@@ -77,6 +77,44 @@ func (u *blockingHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL str
 	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
+type contextBodyHTTPUpstreamRecorder struct {
+	body    string
+	bodyRef *contextAwareReadCloser
+}
+
+func (u *contextBodyHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	body := &contextAwareReadCloser{
+		ctx: req.Context(),
+		r:   strings.NewReader(u.body),
+	}
+	u.bodyRef = body
+	return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+}
+
+func (u *contextBodyHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+type contextAwareReadCloser struct {
+	ctx    context.Context
+	r      *strings.Reader
+	closed bool
+}
+
+func (b *contextAwareReadCloser) Read(p []byte) (int, error) {
+	select {
+	case <-b.ctx.Done():
+		return 0, b.ctx.Err()
+	default:
+		return b.r.Read(p)
+	}
+}
+
+func (b *contextAwareReadCloser) Close() error {
+	b.closed = true
+	return nil
+}
+
 func TestOpenAIGatewayService_ResponsesUnknownModelDoesNotFallbackToGPT54(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -607,6 +645,56 @@ func TestOpenAIGatewayService_OAuthPassthroughHeaderWaitTimeoutReturnsFailover(t
 	require.Contains(t, string(failoverErr.ResponseBody), "timed out waiting for OpenAI upstream response headers")
 	require.False(t, c.Writer.Written())
 	require.Empty(t, rec.Body.String())
+}
+
+func TestOpenAIGatewayService_OAuthPassthroughHeaderWaitTimeoutKeepsResponseBodyReadable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(nil))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.125.0")
+
+	originalBody := []byte(`{"model":"gpt-5.5","stream":true,"instructions":"keep going","input":[{"type":"text","text":"hi"}]}`)
+	upstream := &contextBodyHTTPUpstreamRecorder{
+		body: strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"hello"}`,
+			"",
+			`data: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":1}}}`,
+			"",
+			"data: [DONE]",
+			"",
+		}, "\n"),
+	}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIRequestHeaderTimeoutSeconds: 60,
+		}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:             123,
+		Name:           "acc",
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeOAuth,
+		Concurrency:    1,
+		Credentials:    map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+		Extra:          map[string]any{"openai_passthrough": true},
+		Status:         StatusActive,
+		Schedulable:    true,
+		RateMultiplier: f64p(1),
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, originalBody)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, upstream.bodyRef)
+	require.True(t, upstream.bodyRef.closed)
+	require.Equal(t, 2, result.Usage.InputTokens)
+	require.Equal(t, 1, result.Usage.OutputTokens)
+	require.Contains(t, rec.Body.String(), `"delta":"hello"`)
+	require.NoError(t, c.Request.Context().Err())
 }
 
 func TestOpenAIGatewayService_OAuthPassthrough_DisabledUsesLegacyTransform(t *testing.T) {

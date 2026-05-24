@@ -3639,7 +3639,6 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 		parent = context.Background()
 	}
 	reqCtx, cancel := context.WithCancel(parent)
-	defer cancel()
 	req = req.WithContext(reqCtx)
 
 	resultCh := make(chan openAIUpstreamDoResult, 1)
@@ -3654,6 +3653,22 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 
 	select {
 	case result := <-resultCh:
+		if result.err != nil {
+			cancel()
+			return nil, result.err
+		}
+		if result.resp == nil {
+			cancel()
+			return nil, errors.New("OpenAI upstream returned nil response")
+		}
+		if result.resp.Body != nil {
+			result.resp.Body = &openAIRequestCancelOnCloseBody{
+				ReadCloser: result.resp.Body,
+				cancel:     cancel,
+			}
+		} else {
+			cancel()
+		}
 		return result.resp, result.err
 	case <-timer.C:
 		cancel()
@@ -3662,6 +3677,19 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 		cancel()
 		return nil, parent.Err()
 	}
+}
+
+type openAIRequestCancelOnCloseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *openAIRequestCancelOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	if b.cancel != nil {
+		b.cancel()
+	}
+	return err
 }
 
 func openAIRequestAccountParams(account *Account) (int64, int) {
