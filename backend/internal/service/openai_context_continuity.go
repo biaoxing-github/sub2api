@@ -66,8 +66,37 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 		return selection, decision, err
 	}
 
+	previousResponseID = strings.TrimSpace(previousResponseID)
 	if decision.Layer != openAIAccountScheduleLayerPreviousResponse &&
 		decision.Layer != openAIAccountScheduleLayerSessionSticky {
+		if previousResponseID != "" {
+			fromAccountID, ok := s.lookupOpenAIContinuitySourceAccountID(ctx, groupID, previousResponseID, sessionHash)
+			if ok && fromAccountID > 0 && fromAccountID != selection.Account.ID {
+				replayBody, replayReason, replayOK := s.buildOpenAIContinuityReplayBody(ctx, groupID, previousResponseID, sessionHash, requestBody)
+				if !replayOK {
+					if replayReason == "" {
+						replayReason = OpenAIContinuityReasonReplayNotSafe
+					}
+					releaseOpenAISelection(selection)
+					decision.ContinuityAction = OpenAIContinuityActionProtected
+					decision.ContinuityReason = replayReason
+					decision.ContinuityFromAccountID = fromAccountID
+					return nil, decision, &OpenAIContextContinuityError{
+						Code:               "context_replay_not_safe",
+						Message:            "Current session depends on upstream state that cannot be safely replayed to another account.",
+						SessionHash:        sessionHash,
+						PreviousResponseID: previousResponseID,
+						CurrentAccountID:   fromAccountID,
+						Reason:             replayReason,
+					}
+				}
+				decision.ContinuityAction = OpenAIContinuityActionReplay
+				decision.ContinuityReason = OpenAIContinuityReasonBalanceExhausted
+				decision.ContinuityFromAccountID = fromAccountID
+				decision.ContinuityReplayBody = cloneBytes(replayBody)
+				return selection, decision, nil
+			}
+		}
 		decision.ContinuityAction = OpenAIContinuityActionNewSession
 		return selection, decision, nil
 	}
@@ -130,11 +159,44 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 		nextDecision.ContinuityFromAccountID = account.ID
 		return nextSelection, nextDecision, selectErr
 	}
+	if nextDecision.Layer == openAIAccountScheduleLayerLoadBalance &&
+		strings.TrimSpace(previousResponseID) != "" &&
+		nextSelection.Account.ID != account.ID {
+		nextDecision.ContinuityReplayBody = cloneBytes(replayBody)
+	}
 	nextDecision.ContinuityAction = OpenAIContinuityActionReplay
 	nextDecision.ContinuityReason = OpenAIContinuityReasonBalanceExhausted
 	nextDecision.ContinuityFromAccountID = account.ID
-	nextDecision.ContinuityReplayBody = cloneBytes(replayBody)
+	if len(nextDecision.ContinuityReplayBody) == 0 {
+		nextDecision.ContinuityReplayBody = cloneBytes(replayBody)
+	}
 	return nextSelection, nextDecision, nil
+}
+
+func (s *OpenAIGatewayService) lookupOpenAIContinuitySourceAccountID(ctx context.Context, groupID *int64, previousResponseID string, sessionHash string) (int64, bool) {
+	if s == nil {
+		return 0, false
+	}
+	responseID := strings.TrimSpace(previousResponseID)
+	if responseID == "" {
+		return 0, false
+	}
+	resolvedGroupID := derefGroupID(groupID)
+	if s.contextJournal != nil {
+		ref, err := s.contextJournal.GetResponse(ctx, resolvedGroupID, responseID)
+		if err == nil && ref != nil && ref.AccountID > 0 {
+			if sessionHash == "" || strings.TrimSpace(ref.SessionHash) == "" || ref.SessionHash == sessionHash {
+				return ref.AccountID, true
+			}
+		}
+	}
+	if store := s.getOpenAIWSStateStore(); store != nil {
+		accountID, err := store.GetResponseAccount(ctx, resolvedGroupID, responseID)
+		if err == nil && accountID > 0 {
+			return accountID, true
+		}
+	}
+	return 0, false
 }
 
 func (s *OpenAIGatewayService) checkRealtimeBalanceAvailableForContinuity(ctx context.Context, account *Account) (available bool, checked bool, err error) {

@@ -5,7 +5,15 @@ const STORAGE_KEY = 'table-page-size'
 export function getPersistedPageSize(fallback = getConfiguredTableDefaultPageSize()): number {
   if (typeof window !== 'undefined') {
     try {
+      const configuredDefault = getConfiguredTableDefaultPageSize()
+      const storedSource = window.localStorage.getItem('table-page-size-source')
       const stored = window.localStorage.getItem(STORAGE_KEY)
+      if (storedSource === 'user' && stored !== null && normalizeTablePageSize(stored) !== configuredDefault) {
+        window.localStorage.removeItem(STORAGE_KEY)
+        window.localStorage.removeItem('table-page-size-source')
+        return normalizeTablePageSize(configuredDefault)
+      }
+
       if (stored !== null) {
         const parsed = Number(stored)
         if (Number.isFinite(parsed)) {
