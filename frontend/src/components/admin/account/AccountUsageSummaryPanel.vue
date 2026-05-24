@@ -35,13 +35,14 @@
       {{ error }}
     </div>
 
-    <div v-if="!expanded && summary" class="grid gap-0 md:grid-cols-6">
+    <div v-if="!expanded && summary" class="grid gap-0 md:grid-cols-7">
       <MetricCell :label="t('admin.accounts.usageSummary.accounts')" :value="formatNumber(summary.total_accounts)" />
       <MetricCell :label="t('admin.accounts.usageSummary.fiveHourRemaining')" :value="formatWindowPercent(summary.five_hour.remaining_percent_sum, summary.five_hour)" />
       <MetricCell :label="t('admin.accounts.usageSummary.sevenDayRemaining')" :value="formatWindowPercent(summary.seven_day.remaining_percent_sum, summary.seven_day)" />
       <MetricCell :label="t('admin.accounts.usageSummary.upstreamActualBalance')" :value="formatCost(summary.upstream_balance?.available || 0)" tone="blue" />
       <MetricCell :label="t('admin.accounts.usageSummary.upstreamUsableBalance')" :value="formatCost(upstreamUsableBalance(summary.upstream_balance))" tone="emerald" />
-      <MetricCell :label="t('admin.accounts.usageSummary.missingSnapshots')" :value="formatNumber(summary.missing_snapshot_accounts)" tone="slate" />
+      <MetricCell :label="t('admin.accounts.usageSummary.missingCodexSnapshots')" :value="formatNumber(missingCodexSnapshots(summary))" tone="slate" />
+      <MetricCell :label="t('admin.accounts.usageSummary.missingUpstreamBalanceSnapshots')" :value="formatNumber(missingUpstreamBalanceSnapshots(summary))" tone="amber" />
     </div>
 
     <div v-if="expanded && !summary && loading" class="grid gap-3 p-4 md:grid-cols-4">
@@ -49,11 +50,12 @@
     </div>
 
     <div v-else-if="expanded && summary" class="max-h-[42vh] overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700">
-      <div class="grid gap-0 md:grid-cols-4">
+      <div class="grid gap-0 md:grid-cols-5">
         <MetricCell :label="t('admin.accounts.usageSummary.accounts')" :value="formatNumber(summary.total_accounts)" />
         <MetricCell :label="t('admin.accounts.usageSummary.schedulable')" :value="formatNumber(summary.schedulable_accounts)" />
         <MetricCell :label="t('admin.accounts.usageSummary.rateLimited')" :value="formatNumber(summary.rate_limited_accounts)" tone="amber" />
-        <MetricCell :label="t('admin.accounts.usageSummary.missingSnapshots')" :value="formatNumber(summary.missing_snapshot_accounts)" tone="slate" />
+        <MetricCell :label="t('admin.accounts.usageSummary.missingCodexSnapshots')" :value="formatNumber(missingCodexSnapshots(summary))" tone="slate" />
+        <MetricCell :label="t('admin.accounts.usageSummary.missingUpstreamBalanceSnapshots')" :value="formatNumber(missingUpstreamBalanceSnapshots(summary))" tone="amber" />
       </div>
 
       <div class="grid gap-0 lg:grid-cols-2">
@@ -168,6 +170,14 @@ const { t, locale } = useI18n()
 const expanded = ref(false)
 
 const visiblePlans = computed(() => props.summary?.plans ?? [])
+
+const missingCodexSnapshots = (summary: AccountPoolUsageSummary) => {
+  return summary.missing_codex_snapshot_accounts ?? summary.missing_snapshot_accounts ?? 0
+}
+
+const missingUpstreamBalanceSnapshots = (summary: AccountPoolUsageSummary) => {
+  return summary.upstream_balance?.missing_accounts ?? 0
+}
 
 const formatNumber = (value: number | string) => {
   const numeric = typeof value === 'number' ? value : Number(value)

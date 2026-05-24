@@ -333,6 +333,7 @@ func (s *UpstreamBalanceService) RefreshAccount(ctx context.Context, account *Ac
 	if snapshot.OKCount > 0 {
 		snapshot.Error = ""
 	}
+	preserveManualGroups(snapshot, account)
 	if err := s.accountRepo.UpdateExtra(ctx, account.ID, snapshot.toExtraUpdates(now)); err != nil {
 		return nil, err
 	}
@@ -392,7 +393,13 @@ func (s *UpstreamBalanceService) fetchKeyBalance(ctx context.Context, account *A
 		item.Used = balance.Used
 		item.Total = balance.Total
 		item.Endpoint = endpoint
-		item.Groups = groupsForKey(authCtx, account, apiKey)
+		item.Groups = groupsFromBalanceResponse(body, apiKey, len(allAccountAPIKeys(account)) == 1)
+		if len(item.Groups) == 0 {
+			item.Groups = balance.Groups
+		}
+		if len(item.Groups) == 0 {
+			item.Groups = groupsForKey(authCtx, account, apiKey)
+		}
 		if len(item.Groups) == 0 {
 			item.Groups = s.fetchKeyGroups(ctx, account, apiKey, baseURL)
 		}
@@ -428,6 +435,7 @@ type parsedUpstreamBalance struct {
 	Available *float64
 	Used      *float64
 	Total     *float64
+	Groups    []UpstreamBalanceGroupSnapshot
 }
 
 func (s *UpstreamBalanceService) fetchUpstreamAuthContext(ctx context.Context, account *Account, keys []string) *upstreamAuthContext {
@@ -699,6 +707,10 @@ func ParseUpstreamBalanceResponse(body []byte) (*parsedUpstreamBalance, error) {
 	if isNewAPITokenUsageResponse(obj) {
 		return parseNewAPITokenUsageResponse(obj)
 	}
+	if balance, err := parseNewAPIUsageResponse(body); err == nil {
+		balance.Groups = parseUsageItemGroups(obj)
+		return balance, nil
+	}
 	if strings.EqualFold(strings.TrimSpace(fmt.Sprint(obj["object"])), "billing_subscription") {
 		return parseBillingSubscriptionResponse(obj)
 	}
@@ -898,35 +910,14 @@ func parseUsageItemGroups(raw any) []UpstreamBalanceGroupSnapshot {
 	}
 	seen := make(map[string]UpstreamBalanceGroupSnapshot)
 	for _, item := range items {
-		groupObj, ok := item["group"].(map[string]any)
+		group, ok := usageItemGroup(item)
 		if !ok {
 			continue
 		}
-		name := strings.TrimSpace(firstString(groupObj, "name", "group_name"))
-		if name == "" {
-			name = strings.TrimSpace(firstString(item, "group_name"))
-		}
-		if name == "" {
+		if existing, ok := seen[group.Name]; ok && existing.Ratio > 0 {
 			continue
 		}
-		ratio, ok := parseAnyFloat(groupObj["rate_multiplier"])
-		if !ok || ratio <= 0 {
-			ratio, ok = parseAnyFloat(groupObj["ratio"])
-		}
-		if !ok || ratio <= 0 {
-			ratio, ok = parseAnyFloat(item["rate_multiplier"])
-		}
-		if !ok || ratio <= 0 {
-			continue
-		}
-		if existing, ok := seen[name]; ok && existing.Ratio > 0 {
-			continue
-		}
-		seen[name] = UpstreamBalanceGroupSnapshot{
-			Name:        name,
-			Ratio:       ratio,
-			Description: strings.TrimSpace(firstString(groupObj, "description", "desc")),
-		}
+		seen[group.Name] = group
 	}
 	if len(seen) == 0 {
 		return nil
@@ -939,6 +930,110 @@ func parseUsageItemGroups(raw any) []UpstreamBalanceGroupSnapshot {
 	return groups
 }
 
+func groupsFromBalanceResponse(body []byte, apiKey string, singleKey bool) []UpstreamBalanceGroupSnapshot {
+	var raw any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil
+	}
+	if groups := usageItemGroupsForKey(raw, apiKey); len(groups) > 0 {
+		return groups
+	}
+	if singleKey {
+		return parseUsageItemGroups(raw)
+	}
+	return nil
+}
+
+func usageItemGroupsForKey(raw any, apiKey string) []UpstreamBalanceGroupSnapshot {
+	items := findObjectListAtKeys(raw, "items")
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]UpstreamBalanceGroupSnapshot)
+	for _, item := range items {
+		if !usageItemMatchesAPIKey(item, apiKey) {
+			continue
+		}
+		group, ok := usageItemGroup(item)
+		if !ok {
+			continue
+		}
+		seen[group.Name] = group
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	groups := make([]UpstreamBalanceGroupSnapshot, 0, len(seen))
+	for _, group := range seen {
+		groups = append(groups, group)
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
+	return groups
+}
+
+func usageItemMatchesAPIKey(item map[string]any, apiKey string) bool {
+	candidates := tokenCandidatesFromObject(item)
+	if apiKeyObj, ok := item["api_key"].(map[string]any); ok {
+		candidates = append(candidates, tokenCandidatesFromObject(apiKeyObj)...)
+	}
+	if tokenObj, ok := item["token"].(map[string]any); ok {
+		candidates = append(candidates, tokenCandidatesFromObject(tokenObj)...)
+	}
+	for _, candidate := range candidates {
+		if upstreamTokenMatchesKey(upstreamTokenInfo{fullKey: candidate, masked: candidate}, apiKey) {
+			return true
+		}
+	}
+	return false
+}
+
+func tokenCandidatesFromObject(item map[string]any) []string {
+	fields := []string{
+		"key", "token", "api_key", "apiKey", "apikey",
+		"masked_key", "masked", "key_masked", "token_key",
+	}
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if value := firstString(item, field); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func usageItemGroup(item map[string]any) (UpstreamBalanceGroupSnapshot, bool) {
+	groupObj, _ := item["group"].(map[string]any)
+	name := ""
+	if groupObj != nil {
+		name = strings.TrimSpace(firstString(groupObj, "name", "group_name"))
+	}
+	if name == "" {
+		name = strings.TrimSpace(firstString(item, "group_name", "group"))
+	}
+	if name == "" {
+		return UpstreamBalanceGroupSnapshot{}, false
+	}
+	var ratio float64
+	var ok bool
+	if groupObj != nil {
+		ratio, ok = parseAnyFloat(groupObj["rate_multiplier"])
+		if !ok || ratio <= 0 {
+			ratio, ok = parseAnyFloat(groupObj["ratio"])
+		}
+	}
+	if !ok || ratio <= 0 {
+		ratio, ok = parseAnyFloat(item["rate_multiplier"])
+	}
+	if !ok || ratio <= 0 {
+		ratio = 1
+	}
+	description := ""
+	if groupObj != nil {
+		description = strings.TrimSpace(firstString(groupObj, "description", "desc"))
+	}
+	return UpstreamBalanceGroupSnapshot{Name: name, Ratio: ratio, Description: description}, true
+}
+
 func ParseUpstreamTokenListResponse(body []byte) []upstreamTokenInfo {
 	var raw any
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -947,9 +1042,22 @@ func ParseUpstreamTokenListResponse(body []byte) []upstreamTokenInfo {
 	items := findObjectList(raw)
 	out := make([]upstreamTokenInfo, 0, len(items))
 	for _, item := range items {
-		key := strings.TrimSpace(firstString(item, "key", "token", "api_key"))
+		key := strings.TrimSpace(firstString(item, "key", "token", "api_key", "apiKey", "apikey", "token_key"))
 		masked := strings.TrimSpace(firstString(item, "masked_key", "masked", "key_masked"))
 		group := strings.TrimSpace(firstString(item, "group", "group_name"))
+		if key == "" || group == "" {
+			if apiKeyObj, ok := item["api_key"].(map[string]any); ok {
+				if key == "" {
+					key = strings.TrimSpace(firstString(apiKeyObj, "key", "token", "api_key", "apiKey", "apikey", "token_key"))
+				}
+				if masked == "" {
+					masked = strings.TrimSpace(firstString(apiKeyObj, "masked_key", "masked", "key_masked"))
+				}
+				if group == "" {
+					group = strings.TrimSpace(firstString(apiKeyObj, "group", "group_name"))
+				}
+			}
+		}
 		if group == "" {
 			if g, ok := item["group"].(map[string]any); ok {
 				group = strings.TrimSpace(firstString(g, "name"))
@@ -1354,15 +1462,36 @@ func manualRateGroups(account *Account) []UpstreamBalanceGroupSnapshot {
 	}
 	name := ""
 	if account.Extra != nil {
-		name = strings.TrimSpace(fmt.Sprint(account.Extra[UpstreamCommonRateGroupNameKey]))
+		name = stringValue(account.Extra[UpstreamCommonRateGroupNameKey])
 	}
 	if name == "" {
-		name = strings.TrimSpace(account.GetCredential(UpstreamCommonRateGroupNameKey))
+		name = stringValue(account.Credentials[UpstreamCommonRateGroupNameKey])
 	}
 	if name == "" {
 		name = "manual"
 	}
 	return []UpstreamBalanceGroupSnapshot{{Name: name, Ratio: ratio, Description: "manual common rate"}}
+}
+
+func preserveManualGroups(snapshot *UpstreamBalanceSnapshot, account *Account) {
+	if snapshot == nil || len(snapshot.Groups) > 0 {
+		return
+	}
+	groups := groupsForAccount(nil, account)
+	if len(groups) == 0 {
+		return
+	}
+	for i := range snapshot.Keys {
+		if snapshot.Keys[i].Status != "ok" || len(snapshot.Keys[i].Groups) > 0 {
+			continue
+		}
+		snapshot.Keys[i].Groups = append([]UpstreamBalanceGroupSnapshot(nil), groups...)
+		applyConvertedBalancesToGroups(&snapshot.Keys[i])
+		mergeKeyGroupsIntoSnapshot(snapshot, snapshot.Keys[i])
+	}
+	if len(snapshot.Groups) == 0 {
+		snapshot.Groups = append([]UpstreamBalanceGroupSnapshot(nil), groups...)
+	}
 }
 
 func upstreamTokenMatchesKey(token upstreamTokenInfo, apiKey string) bool {
@@ -1469,11 +1598,23 @@ func firstString(m map[string]any, keys ...string) string {
 		case map[string]any, []any, nil:
 			continue
 		}
-		if s := strings.TrimSpace(fmt.Sprint(m[key])); s != "" && s != "<nil>" {
+		if s := stringValue(m[key]); s != "" {
 			return s
 		}
 	}
 	return ""
+}
+
+func stringValue(raw any) string {
+	switch raw.(type) {
+	case nil, map[string]any, []any:
+		return ""
+	}
+	s := strings.TrimSpace(fmt.Sprint(raw))
+	if s == "" || s == "<nil>" {
+		return ""
+	}
+	return s
 }
 
 func findStringByKeys(raw any, keys ...string) string {

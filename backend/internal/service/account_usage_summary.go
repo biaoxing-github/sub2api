@@ -24,32 +24,34 @@ type AccountUsageSummaryWindow struct {
 }
 
 type AccountUsageSummaryGroup struct {
-	PlanType             string                     `json:"plan_type"`
-	PlanLabel            string                     `json:"plan_label"`
-	AccountType          string                     `json:"account_type,omitempty"`
-	AccountTypeLabel     string                     `json:"account_type_label,omitempty"`
-	AccountCount         int                        `json:"account_count"`
-	SchedulableCount     int                        `json:"schedulable_count"`
-	RateLimitedCount     int                        `json:"rate_limited_count"`
-	MissingSnapshotCount int                        `json:"missing_snapshot_count"`
-	FiveHour             AccountUsageSummaryWindow  `json:"five_hour"`
-	SevenDay             AccountUsageSummaryWindow  `json:"seven_day"`
-	LatestUpdatedAt      *time.Time                 `json:"latest_updated_at,omitempty"`
-	OldestUpdatedAt      *time.Time                 `json:"oldest_updated_at,omitempty"`
-	UpstreamBalance      UpstreamBalanceSummary     `json:"upstream_balance"`
-	Types                []AccountUsageSummaryGroup `json:"types,omitempty"`
+	PlanType                  string                     `json:"plan_type"`
+	PlanLabel                 string                     `json:"plan_label"`
+	AccountType               string                     `json:"account_type,omitempty"`
+	AccountTypeLabel          string                     `json:"account_type_label,omitempty"`
+	AccountCount              int                        `json:"account_count"`
+	SchedulableCount          int                        `json:"schedulable_count"`
+	RateLimitedCount          int                        `json:"rate_limited_count"`
+	MissingSnapshotCount      int                        `json:"missing_snapshot_count"`
+	MissingCodexSnapshotCount int                        `json:"missing_codex_snapshot_count"`
+	FiveHour                  AccountUsageSummaryWindow  `json:"five_hour"`
+	SevenDay                  AccountUsageSummaryWindow  `json:"seven_day"`
+	LatestUpdatedAt           *time.Time                 `json:"latest_updated_at,omitempty"`
+	OldestUpdatedAt           *time.Time                 `json:"oldest_updated_at,omitempty"`
+	UpstreamBalance           UpstreamBalanceSummary     `json:"upstream_balance"`
+	Types                     []AccountUsageSummaryGroup `json:"types,omitempty"`
 }
 
 type AccountUsageSummary struct {
-	GeneratedAt             time.Time                  `json:"generated_at"`
-	TotalAccounts           int                        `json:"total_accounts"`
-	SchedulableAccounts     int                        `json:"schedulable_accounts"`
-	RateLimitedAccounts     int                        `json:"rate_limited_accounts"`
-	MissingSnapshotAccounts int                        `json:"missing_snapshot_accounts"`
-	FiveHour                AccountUsageSummaryWindow  `json:"five_hour"`
-	SevenDay                AccountUsageSummaryWindow  `json:"seven_day"`
-	UpstreamBalance         UpstreamBalanceSummary     `json:"upstream_balance"`
-	Plans                   []AccountUsageSummaryGroup `json:"plans"`
+	GeneratedAt                  time.Time                  `json:"generated_at"`
+	TotalAccounts                int                        `json:"total_accounts"`
+	SchedulableAccounts          int                        `json:"schedulable_accounts"`
+	RateLimitedAccounts          int                        `json:"rate_limited_accounts"`
+	MissingSnapshotAccounts      int                        `json:"missing_snapshot_accounts"`
+	MissingCodexSnapshotAccounts int                        `json:"missing_codex_snapshot_accounts"`
+	FiveHour                     AccountUsageSummaryWindow  `json:"five_hour"`
+	SevenDay                     AccountUsageSummaryWindow  `json:"seven_day"`
+	UpstreamBalance              UpstreamBalanceSummary     `json:"upstream_balance"`
+	Plans                        []AccountUsageSummaryGroup `json:"plans"`
 }
 
 type accountUsageSummaryAccumulator struct {
@@ -118,8 +120,9 @@ func BuildAccountUsageSummary(ctx context.Context, accounts []Account, statsRead
 		if account.IsRateLimited() {
 			summary.RateLimitedAccounts++
 		}
-		if !accountHasCodexUsageSnapshot(account.Extra, now) {
+		if accountNeedsCodexUsageSnapshot(account) && !accountHasCodexUsageSnapshot(account.Extra, now) {
 			summary.MissingSnapshotAccounts++
+			summary.MissingCodexSnapshotAccounts++
 		}
 		if balance := UpstreamBalanceSnapshotFromExtra(account.Extra); balance != nil {
 			applySnapshotToSummary(&summary.UpstreamBalance, balance)
@@ -231,8 +234,9 @@ func applyAccountToSummaryAccumulator(acc *accountUsageSummaryAccumulator, accou
 	if account.IsRateLimited() {
 		acc.group.RateLimitedCount++
 	}
-	if !accountHasCodexUsageSnapshot(account.Extra, now) {
+	if accountNeedsCodexUsageSnapshot(account) && !accountHasCodexUsageSnapshot(account.Extra, now) {
 		acc.group.MissingSnapshotCount++
+		acc.group.MissingCodexSnapshotCount++
 	}
 	if balance := UpstreamBalanceSnapshotFromExtra(account.Extra); balance != nil {
 		applySnapshotToSummary(&acc.group.UpstreamBalance, balance)
@@ -248,6 +252,9 @@ func applyAccountToSummaryAccumulator(acc *accountUsageSummaryAccumulator, accou
 }
 
 func applyAccountWindowToSummary(target *AccountUsageSummaryWindow, account *Account, planType, window string, stats *usagestats.AccountStats, now time.Time) {
+	if account == nil || normalizeAccountSummaryAccountType(account.Type) == AccountTypeAPIKey {
+		return
+	}
 	if !accountSummaryWindowApplies(planType, window) {
 		return
 	}
@@ -318,6 +325,18 @@ func finalizeAccountUsageSummaryWindow(window *AccountUsageSummaryWindow) {
 
 func accountHasCodexUsageSnapshot(extra map[string]any, now time.Time) bool {
 	return buildCodexUsageProgressFromExtra(extra, "5h", now) != nil || buildCodexUsageProgressFromExtra(extra, "7d", now) != nil
+}
+
+func accountNeedsCodexUsageSnapshot(account *Account) bool {
+	if account == nil || !account.IsOpenAI() {
+		return false
+	}
+	switch normalizeAccountSummaryAccountType(account.Type) {
+	case AccountTypeOAuth, AccountTypeSetupToken:
+		return true
+	default:
+		return false
+	}
 }
 
 func accountCodexUsageUpdatedAt(extra map[string]any) *time.Time {

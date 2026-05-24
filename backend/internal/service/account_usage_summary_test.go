@@ -215,6 +215,146 @@ func TestBuildAccountUsageSummaryClassifiesAPIKeyPlan(t *testing.T) {
 	}
 }
 
+func TestBuildAccountUsageSummaryExcludesAPIKeyFromCodexWindows(t *testing.T) {
+	now := time.Date(2026, 3, 16, 12, 0, 0, 0, time.UTC)
+	reset5h := now.Add(time.Hour).Format(time.RFC3339)
+	reset7d := now.Add(24 * time.Hour).Format(time.RFC3339)
+	accounts := []Account{
+		{
+			ID:          10,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Extra: map[string]any{
+				"codex_5h_used_percent": 90.0,
+				"codex_5h_reset_at":     reset5h,
+				"codex_7d_used_percent": 80.0,
+				"codex_7d_reset_at":     reset7d,
+			},
+		},
+		{
+			ID:          11,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{"plan_type": "plus"},
+			Extra: map[string]any{
+				"codex_5h_used_percent": 25.0,
+				"codex_5h_reset_at":     reset5h,
+				"codex_7d_used_percent": 50.0,
+				"codex_7d_reset_at":     reset7d,
+			},
+		},
+	}
+	repo := &accountUsageSummaryStatsRepo{stats: map[time.Duration]map[int64]*usagestats.AccountStats{
+		5 * time.Hour: {
+			10: {Requests: 100, Cost: 100},
+			11: {Requests: 10, Cost: 10},
+		},
+		7 * 24 * time.Hour: {
+			10: {Requests: 700, Cost: 700},
+			11: {Requests: 70, Cost: 70},
+		},
+	}}
+
+	summary, err := BuildAccountUsageSummary(context.Background(), accounts, repo, now)
+	if err != nil {
+		t.Fatalf("BuildAccountUsageSummary() error = %v", err)
+	}
+
+	if got, want := summary.FiveHour.UsedCost, 10.0; got != want {
+		t.Fatalf("summary 5h used cost = %v, want %v", got, want)
+	}
+	if got, want := summary.FiveHour.UsedPercentSum, 25.0; got != want {
+		t.Fatalf("summary 5h used percent = %v, want %v", got, want)
+	}
+	if got, want := summary.FiveHour.RemainingPercentSum, 75.0; got != want {
+		t.Fatalf("summary 5h remaining percent = %v, want %v", got, want)
+	}
+	if got, want := summary.SevenDay.UsedCost, 70.0; got != want {
+		t.Fatalf("summary 7d used cost = %v, want %v", got, want)
+	}
+	if got, want := summary.SevenDay.UsedPercentSum, 50.0; got != want {
+		t.Fatalf("summary 7d used percent = %v, want %v", got, want)
+	}
+	if got, want := summary.SevenDay.RemainingPercentSum, 50.0; got != want {
+		t.Fatalf("summary 7d remaining percent = %v, want %v", got, want)
+	}
+	if len(summary.Plans) != 2 {
+		t.Fatalf("plans len = %d, want 2", len(summary.Plans))
+	}
+	apiKeyPlan := summary.Plans[1]
+	if apiKeyPlan.PlanType != "api_key" {
+		t.Fatalf("second plan = %q, want api_key", apiKeyPlan.PlanType)
+	}
+	if got := apiKeyPlan.FiveHour.UsedCost; got != 0 {
+		t.Fatalf("api key 5h used cost = %v, want 0", got)
+	}
+	if got := apiKeyPlan.SevenDay.UsedPercentSum; got != 0 {
+		t.Fatalf("api key 7d used percent = %v, want 0", got)
+	}
+}
+
+func TestBuildAccountUsageSummarySeparatesCodexAndUpstreamMissingSnapshots(t *testing.T) {
+	now := time.Date(2026, 3, 16, 12, 0, 0, 0, time.UTC)
+	accounts := []Account{
+		{
+			ID:          10,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Extra:       map[string]any{},
+		},
+		{
+			ID:          11,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{"plan_type": "plus"},
+			Extra:       map[string]any{},
+		},
+	}
+
+	summary, err := BuildAccountUsageSummary(context.Background(), accounts, nil, now)
+	if err != nil {
+		t.Fatalf("BuildAccountUsageSummary() error = %v", err)
+	}
+
+	if got, want := summary.MissingCodexSnapshotAccounts, 1; got != want {
+		t.Fatalf("MissingCodexSnapshotAccounts = %d, want %d", got, want)
+	}
+	if got, want := summary.MissingSnapshotAccounts, 1; got != want {
+		t.Fatalf("legacy MissingSnapshotAccounts = %d, want %d", got, want)
+	}
+	if got, want := summary.UpstreamBalance.MissingAccounts, 1; got != want {
+		t.Fatalf("upstream missing accounts = %d, want %d", got, want)
+	}
+	if len(summary.Plans) != 2 {
+		t.Fatalf("plans len = %d, want 2", len(summary.Plans))
+	}
+	plus := summary.Plans[0]
+	if plus.PlanType != "plus" {
+		t.Fatalf("first plan = %q, want plus", plus.PlanType)
+	}
+	if got, want := plus.MissingCodexSnapshotCount, 1; got != want {
+		t.Fatalf("plus MissingCodexSnapshotCount = %d, want %d", got, want)
+	}
+	apiKey := summary.Plans[1]
+	if apiKey.PlanType != "api_key" {
+		t.Fatalf("second plan = %q, want api_key", apiKey.PlanType)
+	}
+	if got := apiKey.MissingCodexSnapshotCount; got != 0 {
+		t.Fatalf("api key MissingCodexSnapshotCount = %d, want 0", got)
+	}
+	if got, want := apiKey.UpstreamBalance.MissingAccounts, 1; got != want {
+		t.Fatalf("api key upstream missing accounts = %d, want %d", got, want)
+	}
+}
+
 func TestBuildAccountUsageSummaryAllowsPercentSumsBeyondOneHundred(t *testing.T) {
 	now := time.Date(2026, 3, 16, 12, 0, 0, 0, time.UTC)
 	accounts := []Account{

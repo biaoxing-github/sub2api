@@ -696,6 +696,7 @@ export interface BatchOperationResult {
   failed: number
   errors?: Array<{ account_id: number; error: string }>
   warnings?: Array<{ account_id: number; warning: string }>
+  accounts?: Account[]
 }
 
 /**

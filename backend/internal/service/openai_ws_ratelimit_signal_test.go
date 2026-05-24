@@ -163,7 +163,10 @@ func TestOpenAIGatewayService_Forward_WSv2ErrorEventUsageLimitPersistsRateLimit(
 	result, err := svc.Forward(context.Background(), c, &account, body)
 	require.Error(t, err)
 	require.Nil(t, result)
-	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.Equal(t, http.StatusOK, rec.Code)
 	require.Nil(t, upstream.lastReq, "WS 限流 error event 不应回退到同账号 HTTP")
 	require.Len(t, repo.rateLimitCalls, 1)
 	require.WithinDuration(t, time.Unix(resetAt, 0), repo.rateLimitCalls[0], 2*time.Second)
@@ -233,11 +236,145 @@ func TestOpenAIGatewayService_Forward_WSv2Handshake429PersistsRateLimit(t *testi
 	result, err := svc.Forward(context.Background(), c, &account, body)
 	require.Error(t, err)
 	require.Nil(t, result)
-	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.Equal(t, http.StatusOK, rec.Code)
 	require.Nil(t, upstream.lastReq, "WS 握手 429 不应回退到同账号 HTTP")
 	require.Len(t, repo.rateLimitCalls, 1)
 	require.NotEmpty(t, repo.updateExtra, "握手 429 的 x-codex 头应立即落库")
 	require.Contains(t, repo.updateExtra[0], "codex_usage_updated_at")
+}
+
+func TestOpenAIGatewayService_Forward_WSv2Handshake429ReturnsFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-codex-primary-used-percent", "100")
+		w.Header().Set("x-codex-primary-reset-after-seconds", "7200")
+		w.Header().Set("x-codex-primary-window-minutes", "10080")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_exceeded","message":"exceeded retry limit, last status: 429 Too Many Requests"}}`))
+	}))
+	defer server.Close()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
+
+	cfg := newOpenAIWSV2TestConfig()
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+
+	account := Account{
+		ID:          512,
+		Name:        "openai-ws-rate-limit-handshake-failover",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": server.URL,
+		},
+		Extra: map[string]any{
+			"responses_websockets_v2_enabled": true,
+		},
+	}
+	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+	svc := &OpenAIGatewayService{
+		accountRepo:      repo,
+		rateLimitService: &RateLimitService{accountRepo: repo},
+		httpUpstream:     &httpUpstreamRecorder{},
+		cache:            &stubGatewayCache{},
+		cfg:              cfg,
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+	}
+
+	result, err := svc.Forward(context.Background(), c, &account, []byte(`{"model":"gpt-5.1","input":[{"type":"input_text","text":"hello"}]}`))
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.False(t, rec.Result().Header.Get("Content-Type") != "" || rec.Code != http.StatusOK, "failover path must not write client response before handler can switch accounts")
+	require.Len(t, repo.rateLimitCalls, 1)
+}
+
+func TestOpenAIGatewayService_Forward_WSv2UsageLimitEventReturnsFailoverBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket failed: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		var req map[string]any
+		if err := conn.ReadJSON(&req); err != nil {
+			t.Errorf("read ws request failed: %v", err)
+			return
+		}
+		_ = conn.WriteJSON(map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"code":    "rate_limit_exceeded",
+				"type":    "usage_limit_reached",
+				"message": "exceeded retry limit, last status: 429 Too Many Requests",
+			},
+		})
+	}))
+	defer wsServer.Close()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
+
+	cfg := newOpenAIWSV2TestConfig()
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+
+	account := Account{
+		ID:          513,
+		Name:        "openai-ws-rate-limit-event-failover",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": wsServer.URL,
+		},
+		Extra: map[string]any{
+			"responses_websockets_v2_enabled": true,
+		},
+	}
+	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+	svc := &OpenAIGatewayService{
+		accountRepo:      repo,
+		rateLimitService: &RateLimitService{accountRepo: repo},
+		httpUpstream:     &httpUpstreamRecorder{},
+		cache:            &stubGatewayCache{},
+		cfg:              cfg,
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+	}
+
+	result, err := svc.Forward(context.Background(), c, &account, []byte(`{"model":"gpt-5.1","input":[{"type":"input_text","text":"hello"}]}`))
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.False(t, rec.Result().Header.Get("Content-Type") != "" || rec.Code != http.StatusOK, "failover path must not write client response before handler can switch accounts")
+	require.Len(t, repo.rateLimitCalls, 1)
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ErrorEventUsageLimitPersistsRateLimit(t *testing.T) {

@@ -50,6 +50,9 @@ type Account struct {
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 
+	TotalAccountCost float64
+	TotalRequests    int64
+
 	Schedulable bool
 
 	RateLimitedAt    *time.Time

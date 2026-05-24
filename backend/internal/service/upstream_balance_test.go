@@ -143,14 +143,19 @@ func (r *upstreamBalanceRefreshOneRepo) ResetQuotaUsed(context.Context, int64) e
 
 type upstreamBalanceRefreshOneHTTP struct {
 	requests []*http.Request
+	body     string
 }
 
 func (h *upstreamBalanceRefreshOneHTTP) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	h.requests = append(h.requests, req)
+	body := h.body
+	if body == "" {
+		body = `{"total_granted":20,"total_used":7.5,"total_available":12.5}`
+	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(`{"total_granted":20,"total_used":7.5,"total_available":12.5}`)),
+		Body:       io.NopCloser(strings.NewReader(body)),
 	}, nil
 }
 
@@ -185,6 +190,74 @@ func TestUpstreamBalanceServiceRefreshOneRefreshesOnlyRequestedAccount(t *testin
 	}
 	if len(httpUpstream.requests) == 0 || !strings.HasSuffix(httpUpstream.requests[0].URL.String(), "/v1/usage") {
 		t.Fatalf("requests = %+v", httpUpstream.requests)
+	}
+}
+
+func TestUpstreamBalanceServiceRefreshOneUsesNewAPIUsageGroups(t *testing.T) {
+	repo := &upstreamBalanceRefreshOneRepo{
+		account: &Account{
+			ID:       42,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key": "sk-test",
+			},
+		},
+	}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{
+		body: `{"code":0,"data":{"user":{"balance":1001.9812742},"items":[{"api_key":{"key":"sk-test","name":"codex","group_id":2},"group":{"id":2,"name":"codex","rate_multiplier":0.7}}]}}`,
+	}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+
+	snapshot, err := svc.RefreshOne(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("RefreshOne() error = %v", err)
+	}
+	if len(snapshot.Groups) != 1 || snapshot.Groups[0].Name != "codex" || snapshot.Groups[0].Ratio != 0.7 {
+		t.Fatalf("snapshot groups = %+v", snapshot.Groups)
+	}
+	if len(snapshot.Keys) != 1 || len(snapshot.Keys[0].Groups) != 1 || snapshot.Keys[0].Groups[0].Name != "codex" {
+		t.Fatalf("key groups = %+v", snapshot.Keys)
+	}
+	if snapshot.ConvertedAvailableByGroup["codex"] == 0 {
+		t.Fatalf("converted groups = %+v", snapshot.ConvertedAvailableByGroup)
+	}
+}
+
+func TestUpstreamBalanceServiceRefreshOnePreservesManualGroupsWhenUpstreamOmitsGroups(t *testing.T) {
+	repo := &upstreamBalanceRefreshOneRepo{
+		account: &Account{
+			ID:       42,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":                       "sk-test",
+				UpstreamCommonRateMultiplierKey: 0.24,
+				UpstreamCommonRateGroupNameKey:  "codex",
+			},
+			Extra: map[string]any{
+				UpstreamCommonRateMultiplierKey: 0.24,
+				UpstreamCommonRateGroupNameKey:  nil,
+			},
+		},
+	}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{
+		body: `{"balance":48.95693364,"isValid":true,"mode":"unrestricted","planName":"钱包余额","remaining":48.95693364,"unit":"USD"}`,
+	}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+
+	snapshot, err := svc.RefreshOne(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("RefreshOne() error = %v", err)
+	}
+	if len(snapshot.Groups) != 1 || snapshot.Groups[0].Name != "codex" || snapshot.Groups[0].Ratio != 0.24 {
+		t.Fatalf("snapshot groups = %+v", snapshot.Groups)
+	}
+	if len(snapshot.Keys) != 1 || len(snapshot.Keys[0].Groups) != 1 || snapshot.Keys[0].Groups[0].Name != "codex" {
+		t.Fatalf("key groups = %+v", snapshot.Keys)
+	}
+	if repo.updateExtra[UpstreamBalanceGroupsKey] == nil {
+		t.Fatalf("updated extra did not preserve groups: %+v", repo.updateExtra)
 	}
 }
 
@@ -224,6 +297,24 @@ func TestManualRateGroupsPrefersPersistedLoginRateOverCredentialRate(t *testing.
 
 	got := manualRateGroups(account)
 	if len(got) != 1 || got[0].Name != "login-group" || got[0].Ratio != 0.2 {
+		t.Fatalf("manualRateGroups() = %+v", got)
+	}
+}
+
+func TestManualRateGroupsFallsBackWhenExtraGroupNameIsNil(t *testing.T) {
+	account := &Account{
+		Credentials: map[string]any{
+			UpstreamCommonRateMultiplierKey: 0.24,
+			UpstreamCommonRateGroupNameKey:  "codex",
+		},
+		Extra: map[string]any{
+			UpstreamCommonRateMultiplierKey: 0.24,
+			UpstreamCommonRateGroupNameKey:  nil,
+		},
+	}
+
+	got := manualRateGroups(account)
+	if len(got) != 1 || got[0].Name != "codex" || got[0].Ratio != 0.24 {
 		t.Fatalf("manualRateGroups() = %+v", got)
 	}
 }

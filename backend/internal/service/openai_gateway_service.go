@@ -2720,6 +2720,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			return wsResult, nil
 		}
+		if failoverErr := openAIWSFailoverErrorFromError(wsErr); failoverErr != nil {
+			return nil, failoverErr
+		}
 		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
 		return nil, wsErr
 	}

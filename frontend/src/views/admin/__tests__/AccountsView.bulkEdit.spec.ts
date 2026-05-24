@@ -71,7 +71,20 @@ vi.mock('vue-i18n', async () => {
 
 const DataTableStub = {
   props: ['columns', 'data'],
-  template: '<div data-test="data-table"></div>'
+  emits: ['sort'],
+  template: `
+    <div>
+      <button
+        v-for="column in columns"
+        :key="column.key"
+        :data-test="'sort-' + column.key"
+        @click="$emit('sort', column.key, 'desc')"
+      >
+        {{ column.label }}
+      </button>
+      <div data-test="data-table">{{ data.map((row) => \`\${row.name}:\${row.status}:\${row.error_message || ""}:\${row.total_account_cost ?? 0}:\${row.total_requests ?? 0}\`).join("|") }}</div>
+    </div>
+  `
 }
 
 const AccountBulkActionsBarStub = {
@@ -240,5 +253,177 @@ describe('admin AccountsView bulk edit scope', () => {
 
     expect(wrapper.text()).toContain('free-one@example.com')
     expect(wrapper.text()).toContain('invalid_grant')
+  })
+
+  it('immediately patches refreshed account error status returned by batch refresh', async () => {
+    window.confirm = vi.fn(() => true)
+    listAccounts.mockResolvedValueOnce({
+      items: [
+        {
+          id: 1,
+          name: 'free-one@example.com',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'active',
+          schedulable: true,
+          credentials: { plan_type: 'free' },
+          error_message: null,
+          extra: {},
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+    listAccounts.mockImplementation(() => new Promise(() => {}))
+    batchRefresh.mockResolvedValue({
+      total: 1,
+      success: 0,
+      failed: 1,
+      errors: [{ account_id: 1, error: 'invalid_grant' }],
+      accounts: [
+        {
+          id: 1,
+          name: 'free-one@example.com',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'error',
+          schedulable: true,
+          credentials: { plan_type: 'free' },
+          error_message: 'invalid_grant',
+          extra: {},
+        },
+      ]
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          BaseDialog: { template: '<section data-test="base-dialog"><slot /><slot name="footer" /></section>' },
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    expect(wrapper.get('[data-test="data-table"]').text()).toContain('free-one@example.com:active:')
+
+    await wrapper.get('[data-test="refresh-token"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="data-table"]').text()).toContain('free-one@example.com:error:invalid_grant')
+  })
+
+  it('passes total account cost sorting to the server and displays usage totals', async () => {
+    listAccounts.mockResolvedValueOnce({
+      items: [
+        {
+          id: 2,
+          name: 'heavy@example.com',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'active',
+          schedulable: true,
+          credentials: { plan_type: 'plus' },
+          total_account_cost: 7.25,
+          total_requests: 18,
+          extra: {},
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+    listAccounts.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 20,
+      pages: 0
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    expect(wrapper.get('[data-test="data-table"]').text()).toContain('heavy@example.com:active::7.25:18')
+
+    await wrapper.get('[data-test="sort-total_account_cost"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      1,
+      20,
+      expect.objectContaining({
+        sort_by: 'total_account_cost',
+        sort_order: 'desc'
+      }),
+      expect.any(Object)
+    )
   })
 })

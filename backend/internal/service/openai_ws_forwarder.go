@@ -95,6 +95,54 @@ func wrapOpenAIWSFallback(reason string, err error) error {
 	return &openAIWSFallbackError{Reason: strings.TrimSpace(reason), Err: err}
 }
 
+type openAIWSFailoverSignalError struct {
+	statusCode int
+	body       []byte
+	headers    http.Header
+	err        error
+}
+
+func (e *openAIWSFailoverSignalError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return fmt.Sprintf("openai ws failover signal: status=%d", e.statusCode)
+}
+
+func (e *openAIWSFailoverSignalError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func newOpenAIWSRateLimitFailoverSignal(headers http.Header, body []byte, err error) error {
+	return &openAIWSFailoverSignalError{
+		statusCode: http.StatusTooManyRequests,
+		body:       cloneBytes(body),
+		headers:    headers.Clone(),
+		err:        err,
+	}
+}
+
+func openAIWSFailoverErrorFromError(err error) *UpstreamFailoverError {
+	if err == nil {
+		return nil
+	}
+	var signal *openAIWSFailoverSignalError
+	if !errors.As(err, &signal) || signal == nil || signal.statusCode <= 0 {
+		return nil
+	}
+	return &UpstreamFailoverError{
+		StatusCode:      signal.statusCode,
+		ResponseBody:    cloneBytes(signal.body),
+		ResponseHeaders: signal.headers.Clone(),
+	}
+}
+
 // OpenAIWSClientCloseError 表示应以指定 WebSocket close code 主动关闭客户端连接的错误。
 type OpenAIWSClientCloseError struct {
 	statusCode coderws.StatusCode
@@ -1886,6 +1934,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		var dialErr *openAIWSDialError
 		if errors.As(err, &dialErr) && dialErr != nil && dialErr.StatusCode == http.StatusTooManyRequests {
 			s.persistOpenAIWSRateLimitSignal(ctx, account, dialErr.ResponseHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(err.Error()))
+			return nil, newOpenAIWSRateLimitFailoverSignal(dialErr.ResponseHeaders, nil, err)
 		}
 		return nil, wrapOpenAIWSFallback(classifyOpenAIWSAcquireError(err), err)
 	}
@@ -2231,6 +2280,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 				return nil, wrapOpenAIWSFallback(fallbackReason, errors.New(errMsg))
 			}
 			statusCode := openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
+			if !wroteDownstream && statusCode == http.StatusTooManyRequests {
+				return nil, newOpenAIWSRateLimitFailoverSignal(lease.HandshakeHeaders(), message, errors.New(errMsg))
+			}
 			setOpsUpstreamError(c, statusCode, errMsg, "")
 			if reqStream && !clientDisconnected {
 				flushBufferedStreamEvents("error_event")

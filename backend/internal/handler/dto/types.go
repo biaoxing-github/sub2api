@@ -173,6 +173,9 @@ type Account struct {
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
 
+	TotalAccountCost float64 `json:"total_account_cost"`
+	TotalRequests    int64   `json:"total_requests"`
+
 	Schedulable bool `json:"schedulable"`
 
 	RateLimitedAt    *time.Time `json:"rate_limited_at"`

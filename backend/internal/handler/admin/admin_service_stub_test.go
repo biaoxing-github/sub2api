@@ -10,25 +10,32 @@ import (
 )
 
 type stubAdminService struct {
-	users                []service.User
-	apiKeys              []service.APIKey
-	groups               []service.Group
-	accounts             []service.Account
-	proxies              []service.Proxy
-	proxyCounts          []service.ProxyWithAccountCount
-	redeems              []service.RedeemCode
-	boundAuthIdentity    *service.AdminBindAuthIdentityInput
-	boundAuthIdentityFor int64
-	createdAccounts      []*service.CreateAccountInput
-	createdProxies       []*service.CreateProxyInput
-	updatedProxyIDs      []int64
-	updatedProxies       []*service.UpdateProxyInput
-	testedProxyIDs       []int64
-	createAccountErr     error
-	updateAccountErr     error
-	bulkUpdateAccountErr error
-	checkMixedErr        error
-	lastMixedCheck       struct {
+	users                 []service.User
+	apiKeys               []service.APIKey
+	groups                []service.Group
+	accounts              []service.Account
+	proxies               []service.Proxy
+	proxyCounts           []service.ProxyWithAccountCount
+	redeems               []service.RedeemCode
+	boundAuthIdentity     *service.AdminBindAuthIdentityInput
+	boundAuthIdentityFor  int64
+	createdAccounts       []*service.CreateAccountInput
+	updatedAccountIDs     []int64
+	updatedAccounts       []*service.UpdateAccountInput
+	clearedAccountIDs     []int64
+	schedulableAccountIDs []int64
+	schedulableValues     []bool
+	setErrorAccountIDs    []int64
+	setErrorMessages      []string
+	createdProxies        []*service.CreateProxyInput
+	updatedProxyIDs       []int64
+	updatedProxies        []*service.UpdateProxyInput
+	testedProxyIDs        []int64
+	createAccountErr      error
+	updateAccountErr      error
+	bulkUpdateAccountErr  error
+	checkMixedErr         error
+	lastMixedCheck        struct {
 		accountID int64
 		platform  string
 		groupIDs  []int64
@@ -315,6 +322,12 @@ func (s *stubAdminService) ListAccounts(ctx context.Context, page, pageSize int,
 }
 
 func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.Account, error) {
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			account := s.accounts[i]
+			return &account, nil
+		}
+	}
 	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
 	return &account, nil
 }
@@ -340,10 +353,22 @@ func (s *stubAdminService) CreateAccount(ctx context.Context, input *service.Cre
 }
 
 func (s *stubAdminService) UpdateAccount(ctx context.Context, id int64, input *service.UpdateAccountInput) (*service.Account, error) {
+	s.mu.Lock()
+	s.updatedAccountIDs = append(s.updatedAccountIDs, id)
+	s.updatedAccounts = append(s.updatedAccounts, input)
+	s.mu.Unlock()
 	if s.updateAccountErr != nil {
 		return nil, s.updateAccountErr
 	}
-	account := service.Account{ID: id, Name: input.Name, Status: service.StatusActive}
+	account := service.Account{
+		ID:          id,
+		Name:        input.Name,
+		Platform:    service.PlatformOpenAI,
+		Type:        input.Type,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: input.Credentials,
+	}
 	return &account, nil
 }
 
@@ -357,16 +382,52 @@ func (s *stubAdminService) RefreshAccountCredentials(ctx context.Context, id int
 }
 
 func (s *stubAdminService) ClearAccountError(ctx context.Context, id int64) (*service.Account, error) {
+	s.mu.Lock()
+	s.clearedAccountIDs = append(s.clearedAccountIDs, id)
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			s.accounts[i].Status = service.StatusActive
+			s.accounts[i].ErrorMessage = ""
+			s.accounts[i].RateLimitResetAt = nil
+			s.accounts[i].TempUnschedulableUntil = nil
+			account := s.accounts[i]
+			s.mu.Unlock()
+			return &account, nil
+		}
+	}
+	s.mu.Unlock()
 	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
 	return &account, nil
 }
 
 func (s *stubAdminService) SetAccountError(ctx context.Context, id int64, errorMsg string) error {
+	s.mu.Lock()
+	s.setErrorAccountIDs = append(s.setErrorAccountIDs, id)
+	s.setErrorMessages = append(s.setErrorMessages, errorMsg)
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			s.accounts[i].Status = service.StatusError
+			s.accounts[i].ErrorMessage = errorMsg
+		}
+	}
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *stubAdminService) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*service.Account, error) {
-	account := service.Account{ID: id, Name: "account", Status: service.StatusActive, Schedulable: schedulable}
+	s.mu.Lock()
+	s.schedulableAccountIDs = append(s.schedulableAccountIDs, id)
+	s.schedulableValues = append(s.schedulableValues, schedulable)
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			s.accounts[i].Schedulable = schedulable
+			account := s.accounts[i]
+			s.mu.Unlock()
+			return &account, nil
+		}
+	}
+	s.mu.Unlock()
+	account := service.Account{ID: id, Name: "account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: schedulable}
 	return &account, nil
 }
 

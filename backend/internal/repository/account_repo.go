@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -587,6 +588,10 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderAsc)
 
+	if sortBy == "total_account_cost" || sortBy == "total_requests" {
+		return accountUsageTotalOrder(sortBy, sortOrder)
+	}
+
 	field := dbaccount.FieldName
 	defaultOrder := true
 	switch sortBy {
@@ -625,6 +630,29 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 		return []func(*entsql.Selector){dbent.Asc(dbaccount.FieldName), dbent.Asc(dbaccount.FieldID)}
 	}
 	return []func(*entsql.Selector){dbent.Asc(field), dbent.Asc(dbaccount.FieldID)}
+}
+
+func accountUsageTotalOrder(sortBy, sortOrder string) []func(*entsql.Selector) {
+	return []func(*entsql.Selector){
+		func(s *entsql.Selector) {
+			accountIDCol := s.C(dbaccount.FieldID)
+			var subquery string
+			switch sortBy {
+			case "total_requests":
+				subquery = fmt.Sprintf("(SELECT COUNT(*) FROM usage_logs ul WHERE ul.account_id = %s)", accountIDCol)
+			default:
+				subquery = fmt.Sprintf("(SELECT COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) FROM usage_logs ul WHERE ul.account_id = %s)", accountIDCol)
+			}
+			direction := "ASC"
+			tieOrder := entsql.Asc
+			if sortOrder == pagination.SortOrderDesc {
+				direction = "DESC"
+				tieOrder = entsql.Desc
+			}
+			s.OrderExpr(entsql.Expr(subquery + " " + direction))
+			s.OrderBy(tieOrder(accountIDCol))
+		},
+	}
 }
 
 func (r *accountRepository) ListByGroup(ctx context.Context, groupID int64) ([]service.Account, error) {
@@ -1573,6 +1601,10 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 	if err != nil {
 		return nil, err
 	}
+	usageTotals, err := r.loadAccountUsageTotals(ctx, accountIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	outAccounts := make([]service.Account, 0, len(accounts))
 	for _, acc := range accounts {
@@ -1594,10 +1626,58 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 		if ags, ok := accountGroupsByAccount[acc.ID]; ok {
 			out.AccountGroups = ags
 		}
+		if totals, ok := usageTotals[acc.ID]; ok {
+			out.TotalAccountCost = totals.totalAccountCost
+			out.TotalRequests = totals.totalRequests
+		}
 		outAccounts = append(outAccounts, *out)
 	}
 
 	return outAccounts, nil
+}
+
+type accountUsageTotals struct {
+	totalAccountCost float64
+	totalRequests    int64
+}
+
+func (r *accountRepository) loadAccountUsageTotals(ctx context.Context, accountIDs []int64) (map[int64]accountUsageTotals, error) {
+	result := make(map[int64]accountUsageTotals, len(accountIDs))
+	if len(accountIDs) == 0 {
+		return result, nil
+	}
+	if r.sql == nil {
+		return result, nil
+	}
+
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT
+			account_id,
+			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) AS total_account_cost,
+			COUNT(*) AS total_requests
+		FROM usage_logs
+		WHERE account_id = ANY($1)
+		GROUP BY account_id
+	`, pq.Array(accountIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			accountID int64
+			totals    accountUsageTotals
+		)
+		if err := rows.Scan(&accountID, &totals.totalAccountCost, &totals.totalRequests); err != nil {
+			return nil, err
+		}
+		result[accountID] = totals
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func tempUnschedulablePredicate() dbpredicate.Account {

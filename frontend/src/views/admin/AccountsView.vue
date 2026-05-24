@@ -328,6 +328,16 @@
               :manual-refresh-token="usageManualRefreshToken"
             />
           </template>
+          <template #cell-total_account_cost="{ row }">
+            <span class="text-sm font-mono text-gray-700 dark:text-gray-300">
+              {{ formatCurrency(row.total_account_cost ?? 0) }}
+            </span>
+          </template>
+          <template #cell-total_requests="{ row }">
+            <span class="text-sm font-mono text-gray-700 dark:text-gray-300">
+              {{ formatNumber(row.total_requests ?? 0) }}
+            </span>
+          </template>
           <template #cell-upstream_balance="{ row }">
             <div v-if="row.upstream_balance" class="min-w-[14rem] text-sm">
               <div class="font-medium text-blue-700 dark:text-blue-300">
@@ -709,7 +719,9 @@ const ACCOUNT_SORTABLE_KEYS = new Set([
   'priority',
   'rate_multiplier',
   'last_used_at',
-  'expires_at'
+  'expires_at',
+  'total_account_cost',
+  'total_requests'
 ])
 const loadInitialAccountSortState = (): AccountSortState => {
   const fallback: AccountSortState = { sort_by: 'name', sort_order: 'asc' }
@@ -1536,6 +1548,8 @@ const allColumns = computed(() => {
   }
   c.push(
     { key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false },
+    { key: 'total_account_cost', label: t('admin.accounts.columns.totalAccountCost'), sortable: true },
+    { key: 'total_requests', label: t('admin.accounts.columns.totalRequests'), sortable: true },
     { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false },
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
@@ -1645,6 +1659,16 @@ const handleBulkRefreshToken = async () => {
   if (!confirm(t('common.confirm'))) return
   try {
     const result = await adminAPI.accounts.batchRefresh(selIds.value)
+    for (const account of result.accounts ?? []) {
+      patchAccountInList(account)
+    }
+    if (result.accounts?.length) {
+      enterAutoRefreshSilentWindow()
+      usageManualRefreshToken.value += 1
+      Promise.all([reload(), loadUsageSummary(), loadStatusSummary()]).catch((error) => {
+        console.error('Failed to refresh account list after bulk token refresh:', error)
+      })
+    }
     if (result.failed > 0) {
       bulkRefreshErrors.value = normalizeBulkRefreshErrors(result.errors ?? [])
       showBulkRefreshErrors.value = bulkRefreshErrors.value.length > 0
@@ -1655,7 +1679,9 @@ const handleBulkRefreshToken = async () => {
       appStore.showSuccess(t('admin.accounts.bulkActions.refreshTokenSuccess', { count: result.success }))
       clearSelection()
     }
-    reload()
+    if (!result.accounts?.length) {
+      await reload()
+    }
   } catch (error) {
     console.error('Failed to bulk refresh token:', error)
     appStore.showError(String(error))
@@ -1981,8 +2007,16 @@ const handleRefresh = async (a: Account) => {
     const updated = await adminAPI.accounts.refreshCredentials(a.id)
     patchAccountInList(updated)
     enterAutoRefreshSilentWindow()
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to refresh credentials:', error)
+    try {
+      const latest = await adminAPI.accounts.getById(a.id)
+      patchAccountInList(latest)
+      enterAutoRefreshSilentWindow()
+    } catch (loadError) {
+      console.error('Failed to load account after refresh failure:', loadError)
+    }
+    appStore.showError(error?.response?.data?.message || error?.message || t('admin.accounts.failedToRefresh'))
   }
 }
 const handleRecoverState = async (a: Account) => {

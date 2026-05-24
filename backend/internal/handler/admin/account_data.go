@@ -71,8 +71,14 @@ type DataImportResult struct {
 	ProxyReused    int               `json:"proxy_reused"`
 	ProxyFailed    int               `json:"proxy_failed"`
 	AccountCreated int               `json:"account_created"`
+	AccountUpdated int               `json:"account_updated"`
+	AccountSkipped int               `json:"account_skipped"`
 	AccountFailed  int               `json:"account_failed"`
 	Errors         []DataImportError `json:"errors,omitempty"`
+}
+
+type dataAccountIndex struct {
+	accountsByKey map[string]service.Account
 }
 
 type DataImportError struct {
@@ -271,6 +277,12 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		}
 	}
 
+	existingAccounts, err := h.listAccountsFiltered(ctx, "", "", "", "", 0, "", "", "id", "asc")
+	if err != nil {
+		return result, err
+	}
+	accountIndex := buildDataAccountIndex(existingAccounts)
+
 	// 收集需要异步设置隐私的 Antigravity OAuth 账号
 	var privacyAccounts []*service.Account
 
@@ -304,6 +316,82 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 
 		enrichCredentialsFromIDToken(&item)
 
+		identityKeys := buildDataAccountIdentityKeys(item.Platform, item.Type, item.Credentials)
+		if existing := accountIndex.Find(identityKeys); existing != nil {
+			if existing.IsSchedulable() {
+				result.AccountSkipped++
+				continue
+			}
+			concurrency := item.Concurrency
+			priority := item.Priority
+			proxyUpdateID := int64(0)
+			if proxyID != nil {
+				proxyUpdateID = *proxyID
+			}
+			expiresAt := int64(0)
+			if item.ExpiresAt != nil {
+				expiresAt = *item.ExpiresAt
+			}
+			updated, updateErr := h.adminService.UpdateAccount(ctx, existing.ID, &service.UpdateAccountInput{
+				Name:                  item.Name,
+				Notes:                 item.Notes,
+				Type:                  item.Type,
+				Credentials:           item.Credentials,
+				Extra:                 item.Extra,
+				ProxyID:               &proxyUpdateID,
+				Concurrency:           &concurrency,
+				Priority:              &priority,
+				RateMultiplier:        item.RateMultiplier,
+				Status:                service.StatusActive,
+				ExpiresAt:             &expiresAt,
+				AutoPauseOnExpired:    item.AutoPauseOnExpired,
+				SkipMixedChannelCheck: true,
+			})
+			if updateErr != nil {
+				result.AccountFailed++
+				result.Errors = append(result.Errors, DataImportError{
+					Kind:    "account",
+					Name:    item.Name,
+					Message: updateErr.Error(),
+				})
+				continue
+			}
+			if _, clearErr := h.adminService.ClearAccountError(ctx, existing.ID); clearErr != nil {
+				result.AccountFailed++
+				result.Errors = append(result.Errors, DataImportError{
+					Kind:    "account",
+					Name:    item.Name,
+					Message: clearErr.Error(),
+				})
+				continue
+			}
+			recovered, schedulableErr := h.adminService.SetAccountSchedulable(ctx, existing.ID, true)
+			if schedulableErr != nil {
+				result.AccountFailed++
+				result.Errors = append(result.Errors, DataImportError{
+					Kind:    "account",
+					Name:    item.Name,
+					Message: schedulableErr.Error(),
+				})
+				continue
+			}
+			indexAccount := updated
+			if updated != nil {
+				updated.Status = service.StatusActive
+				updated.Schedulable = true
+			} else if recovered != nil {
+				indexAccount = recovered
+			}
+			if indexAccount != nil {
+				accountIndex.Add(*indexAccount)
+				if indexAccount.Platform == service.PlatformAntigravity && indexAccount.Type == service.AccountTypeOAuth {
+					privacyAccounts = append(privacyAccounts, indexAccount)
+				}
+			}
+			result.AccountUpdated++
+			continue
+		}
+
 		accountInput := &service.CreateAccountInput{
 			Name:                 item.Name,
 			Notes:                item.Notes,
@@ -335,6 +423,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		if created.Platform == service.PlatformAntigravity && created.Type == service.AccountTypeOAuth {
 			privacyAccounts = append(privacyAccounts, created)
 		}
+		accountIndex.Add(*created)
 		result.AccountCreated++
 	}
 
@@ -374,6 +463,69 @@ func (h *AccountHandler) listAllProxies(ctx context.Context) ([]service.Proxy, e
 		page++
 	}
 	return out, nil
+}
+
+func buildDataAccountIndex(accounts []service.Account) *dataAccountIndex {
+	index := &dataAccountIndex{accountsByKey: map[string]service.Account{}}
+	for _, account := range accounts {
+		index.Add(account)
+	}
+	return index
+}
+
+func (i *dataAccountIndex) Add(account service.Account) {
+	if i == nil {
+		return
+	}
+	if i.accountsByKey == nil {
+		i.accountsByKey = map[string]service.Account{}
+	}
+	for _, key := range buildDataAccountIdentityKeys(account.Platform, account.Type, account.Credentials) {
+		i.accountsByKey[key] = account
+	}
+}
+
+func (i *dataAccountIndex) Find(keys []string) *service.Account {
+	if i == nil {
+		return nil
+	}
+	for _, key := range keys {
+		if account, ok := i.accountsByKey[key]; ok {
+			return &account
+		}
+	}
+	return nil
+}
+
+func buildDataAccountIdentityKeys(platform, accountType string, credentials map[string]any) []string {
+	if len(credentials) == 0 {
+		return nil
+	}
+	prefix := strings.ToLower(strings.TrimSpace(platform)) + ":" + strings.ToLower(strings.TrimSpace(accountType)) + ":"
+	keys := make([]string, 0, 7)
+	for _, field := range []string{"chatgpt_account_id", "chatgpt_user_id", "account_id", "user_id", "project_id"} {
+		value := dataCredentialString(credentials, field)
+		if value != "" {
+			keys = append(keys, prefix+field+":"+value)
+		}
+	}
+	if email := strings.ToLower(dataCredentialString(credentials, "email")); email != "" {
+		keys = append(keys, prefix+"email:"+email)
+	}
+	for _, field := range []string{"refresh_token", "access_token", "api_key", "key"} {
+		value := dataCredentialString(credentials, field)
+		if value != "" {
+			keys = append(keys, prefix+field+":"+codexTokenFingerprint(value))
+		}
+	}
+	return keys
+}
+
+func dataCredentialString(credentials map[string]any, key string) string {
+	if credentials == nil {
+		return ""
+	}
+	return strings.TrimSpace(codexStringValue(credentials[key]))
 }
 
 func (h *AccountHandler) listAccountsFiltered(ctx context.Context, platform, accountType, status, search string, groupID int64, privacyMode, planType, sortBy, sortOrder string) ([]service.Account, error) {

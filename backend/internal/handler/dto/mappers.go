@@ -222,6 +222,8 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		AutoPauseOnExpired:      a.AutoPauseOnExpired,
 		CreatedAt:               a.CreatedAt,
 		UpdatedAt:               a.UpdatedAt,
+		TotalAccountCost:        a.TotalAccountCost,
+		TotalRequests:           a.TotalRequests,
 		Schedulable:             a.Schedulable,
 		RateLimitedAt:           a.RateLimitedAt,
 		RateLimitResetAt:        a.RateLimitResetAt,

@@ -944,7 +944,7 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 		if err != nil {
 			// 刷新失败但 access_token 可能仍有效，尝试设置隐私
 			h.adminService.EnsureOpenAIPrivacy(ctx, account)
-			return nil, "", err
+			return h.markAccountRefreshFailure(ctx, account, err), "", err
 		}
 
 		newCredentials = h.openaiOAuthService.BuildAccountCredentials(tokenInfo)
@@ -956,7 +956,8 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 	} else if account.Platform == service.PlatformGemini {
 		tokenInfo, err := h.geminiOAuthService.RefreshAccountToken(ctx, account)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to refresh credentials: %w", err)
+			wrappedErr := fmt.Errorf("failed to refresh credentials: %w", err)
+			return h.markAccountRefreshFailure(ctx, account, wrappedErr), "", wrappedErr
 		}
 
 		newCredentials = h.geminiOAuthService.BuildAccountCredentials(tokenInfo)
@@ -968,7 +969,7 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 	} else if account.Platform == service.PlatformAntigravity {
 		tokenInfo, err := h.antigravityOAuthService.RefreshAccountToken(ctx, account)
 		if err != nil {
-			return nil, "", err
+			return h.markAccountRefreshFailure(ctx, account, err), "", err
 		}
 
 		newCredentials = h.antigravityOAuthService.BuildAccountCredentials(tokenInfo)
@@ -994,6 +995,7 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 			if updateErr != nil {
 				return nil, "", fmt.Errorf("failed to update credentials: %w", updateErr)
 			}
+			updatedAccount = h.markAccountRefreshSuccess(ctx, account, updatedAccount)
 			h.adminService.EnsureAntigravityPrivacy(ctx, updatedAccount)
 			return updatedAccount, "missing_project_id_temporary", nil
 		}
@@ -1008,7 +1010,7 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 		// Use Anthropic/Claude OAuth service to refresh token
 		tokenInfo, err := h.oauthService.RefreshAccountToken(ctx, account)
 		if err != nil {
-			return nil, "", err
+			return h.markAccountRefreshFailure(ctx, account, err), "", err
 		}
 
 		// Copy existing credentials to preserve non-token settings (e.g., intercept_warmup_requests)
@@ -1036,6 +1038,7 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 	if err != nil {
 		return nil, "", err
 	}
+	updatedAccount = h.markAccountRefreshSuccess(ctx, account, updatedAccount)
 
 	// 刷新成功后，清除 token 缓存，确保下次请求使用新 token
 	if h.tokenCacheInvalidator != nil {
@@ -1050,6 +1053,75 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 	h.adminService.EnsureAntigravityPrivacy(ctx, updatedAccount)
 
 	return updatedAccount, "", nil
+}
+
+func (h *AccountHandler) markAccountRefreshSuccess(ctx context.Context, previousAccount *service.Account, updatedAccount *service.Account) *service.Account {
+	if h == nil || h.adminService == nil {
+		return updatedAccount
+	}
+	accountID := int64(0)
+	if updatedAccount != nil {
+		accountID = updatedAccount.ID
+	}
+	if accountID == 0 && previousAccount != nil {
+		accountID = previousAccount.ID
+	}
+	if accountID == 0 {
+		return updatedAccount
+	}
+
+	needsClear := accountNeedsRefreshRecovery(previousAccount) || accountNeedsRefreshRecovery(updatedAccount)
+	if needsClear {
+		if recovered, err := h.adminService.ClearAccountError(ctx, accountID); err != nil {
+			slog.Warn("account_refresh_clear_error_failed", "account_id", accountID, "error", err)
+		} else if recovered != nil {
+			updatedAccount = recovered
+		}
+	}
+
+	if accountNeedsSchedulableRecovery(previousAccount) || accountNeedsSchedulableRecovery(updatedAccount) {
+		if recovered, err := h.adminService.SetAccountSchedulable(ctx, accountID, true); err != nil {
+			slog.Warn("account_refresh_set_schedulable_failed", "account_id", accountID, "error", err)
+		} else if recovered != nil {
+			updatedAccount = recovered
+		}
+	}
+
+	return updatedAccount
+}
+
+func accountNeedsRefreshRecovery(account *service.Account) bool {
+	if account == nil {
+		return false
+	}
+	return account.Status == service.StatusError ||
+		strings.TrimSpace(account.ErrorMessage) != "" ||
+		account.IsRateLimited() ||
+		account.TempUnschedulableUntil != nil
+}
+
+func accountNeedsSchedulableRecovery(account *service.Account) bool {
+	return account != nil && !account.Schedulable
+}
+
+func (h *AccountHandler) markAccountRefreshFailure(ctx context.Context, account *service.Account, refreshErr error) *service.Account {
+	if h == nil || h.adminService == nil || account == nil || refreshErr == nil {
+		return nil
+	}
+	errorMessage := strings.TrimSpace(refreshErr.Error())
+	if errorMessage == "" {
+		errorMessage = "token refresh failed"
+	}
+	if err := h.adminService.SetAccountError(ctx, account.ID, errorMessage); err != nil {
+		slog.Warn("account_refresh_set_error_failed", "account_id", account.ID, "error", err)
+		return nil
+	}
+	updated, err := h.adminService.GetAccount(ctx, account.ID)
+	if err != nil {
+		slog.Warn("account_refresh_get_error_account_failed", "account_id", account.ID, "error", err)
+		return nil
+	}
+	return updated
 }
 
 // Refresh handles refreshing account credentials
@@ -1249,6 +1321,7 @@ func (h *AccountHandler) BatchRefresh(c *gin.Context) {
 	var successCount, failedCount int
 	var errors []gin.H
 	var warnings []gin.H
+	var refreshedAccounts []AccountWithConcurrency
 
 	// 将不存在的账号 ID 标记为失败
 	for _, id := range req.AccountIDs {
@@ -1268,7 +1341,18 @@ func (h *AccountHandler) BatchRefresh(c *gin.Context) {
 			continue
 		}
 		g.Go(func() error {
-			_, warning, err := h.refreshSingleAccount(gctx, acc)
+			updatedAccount, warning, err := h.refreshSingleAccount(gctx, acc)
+			if updatedAccount == nil {
+				if latest, getErr := h.adminService.GetAccount(gctx, acc.ID); getErr == nil {
+					updatedAccount = latest
+				}
+			}
+			var updatedResponse *AccountWithConcurrency
+			if updatedAccount != nil {
+				responseAccount := h.buildAccountResponseWithRuntime(gctx, updatedAccount)
+				updatedResponse = &responseAccount
+			}
+
 			mu.Lock()
 			if err != nil {
 				failedCount++
@@ -1284,6 +1368,9 @@ func (h *AccountHandler) BatchRefresh(c *gin.Context) {
 						"warning":    warning,
 					})
 				}
+			}
+			if updatedResponse != nil {
+				refreshedAccounts = append(refreshedAccounts, *updatedResponse)
 			}
 			mu.Unlock()
 			return nil
@@ -1301,6 +1388,7 @@ func (h *AccountHandler) BatchRefresh(c *gin.Context) {
 		"failed":   failedCount,
 		"errors":   errors,
 		"warnings": warnings,
+		"accounts": refreshedAccounts,
 	})
 }
 

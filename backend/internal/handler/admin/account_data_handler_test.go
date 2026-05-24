@@ -17,6 +17,11 @@ type dataResponse struct {
 	Data dataPayload `json:"data"`
 }
 
+type dataImportResponse struct {
+	Code int              `json:"code"`
+	Data DataImportResult `json:"data"`
+}
+
 type dataPayload struct {
 	Type     string        `json:"type"`
 	Version  int           `json:"version"`
@@ -275,4 +280,164 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.Len(t, adminSvc.createdProxies, 0)
 	require.Len(t, adminSvc.createdAccounts, 1)
 	require.True(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
+}
+
+func TestImportDataSkipsDuplicateWhenExistingAccountIsSchedulable(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	adminSvc.proxies = nil
+	adminSvc.accounts = []service.Account{
+		{
+			ID:          21,
+			Name:        "existing",
+			Platform:    service.PlatformOpenAI,
+			Type:        service.AccountTypeOAuth,
+			Status:      service.StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{
+				"email":         "same@example.com",
+				"refresh_token": "old-refresh",
+			},
+		},
+	}
+
+	body := marshalDataImportBody(t, []map[string]any{
+		{
+			"name":        "incoming",
+			"platform":    service.PlatformOpenAI,
+			"type":        service.AccountTypeOAuth,
+			"credentials": map[string]any{"email": "same@example.com", "refresh_token": "new-refresh"},
+			"concurrency": 3,
+			"priority":    50,
+		},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dataImportResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, 1, resp.Data.AccountSkipped)
+	require.Equal(t, 0, resp.Data.AccountCreated)
+	require.Equal(t, 0, resp.Data.AccountUpdated)
+	require.Empty(t, adminSvc.createdAccounts)
+	require.Empty(t, adminSvc.updatedAccounts)
+}
+
+func TestImportDataUpdatesDuplicateWhenExistingAccountIsNotSchedulable(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	adminSvc.proxies = nil
+	adminSvc.accounts = []service.Account{
+		{
+			ID:          21,
+			Name:        "existing",
+			Platform:    service.PlatformOpenAI,
+			Type:        service.AccountTypeOAuth,
+			Status:      service.StatusError,
+			Schedulable: true,
+			Credentials: map[string]any{
+				"email":         "same@example.com",
+				"refresh_token": "old-refresh",
+			},
+		},
+	}
+
+	body := marshalDataImportBody(t, []map[string]any{
+		{
+			"name":        "incoming",
+			"platform":    service.PlatformOpenAI,
+			"type":        service.AccountTypeOAuth,
+			"credentials": map[string]any{"email": "same@example.com", "refresh_token": "new-refresh"},
+			"concurrency": 3,
+			"priority":    50,
+		},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dataImportResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, 1, resp.Data.AccountUpdated)
+	require.Equal(t, 0, resp.Data.AccountCreated)
+	require.Equal(t, 0, resp.Data.AccountSkipped)
+	require.Empty(t, adminSvc.createdAccounts)
+	require.Equal(t, []int64{21}, adminSvc.updatedAccountIDs)
+	require.Len(t, adminSvc.updatedAccounts, 1)
+	require.Equal(t, service.StatusActive, adminSvc.updatedAccounts[0].Status)
+	require.Equal(t, "new-refresh", adminSvc.updatedAccounts[0].Credentials["refresh_token"])
+	require.Equal(t, []int64{21}, adminSvc.clearedAccountIDs)
+	require.Equal(t, []int64{21}, adminSvc.schedulableAccountIDs)
+	require.Equal(t, []bool{true}, adminSvc.schedulableValues)
+}
+
+func TestImportDataSkipsDuplicateLaterInSameFileAfterRepair(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	adminSvc.proxies = nil
+	adminSvc.accounts = []service.Account{
+		{
+			ID:          21,
+			Name:        "existing",
+			Platform:    service.PlatformOpenAI,
+			Type:        service.AccountTypeOAuth,
+			Status:      service.StatusError,
+			Schedulable: true,
+			Credentials: map[string]any{
+				"email": "same@example.com",
+			},
+		},
+	}
+
+	body := marshalDataImportBody(t, []map[string]any{
+		{
+			"name":        "incoming-1",
+			"platform":    service.PlatformOpenAI,
+			"type":        service.AccountTypeOAuth,
+			"credentials": map[string]any{"email": "same@example.com", "refresh_token": "new-refresh"},
+			"concurrency": 3,
+			"priority":    50,
+		},
+		{
+			"name":        "incoming-2",
+			"platform":    service.PlatformOpenAI,
+			"type":        service.AccountTypeOAuth,
+			"credentials": map[string]any{"email": "same@example.com", "refresh_token": "newer-refresh"},
+			"concurrency": 3,
+			"priority":    50,
+		},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp dataImportResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, 1, resp.Data.AccountUpdated)
+	require.Equal(t, 1, resp.Data.AccountSkipped)
+	require.Empty(t, adminSvc.createdAccounts)
+	require.Len(t, adminSvc.updatedAccounts, 1)
+}
+
+func marshalDataImportBody(t *testing.T, accounts []map[string]any) []byte {
+	t.Helper()
+	dataPayload := map[string]any{
+		"data": map[string]any{
+			"type":     dataType,
+			"version":  dataVersion,
+			"proxies":  []map[string]any{},
+			"accounts": accounts,
+		},
+		"skip_default_group_bind": true,
+	}
+	body, err := json.Marshal(dataPayload)
+	require.NoError(t, err)
+	return body
 }

@@ -828,6 +828,8 @@ export interface Account {
   auto_pause_on_expired: boolean
   created_at: string
   updated_at: string
+  total_account_cost?: number | null
+  total_requests?: number | null
   proxy?: Proxy
   group_ids?: number[] // Groups this account belongs to
   groups?: Group[] // Preloaded group objects
@@ -1038,6 +1040,7 @@ export interface AccountPoolUsageSummaryGroup {
   schedulable_count: number
   rate_limited_count: number
   missing_snapshot_count: number
+  missing_codex_snapshot_count?: number
   five_hour: AccountPoolUsageSummaryWindow
   seven_day: AccountPoolUsageSummaryWindow
   latest_updated_at?: string | null
@@ -1052,6 +1055,7 @@ export interface AccountPoolUsageSummary {
   schedulable_accounts: number
   rate_limited_accounts: number
   missing_snapshot_accounts: number
+  missing_codex_snapshot_accounts?: number
   five_hour: AccountPoolUsageSummaryWindow
   seven_day: AccountPoolUsageSummaryWindow
   upstream_balance: UpstreamBalanceSummary
@@ -1229,6 +1233,8 @@ export interface AdminDataImportResult {
   proxy_reused: number
   proxy_failed: number
   account_created: number
+  account_updated: number
+  account_skipped: number
   account_failed: number
   errors?: AdminDataImportError[]
 }
