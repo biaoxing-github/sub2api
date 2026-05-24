@@ -3011,6 +3011,7 @@ export default {
         error: '错误',
         inactive: '停用',
         tempUnschedulable: '临时不可调度',
+        unschedulable: '暂停',
         loadFailed: '加载账号状态汇总失败'
       },
       syncFromCrs: '从 CRS 同步',
@@ -3250,7 +3251,7 @@ export default {
         overloaded: '过载中',
         tempUnschedulable: '临时不可调度',
         quotaExceeded: '配额超限',
-        unschedulable: '不可调度',
+        unschedulable: '暂停',
         rateLimitedUntil: '限流中，当前不参与调度，预计 {time} 自动恢复',
         rateLimitedAutoResume: '{time} 自动恢复',
         modelRateLimitedUntil: '{model} 限流至 {time}',

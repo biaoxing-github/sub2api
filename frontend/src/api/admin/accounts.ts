@@ -45,6 +45,7 @@ const accountStatusSummaryStatuses = [
   'error',
   'inactive',
   'temp_unschedulable',
+  'unschedulable',
 ] as const
 
 /**

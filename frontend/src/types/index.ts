@@ -1068,6 +1068,7 @@ export interface AccountStatusSummary {
   error: number
   inactive: number
   temp_unschedulable: number
+  unschedulable: number
 }
 
 // OpenAI Codex usage snapshot (from response headers)

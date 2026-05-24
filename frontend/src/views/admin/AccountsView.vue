@@ -201,7 +201,7 @@
               </span>
             </div>
           </div>
-          <div class="grid grid-cols-2 border-t border-gray-100 dark:border-gray-700 sm:grid-cols-3 lg:grid-cols-5">
+          <div class="grid grid-cols-2 border-t border-gray-100 dark:border-gray-700 sm:grid-cols-3 lg:grid-cols-6">
             <div
               v-for="item in accountStatusSummaryItems"
               :key="item.key"
@@ -928,6 +928,13 @@ const accountStatusSummaryItems = computed(() => {
       value: current?.temp_unschedulable ?? 0,
       dotClass: 'bg-orange-500',
       valueClass: 'text-orange-700 dark:text-orange-300',
+    },
+    {
+      key: 'unschedulable',
+      label: t('admin.accounts.statusSummary.unschedulable'),
+      value: current?.unschedulable ?? 0,
+      dotClass: 'bg-slate-500',
+      valueClass: 'text-slate-700 dark:text-slate-300',
     },
   ]
   return items

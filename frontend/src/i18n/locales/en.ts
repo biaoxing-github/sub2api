@@ -2935,6 +2935,7 @@ export default {
         error: 'Error',
         inactive: 'Disabled',
         tempUnschedulable: 'Temp unschedulable',
+        unschedulable: 'Paused',
         loadFailed: 'Failed to load account status summary'
       },
       syncFromCrs: 'Sync from CRS',
@@ -3060,7 +3061,7 @@ export default {
         overloaded: 'Overloaded',
         tempUnschedulable: 'Temp Unschedulable',
         quotaExceeded: 'Quota Exceeded',
-        unschedulable: 'Unschedulable',
+        unschedulable: 'Paused',
         rateLimitedUntil: 'Rate limited and removed from scheduling. Auto resumes at {time}',
         rateLimitedAutoResume: 'Auto resumes in {time}',
         modelRateLimitedUntil: '{model} rate limited until {time}',

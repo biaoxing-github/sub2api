@@ -85,6 +85,7 @@ describe('admin accounts api usage summary', () => {
     get.mockResolvedValueOnce({ data: { total: 3 } })
     get.mockResolvedValueOnce({ data: { total: 1 } })
     get.mockResolvedValueOnce({ data: { total: 4 } })
+    get.mockResolvedValueOnce({ data: { total: 5 } })
 
     const result = await getStatusSummary({
       platform: 'openai',
@@ -98,7 +99,7 @@ describe('admin accounts api usage summary', () => {
       sort_order: 'asc',
     })
 
-    expect(get).toHaveBeenCalledTimes(5)
+    expect(get).toHaveBeenCalledTimes(6)
     expect(get).toHaveBeenNthCalledWith(1, '/admin/accounts', expect.objectContaining({
       params: expect.objectContaining({
         page: 1,
@@ -119,6 +120,7 @@ describe('admin accounts api usage summary', () => {
       'error',
       'inactive',
       'temp_unschedulable',
+      'unschedulable',
     ])
     expect(result).toEqual({
       active: 8,
@@ -126,6 +128,7 @@ describe('admin accounts api usage summary', () => {
       error: 3,
       inactive: 1,
       temp_unschedulable: 4,
+      unschedulable: 5,
     })
   })
 
