@@ -1127,7 +1127,7 @@ func TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover(t *test
 
 	upstream := &httpUpstreamRecorder{err: errors.New("Post \"https://chatgpt.com/backend-api/codex/responses\": http2: timeout awaiting response headers")}
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{OpenAIRequestHeaderTimeoutSeconds: 60}},
 		httpUpstream: upstream,
 	}
 	account := &Account{

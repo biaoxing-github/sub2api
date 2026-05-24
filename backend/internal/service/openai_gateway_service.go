@@ -2819,7 +2819,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
-		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -3129,7 +3129,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	upstreamStart := time.Now()
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -3596,6 +3596,7 @@ func isOpenAIRequestPhaseTransientError(err error) bool {
 	transientMarkers := []string{
 		"unexpected eof",
 		"timeout awaiting response headers",
+		"timed out waiting for openai upstream response headers",
 	}
 	for _, marker := range transientMarkers {
 		if strings.Contains(msg, marker) {
@@ -3603,6 +3604,71 @@ func isOpenAIRequestPhaseTransientError(err error) bool {
 		}
 	}
 	return false
+}
+
+type openAIUpstreamDoResult struct {
+	resp *http.Response
+	err  error
+}
+
+func (s *OpenAIGatewayService) openAIRequestHeaderTimeout() time.Duration {
+	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(s.cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds) * time.Second
+}
+
+func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
+	parent context.Context,
+	req *http.Request,
+	proxyURL string,
+	account *Account,
+) (*http.Response, error) {
+	if s == nil || s.httpUpstream == nil {
+		return nil, errors.New("http upstream not configured")
+	}
+	if req == nil {
+		return nil, errors.New("upstream request is nil")
+	}
+	timeout := s.openAIRequestHeaderTimeout()
+	if timeout <= 0 {
+		accountID, accountConcurrency := openAIRequestAccountParams(account)
+		return s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	reqCtx, cancel := context.WithCancel(parent)
+	defer cancel()
+	req = req.WithContext(reqCtx)
+
+	resultCh := make(chan openAIUpstreamDoResult, 1)
+	go func() {
+		accountID, accountConcurrency := openAIRequestAccountParams(account)
+		resp, err := s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
+		resultCh <- openAIUpstreamDoResult{resp: resp, err: err}
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case result := <-resultCh:
+		return result.resp, result.err
+	case <-timer.C:
+		cancel()
+		return nil, fmt.Errorf("timed out waiting for OpenAI upstream response headers after %s", timeout)
+	case <-parent.Done():
+		cancel()
+		return nil, parent.Err()
+	}
+}
+
+func openAIRequestAccountParams(account *Account) (int64, int) {
+	if account == nil {
+		return 0, 0
+	}
+	return account.ID, account.Concurrency
 }
 
 func (s *OpenAIGatewayService) newOpenAIRequestFailoverError(

@@ -81,6 +81,18 @@ func TestLoadDefaultSchedulingConfig(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultOpenAIRequestHeaderTimeout(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds != 60 {
+		t.Fatalf("OpenAIRequestHeaderTimeoutSeconds = %d, want 60", cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds)
+	}
+}
+
 func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	resetViperWithJWTSecret(t)
 
@@ -1229,6 +1241,11 @@ func TestValidateConfigErrors(t *testing.T) {
 			name:    "gateway max idle conns per host",
 			mutate:  func(c *Config) { c.Gateway.MaxIdleConnsPerHost = 0 },
 			wantErr: "gateway.max_idle_conns_per_host",
+		},
+		{
+			name:    "gateway openai request header timeout",
+			mutate:  func(c *Config) { c.Gateway.OpenAIRequestHeaderTimeoutSeconds = -1 },
+			wantErr: "gateway.openai_request_header_timeout_seconds",
 		},
 		{
 			name:    "gateway idle timeout",

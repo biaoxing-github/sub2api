@@ -680,6 +680,9 @@ type GatewayConfig struct {
 	// 等待上游响应头的超时时间（秒），0表示无超时
 	// 注意：这不影响流式数据传输，只控制等待响应头的时间
 	ResponseHeaderTimeout int `mapstructure:"response_header_timeout"`
+	// OpenAIRequestHeaderTimeoutSeconds: OpenAI /responses 单次账号等待响应头的超时时间（秒）。
+	// 比全局 response_header_timeout 更短，用于快速切换卡在思考前的账号；0 表示不启用额外保护。
+	OpenAIRequestHeaderTimeoutSeconds int `mapstructure:"openai_request_header_timeout_seconds"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
 	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
@@ -1807,6 +1810,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.image_concurrency.max_waiting_requests", 100)
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
+	viper.SetDefault("gateway.openai_request_header_timeout_seconds", 60)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
 	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
 	viper.SetDefault("gateway.proxy_probe_response_read_max_bytes", int64(1024*1024))
@@ -2389,6 +2393,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.ImageConcurrency.MaxWaitingRequests < 0 {
 		return fmt.Errorf("gateway.image_concurrency.max_waiting_requests must be non-negative")
+	}
+	if c.Gateway.OpenAIRequestHeaderTimeoutSeconds < 0 {
+		return fmt.Errorf("gateway.openai_request_header_timeout_seconds must be non-negative")
 	}
 	if c.Gateway.MaxIdleConns <= 0 {
 		return fmt.Errorf("gateway.max_idle_conns must be positive")
