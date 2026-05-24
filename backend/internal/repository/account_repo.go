@@ -546,22 +546,7 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 			)
 		case "unschedulable":
 			q = q.Where(
-				dbaccount.StatusEQ(service.StatusActive),
 				dbaccount.SchedulableEQ(false),
-				dbaccount.Or(
-					dbaccount.RateLimitResetAtIsNil(),
-					dbaccount.RateLimitResetAtLTE(time.Now()),
-				),
-				dbpredicate.Account(func(s *entsql.Selector) {
-					s.Where(entsql.Not(codexExhaustedPredicateSQL()))
-				}),
-				dbpredicate.Account(func(s *entsql.Selector) {
-					col := s.C("temp_unschedulable_until")
-					s.Where(entsql.Or(
-						entsql.IsNull(col),
-						entsql.LTE(col, entsql.Expr("NOW()")),
-					))
-				}),
 			)
 		default:
 			q = q.Where(dbaccount.StatusEQ(status))

@@ -1880,7 +1880,7 @@ const accountMatchesCurrentFilters = (account: Account) => {
     } else if (filters.status === 'temp_unschedulable') {
       if (account.status !== 'active' || !isTempUnschedulable) return false
     } else if (filters.status === 'unschedulable') {
-      if (account.status !== 'active' || account.schedulable || isRateLimited || isTempUnschedulable) return false
+      if (account.schedulable) return false
     } else if (account.status !== filters.status) {
       return false
     }

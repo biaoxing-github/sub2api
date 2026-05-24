@@ -319,14 +319,14 @@ const statusClass = computed(() => {
   if (isTempUnschedulable.value) {
     return 'badge-warning'
   }
+  if (!props.account.schedulable) {
+    return 'badge-gray'
+  }
   if (props.account.status !== 'active') {
     return props.account.status === 'error' ? 'badge-danger' : 'badge-gray'
   }
   if (isQuotaExceeded.value) {
     return 'badge-warning'
-  }
-  if (!props.account.schedulable) {
-    return 'badge-gray'
   }
   return 'badge-success'
 })
@@ -339,14 +339,14 @@ const statusText = computed(() => {
   if (isTempUnschedulable.value) {
     return t('admin.accounts.status.tempUnschedulable')
   }
+  if (!props.account.schedulable) {
+    return t('admin.accounts.status.paused')
+  }
   if (props.account.status !== 'active') {
     return t(`admin.accounts.status.${props.account.status}`)
   }
   if (isQuotaExceeded.value) {
     return t('admin.accounts.status.quotaExceeded')
-  }
-  if (!props.account.schedulable) {
-    return t('admin.accounts.status.paused')
   }
   return t(`admin.accounts.status.${props.account.status}`)
 })

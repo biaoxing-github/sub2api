@@ -2819,7 +2819,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
-		resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account)
+		resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -3129,7 +3129,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	upstreamStart := time.Now()
-	resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account)
+	resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -3618,11 +3618,62 @@ func (s *OpenAIGatewayService) openAIRequestHeaderTimeout() time.Duration {
 	return time.Duration(s.cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds) * time.Second
 }
 
+func (s *OpenAIGatewayService) openAIRequestHeaderTimeoutForBody(body []byte) time.Duration {
+	configured := s.openAIRequestHeaderTimeout()
+	if configured <= 0 {
+		return 0
+	}
+	estimatedTokens := estimateOpenAIRequestContextTokens(body)
+	timeout := 10 * time.Second
+	switch {
+	case estimatedTokens > 32000:
+		timeout = 20 * time.Second
+	case estimatedTokens > 8000:
+		timeout = 15 * time.Second
+	}
+	if timeout > configured {
+		return configured
+	}
+	return timeout
+}
+
+func estimateOpenAIRequestContextTokens(body []byte) int {
+	if len(body) == 0 {
+		return 0
+	}
+	textBytes := 0
+	if gjson.ValidBytes(body) {
+		root := gjson.ParseBytes(body)
+		textBytes += openAIRequestContextRawBytes(root.Get("instructions"))
+		textBytes += openAIRequestContextRawBytes(root.Get("input"))
+	}
+	if textBytes <= 0 {
+		textBytes = len(body)
+	}
+	return textBytes / 4
+}
+
+func openAIRequestContextRawBytes(value gjson.Result) int {
+	if !value.Exists() {
+		return 0
+	}
+	if !value.IsArray() && !value.IsObject() {
+		return len(value.Raw)
+	}
+	total := 0
+	value.ForEach(func(_, child gjson.Result) bool {
+		total += len(child.Raw)
+		return true
+	})
+	return total
+}
+
 func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	parent context.Context,
 	req *http.Request,
 	proxyURL string,
 	account *Account,
+	body []byte,
 ) (*http.Response, error) {
 	if s == nil || s.httpUpstream == nil {
 		return nil, errors.New("http upstream not configured")
@@ -3630,7 +3681,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	if req == nil {
 		return nil, errors.New("upstream request is nil")
 	}
-	timeout := s.openAIRequestHeaderTimeout()
+	timeout := s.openAIRequestHeaderTimeoutForBody(body)
 	if timeout <= 0 {
 		accountID, accountConcurrency := openAIRequestAccountParams(account)
 		return s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)

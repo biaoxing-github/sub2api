@@ -313,7 +313,7 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 			},
 		},
 		{
-			name: "filter_by_status_unschedulable_excludes_rate_limited_and_temp_unschedulable",
+			name: "filter_by_status_unschedulable_returns_all_manually_unschedulable_accounts",
 			setup: func(client *dbent.Client) {
 				mustCreateAccount(s.T(), client, &service.Account{Name: "active-normal", Status: service.StatusActive, Schedulable: true})
 				unsched := mustCreateAccount(s.T(), client, &service.Account{Name: "active-unsched", Status: service.StatusActive})
@@ -333,11 +333,21 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 					SetTempUnschedulableUntil(time.Now().Add(15 * time.Minute)).
 					Exec(context.Background())
 				s.Require().NoError(err)
+				inactive := mustCreateAccount(s.T(), client, &service.Account{Name: "inactive-unsched", Status: service.StatusDisabled})
+				err = client.Account.UpdateOneID(inactive.ID).
+					SetSchedulable(false).
+					Exec(context.Background())
+				s.Require().NoError(err)
 			},
 			status:    "unschedulable",
-			wantCount: 1,
+			wantCount: 4,
 			validate: func(accounts []service.Account) {
-				s.Require().Equal("active-unsched", accounts[0].Name)
+				names := make([]string, 0, len(accounts))
+				for _, account := range accounts {
+					names = append(names, account.Name)
+					s.Require().False(account.Schedulable)
+				}
+				s.Require().ElementsMatch([]string{"active-unsched", "active-rate-limited", "active-temp-unsched", "inactive-unsched"}, names)
 			},
 		},
 		{
