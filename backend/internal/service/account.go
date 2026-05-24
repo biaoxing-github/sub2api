@@ -131,7 +131,7 @@ func (a *Account) IsSchedulable() bool {
 	if a.OverloadUntil != nil && now.Before(*a.OverloadUntil) {
 		return false
 	}
-	if a.RateLimitResetAt != nil && now.Before(*a.RateLimitResetAt) {
+	if resetAt := a.effectiveRateLimitResetAt(now); resetAt != nil {
 		return false
 	}
 	if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
@@ -144,10 +144,65 @@ func (a *Account) IsSchedulable() bool {
 }
 
 func (a *Account) IsRateLimited() bool {
-	if a.RateLimitResetAt == nil {
-		return false
+	return a.effectiveRateLimitResetAt(time.Now()) != nil
+}
+
+func (a *Account) EffectiveRateLimitResetAt() *time.Time {
+	return a.effectiveRateLimitResetAt(time.Now())
+}
+
+func (a *Account) ApplyEffectiveRateLimitResetAt() {
+	if resetAt := a.EffectiveRateLimitResetAt(); resetAt != nil {
+		a.RateLimitResetAt = resetAt
 	}
-	return time.Now().Before(*a.RateLimitResetAt)
+}
+
+func (a *Account) effectiveRateLimitResetAt(now time.Time) *time.Time {
+	if a == nil {
+		return nil
+	}
+	if a.RateLimitResetAt != nil && now.Before(*a.RateLimitResetAt) {
+		return a.RateLimitResetAt
+	}
+	return a.codexExhaustedResetAt(now)
+}
+
+func (a *Account) codexExhaustedResetAt(now time.Time) *time.Time {
+	if a == nil || !a.IsOpenAIOAuth() || len(a.Extra) == 0 {
+		return nil
+	}
+	if resetAt := codexWindowExhaustedResetAt(a.Extra, "7d", now); resetAt != nil {
+		return resetAt
+	}
+	return codexWindowExhaustedResetAt(a.Extra, "5h", now)
+}
+
+func codexWindowExhaustedResetAt(extra map[string]any, window string, now time.Time) *time.Time {
+	if parseExtraFloat64(extra["codex_"+window+"_used_percent"]) < 100 {
+		return nil
+	}
+	if resetAt := parseCodexResetAt(extra["codex_"+window+"_reset_at"]); resetAt != nil && now.Before(*resetAt) {
+		return resetAt
+	}
+	if seconds := parseExtraInt(extra["codex_"+window+"_reset_after_seconds"]); seconds > 0 {
+		resetAt := now.Add(time.Duration(seconds) * time.Second)
+		return &resetAt
+	}
+	return nil
+}
+
+func parseCodexResetAt(value any) *time.Time {
+	s, ok := value.(string)
+	if !ok || strings.TrimSpace(s) == "" {
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(s)); err == nil {
+		return &t
+	}
+	if t, err := time.Parse(time.RFC3339, strings.TrimSpace(s)); err == nil {
+		return &t
+	}
+	return nil
 }
 
 func (a *Account) IsOverloaded() bool {

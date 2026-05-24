@@ -199,6 +199,7 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 	if a == nil {
 		return nil
 	}
+	rateLimitResetAt := a.EffectiveRateLimitResetAt()
 	redactedCreds, credsStatus := RedactCredentials(a.Credentials)
 	out := &Account{
 		ID:                      a.ID,
@@ -226,7 +227,7 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		TotalRequests:           a.TotalRequests,
 		Schedulable:             a.Schedulable,
 		RateLimitedAt:           a.RateLimitedAt,
-		RateLimitResetAt:        a.RateLimitResetAt,
+		RateLimitResetAt:        rateLimitResetAt,
 		OverloadUntil:           a.OverloadUntil,
 		TempUnschedulableUntil:  a.TempUnschedulableUntil,
 		TempUnschedulableReason: a.TempUnschedulableReason,

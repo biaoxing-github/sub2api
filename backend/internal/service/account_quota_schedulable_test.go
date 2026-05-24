@@ -121,3 +121,58 @@ func TestAccountIsSchedulable_QuotaExceeded(t *testing.T) {
 		})
 	}
 }
+
+func TestAccountCodexExtraEffectiveRateLimit(t *testing.T) {
+	now := time.Now().UTC()
+	resetAt := now.Add(6 * time.Hour).Truncate(time.Second)
+
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Extra: map[string]any{
+			"codex_7d_used_percent": 100.0,
+			"codex_7d_reset_at":     resetAt.Format(time.RFC3339),
+		},
+	}
+
+	effective := account.EffectiveRateLimitResetAt()
+	require.NotNil(t, effective)
+	require.WithinDuration(t, resetAt, *effective, time.Second)
+	require.True(t, account.IsRateLimited())
+	require.False(t, account.IsSchedulable())
+}
+
+func TestAccountCodexExtraEffectiveRateLimitIgnoresAPIKeyAndExpiredWindow(t *testing.T) {
+	past := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	future := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+
+	apiKey := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Extra: map[string]any{
+			"codex_7d_used_percent": 100.0,
+			"codex_7d_reset_at":     future.Format(time.RFC3339),
+		},
+	}
+	require.Nil(t, apiKey.EffectiveRateLimitResetAt())
+	require.False(t, apiKey.IsRateLimited())
+	require.True(t, apiKey.IsSchedulable())
+
+	expiredOAuth := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Extra: map[string]any{
+			"codex_7d_used_percent": 100.0,
+			"codex_7d_reset_at":     past.Format(time.RFC3339),
+		},
+	}
+	require.Nil(t, expiredOAuth.EffectiveRateLimitResetAt())
+	require.False(t, expiredOAuth.IsRateLimited())
+	require.True(t, expiredOAuth.IsSchedulable())
+}

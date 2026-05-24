@@ -674,6 +674,12 @@ func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, u
 		updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer updateCancel()
 		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+		if resetAt := codexSnapshotRateLimitResetAt(updates, time.Now()); resetAt != nil {
+			account, err := s.accountRepo.GetByID(updateCtx, accountID)
+			if err == nil && codexSnapshotShouldLimitAccount(account) {
+				_ = s.accountRepo.SetRateLimited(updateCtx, accountID, *resetAt)
+			}
+		}
 	}()
 }
 

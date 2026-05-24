@@ -5925,6 +5925,12 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+		if resetAt := codexSnapshotRateLimitResetAt(updates, time.Now()); resetAt != nil {
+			account, err := s.accountRepo.GetByID(updateCtx, accountID)
+			if err == nil && codexSnapshotShouldLimitAccount(account) {
+				_ = s.accountRepo.SetRateLimited(updateCtx, accountID, *resetAt)
+			}
+		}
 	}()
 }
 

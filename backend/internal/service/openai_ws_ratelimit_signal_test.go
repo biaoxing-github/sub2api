@@ -73,6 +73,14 @@ func (r *openAICodexExtraListRepo) SetRateLimited(_ context.Context, _ int64, re
 	return nil
 }
 
+func (r *openAICodexExtraListRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
+	account, err := r.stubOpenAIAccountRepo.GetByID(ctx, id)
+	if account != nil {
+		account.ApplyEffectiveRateLimitResetAt()
+	}
+	return account, err
+}
+
 func (r *openAICodexExtraListRepo) ListWithFilters(_ context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode, planType string) ([]Account, *pagination.PaginationResult, error) {
 	_ = platform
 	_ = accountType
@@ -81,7 +89,11 @@ func (r *openAICodexExtraListRepo) ListWithFilters(_ context.Context, params pag
 	_ = groupID
 	_ = privacyMode
 	_ = planType
-	return r.accounts, &pagination.PaginationResult{Total: int64(len(r.accounts)), Page: params.Page, PageSize: params.PageSize}, nil
+	accounts := append([]Account(nil), r.accounts...)
+	for i := range accounts {
+		accounts[i].ApplyEffectiveRateLimitResetAt()
+	}
+	return accounts, &pagination.PaginationResult{Total: int64(len(accounts)), Page: params.Page, PageSize: params.PageSize}, nil
 }
 
 func TestOpenAIGatewayService_Forward_WSv2ErrorEventUsageLimitPersistsRateLimit(t *testing.T) {
@@ -483,8 +495,13 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ErrorEventUsageL
 	}
 }
 
-func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotDoesNotSetRateLimit(t *testing.T) {
+func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotSetsRateLimit(t *testing.T) {
 	repo := &openAICodexSnapshotAsyncRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{{
+			ID:       601,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+		}}},
 		updateExtraCh: make(chan map[string]any, 1),
 		rateLimitCh:   make(chan time.Time, 1),
 	}
@@ -508,8 +525,10 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotDoesNotS
 
 	select {
 	case resetAt := <-repo.rateLimitCh:
-		t.Fatalf("不应因仅写入快照而生成运行时限流时间: %v", resetAt)
+		require.True(t, resetAt.After(time.Now()))
+		require.True(t, resetAt.Before(time.Now().Add(3700*time.Second)))
 	case <-time.After(2 * time.Second):
+		t.Fatal("等待 codex 快照提升为运行时限流状态超时")
 	}
 }
 
@@ -578,7 +597,7 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ThrottlesExtraWrites(t *t
 func ptrFloat64WS(v float64) *float64 { return &v }
 func ptrIntWS(v int) *int             { return &v }
 
-func TestOpenAIGatewayService_GetSchedulableAccount_ExhaustedCodexExtraDoesNotSetRateLimit(t *testing.T) {
+func TestOpenAIGatewayService_GetSchedulableAccount_ExhaustedCodexExtraIsRateLimited(t *testing.T) {
 	resetAt := time.Now().Add(6 * 24 * time.Hour)
 	account := Account{
 		ID:          701,
@@ -598,15 +617,18 @@ func TestOpenAIGatewayService_GetSchedulableAccount_ExhaustedCodexExtraDoesNotSe
 	fresh, err := svc.getSchedulableAccount(context.Background(), account.ID)
 	require.NoError(t, err)
 	require.NotNil(t, fresh)
-	require.Nil(t, fresh.RateLimitResetAt)
+	require.NotNil(t, fresh.RateLimitResetAt)
+	require.WithinDuration(t, resetAt, *fresh.RateLimitResetAt, time.Second)
+	require.True(t, fresh.IsRateLimited())
+	require.False(t, fresh.IsSchedulable())
 	select {
 	case persisted := <-repo.rateLimitCh:
-		t.Fatalf("不应将已耗尽的 codex extra 提升为运行时限流状态: %v", persisted)
-	case <-time.After(2 * time.Second):
+		t.Fatalf("账号读取不应产生额外持久化副作用: %v", persisted)
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 
-func TestAdminService_ListAccounts_ExhaustedCodexExtraDoesNotSetRateLimit(t *testing.T) {
+func TestAdminService_ListAccounts_ExhaustedCodexExtraShowsRateLimited(t *testing.T) {
 	resetAt := time.Now().Add(4 * 24 * time.Hour)
 	repo := &openAICodexExtraListRepo{
 		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{{
@@ -629,11 +651,14 @@ func TestAdminService_ListAccounts_ExhaustedCodexExtraDoesNotSetRateLimit(t *tes
 	require.NoError(t, err)
 	require.Equal(t, int64(1), total)
 	require.Len(t, accounts, 1)
-	require.Nil(t, accounts[0].RateLimitResetAt)
+	require.NotNil(t, accounts[0].RateLimitResetAt)
+	require.WithinDuration(t, resetAt, *accounts[0].RateLimitResetAt, time.Second)
+	require.True(t, accounts[0].IsRateLimited())
+	require.False(t, accounts[0].IsSchedulable())
 	select {
 	case persisted := <-repo.rateLimitCh:
-		t.Fatalf("不应在账号列表查询时将 codex extra 持久化为运行时限流状态: %v", persisted)
-	case <-time.After(2 * time.Second):
+		t.Fatalf("账号列表查询不应产生额外持久化副作用: %v", persisted)
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 

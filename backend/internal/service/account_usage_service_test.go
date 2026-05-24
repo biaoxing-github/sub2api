@@ -92,10 +92,15 @@ func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) 
 	}
 }
 
-func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *testing.T) {
+func TestAccountUsageService_PersistOpenAICodexProbeSnapshotSetsRateLimitWhenExhausted(t *testing.T) {
 	t.Parallel()
 
 	repo := &accountUsageCodexProbeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{{
+			ID:       321,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeOAuth,
+		}}},
 		updateExtraCh: make(chan map[string]any, 1),
 		rateLimitCh:   make(chan time.Time, 1),
 	}
@@ -116,7 +121,41 @@ func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *
 
 	select {
 	case got := <-repo.rateLimitCh:
-		t.Fatalf("不应将探测快照写入运行时限流状态: %v", got)
+		if !got.After(time.Now()) {
+			t.Fatalf("expected future rate limit reset, got %v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待 codex 探测快照提升为运行时限流状态超时")
+	}
+}
+
+func TestAccountUsageService_PersistOpenAICodexProbeSnapshotDoesNotRateLimitAPIKey(t *testing.T) {
+	t.Parallel()
+
+	repo := &accountUsageCodexProbeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{{
+			ID:       322,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+		}}},
+		updateExtraCh: make(chan map[string]any, 1),
+		rateLimitCh:   make(chan time.Time, 1),
+	}
+	svc := &AccountUsageService{accountRepo: repo}
+	svc.persistOpenAICodexProbeSnapshot(322, map[string]any{
+		"codex_7d_used_percent": 100.0,
+		"codex_7d_reset_at":     time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339),
+	})
+
+	select {
+	case <-repo.updateExtraCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待 codex 探测快照写入 extra 超时")
+	}
+
+	select {
+	case got := <-repo.rateLimitCh:
+		t.Fatalf("api_key 账号不应因 codex 快照百分比进入运行时限流: %v", got)
 	case <-time.After(200 * time.Millisecond):
 	}
 }
@@ -147,8 +186,8 @@ func TestAccountUsageService_GetOpenAIUsage_DoesNotPromoteCodexExtraToRateLimit(
 	if usage.SevenDay == nil || usage.SevenDay.Utilization != 100.0 {
 		t.Fatalf("预期 7 天用量仍然可见，实际为 %#v", usage.SevenDay)
 	}
-	if account.RateLimitResetAt != nil {
-		t.Fatalf("不应让已耗尽的 codex extra 改写运行时限流状态: %v", account.RateLimitResetAt)
+	if reset := account.EffectiveRateLimitResetAt(); reset == nil || reset.Before(time.Now()) {
+		t.Fatalf("预期已耗尽 codex extra 在运行时表现为限流，实际 reset=%v", reset)
 	}
 	select {
 	case got := <-repo.rateLimitCh:

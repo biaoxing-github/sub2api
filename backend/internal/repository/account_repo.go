@@ -462,6 +462,25 @@ func (r *accountRepository) List(ctx context.Context, params pagination.Paginati
 	return r.ListWithFilters(ctx, params, "", "", "", "", 0, "", "")
 }
 
+func codexExhaustedPredicateSQL() *entsql.Predicate {
+	return entsql.P(func(b *entsql.Builder) {
+		b.WriteString("(platform = ")
+		b.Arg(service.PlatformOpenAI)
+		b.WriteString(" AND type = ")
+		b.Arg(service.AccountTypeOAuth)
+		b.WriteString(` AND (
+			(
+				COALESCE(NULLIF(extra->>'codex_7d_used_percent', '')::numeric, 0) >= 100
+				AND COALESCE(NULLIF(extra->>'codex_7d_reset_at', '')::timestamptz, '1970-01-01'::timestamptz) > NOW()
+			)
+			OR (
+				COALESCE(NULLIF(extra->>'codex_5h_used_percent', '')::numeric, 0) >= 100
+				AND COALESCE(NULLIF(extra->>'codex_5h_reset_at', '')::timestamptz, '1970-01-01'::timestamptz) > NOW()
+			)
+		))`)
+	})
+}
+
 func (r *accountRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, accountType, status, search string, groupID int64, privacyMode, planType string) ([]service.Account, *pagination.PaginationResult, error) {
 	q := r.client.Account.Query()
 
@@ -482,6 +501,9 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 					dbaccount.RateLimitResetAtLTE(time.Now()),
 				),
 				dbpredicate.Account(func(s *entsql.Selector) {
+					s.Where(entsql.Not(codexExhaustedPredicateSQL()))
+				}),
+				dbpredicate.Account(func(s *entsql.Selector) {
 					col := s.C("temp_unschedulable_until")
 					s.Where(entsql.Or(
 						entsql.IsNull(col),
@@ -492,7 +514,12 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 		case "rate_limited":
 			q = q.Where(
 				dbaccount.StatusEQ(service.StatusActive),
-				dbaccount.RateLimitResetAtGT(time.Now()),
+				dbaccount.Or(
+					dbaccount.RateLimitResetAtGT(time.Now()),
+					dbpredicate.Account(func(s *entsql.Selector) {
+						s.Where(codexExhaustedPredicateSQL())
+					}),
+				),
 				dbpredicate.Account(func(s *entsql.Selector) {
 					col := s.C("temp_unschedulable_until")
 					s.Where(entsql.Or(
@@ -520,6 +547,9 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 					dbaccount.RateLimitResetAtIsNil(),
 					dbaccount.RateLimitResetAtLTE(time.Now()),
 				),
+				dbpredicate.Account(func(s *entsql.Selector) {
+					s.Where(entsql.Not(codexExhaustedPredicateSQL()))
+				}),
 				dbpredicate.Account(func(s *entsql.Selector) {
 					col := s.C("temp_unschedulable_until")
 					s.Where(entsql.Or(
@@ -1807,7 +1837,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 
 	rateMultiplier := m.RateMultiplier
 
-	return &service.Account{
+	account := &service.Account{
 		ID:                      m.ID,
 		Name:                    m.Name,
 		Notes:                   m.Notes,
@@ -1837,6 +1867,8 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		SessionWindowEnd:        m.SessionWindowEnd,
 		SessionWindowStatus:     derefString(m.SessionWindowStatus),
 	}
+	account.ApplyEffectiveRateLimitResetAt()
+	return account
 }
 
 func normalizeJSONMap(in map[string]any) map[string]any {

@@ -629,6 +629,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
 				_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 				mergeAccountExtra(account, updates)
+				s.applyCodexSnapshotRateLimit(ctx, account, updates)
 			}
 		}
 
@@ -755,6 +756,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		if len(updates) > 0 {
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
+			s.applyCodexSnapshotRateLimit(ctx, account, updates)
 		}
 		// 探测如返回 429,主动同步限流状态,避免后续短时间内继续选中。
 		if resp.StatusCode == http.StatusTooManyRequests {
@@ -808,6 +810,22 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 		account.Status = StatusActive
 		account.ErrorMessage = ""
 	}
+}
+
+func (s *AccountTestService) applyCodexSnapshotRateLimit(ctx context.Context, account *Account, updates map[string]any) {
+	if s == nil || s.accountRepo == nil || account == nil || !account.IsOpenAIOAuth() {
+		return
+	}
+	resetAt := codexSnapshotRateLimitResetAt(updates, time.Now())
+	if resetAt == nil {
+		return
+	}
+	if err := s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt); err != nil {
+		return
+	}
+	now := time.Now()
+	account.RateLimitedAt = &now
+	account.RateLimitResetAt = resetAt
 }
 
 // testGeminiAccountConnection tests a Gemini account's connection
