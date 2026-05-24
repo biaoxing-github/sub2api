@@ -2822,8 +2822,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
-			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
+			if isOpenAIRequestPhaseTransientError(err) {
+				return nil, s.newOpenAIRequestFailoverError(c, account, false, safeErr)
+			}
+			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 			setOpsUpstreamError(c, 0, safeErr, "")
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
@@ -3130,6 +3133,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
+		if isOpenAIRequestPhaseTransientError(err) {
+			return nil, s.newOpenAIRequestFailoverError(c, account, true, safeErr)
+		}
 		setOpsUpstreamError(c, 0, safeErr, "")
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
@@ -3574,6 +3580,68 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 		}
 	}
 	return true
+}
+
+func isOpenAIRequestPhaseTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return true
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if msg == "" {
+		return false
+	}
+	transientMarkers := []string{
+		"unexpected eof",
+		"timeout awaiting response headers",
+	}
+	for _, marker := range transientMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *OpenAIGatewayService) newOpenAIRequestFailoverError(
+	c *gin.Context,
+	account *Account,
+	passthrough bool,
+	message string,
+) *UpstreamFailoverError {
+	message = sanitizeUpstreamErrorMessage(strings.TrimSpace(message))
+	if message == "" {
+		message = "OpenAI upstream request failed before response headers"
+	}
+	if c != nil {
+		setOpsUpstreamError(c, http.StatusBadGateway, message, "")
+		event := OpsUpstreamErrorEvent{
+			Platform:           PlatformOpenAI,
+			UpstreamStatusCode: http.StatusBadGateway,
+			Passthrough:        passthrough,
+			Kind:               "failover",
+			Message:            message,
+		}
+		if account != nil {
+			event.Platform = account.Platform
+			event.AccountID = account.ID
+			event.AccountName = account.Name
+		}
+		appendOpsUpstreamError(c, event)
+	}
+	body, _ := json.Marshal(gin.H{
+		"error": gin.H{
+			"type":    "upstream_error",
+			"message": message,
+		},
+	})
+	return &UpstreamFailoverError{
+		StatusCode:             http.StatusBadGateway,
+		ResponseBody:           body,
+		RetryableOnSameAccount: account != nil && account.IsPoolMode(),
+	}
 }
 
 func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
