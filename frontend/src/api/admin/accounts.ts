@@ -12,6 +12,8 @@ import type {
   PaginatedResponse,
   AccountUsageInfo,
   AccountPoolUsageSummary,
+  AccountDashboardSummary,
+  AccountActionItemsResponse,
   WindowStats,
   ClaudeModel,
   AccountUsageStatsResponse,
@@ -38,6 +40,11 @@ export interface AccountUsageSummaryFilters {
 }
 
 export type AccountStatusSummaryFilters = AccountUsageSummaryFilters
+export type AccountDashboardSummaryFilters = AccountUsageSummaryFilters
+export type AccountActionItemsFilters = Pick<
+  AccountUsageSummaryFilters,
+  'platform' | 'type' | 'status' | 'group' | 'search' | 'plan_type' | 'privacy_mode'
+>
 
 const accountStatusSummaryStatuses = [
   'active',
@@ -309,6 +316,40 @@ export async function getStatusSummary(
     })
   )
   return Object.fromEntries(entries) as unknown as AccountStatusSummary
+}
+
+/**
+ * Get account dashboard summary across the current account filters.
+ * This is the preferred first-screen summary endpoint; legacy summary methods
+ * stay exported as fallback paths.
+ */
+export async function getDashboardSummary(
+  filters?: AccountDashboardSummaryFilters,
+  options?: {
+    signal?: AbortSignal
+  }
+): Promise<AccountDashboardSummary> {
+  const { data } = await apiClient.get<AccountDashboardSummary>('/admin/accounts/dashboard-summary', {
+    params: filters,
+    signal: options?.signal
+  })
+  return data
+}
+
+/**
+ * Get prioritized account action items for the current account filters.
+ */
+export async function getActionItems(
+  filters?: AccountActionItemsFilters,
+  options?: {
+    signal?: AbortSignal
+  }
+): Promise<AccountActionItemsResponse> {
+  const { data } = await apiClient.get<AccountActionItemsResponse>('/admin/accounts/action-items', {
+    params: filters,
+    signal: options?.signal
+  })
+  return data
 }
 
 export async function refreshUpstreamBalances(): Promise<UpstreamBalanceRefreshResult> {
@@ -752,6 +793,8 @@ export const accountsAPI = {
   getUsage,
   getUsageSummary,
   getStatusSummary,
+  getDashboardSummary,
+  getActionItems,
   refreshUpstreamBalances,
   refreshUpstreamBalance,
   getTodayStats,

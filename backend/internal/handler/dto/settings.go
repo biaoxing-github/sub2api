@@ -176,13 +176,18 @@ type SystemSettings struct {
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
 	// Gateway forwarding behavior
-	EnableFingerprintUnification       bool   `json:"enable_fingerprint_unification"`
-	EnableMetadataPassthrough          bool   `json:"enable_metadata_passthrough"`
-	EnableCCHSigning                   bool   `json:"enable_cch_signing"`
-	EnableAnthropicCacheTTL1hInjection bool   `json:"enable_anthropic_cache_ttl_1h_injection"`
-	RewriteMessageCacheControl         bool   `json:"rewrite_message_cache_control"`
-	AntigravityUserAgentVersion        string `json:"antigravity_user_agent_version"`
-	OpenAICodexUserAgent               string `json:"openai_codex_user_agent"`
+	EnableFingerprintUnification               bool   `json:"enable_fingerprint_unification"`
+	EnableMetadataPassthrough                  bool   `json:"enable_metadata_passthrough"`
+	EnableCCHSigning                           bool   `json:"enable_cch_signing"`
+	EnableAnthropicCacheTTL1hInjection         bool   `json:"enable_anthropic_cache_ttl_1h_injection"`
+	RewriteMessageCacheControl                 bool   `json:"rewrite_message_cache_control"`
+	AntigravityUserAgentVersion                string `json:"antigravity_user_agent_version"`
+	OpenAICodexUserAgent                       string `json:"openai_codex_user_agent"`
+	CodexStabilityMode                         string `json:"codex_stability_mode"`
+	CodexStabilityDynamicHeaderTimeoutEnabled  bool   `json:"codex_stability_dynamic_header_timeout_enabled"`
+	CodexStabilityRequestPhaseFailoverEnabled  bool   `json:"codex_stability_request_phase_failover_enabled"`
+	CodexStabilitySuppressClientTimeoutHeaders bool   `json:"codex_stability_suppress_client_timeout_headers"`
+	CodexStabilityStreamKeepaliveEnabled       bool   `json:"codex_stability_stream_keepalive_enabled"`
 
 	// Web Search Emulation
 	WebSearchEmulationEnabled bool `json:"web_search_emulation_enabled"`

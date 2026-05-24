@@ -161,6 +161,26 @@ export interface OpsRequestDetailsParams {
 
 export type OpsRequestDetailsResponse = PaginatedResponse<OpsRequestDetail>
 
+export interface OpsRequestTimelineEvent {
+  at: string
+  phase: string
+  event_type: string
+  account_id?: number | null
+  account_name?: string
+  reason?: string
+  latency_ms?: number | null
+  details?: Record<string, unknown>
+}
+
+export interface OpsRequestTimeline {
+  request_id: string
+  client_request_id?: string
+  started_at?: string
+  ended_at?: string
+  status: string
+  events: OpsRequestTimelineEvent[]
+}
+
 export interface OpsLatencyHistogramBucket {
   range: string
   count: number
@@ -1141,6 +1161,11 @@ export async function listRequestDetails(params: OpsRequestDetailsParams): Promi
   return data
 }
 
+export async function getRequestTimeline(requestId: string): Promise<OpsRequestTimeline> {
+  const { data } = await apiClient.get<OpsRequestTimeline>(`/admin/ops/requests/${encodeURIComponent(requestId)}/timeline`)
+  return data
+}
+
 // Alert rules
 export async function listAlertRules(): Promise<AlertRule[]> {
   const { data } = await apiClient.get<AlertRule[]>('/admin/ops/alert-rules')
@@ -1303,6 +1328,7 @@ export const opsAPI = {
   listRequestErrorUpstreamErrors,
 
   listRequestDetails,
+  getRequestTimeline,
   listAlertRules,
   createAlertRule,
   updateAlertRule,

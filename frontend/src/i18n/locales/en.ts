@@ -2935,8 +2935,30 @@ export default {
         error: 'Error',
         inactive: 'Disabled',
         tempUnschedulable: 'Temp unschedulable',
-        unschedulable: 'Paused',
+        unschedulable: 'Scheduling off',
         loadFailed: 'Failed to load account status summary'
+      },
+      dashboardSummary: {
+        loadFailed: 'Failed to load account dashboard summary'
+      },
+      actionItems: {
+        title: 'Needs Attention',
+        description: 'Prioritized accounts under the current filters',
+        criticalCount: 'Critical {count}',
+        warningCount: 'Warning {count}',
+        infoCount: 'Info {count}',
+        empty: 'No action items',
+        loadFailed: 'Failed to load account action items',
+        suggestedAction: 'Suggested:',
+        refreshBalance: 'Refresh balance',
+        pause: 'Pause',
+        resume: 'Resume',
+        viewRequests: 'View requests',
+        severity: {
+          critical: 'Critical',
+          warning: 'Warning',
+          info: 'Info'
+        }
       },
       syncFromCrs: 'Sync from CRS',
       dataExport: 'Export',
@@ -3061,7 +3083,7 @@ export default {
         overloaded: 'Overloaded',
         tempUnschedulable: 'Temp Unschedulable',
         quotaExceeded: 'Quota Exceeded',
-        unschedulable: 'Paused',
+        unschedulable: 'Scheduling off',
         rateLimitedUntil: 'Rate limited and removed from scheduling. Auto resumes at {time}',
         rateLimitedAutoResume: 'Auto resumes in {time}',
         modelRateLimitedUntil: '{model} rate limited until {time}',
@@ -5610,6 +5632,17 @@ export default {
         openaiCodexUserAgent: 'OpenAI Codex UA',
         openaiCodexUserAgentPlaceholder: 'codex-tui/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.125.0)',
         openaiCodexUserAgentHint: 'Used to bypass Cloudflare browser-UA challenges on the OpenAI upstream. Only applies when the client User-Agent is detected as a browser (Mozilla/...). Leave empty to use the built-in default.',
+        codexStability: {
+          title: 'Codex Stability Mode',
+          description: 'Enables conservative timeout, failover, and keepalive behavior for Codex Responses requests. Off behaves closer to a transparent proxy.',
+          modeOff: 'Off',
+          modeCodex: 'Codex only',
+          modeAllResponses: 'All OpenAI Responses',
+          dynamicHeaderTimeout: 'Dynamic header timeout',
+          requestPhaseFailover: 'Request-phase failover',
+          suppressTimeoutHeaders: 'Suppress client timeout headers',
+          streamKeepalive: 'Stream keepalive'
+        },
       },
       webSearchEmulation: {
         title: 'Web Search Emulation',

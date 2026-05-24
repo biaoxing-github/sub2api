@@ -1071,6 +1071,51 @@ export interface AccountStatusSummary {
   unschedulable: number
 }
 
+export interface AccountBalanceSummary {
+  healthy: number
+  draining: number
+  exhausted: number
+  balance_unknown: number
+  missing_snapshot: number
+}
+
+export type AccountActionItemSeverity = 'critical' | 'warning' | 'info'
+
+export interface AccountActionItemCounts {
+  critical: number
+  warning: number
+  info: number
+}
+
+export interface AccountDashboardSummary {
+  generated_at: string
+  status_summary: AccountStatusSummary
+  usage_summary?: AccountPoolUsageSummary | null
+  usage_summary_error?: string | null
+  balance_summary?: AccountBalanceSummary | null
+  action_item_counts?: AccountActionItemCounts | null
+  action_items_error?: string | null
+}
+
+export interface AccountActionItem {
+  account_id: number
+  account_name: string
+  severity: AccountActionItemSeverity
+  reason: string
+  summary?: string
+  suggested_action: string
+  status: Account['status'] | string
+  schedulable: boolean
+  request_id?: string | null
+  client_request_id?: string | null
+}
+
+export interface AccountActionItemsResponse {
+  generated_at: string
+  items: AccountActionItem[]
+  error?: string | null
+}
+
 // OpenAI Codex usage snapshot (from response headers)
 export interface CodexUsageSnapshot {
   // Legacy fields (kept for backwards compatibility)

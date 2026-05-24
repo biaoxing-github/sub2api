@@ -93,6 +93,21 @@ func TestLoadDefaultOpenAIRequestHeaderTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultCodexStabilityConfig(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	require.Equal(t, GatewayCodexStabilityModeCodex, cfg.Gateway.CodexStability.Mode)
+	require.True(t, cfg.Gateway.CodexStability.DynamicHeaderTimeoutEnabled)
+	require.True(t, cfg.Gateway.CodexStability.RequestPhaseFailoverEnabled)
+	require.True(t, cfg.Gateway.CodexStability.SuppressClientTimeoutHeaders)
+	require.True(t, cfg.Gateway.CodexStability.StreamKeepaliveEnabled)
+}
+
 func TestLoadDefaultOpenAIWSConfig(t *testing.T) {
 	resetViperWithJWTSecret(t)
 
@@ -1246,6 +1261,11 @@ func TestValidateConfigErrors(t *testing.T) {
 			name:    "gateway openai request header timeout",
 			mutate:  func(c *Config) { c.Gateway.OpenAIRequestHeaderTimeoutSeconds = -1 },
 			wantErr: "gateway.openai_request_header_timeout_seconds",
+		},
+		{
+			name:    "gateway codex stability mode",
+			mutate:  func(c *Config) { c.Gateway.CodexStability.Mode = "sometimes" },
+			wantErr: "gateway.codex_stability.mode",
 		},
 		{
 			name:    "gateway idle timeout",

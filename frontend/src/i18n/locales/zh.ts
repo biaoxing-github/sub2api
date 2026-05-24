@@ -3011,8 +3011,30 @@ export default {
         error: '错误',
         inactive: '停用',
         tempUnschedulable: '临时不可调度',
-        unschedulable: '暂停',
+        unschedulable: '关闭调度',
         loadFailed: '加载账号状态汇总失败'
+      },
+      dashboardSummary: {
+        loadFailed: '加载账号首屏摘要失败'
+      },
+      actionItems: {
+        title: '需要处理',
+        description: '按当前筛选展示最需要关注的账号',
+        criticalCount: '严重 {count}',
+        warningCount: '警告 {count}',
+        infoCount: '提示 {count}',
+        empty: '暂无需要处理',
+        loadFailed: '加载待处理账号失败',
+        suggestedAction: '建议：',
+        refreshBalance: '刷新余额',
+        pause: '暂停',
+        resume: '恢复',
+        viewRequests: '查看请求',
+        severity: {
+          critical: '严重',
+          warning: '警告',
+          info: '提示'
+        }
       },
       syncFromCrs: '从 CRS 同步',
       dataExport: '导出',
@@ -3251,7 +3273,7 @@ export default {
         overloaded: '过载中',
         tempUnschedulable: '临时不可调度',
         quotaExceeded: '配额超限',
-        unschedulable: '暂停',
+        unschedulable: '关闭调度',
         rateLimitedUntil: '限流中，当前不参与调度，预计 {time} 自动恢复',
         rateLimitedAutoResume: '{time} 自动恢复',
         modelRateLimitedUntil: '{model} 限流至 {time}',
@@ -5767,6 +5789,17 @@ export default {
         openaiCodexUserAgent: 'OpenAI Codex UA',
         openaiCodexUserAgentPlaceholder: 'codex-tui/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.125.0)',
         openaiCodexUserAgentHint: '用于规避 OpenAI 上游 Cloudflare 对浏览器 UA 的访问质询。仅在检测到客户端 User-Agent 为浏览器（Mozilla/...）时生效，其他客户端原样透传。留空使用内置默认值。',
+        codexStability: {
+          title: 'Codex 稳定模式',
+          description: '开启后对 Codex Responses 请求启用更保守的超时、切号和 keepalive 策略；关闭后更接近透明代理。',
+          modeOff: '关闭',
+          modeCodex: '仅 Codex',
+          modeAllResponses: '全部 OpenAI Responses',
+          dynamicHeaderTimeout: '动态响应头超时',
+          requestPhaseFailover: '请求阶段快速切号',
+          suppressTimeoutHeaders: '屏蔽客户端短超时头',
+          streamKeepalive: '流式 keepalive'
+        },
       },
       webSearchEmulation: {
         title: 'Web Search 模拟',

@@ -74,6 +74,47 @@ func TestMemoryContextJournalAppendListAndBindResponse(t *testing.T) {
 	}
 }
 
+func TestMemoryContextJournalImplementsContextJournalContract(t *testing.T) {
+	var _ ContextJournal = NewMemoryContextJournal(ContextJournalOptions{})
+}
+
+func TestMemoryContextJournalTurnCarriesReplayMetadata(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 24, 10, 0, 0, 0, time.UTC)
+	journal := NewMemoryContextJournal(ContextJournalOptions{
+		TTL:             time.Hour,
+		MaxSessionBytes: 1024,
+		Now:             func() time.Time { return now },
+	})
+
+	turn, err := journal.AppendTurn(ctx, ContextJournalAppendInput{
+		GroupID:               7,
+		SessionHash:           "sess-meta",
+		AccountID:             42,
+		Protocol:              ContextJournalProtocolOpenAIResponses,
+		RequestBody:           []byte(`{"input":"hello","previous_response_id":"resp_prev"}`),
+		ResponseID:            "resp_next",
+		ClientOutputStarted:   true,
+		HasPreviousResponseID: true,
+		HasFunctionCallOutput: false,
+	})
+	if err != nil {
+		t.Fatalf("AppendTurn() error = %v", err)
+	}
+	if turn.RequestProtocol != ContextJournalProtocolOpenAIResponses {
+		t.Fatalf("RequestProtocol = %q, want %q", turn.RequestProtocol, ContextJournalProtocolOpenAIResponses)
+	}
+	if !turn.HasPreviousResponseID {
+		t.Fatal("HasPreviousResponseID = false, want true")
+	}
+	if !turn.ClientOutputStarted {
+		t.Fatal("ClientOutputStarted = false, want true")
+	}
+	if !turn.CreatedAt.Equal(now) {
+		t.Fatalf("CreatedAt = %v, want %v", turn.CreatedAt, now)
+	}
+}
+
 func TestMemoryContextJournalTTLExpiresTurnsAndResponseRefs(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC)
@@ -120,6 +161,29 @@ func TestMemoryContextJournalTTLExpiresTurnsAndResponseRefs(t *testing.T) {
 	}
 }
 
+func TestMemoryContextJournalGetResponseBindingAlias(t *testing.T) {
+	ctx := context.Background()
+	journal := NewMemoryContextJournal(ContextJournalOptions{
+		TTL:             time.Hour,
+		MaxSessionBytes: 1024,
+	})
+	if err := journal.BindResponse(ctx, 7, "resp_alias", ContextJournalResponseRef{
+		SessionHash: "sess-alias",
+		AccountID:   42,
+		TurnID:      "turn_alias",
+	}, time.Hour); err != nil {
+		t.Fatalf("BindResponse() error = %v", err)
+	}
+
+	ref, err := journal.GetResponseBinding(ctx, 7, "resp_alias")
+	if err != nil {
+		t.Fatalf("GetResponseBinding() error = %v", err)
+	}
+	if ref == nil || ref.SessionHash != "sess-alias" || ref.AccountID != 42 || ref.TurnID != "turn_alias" {
+		t.Fatalf("response binding = %+v", ref)
+	}
+}
+
 func TestMemoryContextJournalRejectsSessionOverflow(t *testing.T) {
 	ctx := context.Background()
 	journal := NewMemoryContextJournal(ContextJournalOptions{
@@ -150,6 +214,136 @@ func TestMemoryContextJournalRejectsSessionOverflow(t *testing.T) {
 	}
 	if !state.Overflow || state.TotalBytes != 10 {
 		t.Fatalf("state = %+v", state)
+	}
+}
+
+func TestMemoryContextJournalBuildReplayFromCompleteTurns(t *testing.T) {
+	ctx := context.Background()
+	journal := NewMemoryContextJournal(ContextJournalOptions{
+		TTL:             time.Hour,
+		MaxSessionBytes: 1024,
+	})
+	if _, err := journal.AppendTurn(ctx, ContextJournalAppendInput{
+		GroupID:     7,
+		SessionHash: "sess-replay",
+		AccountID:   42,
+		Protocol:    ContextJournalProtocolOpenAIResponses,
+		RequestBody: []byte(`{"input":"hello"}`),
+	}); err != nil {
+		t.Fatalf("AppendTurn() error = %v", err)
+	}
+
+	replay, err := journal.BuildReplay(ctx, 7, "sess-replay")
+	if err != nil {
+		t.Fatalf("BuildReplay() error = %v", err)
+	}
+	if !replay.Safe || replay.Reason != ContextReplayReasonSafe {
+		t.Fatalf("replay = %+v, want safe", replay)
+	}
+	if !bytes.Equal(replay.RequestBody, []byte(`{"input":"hello"}`)) {
+		t.Fatalf("replay body = %s", replay.RequestBody)
+	}
+	replay.RequestBody[0] = '['
+	again, err := journal.BuildReplay(ctx, 7, "sess-replay")
+	if err != nil {
+		t.Fatalf("BuildReplay() second error = %v", err)
+	}
+	if !bytes.Equal(again.RequestBody, []byte(`{"input":"hello"}`)) {
+		t.Fatalf("replay leaked mutable body: %s", again.RequestBody)
+	}
+}
+
+func TestMemoryContextJournalReplaySafetyReasons(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name  string
+		input ContextJournalAppendInput
+		want  ContextReplayReason
+	}{
+		{
+			name: "function call output unsafe",
+			input: ContextJournalAppendInput{
+				RequestBody:           []byte(`{"input":[{"type":"function_call_output","output":"ok"}]}`),
+				HasFunctionCallOutput: true,
+			},
+			want: ContextReplayReasonFunctionCallOutput,
+		},
+		{
+			name: "encrypted reasoning unsafe",
+			input: ContextJournalAppendInput{
+				RequestBody:           []byte(`{"input":[{"type":"reasoning","encrypted_content":"abc"}]}`),
+				HasEncryptedReasoning: true,
+			},
+			want: ContextReplayReasonEncryptedReasoning,
+		},
+		{
+			name: "client output started unsafe",
+			input: ContextJournalAppendInput{
+				RequestBody:         []byte(`{"input":"hello"}`),
+				ClientOutputStarted: true,
+			},
+			want: ContextReplayReasonClientOutputStarted,
+		},
+		{
+			name: "missing body unsafe",
+			input: ContextJournalAppendInput{
+				RequestBody: nil,
+			},
+			want: ContextReplayReasonMissingBody,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			journal := NewMemoryContextJournal(ContextJournalOptions{
+				TTL:             time.Hour,
+				MaxSessionBytes: 1024,
+			})
+			tc.input.GroupID = 7
+			tc.input.SessionHash = tc.name
+			tc.input.AccountID = 42
+			if len(tc.input.RequestBody) > 0 {
+				if _, err := journal.AppendTurn(ctx, tc.input); err != nil {
+					t.Fatalf("AppendTurn() error = %v", err)
+				}
+			}
+
+			result, err := journal.IsReplaySafe(ctx, 7, tc.name)
+			if err != nil {
+				t.Fatalf("IsReplaySafe() error = %v", err)
+			}
+			if result.Safe {
+				t.Fatalf("IsReplaySafe() = %+v, want unsafe", result)
+			}
+			if result.Reason != tc.want {
+				t.Fatalf("reason = %q, want %q", result.Reason, tc.want)
+			}
+		})
+	}
+}
+
+func TestMemoryContextJournalReplaySafetyReportsJournalOverflow(t *testing.T) {
+	ctx := context.Background()
+	journal := NewMemoryContextJournal(ContextJournalOptions{
+		TTL:             time.Hour,
+		MaxSessionBytes: 4,
+	})
+
+	_, err := journal.AppendTurn(ctx, ContextJournalAppendInput{
+		GroupID:     7,
+		SessionHash: "sess-overflow-replay",
+		AccountID:   42,
+		RequestBody: []byte(`12345`),
+	})
+	if !errors.Is(err, ErrContextJournalSessionOverflow) {
+		t.Fatalf("AppendTurn() error = %v, want overflow", err)
+	}
+	result, err := journal.IsReplaySafe(ctx, 7, "sess-overflow-replay")
+	if err != nil {
+		t.Fatalf("IsReplaySafe() error = %v", err)
+	}
+	if result.Safe || result.Reason != ContextReplayReasonJournalOverflow {
+		t.Fatalf("result = %+v, want journal overflow", result)
 	}
 }
 

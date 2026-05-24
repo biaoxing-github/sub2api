@@ -279,6 +279,31 @@ func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler
 	require.Equal(t, "true", repo.updates[openAIAdvancedSchedulerSettingKey])
 }
 
+func TestSettingService_UpdateSettings_CodexStabilityRefreshesGatewayConfig(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	cfg := &config.Config{}
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		CodexStabilityMode:                         config.GatewayCodexStabilityModeOff,
+		CodexStabilityDynamicHeaderTimeoutEnabled:  false,
+		CodexStabilityRequestPhaseFailoverEnabled:  false,
+		CodexStabilitySuppressClientTimeoutHeaders: true,
+		CodexStabilityStreamKeepaliveEnabled:       false,
+	})
+	require.NoError(t, err)
+	require.Equal(t, config.GatewayCodexStabilityModeOff, repo.updates[SettingKeyCodexStabilityMode])
+	require.Equal(t, "false", repo.updates[SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled])
+	require.Equal(t, "false", repo.updates[SettingKeyCodexStabilityRequestPhaseFailoverEnabled])
+	require.Equal(t, "true", repo.updates[SettingKeyCodexStabilitySuppressClientTimeoutHeaders])
+	require.Equal(t, "false", repo.updates[SettingKeyCodexStabilityStreamKeepaliveEnabled])
+	require.Equal(t, config.GatewayCodexStabilityModeOff, cfg.Gateway.CodexStability.Mode)
+	require.False(t, cfg.Gateway.CodexStability.DynamicHeaderTimeoutEnabled)
+	require.False(t, cfg.Gateway.CodexStability.RequestPhaseFailoverEnabled)
+	require.True(t, cfg.Gateway.CodexStability.SuppressClientTimeoutHeaders)
+	require.False(t, cfg.Gateway.CodexStability.StreamKeepaliveEnabled)
+}
+
 func TestSettingService_UpdateSettings_AntigravityUserAgentVersion(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := NewSettingService(repo, &config.Config{})

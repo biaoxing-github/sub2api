@@ -411,6 +411,12 @@ const (
 	// 当客户端 UA 被识别为浏览器（Chrome/Firefox/Safari/Edge 等）时，转发给 OpenAI 上游前会替换为此值，
 	// 用于避免 Cloudflare 对浏览器型 UA 的质询拦截。
 	SettingKeyOpenAICodexUserAgent = "openai_codex_user_agent"
+	// SettingKeyCodexStabilityMode Codex 稳定模式档位：off/codex/all_openai_responses。
+	SettingKeyCodexStabilityMode                         = "codex_stability_mode"
+	SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled  = "codex_stability_dynamic_header_timeout_enabled"
+	SettingKeyCodexStabilityRequestPhaseFailoverEnabled  = "codex_stability_request_phase_failover_enabled"
+	SettingKeyCodexStabilitySuppressClientTimeoutHeaders = "codex_stability_suppress_client_timeout_headers"
+	SettingKeyCodexStabilityStreamKeepaliveEnabled       = "codex_stability_stream_keepalive_enabled"
 
 	// 余额不足提醒
 	SettingKeyBalanceLowNotifyEnabled     = "balance_low_notify_enabled"      // 全局开关

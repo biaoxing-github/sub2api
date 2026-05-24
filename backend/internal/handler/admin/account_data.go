@@ -546,6 +546,35 @@ func (h *AccountHandler) listAccountsFiltered(ctx context.Context, platform, acc
 	return out, nil
 }
 
+func (h *AccountHandler) listAccountsForCurrentFilters(c *gin.Context) ([]service.Account, error) {
+	platform := c.Query("platform")
+	accountType := c.Query("type")
+	status := c.Query("status")
+	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+	planType := strings.ToLower(strings.TrimSpace(c.Query("plan_type")))
+	search := strings.TrimSpace(c.Query("search"))
+	sortBy := c.DefaultQuery("sort_by", "name")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+	if len(search) > 100 {
+		search = search[:100]
+	}
+
+	var groupID int64
+	if groupIDStr := c.Query("group"); groupIDStr != "" {
+		if groupIDStr == accountListGroupUngroupedQueryValue {
+			groupID = service.AccountListGroupUngrouped
+		} else {
+			parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
+			if parseErr != nil || parsedGroupID < 0 {
+				return nil, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter")
+			}
+			groupID = parsedGroupID
+		}
+	}
+
+	return h.listAccountsFiltered(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode, planType, sortBy, sortOrder)
+}
+
 func (h *AccountHandler) resolveExportAccounts(ctx context.Context, ids []int64, c *gin.Context) ([]service.Account, error) {
 	if len(ids) > 0 {
 		accounts, err := h.adminService.GetAccountsByIDs(ctx, ids)

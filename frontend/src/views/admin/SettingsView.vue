@@ -3821,6 +3821,60 @@
                   }}
                 </p>
               </div>
+
+              <!-- Codex Stability Mode -->
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.codexStability.title") }}
+                    </label>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.codexStability.description") }}
+                    </p>
+                  </div>
+                  <select
+                    v-model="form.codex_stability_mode"
+                    class="select max-w-xs"
+                  >
+                    <option value="off">
+                      {{ t("admin.settings.gatewayForwarding.codexStability.modeOff") }}
+                    </option>
+                    <option value="codex">
+                      {{ t("admin.settings.gatewayForwarding.codexStability.modeCodex") }}
+                    </option>
+                    <option value="all_openai_responses">
+                      {{ t("admin.settings.gatewayForwarding.codexStability.modeAllResponses") }}
+                    </option>
+                  </select>
+                </div>
+                <div class="mt-4 grid gap-3 md:grid-cols-2">
+                  <label class="flex items-center justify-between gap-3 rounded-md bg-gray-50 px-3 py-2 dark:bg-dark-800">
+                    <span class="text-sm text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.codexStability.dynamicHeaderTimeout") }}
+                    </span>
+                    <Toggle v-model="form.codex_stability_dynamic_header_timeout_enabled" />
+                  </label>
+                  <label class="flex items-center justify-between gap-3 rounded-md bg-gray-50 px-3 py-2 dark:bg-dark-800">
+                    <span class="text-sm text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.codexStability.requestPhaseFailover") }}
+                    </span>
+                    <Toggle v-model="form.codex_stability_request_phase_failover_enabled" />
+                  </label>
+                  <label class="flex items-center justify-between gap-3 rounded-md bg-gray-50 px-3 py-2 dark:bg-dark-800">
+                    <span class="text-sm text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.codexStability.suppressTimeoutHeaders") }}
+                    </span>
+                    <Toggle v-model="form.codex_stability_suppress_client_timeout_headers" />
+                  </label>
+                  <label class="flex items-center justify-between gap-3 rounded-md bg-gray-50 px-3 py-2 dark:bg-dark-800">
+                    <span class="text-sm text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.codexStability.streamKeepalive") }}
+                    </span>
+                    <Toggle v-model="form.codex_stability_stream_keepalive_enabled" />
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
           <!-- Web Search Emulation -->
@@ -6835,6 +6889,11 @@ type SettingsForm = Omit<
   google_oauth_client_secret: string;
   force_email_on_third_party_signup: boolean;
   openai_advanced_scheduler_enabled: boolean;
+  codex_stability_mode: "off" | "codex" | "all_openai_responses" | string;
+  codex_stability_dynamic_header_timeout_enabled: boolean;
+  codex_stability_request_phase_failover_enabled: boolean;
+  codex_stability_suppress_client_timeout_headers: boolean;
+  codex_stability_stream_keepalive_enabled: boolean;
 };
 
 const form = reactive<SettingsForm>({
@@ -7029,6 +7088,11 @@ const form = reactive<SettingsForm>({
   rewrite_message_cache_control: false,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  codex_stability_mode: "codex",
+  codex_stability_dynamic_header_timeout_enabled: true,
+  codex_stability_request_phase_failover_enabled: true,
+  codex_stability_suppress_client_timeout_headers: true,
+  codex_stability_stream_keepalive_enabled: true,
   // 余额、订阅到期与账号限额通知
   balance_low_notify_enabled: false,
   balance_low_notify_threshold: 0,
@@ -8133,6 +8197,15 @@ async function saveSettings() {
         form.antigravity_user_agent_version?.trim() || "",
       openai_codex_user_agent:
         form.openai_codex_user_agent?.trim() || "",
+      codex_stability_mode: form.codex_stability_mode || "codex",
+      codex_stability_dynamic_header_timeout_enabled:
+        form.codex_stability_dynamic_header_timeout_enabled,
+      codex_stability_request_phase_failover_enabled:
+        form.codex_stability_request_phase_failover_enabled,
+      codex_stability_suppress_client_timeout_headers:
+        form.codex_stability_suppress_client_timeout_headers,
+      codex_stability_stream_keepalive_enabled:
+        form.codex_stability_stream_keepalive_enabled,
       // Payment configuration
       payment_enabled: form.payment_enabled,
       risk_control_enabled: form.risk_control_enabled,

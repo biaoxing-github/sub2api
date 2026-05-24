@@ -512,6 +512,11 @@ export interface SystemSettings {
   rewrite_message_cache_control: boolean;
   antigravity_user_agent_version: string;
   openai_codex_user_agent: string;
+  codex_stability_mode: "off" | "codex" | "all_openai_responses" | string;
+  codex_stability_dynamic_header_timeout_enabled: boolean;
+  codex_stability_request_phase_failover_enabled: boolean;
+  codex_stability_suppress_client_timeout_headers: boolean;
+  codex_stability_stream_keepalive_enabled: boolean;
   web_search_emulation_enabled?: boolean;
 
   // Payment configuration
@@ -735,6 +740,11 @@ export interface UpdateSettingsRequest {
   rewrite_message_cache_control?: boolean;
   antigravity_user_agent_version?: string;
   openai_codex_user_agent?: string;
+  codex_stability_mode?: "off" | "codex" | "all_openai_responses" | string;
+  codex_stability_dynamic_header_timeout_enabled?: boolean;
+  codex_stability_request_phase_failover_enabled?: boolean;
+  codex_stability_suppress_client_timeout_headers?: boolean;
+  codex_stability_stream_keepalive_enabled?: boolean;
   // Payment configuration
   payment_enabled?: boolean;
   risk_control_enabled?: boolean;

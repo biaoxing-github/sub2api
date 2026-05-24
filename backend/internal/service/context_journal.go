@@ -37,6 +37,9 @@ type ContextJournal interface {
 	ListTurns(ctx context.Context, groupID int64, sessionHash string) ([]ContextJournalTurn, error)
 	BindResponse(ctx context.Context, groupID int64, responseID string, ref ContextJournalResponseRef, ttl time.Duration) error
 	GetResponse(ctx context.Context, groupID int64, responseID string) (*ContextJournalResponseRef, error)
+	GetResponseBinding(ctx context.Context, groupID int64, responseID string) (*ContextJournalResponseRef, error)
+	BuildReplay(ctx context.Context, groupID int64, sessionHash string) (*ContextJournalReplay, error)
+	IsReplaySafe(ctx context.Context, groupID int64, sessionHash string) (ContextJournalReplaySafetyResult, error)
 }
 
 type ContextJournalOptions struct {
@@ -50,10 +53,13 @@ type ContextJournalAppendInput struct {
 	SessionHash           string
 	AccountID             int64
 	Protocol              string
+	RequestProtocol       string
 	RequestBody           []byte
 	ResponseID            string
 	HasFunctionCallOutput bool
 	HasEncryptedReasoning bool
+	HasPreviousResponseID bool
+	ClientOutputStarted   bool
 }
 
 type ContextJournalTurn struct {
@@ -62,11 +68,14 @@ type ContextJournalTurn struct {
 	SessionHash           string
 	AccountID             int64
 	Protocol              string
+	RequestProtocol       string
 	RequestBody           []byte
 	RequestBodyHash       string
 	ResponseID            string
 	HasFunctionCallOutput bool
 	HasEncryptedReasoning bool
+	HasPreviousResponseID bool
+	ClientOutputStarted   bool
 	ReplaySafety          ContextReplaySafety
 	CreatedAt             time.Time
 	ExpiresAt             time.Time
@@ -88,6 +97,28 @@ type ContextJournalSessionState struct {
 	Overflow    bool
 	UpdatedAt   time.Time
 	ExpiresAt   time.Time
+}
+
+type ContextReplayReason string
+
+const (
+	ContextReplayReasonSafe                ContextReplayReason = "safe"
+	ContextReplayReasonMissingBody         ContextReplayReason = "missing_body"
+	ContextReplayReasonFunctionCallOutput  ContextReplayReason = "function_call_output_requires_previous_response"
+	ContextReplayReasonEncryptedReasoning  ContextReplayReason = "encrypted_reasoning_requires_original_account"
+	ContextReplayReasonClientOutputStarted ContextReplayReason = "client_output_started"
+	ContextReplayReasonJournalOverflow     ContextReplayReason = "journal_overflow"
+)
+
+type ContextJournalReplaySafetyResult struct {
+	Safe   bool
+	Reason ContextReplayReason
+}
+
+type ContextJournalReplay struct {
+	ContextJournalReplaySafetyResult
+	RequestBody []byte
+	Turns       []ContextJournalTurn
 }
 
 type ContextJournalRecordInput struct {
@@ -172,23 +203,30 @@ func (j *memoryContextJournal) AppendTurn(ctx context.Context, input ContextJour
 		session.state.ExpiresAt = expiresAt
 		return nil, ErrContextJournalSessionOverflow
 	}
+	protocol := strings.TrimSpace(input.RequestProtocol)
+	if protocol == "" {
+		protocol = strings.TrimSpace(input.Protocol)
+	}
 
 	turn := ContextJournalTurn{
 		TurnID:                newContextJournalTurnID(now),
 		GroupID:               input.GroupID,
 		SessionHash:           sessionHash,
 		AccountID:             input.AccountID,
-		Protocol:              strings.TrimSpace(input.Protocol),
+		Protocol:              protocol,
+		RequestProtocol:       protocol,
 		RequestBody:           body,
 		RequestBodyHash:       sha256Hex(body),
 		ResponseID:            strings.TrimSpace(input.ResponseID),
 		HasFunctionCallOutput: input.HasFunctionCallOutput || bodyHasFunctionCallOutput(body),
 		HasEncryptedReasoning: input.HasEncryptedReasoning || bodyHasEncryptedReasoning(body),
+		HasPreviousResponseID: input.HasPreviousResponseID || bodyHasPreviousResponseID(body),
+		ClientOutputStarted:   input.ClientOutputStarted,
 		ReplaySafety:          ClassifyContextReplaySafety(body),
 		CreatedAt:             now,
 		ExpiresAt:             expiresAt,
 	}
-	if turn.HasFunctionCallOutput || turn.HasEncryptedReasoning {
+	if turn.HasFunctionCallOutput || turn.HasEncryptedReasoning || turn.ClientOutputStarted {
 		turn.ReplaySafety = ContextReplayProtected
 	}
 
@@ -276,6 +314,30 @@ func (j *memoryContextJournal) GetResponse(ctx context.Context, groupID int64, r
 	return &out, nil
 }
 
+func (j *memoryContextJournal) GetResponseBinding(ctx context.Context, groupID int64, responseID string) (*ContextJournalResponseRef, error) {
+	return j.GetResponse(ctx, groupID, responseID)
+}
+
+func (j *memoryContextJournal) BuildReplay(ctx context.Context, groupID int64, sessionHash string) (*ContextJournalReplay, error) {
+	safety, turns, err := j.replaySafetyAndTurns(ctx, groupID, sessionHash)
+	if err != nil {
+		return nil, err
+	}
+	replay := &ContextJournalReplay{
+		ContextJournalReplaySafetyResult: safety,
+		Turns:                            turns,
+	}
+	if safety.Safe && len(turns) > 0 {
+		replay.RequestBody = cloneBytes(turns[len(turns)-1].RequestBody)
+	}
+	return replay, nil
+}
+
+func (j *memoryContextJournal) IsReplaySafe(ctx context.Context, groupID int64, sessionHash string) (ContextJournalReplaySafetyResult, error) {
+	safety, _, err := j.replaySafetyAndTurns(ctx, groupID, sessionHash)
+	return safety, err
+}
+
 func (j *memoryContextJournal) SessionState(ctx context.Context, groupID int64, sessionHash string) (ContextJournalSessionState, bool) {
 	if ctx != nil && ctx.Err() != nil {
 		return ContextJournalSessionState{}, false
@@ -296,6 +358,58 @@ func (j *memoryContextJournal) SessionState(ctx context.Context, groupID int64, 
 		return ContextJournalSessionState{}, false
 	}
 	return session.state, true
+}
+
+func (j *memoryContextJournal) replaySafetyAndTurns(ctx context.Context, groupID int64, sessionHash string) (ContextJournalReplaySafetyResult, []ContextJournalTurn, error) {
+	if err := ctx.Err(); err != nil {
+		return ContextJournalReplaySafetyResult{}, nil, err
+	}
+	if j == nil {
+		return ContextJournalReplaySafetyResult{}, nil, errors.New("context journal is not configured")
+	}
+	key := contextJournalSessionKey(groupID, sessionHash)
+	if key == "" {
+		return protectedReplayResult(ContextReplayReasonMissingBody), nil, nil
+	}
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	now := j.now().UTC()
+	j.cleanupLocked(now)
+	session := j.sessions[key]
+	if session == nil {
+		return protectedReplayResult(ContextReplayReasonMissingBody), nil, nil
+	}
+	turns := cloneContextJournalTurns(session.turns)
+	if session.state.Overflow {
+		return protectedReplayResult(ContextReplayReasonJournalOverflow), turns, nil
+	}
+	return classifyReplayTurns(turns), turns, nil
+}
+
+func classifyReplayTurns(turns []ContextJournalTurn) ContextJournalReplaySafetyResult {
+	if len(turns) == 0 {
+		return protectedReplayResult(ContextReplayReasonMissingBody)
+	}
+	for _, turn := range turns {
+		switch {
+		case len(turn.RequestBody) == 0:
+			return protectedReplayResult(ContextReplayReasonMissingBody)
+		case turn.HasFunctionCallOutput:
+			return protectedReplayResult(ContextReplayReasonFunctionCallOutput)
+		case turn.HasEncryptedReasoning:
+			return protectedReplayResult(ContextReplayReasonEncryptedReasoning)
+		case turn.ClientOutputStarted:
+			return protectedReplayResult(ContextReplayReasonClientOutputStarted)
+		case ClassifyContextReplaySafety(turn.RequestBody) != ContextReplaySafe:
+			return protectedReplayResult(ContextReplayReasonMissingBody)
+		}
+	}
+	return ContextJournalReplaySafetyResult{Safe: true, Reason: ContextReplayReasonSafe}
+}
+
+func protectedReplayResult(reason ContextReplayReason) ContextJournalReplaySafetyResult {
+	return ContextJournalReplaySafetyResult{Safe: false, Reason: reason}
 }
 
 func (j *memoryContextJournal) cleanupLocked(now time.Time) {
@@ -394,6 +508,10 @@ func bodyHasFunctionCallOutput(body []byte) bool {
 
 func bodyHasEncryptedReasoning(body []byte) bool {
 	return bytesContainsString(body, `"encrypted_content"`)
+}
+
+func bodyHasPreviousResponseID(body []byte) bool {
+	return bytesContainsString(body, `"previous_response_id"`)
 }
 
 func bytesContainsString(body []byte, needle string) bool {

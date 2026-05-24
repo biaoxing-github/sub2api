@@ -2131,6 +2131,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	setOpenAICompatMessagesBridgeContext(c, compatMessagesBridge)
 
 	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || (s.cfg != nil && s.cfg.Gateway.ForceCodexCLI)
+	stabilityPolicy := s.openAICodexStabilityPolicy(isCodexCLI)
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
 	clientTransport := GetOpenAIClientTransport(c)
 	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
@@ -2166,7 +2167,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if passthroughEnabled {
 		// 透传分支只需要轻量提取字段，避免热路径全量 Unmarshal。
 		reasoningEffort := extractOpenAIReasoningEffortFromBody(body, reqModel)
-		return s.forwardOpenAIPassthrough(ctx, c, account, originalBody, reqModel, reasoningEffort, reqStream, startTime)
+		return s.forwardOpenAIPassthrough(ctx, c, account, originalBody, reqModel, reasoningEffort, reqStream, startTime, stabilityPolicy)
 	}
 
 	reqBody, err := getOpenAIRequestBodyMap(c, body)
@@ -2819,11 +2820,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
-		resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body)
+		resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body, stabilityPolicy)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
-			if isOpenAIRequestPhaseTransientError(err) {
+			if stabilityPolicy.RequestPhaseFailoverEnabled && isOpenAIRequestPhaseTransientError(err) {
 				return nil, s.newOpenAIRequestFailoverError(c, account, false, safeErr)
 			}
 			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
@@ -2968,6 +2969,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reasoningEffort *string,
 	reqStream bool,
 	startTime time.Time,
+	stabilityPolicy openAICodexStabilityPolicy,
 ) (*OpenAIForwardResult, error) {
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) {
@@ -3098,7 +3100,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				zap.Int64("account_id", account.ID),
 				zap.Strings("timeout_headers", timeoutHeaders),
 			)
-			if s.isOpenAIPassthroughTimeoutHeadersAllowed() {
+			if s.isOpenAIPassthroughTimeoutHeadersAllowedForPolicy(stabilityPolicy) {
 				streamWarnLogger.Warn("OpenAI passthrough 透传请求包含超时相关请求头，且当前配置为放行，可能导致上游提前断流")
 			} else {
 				streamWarnLogger.Warn("OpenAI passthrough 检测到超时相关请求头，将按配置过滤以降低断流风险")
@@ -3113,7 +3115,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
+	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token, stabilityPolicy)
 	releaseUpstreamCtx()
 	if err != nil {
 		return nil, err
@@ -3129,11 +3131,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	upstreamStart := time.Now()
-	resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body)
+	resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body, stabilityPolicy)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		if isOpenAIRequestPhaseTransientError(err) {
+		if stabilityPolicy.RequestPhaseFailoverEnabled && isOpenAIRequestPhaseTransientError(err) {
 			return nil, s.newOpenAIRequestFailoverError(c, account, true, safeErr)
 		}
 		setOpsUpstreamError(c, 0, safeErr, "")
@@ -3257,6 +3259,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	account *Account,
 	body []byte,
 	token string,
+	stabilityPolicy openAICodexStabilityPolicy,
 ) (*http.Request, error) {
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
@@ -3280,7 +3283,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	}
 
 	// 透传客户端请求头（安全白名单）。
-	allowTimeoutHeaders := s.isOpenAIPassthroughTimeoutHeadersAllowed()
+	allowTimeoutHeaders := s.isOpenAIPassthroughTimeoutHeadersAllowedForPolicy(stabilityPolicy)
 	if c != nil && c.Request != nil {
 		for key, values := range c.Request.Header {
 			lower := strings.ToLower(strings.TrimSpace(key))
@@ -3489,6 +3492,13 @@ func (s *OpenAIGatewayService) isOpenAIPassthroughTimeoutHeadersAllowed() bool {
 	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIPassthroughAllowTimeoutHeaders
 }
 
+func (s *OpenAIGatewayService) isOpenAIPassthroughTimeoutHeadersAllowedForPolicy(policy openAICodexStabilityPolicy) bool {
+	if policy.Enabled && policy.SuppressClientTimeoutHeaders {
+		return false
+	}
+	return s.isOpenAIPassthroughTimeoutHeadersAllowed()
+}
+
 func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 	if h == nil {
 		return nil
@@ -3611,6 +3621,46 @@ type openAIUpstreamDoResult struct {
 	err  error
 }
 
+type openAICodexStabilityPolicy struct {
+	Enabled                      bool
+	DynamicHeaderTimeoutEnabled  bool
+	RequestPhaseFailoverEnabled  bool
+	SuppressClientTimeoutHeaders bool
+	StreamKeepaliveEnabled       bool
+}
+
+func (s *OpenAIGatewayService) openAICodexStabilityPolicy(isCodexCLI bool) openAICodexStabilityPolicy {
+	if s == nil || s.cfg == nil {
+		return openAICodexStabilityPolicy{}
+	}
+	stability := s.cfg.Gateway.CodexStability
+	mode := strings.ToLower(strings.TrimSpace(stability.Mode))
+	if mode == "" {
+		mode = config.GatewayCodexStabilityModeCodex
+	}
+	enabled := false
+	switch mode {
+	case config.GatewayCodexStabilityModeCodex:
+		enabled = isCodexCLI
+	case config.GatewayCodexStabilityModeAllOpenAIResponses:
+		enabled = true
+	case config.GatewayCodexStabilityModeOff:
+		enabled = false
+	default:
+		enabled = false
+	}
+	if !enabled {
+		return openAICodexStabilityPolicy{}
+	}
+	return openAICodexStabilityPolicy{
+		Enabled:                      true,
+		DynamicHeaderTimeoutEnabled:  stability.DynamicHeaderTimeoutEnabled,
+		RequestPhaseFailoverEnabled:  stability.RequestPhaseFailoverEnabled,
+		SuppressClientTimeoutHeaders: stability.SuppressClientTimeoutHeaders,
+		StreamKeepaliveEnabled:       stability.StreamKeepaliveEnabled,
+	}
+}
+
 func (s *OpenAIGatewayService) openAIRequestHeaderTimeout() time.Duration {
 	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds <= 0 {
 		return 0
@@ -3619,6 +3669,16 @@ func (s *OpenAIGatewayService) openAIRequestHeaderTimeout() time.Duration {
 }
 
 func (s *OpenAIGatewayService) openAIRequestHeaderTimeoutForBody(body []byte) time.Duration {
+	return s.openAIRequestHeaderTimeoutForBodyWithPolicy(body, openAICodexStabilityPolicy{
+		Enabled:                     true,
+		DynamicHeaderTimeoutEnabled: true,
+	})
+}
+
+func (s *OpenAIGatewayService) openAIRequestHeaderTimeoutForBodyWithPolicy(body []byte, policy openAICodexStabilityPolicy) time.Duration {
+	if !policy.Enabled || !policy.DynamicHeaderTimeoutEnabled {
+		return 0
+	}
 	configured := s.openAIRequestHeaderTimeout()
 	if configured <= 0 {
 		return 0
@@ -3674,6 +3734,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	proxyURL string,
 	account *Account,
 	body []byte,
+	stabilityPolicy openAICodexStabilityPolicy,
 ) (*http.Response, error) {
 	if s == nil || s.httpUpstream == nil {
 		return nil, errors.New("http upstream not configured")
@@ -3681,7 +3742,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	if req == nil {
 		return nil, errors.New("upstream request is nil")
 	}
-	timeout := s.openAIRequestHeaderTimeoutForBody(body)
+	timeout := s.openAIRequestHeaderTimeoutForBodyWithPolicy(body, stabilityPolicy)
 	if timeout <= 0 {
 		accountID, accountConcurrency := openAIRequestAccountParams(account)
 		return s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)

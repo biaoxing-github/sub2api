@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 type OpsRequestKind string
@@ -111,6 +114,26 @@ type OpsRequestDetailList struct {
 	PageSize int                 `json:"page_size"`
 }
 
+type OpsRequestTimelineEvent struct {
+	At          time.Time      `json:"at"`
+	Phase       string         `json:"phase"`
+	EventType   string         `json:"event_type"`
+	AccountID   *int64         `json:"account_id,omitempty"`
+	AccountName string         `json:"account_name,omitempty"`
+	Reason      string         `json:"reason,omitempty"`
+	LatencyMs   *int64         `json:"latency_ms,omitempty"`
+	Details     map[string]any `json:"details,omitempty"`
+}
+
+type OpsRequestTimeline struct {
+	RequestID       string                    `json:"request_id"`
+	ClientRequestID string                    `json:"client_request_id,omitempty"`
+	StartedAt       *time.Time                `json:"started_at,omitempty"`
+	EndedAt         *time.Time                `json:"ended_at,omitempty"`
+	Status          string                    `json:"status"`
+	Events          []OpsRequestTimelineEvent `json:"events"`
+}
+
 func (s *OpsService) ListRequestDetails(ctx context.Context, filter *OpsRequestDetailFilter) (*OpsRequestDetailList, error) {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return nil, err
@@ -148,4 +171,60 @@ func (s *OpsService) ListRequestDetails(ctx context.Context, filter *OpsRequestD
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+func (s *OpsService) GetRequestTimeline(ctx context.Context, requestID string) (*OpsRequestTimeline, error) {
+	if err := s.RequireMonitoringEnabled(ctx); err != nil {
+		return nil, err
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return nil, infraerrors.BadRequest("INVALID_REQUEST_ID", "request_id is required")
+	}
+	timeline := &OpsRequestTimeline{
+		RequestID: requestID,
+		Status:    "unknown",
+		Events:    []OpsRequestTimelineEvent{},
+	}
+	if s.opsRepo == nil {
+		return timeline, nil
+	}
+	filter := &OpsRequestDetailFilter{
+		RequestID: requestID,
+		Kind:      "all",
+		Page:      1,
+		PageSize:  1,
+	}
+	now := time.Now()
+	start := now.Add(-72 * time.Hour)
+	filter.StartTime = &start
+	filter.EndTime = &now
+	items, _, err := s.opsRepo.ListRequestDetails(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 || items[0] == nil {
+		return timeline, nil
+	}
+	item := items[0]
+	timeline.StartedAt = &item.CreatedAt
+	if item.DurationMs != nil {
+		endedAt := item.CreatedAt.Add(time.Duration(*item.DurationMs) * time.Millisecond)
+		timeline.EndedAt = &endedAt
+	}
+	timeline.Status = string(item.Kind)
+	timeline.Events = append(timeline.Events, OpsRequestTimelineEvent{
+		At:        item.CreatedAt,
+		Phase:     "request",
+		EventType: "request_recorded",
+		Reason:    item.Message,
+		Details: map[string]any{
+			"kind":        item.Kind,
+			"platform":    item.Platform,
+			"model":       item.Model,
+			"status_code": item.StatusCode,
+			"stream":      item.Stream,
+		},
+	})
+	return timeline, nil
 }

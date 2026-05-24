@@ -1790,6 +1790,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyRewriteMessageCacheControl] = strconv.FormatBool(settings.RewriteMessageCacheControl)
 	updates[SettingKeyAntigravityUserAgentVersion] = antigravity.NormalizeUserAgentVersion(settings.AntigravityUserAgentVersion)
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
+	updates[SettingKeyCodexStabilityMode] = normalizeCodexStabilityMode(settings.CodexStabilityMode)
+	updates[SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled] = strconv.FormatBool(settings.CodexStabilityDynamicHeaderTimeoutEnabled)
+	updates[SettingKeyCodexStabilityRequestPhaseFailoverEnabled] = strconv.FormatBool(settings.CodexStabilityRequestPhaseFailoverEnabled)
+	updates[SettingKeyCodexStabilitySuppressClientTimeoutHeaders] = strconv.FormatBool(settings.CodexStabilitySuppressClientTimeoutHeaders)
+	updates[SettingKeyCodexStabilityStreamKeepaliveEnabled] = strconv.FormatBool(settings.CodexStabilityStreamKeepaliveEnabled)
 	updates[SettingPaymentVisibleMethodAlipaySource] = settings.PaymentVisibleMethodAlipaySource
 	updates[SettingPaymentVisibleMethodWxpaySource] = settings.PaymentVisibleMethodWxpaySource
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
@@ -1889,6 +1894,11 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	})
 	if s.cfg != nil {
 		s.cfg.SetTrustForwardedIPForAPIKeyACL(settings.APIKeyACLTrustForwardedIP)
+		s.cfg.Gateway.CodexStability.Mode = normalizeCodexStabilityMode(settings.CodexStabilityMode)
+		s.cfg.Gateway.CodexStability.DynamicHeaderTimeoutEnabled = settings.CodexStabilityDynamicHeaderTimeoutEnabled
+		s.cfg.Gateway.CodexStability.RequestPhaseFailoverEnabled = settings.CodexStabilityRequestPhaseFailoverEnabled
+		s.cfg.Gateway.CodexStability.SuppressClientTimeoutHeaders = settings.CodexStabilitySuppressClientTimeoutHeaders
+		s.cfg.Gateway.CodexStability.StreamKeepaliveEnabled = settings.CodexStabilityStreamKeepaliveEnabled
 	}
 	if s.onUpdate != nil {
 		s.onUpdate() // Invalidate cache after settings update
@@ -2623,16 +2633,21 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyMaxClaudeCodeVersion: "",
 
 		// 分组隔离（默认不允许未分组 Key 调度）
-		SettingKeyAllowUngroupedKeyScheduling:        "false",
-		SettingKeyEnableAnthropicCacheTTL1hInjection: "false",
-		SettingKeyRewriteMessageCacheControl:         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
-		SettingKeyAntigravityUserAgentVersion:        "",
-		SettingKeyOpenAICodexUserAgent:               "",
-		SettingPaymentVisibleMethodAlipaySource:      "",
-		SettingPaymentVisibleMethodWxpaySource:       "",
-		SettingPaymentVisibleMethodAlipayEnabled:     "false",
-		SettingPaymentVisibleMethodWxpayEnabled:      "false",
-		openAIAdvancedSchedulerSettingKey:            "false",
+		SettingKeyAllowUngroupedKeyScheduling:                "false",
+		SettingKeyEnableAnthropicCacheTTL1hInjection:         "false",
+		SettingKeyRewriteMessageCacheControl:                 strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
+		SettingKeyAntigravityUserAgentVersion:                "",
+		SettingKeyOpenAICodexUserAgent:                       "",
+		SettingKeyCodexStabilityMode:                         config.GatewayCodexStabilityModeCodex,
+		SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled:  "true",
+		SettingKeyCodexStabilityRequestPhaseFailoverEnabled:  "true",
+		SettingKeyCodexStabilitySuppressClientTimeoutHeaders: "true",
+		SettingKeyCodexStabilityStreamKeepaliveEnabled:       "true",
+		SettingPaymentVisibleMethodAlipaySource:              "",
+		SettingPaymentVisibleMethodWxpaySource:               "",
+		SettingPaymentVisibleMethodAlipayEnabled:             "false",
+		SettingPaymentVisibleMethodWxpayEnabled:              "false",
+		openAIAdvancedSchedulerSettingKey:                    "false",
 	}
 
 	return s.settingRepo.SetMultiple(ctx, defaults)
@@ -3148,6 +3163,11 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result.AntigravityUserAgentVersion = antigravity.NormalizeUserAgentVersion(settings[SettingKeyAntigravityUserAgentVersion])
 	result.OpenAICodexUserAgent = strings.TrimSpace(settings[SettingKeyOpenAICodexUserAgent])
+	result.CodexStabilityMode = normalizeCodexStabilityMode(settings[SettingKeyCodexStabilityMode])
+	result.CodexStabilityDynamicHeaderTimeoutEnabled = !isFalseSettingValue(settings[SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled])
+	result.CodexStabilityRequestPhaseFailoverEnabled = !isFalseSettingValue(settings[SettingKeyCodexStabilityRequestPhaseFailoverEnabled])
+	result.CodexStabilitySuppressClientTimeoutHeaders = !isFalseSettingValue(settings[SettingKeyCodexStabilitySuppressClientTimeoutHeaders])
+	result.CodexStabilityStreamKeepaliveEnabled = !isFalseSettingValue(settings[SettingKeyCodexStabilityStreamKeepaliveEnabled])
 
 	// Web search emulation: quick enabled check from the JSON config
 	if raw := settings[SettingKeyWebSearchEmulationConfig]; raw != "" {
@@ -3201,6 +3221,17 @@ func isFalseSettingValue(value string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func normalizeCodexStabilityMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case config.GatewayCodexStabilityModeOff:
+		return config.GatewayCodexStabilityModeOff
+	case config.GatewayCodexStabilityModeAllOpenAIResponses:
+		return config.GatewayCodexStabilityModeAllOpenAIResponses
+	default:
+		return config.GatewayCodexStabilityModeCodex
 	}
 }
 

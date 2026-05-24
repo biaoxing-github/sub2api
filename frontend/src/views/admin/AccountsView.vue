@@ -181,6 +181,43 @@
           :loading="usageSummaryLoading"
           :error="usageSummaryError"
         />
+        <div class="mt-3 rounded-lg border border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+          <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  {{ t('admin.accounts.actionItems.title') }}
+                </span>
+                <span class="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
+                  {{ t('admin.accounts.actionItems.criticalCount', { count: actionItemCounts.critical }) }}
+                </span>
+                <span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+                  {{ t('admin.accounts.actionItems.warningCount', { count: actionItemCounts.warning }) }}
+                </span>
+                <span class="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700 dark:bg-sky-900/30 dark:text-sky-200">
+                  {{ t('admin.accounts.actionItems.infoCount', { count: actionItemCounts.info }) }}
+                </span>
+              </div>
+              <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+                <span>{{ actionItemsTotal > 0 ? t('admin.accounts.actionItems.description') : t('admin.accounts.actionItems.empty') }}</span>
+                <span v-if="actionItemsLoading" class="inline-flex items-center gap-1">
+                  <Icon name="refresh" size="xs" class="animate-spin" />
+                  {{ t('common.loading') }}
+                </span>
+                <span v-else-if="actionItemsError" class="text-rose-600 dark:text-rose-300">
+                  {{ actionItemsError }}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="btn btn-secondary shrink-0 px-3 py-1.5 text-sm"
+              @click="showActionItemsDialog = true"
+            >
+              {{ t('common.view') }}
+            </button>
+          </div>
+        </div>
         <div class="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
           <div class="flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div>
@@ -472,6 +509,100 @@
       </label>
     </ConfirmDialog>
     <BaseDialog
+      :show="showActionItemsDialog"
+      :title="t('admin.accounts.actionItems.title')"
+      width="wide"
+      @close="showActionItemsDialog = false"
+    >
+      <div class="space-y-3">
+        <div class="flex flex-col gap-2 rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-900/40 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-200">
+              {{ t('admin.accounts.actionItems.criticalCount', { count: actionItemCounts.critical }) }}
+            </span>
+            <span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+              {{ t('admin.accounts.actionItems.warningCount', { count: actionItemCounts.warning }) }}
+            </span>
+            <span class="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700 dark:bg-sky-900/30 dark:text-sky-200">
+              {{ t('admin.accounts.actionItems.infoCount', { count: actionItemCounts.info }) }}
+            </span>
+          </div>
+          <div class="text-xs text-gray-500 dark:text-gray-400">
+            <span v-if="actionItemsLoading" class="inline-flex items-center gap-1">
+              <Icon name="refresh" size="xs" class="animate-spin" />
+              {{ t('common.loading') }}
+            </span>
+            <span v-else-if="actionItemsError" class="text-rose-600 dark:text-rose-300">
+              {{ actionItemsError }}
+            </span>
+            <span v-else>{{ t('admin.accounts.actionItems.description') }}</span>
+          </div>
+        </div>
+        <div class="max-h-[60vh] overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700">
+          <div
+            v-if="!actionItemsLoading && actionItems.length === 0"
+            class="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
+          >
+            {{ t('admin.accounts.actionItems.empty') }}
+          </div>
+          <div v-else class="divide-y divide-gray-100 dark:divide-gray-700">
+            <div
+              v-for="item in actionItems"
+              :key="`${item.severity}-${item.account_id}-${item.reason}`"
+              class="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between"
+            >
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span :class="['rounded-full px-2 py-0.5 text-xs font-medium', actionItemSeverityClass(item.severity)]">
+                    {{ actionItemSeverityLabel(item.severity) }}
+                  </span>
+                  <span class="truncate font-medium text-gray-900 dark:text-gray-100">{{ item.account_name }}</span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">#{{ item.account_id }}</span>
+                </div>
+                <div class="mt-1 text-sm text-gray-700 dark:text-gray-200">
+                  {{ item.summary || item.reason }}
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.accounts.actionItems.suggestedAction') }} {{ item.suggested_action }}
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="btn btn-secondary px-2 py-1 text-xs"
+                  :disabled="refreshingUpstreamBalanceIds.has(item.account_id)"
+                  @click="handleActionItemRefreshBalance(item)"
+                >
+                  {{ t('admin.accounts.actionItems.refreshBalance') }}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary px-2 py-1 text-xs"
+                  :disabled="togglingSchedulable === item.account_id"
+                  @click="handleActionItemToggleSchedulable(item)"
+                >
+                  {{ item.schedulable ? t('admin.accounts.actionItems.pause') : t('admin.accounts.actionItems.resume') }}
+                </button>
+                <a
+                  class="btn btn-secondary px-2 py-1 text-xs"
+                  :href="buildActionItemRequestsHref(item)"
+                >
+                  {{ t('admin.accounts.actionItems.viewRequests') }}
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end">
+          <button class="btn btn-primary" type="button" @click="showActionItemsDialog = false">
+            {{ t('common.close') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+    <BaseDialog
       :show="showBulkRefreshErrors"
       :title="t('admin.accounts.bulkActions.refreshTokenErrorsTitle')"
       width="wide"
@@ -551,7 +682,20 @@ import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRules
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
-import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, AccountPoolUsageSummary, AccountStatusSummary } from '@/types'
+import type {
+  Account,
+  AccountActionItem,
+  AccountActionItemCounts,
+  AccountActionItemSeverity,
+  AccountPlatform,
+  AccountType,
+  Proxy as AccountProxy,
+  AdminGroup,
+  WindowStats,
+  ClaudeModel,
+  AccountPoolUsageSummary,
+  AccountStatusSummary
+} from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -683,6 +827,7 @@ const showTest = ref(false)
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
+const showActionItemsDialog = ref(false)
 const showBulkRefreshErrors = ref(false)
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
@@ -767,6 +912,12 @@ let usageSummaryAbortController: AbortController | null = null
 const statusSummary = ref<AccountStatusSummary | null>(null)
 const statusSummaryLoading = ref(false)
 const statusSummaryError = ref<string | null>(null)
+const actionItems = ref<AccountActionItem[]>([])
+const actionItemsLoading = ref(false)
+const actionItemsError = ref<string | null>(null)
+const dashboardSummaryLoading = ref(false)
+let dashboardSummaryAbortController: AbortController | null = null
+let actionItemsAbortController: AbortController | null = null
 const upstreamBalanceRefreshing = ref(false)
 const refreshingUpstreamBalanceIds = reactive<Set<number>>(new Set())
 let statusSummaryAbortController: AbortController | null = null
@@ -835,6 +986,37 @@ const buildStatusSummaryFilters = () => {
   return filters
 }
 
+const buildDashboardSummaryFilters = () => {
+  const rawParams = toRaw(params) as Record<string, unknown>
+  const filters: {
+    platform?: string
+    type?: string
+    status?: string
+    group?: string
+    search?: string
+    privacy_mode?: string
+    plan_type?: string
+    sort_by?: string
+    sort_order?: AccountSortOrder
+  } = {}
+  const stringFields = ['platform', 'type', 'status', 'group', 'search', 'privacy_mode', 'plan_type', 'sort_by'] as const
+  for (const field of stringFields) {
+    const value = rawParams[field]
+    if (typeof value === 'string' && value.trim() !== '') {
+      filters[field] = value
+    }
+  }
+  if (rawParams.sort_order === 'asc' || rawParams.sort_order === 'desc') {
+    filters.sort_order = rawParams.sort_order
+  }
+  return filters
+}
+
+const buildActionItemsFilters = () => {
+  const { sort_by: _sortBy, sort_order: _sortOrder, ...filters } = buildDashboardSummaryFilters()
+  return filters
+}
+
 const loadUsageSummary = async () => {
   usageSummaryAbortController?.abort()
   const controller = new AbortController()
@@ -881,6 +1063,76 @@ const loadStatusSummary = async () => {
       statusSummaryAbortController = null
     }
   }
+}
+
+const isCanceledError = (error: any) => {
+  return error?.name === 'AbortError' || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError'
+}
+
+const loadDashboardSummary = async () => {
+  dashboardSummaryAbortController?.abort()
+  const controller = new AbortController()
+  dashboardSummaryAbortController = controller
+  dashboardSummaryLoading.value = true
+  usageSummaryLoading.value = true
+  statusSummaryLoading.value = true
+  usageSummaryError.value = null
+  statusSummaryError.value = null
+  try {
+    const summary = await adminAPI.accounts.getDashboardSummary(buildDashboardSummaryFilters(), {
+      signal: controller.signal
+    })
+    statusSummary.value = summary.status_summary
+    usageSummary.value = summary.usage_summary ?? null
+    usageSummaryError.value = summary.usage_summary_error || null
+  } catch (error: any) {
+    if (isCanceledError(error)) {
+      return
+    }
+    console.error('Failed to load account dashboard summary:', error)
+    const fallbackError = error?.response?.data?.message || error?.message || t('admin.accounts.dashboardSummary.loadFailed')
+    statusSummaryError.value = fallbackError
+    usageSummaryError.value = fallbackError
+    await Promise.all([loadUsageSummary(), loadStatusSummary()])
+  } finally {
+    if (dashboardSummaryAbortController === controller) {
+      dashboardSummaryLoading.value = false
+      usageSummaryLoading.value = false
+      statusSummaryLoading.value = false
+      dashboardSummaryAbortController = null
+    }
+  }
+}
+
+const loadActionItems = async () => {
+  actionItemsAbortController?.abort()
+  const controller = new AbortController()
+  actionItemsAbortController = controller
+  actionItemsLoading.value = true
+  actionItemsError.value = null
+  try {
+    const response = await adminAPI.accounts.getActionItems(buildActionItemsFilters(), {
+      signal: controller.signal
+    })
+    actionItems.value = response.items ?? []
+    actionItemsError.value = response.error || null
+  } catch (error: any) {
+    if (isCanceledError(error)) {
+      return
+    }
+    console.error('Failed to load account action items:', error)
+    actionItems.value = []
+    actionItemsError.value = error?.response?.data?.message || error?.message || t('admin.accounts.actionItems.loadFailed')
+  } finally {
+    if (actionItemsAbortController === controller) {
+      actionItemsLoading.value = false
+      actionItemsAbortController = null
+    }
+  }
+}
+
+const loadAccountFirstScreenSummary = async () => {
+  await Promise.all([loadDashboardSummary(), loadActionItems()])
 }
 
 type AccountStatusSummaryKey = keyof AccountStatusSummary
@@ -941,6 +1193,39 @@ const accountStatusSummaryItems = computed(() => {
 })
 
 const statusSummaryTotal = computed(() => accountStatusSummaryItems.value.reduce((sum, item) => sum + item.value, 0))
+
+const actionItemCounts = computed<AccountActionItemCounts>(() => {
+  return actionItems.value.reduce<AccountActionItemCounts>((counts, item) => {
+    counts[item.severity] += 1
+    return counts
+  }, { critical: 0, warning: 0, info: 0 })
+})
+
+const actionItemsTotal = computed(() => {
+  return actionItemCounts.value.critical + actionItemCounts.value.warning + actionItemCounts.value.info
+})
+
+const actionItemSeverityClass = (severity: AccountActionItemSeverity) => {
+  if (severity === 'critical') return 'bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200'
+  if (severity === 'warning') return 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
+  return 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-200'
+}
+
+const actionItemSeverityLabel = (severity: AccountActionItemSeverity) => {
+  return t(`admin.accounts.actionItems.severity.${severity}`)
+}
+
+const buildActionItemRequestsHref = (item: AccountActionItem) => {
+  const params = new URLSearchParams()
+  params.set('account_id', String(item.account_id))
+  if (item.request_id) {
+    params.set('request_id', item.request_id)
+    params.set('open_request_timeline', '1')
+  } else {
+    params.set('open_error_details', '1')
+  }
+  return `/admin/ops?${params.toString()}`
+}
 
 const buildDefaultTodayStats = (): WindowStats => ({
   requests: 0,
@@ -1177,7 +1462,7 @@ const load = async () => {
     isFirstLoad.value = false
     delete requestParams.lite
   }
-  await Promise.all([refreshTodayStatsBatch(), loadUsageSummary(), loadStatusSummary()])
+  await Promise.all([refreshTodayStatsBatch(), loadAccountFirstScreenSummary()])
 }
 
 const reload = async () => {
@@ -1185,7 +1470,7 @@ const reload = async () => {
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
   await baseReload()
-  await Promise.all([refreshTodayStatsBatch(), loadUsageSummary(), loadStatusSummary()])
+  await Promise.all([refreshTodayStatsBatch(), loadAccountFirstScreenSummary()])
 }
 
 const debouncedReload = () => {
@@ -1225,7 +1510,7 @@ const handleSort = (key: string, order: AccountSortOrder) => {
 watch(loading, (isLoading, wasLoading) => {
   if (wasLoading && !isLoading && pendingTodayStatsRefresh.value) {
     pendingTodayStatsRefresh.value = false
-    Promise.all([refreshTodayStatsBatch(), loadUsageSummary(), loadStatusSummary()]).catch((error) => {
+    Promise.all([refreshTodayStatsBatch(), loadAccountFirstScreenSummary()]).catch((error) => {
       console.error('Failed to refresh account stats after table load:', error)
     })
   }
@@ -1246,6 +1531,7 @@ const isAnyModalOpen = computed(() => {
     showStats.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
+    showActionItemsDialog.value ||
     showTLSFingerprintProfiles.value
   )
 })
@@ -1344,7 +1630,7 @@ const refreshAccountsIncrementally = async () => {
       hasPendingListSync.value = false
     }
 
-    await Promise.all([refreshTodayStatsBatch(), loadUsageSummary(), loadStatusSummary()])
+    await Promise.all([refreshTodayStatsBatch(), loadAccountFirstScreenSummary()])
   } catch (error) {
     console.error('Auto refresh failed:', error)
   } finally {
@@ -1389,7 +1675,7 @@ const handleRefreshUpstreamBalances = async () => {
     const result = await adminAPI.accounts.refreshUpstreamBalances()
     appStore.showSuccess(t('admin.accounts.refreshUpstreamBalancesSuccess', { count: result.refreshed }))
     closeAccountToolsDropdown()
-    await Promise.all([load(), loadUsageSummary()])
+    await Promise.all([load(), loadAccountFirstScreenSummary()])
   } catch (error: any) {
     console.error('Failed to refresh upstream balances:', error)
     appStore.showError(error?.response?.data?.message || error?.message || t('admin.accounts.refreshUpstreamBalancesFailed'))
@@ -1410,12 +1696,51 @@ const handleRefreshUpstreamBalance = async (account: Account) => {
     patchAccountInList(updated)
     enterAutoRefreshSilentWindow()
     appStore.showSuccess(t('admin.accounts.refreshUpstreamBalanceSuccess'))
-    await loadUsageSummary()
+    await loadAccountFirstScreenSummary()
   } catch (error: any) {
     console.error('Failed to refresh upstream balance:', error)
     appStore.showError(error?.response?.data?.message || error?.message || t('admin.accounts.refreshUpstreamBalanceFailed'))
   } finally {
     refreshingUpstreamBalanceIds.delete(account.id)
+  }
+}
+
+const handleActionItemRefreshBalance = async (item: AccountActionItem) => {
+  if (refreshingUpstreamBalanceIds.has(item.account_id)) return
+  refreshingUpstreamBalanceIds.add(item.account_id)
+  try {
+    const updated = await adminAPI.accounts.refreshUpstreamBalance(item.account_id)
+    patchAccountInList(updated)
+    enterAutoRefreshSilentWindow()
+    appStore.showSuccess(t('admin.accounts.refreshUpstreamBalanceSuccess'))
+    await loadAccountFirstScreenSummary()
+  } catch (error: any) {
+    console.error('Failed to refresh action item upstream balance:', error)
+    appStore.showError(error?.response?.data?.message || error?.message || t('admin.accounts.refreshUpstreamBalanceFailed'))
+  } finally {
+    refreshingUpstreamBalanceIds.delete(item.account_id)
+  }
+}
+
+const handleActionItemToggleSchedulable = async (item: AccountActionItem) => {
+  if (togglingSchedulable.value === item.account_id) return
+  const nextSchedulable = !item.schedulable
+  togglingSchedulable.value = item.account_id
+  try {
+    const updated = await adminAPI.accounts.setSchedulable(item.account_id, nextSchedulable)
+    updateSchedulableInList([item.account_id], updated?.schedulable ?? nextSchedulable)
+    actionItems.value = actionItems.value.map((current) => (
+      current.account_id === item.account_id
+        ? { ...current, schedulable: updated?.schedulable ?? nextSchedulable }
+        : current
+    ))
+    enterAutoRefreshSilentWindow()
+    await loadAccountFirstScreenSummary()
+  } catch (error) {
+    console.error('Failed to toggle action item schedulable:', error)
+    appStore.showError(t('admin.accounts.failedToToggleSchedulable'))
+  } finally {
+    togglingSchedulable.value = null
   }
 }
 
@@ -1672,7 +1997,7 @@ const handleBulkRefreshToken = async () => {
     if (result.accounts?.length) {
       enterAutoRefreshSilentWindow()
       usageManualRefreshToken.value += 1
-      Promise.all([reload(), loadUsageSummary(), loadStatusSummary()]).catch((error) => {
+      Promise.all([reload(), loadAccountFirstScreenSummary()]).catch((error) => {
         console.error('Failed to refresh account list after bulk token refresh:', error)
       })
     }
@@ -2140,6 +2465,8 @@ onMounted(async () => {
 onUnmounted(() => {
   usageSummaryAbortController?.abort()
   statusSummaryAbortController?.abort()
+  dashboardSummaryAbortController?.abort()
+  actionItemsAbortController?.abort()
   window.removeEventListener('scroll', handleScroll, true)
   document.removeEventListener('click', handleClickOutside)
 })

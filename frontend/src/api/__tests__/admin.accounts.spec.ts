@@ -16,7 +16,13 @@ vi.mock('@/api/client', () => ({
   },
 }))
 
-import { getStatusSummary, getUsageSummary, list } from '@/api/admin/accounts'
+import {
+  getActionItems,
+  getDashboardSummary,
+  getStatusSummary,
+  getUsageSummary,
+  list
+} from '@/api/admin/accounts'
 
 describe('admin accounts api usage summary', () => {
   beforeEach(() => {
@@ -130,6 +136,96 @@ describe('admin accounts api usage summary', () => {
       temp_unschedulable: 4,
       unschedulable: 5,
     })
+  })
+
+  it('loads dashboard summary with account list filters in one request', async () => {
+    const response = {
+      generated_at: '2026-05-24T10:00:00Z',
+      status_summary: {
+        active: 10,
+        rate_limited: 2,
+        error: 1,
+        inactive: 3,
+        temp_unschedulable: 1,
+        unschedulable: 4,
+      },
+      usage_summary: null,
+      balance_summary: {
+        healthy: 8,
+        draining: 2,
+        exhausted: 1,
+        balance_unknown: 3,
+        missing_snapshot: 4,
+      },
+      action_item_counts: {
+        critical: 2,
+        warning: 5,
+        info: 4,
+      },
+    }
+    get.mockResolvedValue({ data: response })
+
+    const result = await getDashboardSummary({
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      group: '12',
+      search: 'free',
+      plan_type: 'free',
+      privacy_mode: 'training_off',
+      sort_by: 'name',
+      sort_order: 'asc',
+    })
+
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(get).toHaveBeenCalledWith('/admin/accounts/dashboard-summary', {
+      params: {
+        platform: 'openai',
+        type: 'oauth',
+        status: 'active',
+        group: '12',
+        search: 'free',
+        plan_type: 'free',
+        privacy_mode: 'training_off',
+        sort_by: 'name',
+        sort_order: 'asc',
+      },
+      signal: undefined,
+    })
+    expect(result).toEqual(response)
+  })
+
+  it('loads action items with account filters', async () => {
+    const response = {
+      generated_at: '2026-05-24T10:00:00Z',
+      items: [
+        {
+          account_id: 12,
+          account_name: 'openai-a',
+          severity: 'critical',
+          reason: 'header_timeout_spike',
+          summary: '5 header timeouts in the last hour',
+          suggested_action: 'Pause or refresh balance',
+          status: 'active',
+          schedulable: true,
+        },
+      ],
+    }
+    get.mockResolvedValue({ data: response })
+
+    const result = await getActionItems({
+      platform: 'openai',
+      group: '12',
+    })
+
+    expect(get).toHaveBeenCalledWith('/admin/accounts/action-items', {
+      params: {
+        platform: 'openai',
+        group: '12',
+      },
+      signal: undefined,
+    })
+    expect(result).toEqual(response)
   })
 
   it('passes plan type when listing accounts', async () => {

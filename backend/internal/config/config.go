@@ -675,6 +675,25 @@ const (
 	ImageConcurrencyOverflowModeWait   = "wait"
 )
 
+const (
+	GatewayCodexStabilityModeOff                = "off"
+	GatewayCodexStabilityModeCodex              = "codex"
+	GatewayCodexStabilityModeAllOpenAIResponses = "all_openai_responses"
+)
+
+type GatewayCodexStabilityConfig struct {
+	// Mode: Codex 稳定模式。off=透明代理，codex=仅 Codex 客户端，all_openai_responses=全部 Responses 请求。
+	Mode string `mapstructure:"mode"`
+	// DynamicHeaderTimeoutEnabled: 是否按请求体大小动态缩短等待上游响应头的时间。
+	DynamicHeaderTimeoutEnabled bool `mapstructure:"dynamic_header_timeout_enabled"`
+	// RequestPhaseFailoverEnabled: 是否允许请求阶段 EOF/header timeout 在未输出前切换账号。
+	RequestPhaseFailoverEnabled bool `mapstructure:"request_phase_failover_enabled"`
+	// SuppressClientTimeoutHeaders: 稳定模式下是否屏蔽客户端短超时头。
+	SuppressClientTimeoutHeaders bool `mapstructure:"suppress_client_timeout_headers"`
+	// StreamKeepaliveEnabled: 稳定模式下是否启用流式 keepalive。
+	StreamKeepaliveEnabled bool `mapstructure:"stream_keepalive_enabled"`
+}
+
 // GatewayConfig API网关相关配置
 type GatewayConfig struct {
 	// 等待上游响应头的超时时间（秒），0表示无超时
@@ -683,6 +702,8 @@ type GatewayConfig struct {
 	// OpenAIRequestHeaderTimeoutSeconds: OpenAI /responses 单次账号等待响应头的超时时间（秒）。
 	// 比全局 response_header_timeout 更短，用于快速切换卡在思考前的账号；0 表示不启用额外保护。
 	OpenAIRequestHeaderTimeoutSeconds int `mapstructure:"openai_request_header_timeout_seconds"`
+	// CodexStability: Codex/OpenAI Responses 稳定模式总开关与策略细项。
+	CodexStability GatewayCodexStabilityConfig `mapstructure:"codex_stability"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
 	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
@@ -1811,6 +1832,11 @@ func setDefaults() {
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.openai_request_header_timeout_seconds", 20)
+	viper.SetDefault("gateway.codex_stability.mode", GatewayCodexStabilityModeCodex)
+	viper.SetDefault("gateway.codex_stability.dynamic_header_timeout_enabled", true)
+	viper.SetDefault("gateway.codex_stability.request_phase_failover_enabled", true)
+	viper.SetDefault("gateway.codex_stability.suppress_client_timeout_headers", true)
+	viper.SetDefault("gateway.codex_stability.stream_keepalive_enabled", true)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
 	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
 	viper.SetDefault("gateway.proxy_probe_response_read_max_bytes", int64(1024*1024))
@@ -2396,6 +2422,18 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIRequestHeaderTimeoutSeconds < 0 {
 		return fmt.Errorf("gateway.openai_request_header_timeout_seconds must be non-negative")
+	}
+	c.Gateway.CodexStability.Mode = strings.ToLower(strings.TrimSpace(c.Gateway.CodexStability.Mode))
+	if c.Gateway.CodexStability.Mode == "" {
+		c.Gateway.CodexStability.Mode = GatewayCodexStabilityModeCodex
+	}
+	switch c.Gateway.CodexStability.Mode {
+	case GatewayCodexStabilityModeOff, GatewayCodexStabilityModeCodex, GatewayCodexStabilityModeAllOpenAIResponses:
+	default:
+		return fmt.Errorf("gateway.codex_stability.mode must be one of: %s/%s/%s",
+			GatewayCodexStabilityModeOff,
+			GatewayCodexStabilityModeCodex,
+			GatewayCodexStabilityModeAllOpenAIResponses)
 	}
 	if c.Gateway.MaxIdleConns <= 0 {
 		return fmt.Errorf("gateway.max_idle_conns must be positive")

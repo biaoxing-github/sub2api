@@ -598,6 +598,22 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 	response.Paginated(c, out.Items, out.Total, out.Page, out.PageSize)
 }
 
+// GetRequestTimeline returns a request timeline skeleton/detail.
+// GET /api/v1/admin/ops/requests/:request_id/timeline
+func (h *OpsHandler) GetRequestTimeline(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	requestID := strings.TrimSpace(c.Param("request_id"))
+	timeline, err := h.opsService.GetRequestTimeline(c.Request.Context(), requestID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, timeline)
+}
+
 type opsResolveRequest struct {
 	Resolved bool `json:"resolved"`
 }

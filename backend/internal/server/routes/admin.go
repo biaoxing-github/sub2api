@@ -189,6 +189,7 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 
 		// Request drilldown (success + error)
 		ops.GET("/requests", h.Admin.Ops.ListRequestDetails)
+		ops.GET("/requests/:request_id/timeline", h.Admin.Ops.GetRequestTimeline)
 
 		// Indexed system logs
 		ops.GET("/system-logs", h.Admin.Ops.ListSystemLogs)
@@ -274,6 +275,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	accounts := admin.Group("/accounts")
 	{
 		accounts.GET("", h.Admin.Account.List)
+		accounts.GET("/dashboard-summary", h.Admin.Account.GetDashboardSummary)
+		accounts.GET("/action-items", h.Admin.Account.GetActionItems)
 		accounts.GET("/usage-summary", h.Admin.Account.GetUsageSummary)
 		accounts.POST("/refresh-upstream-balances", h.Admin.Account.RefreshUpstreamBalances)
 		accounts.GET("/:id", h.Admin.Account.GetByID)

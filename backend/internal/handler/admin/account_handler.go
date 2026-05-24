@@ -438,6 +438,45 @@ func (h *AccountHandler) GetUsageSummary(c *gin.Context) {
 	response.Success(c, summary)
 }
 
+// GetDashboardSummary handles first-screen account dashboard aggregates.
+// GET /api/v1/admin/accounts/dashboard-summary
+func (h *AccountHandler) GetDashboardSummary(c *gin.Context) {
+	accounts, err := h.listAccountsForCurrentFilters(c)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	var usageSummary *service.AccountUsageSummary
+	var usageErr string
+	if h.accountUsageService != nil {
+		summary, err := h.accountUsageService.GetAccountUsageSummary(c.Request.Context(), accounts)
+		if err != nil {
+			usageErr = err.Error()
+		} else {
+			usageSummary = summary
+		}
+	} else {
+		usageErr = "account usage service is not configured"
+	}
+
+	result := service.BuildAccountDashboardSummary(accounts, usageSummary, time.Now())
+	result.UsageSummaryError = usageErr
+	response.Success(c, result)
+}
+
+// GetActionItems handles account action-item queue for the current filters.
+// GET /api/v1/admin/accounts/action-items
+func (h *AccountHandler) GetActionItems(c *gin.Context) {
+	accounts, err := h.listAccountsForCurrentFilters(c)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, service.BuildAccountActionItems(accounts, time.Now()))
+}
+
 // RefreshUpstreamBalances refreshes upstream API-key balances for the current account filters.
 // POST /api/v1/admin/accounts/refresh-upstream-balances
 func (h *AccountHandler) RefreshUpstreamBalances(c *gin.Context) {
