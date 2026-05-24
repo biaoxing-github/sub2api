@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 )
 
@@ -62,6 +63,7 @@ func newTestContext() (*gin.Context, *httptest.ResponseRecorder) {
 type openAIAccountTestRepo struct {
 	mockAccountRepoForGemini
 	updatedExtra       map[string]any
+	updatedCredentials map[string]any
 	bulkUpdatedIDs     []int64
 	bulkUpdatedPayload AccountBulkUpdate
 	rateLimitedID      int64
@@ -73,6 +75,11 @@ type openAIAccountTestRepo struct {
 
 func (r *openAIAccountTestRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
 	r.updatedExtra = updates
+	return nil
+}
+
+func (r *openAIAccountTestRepo) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {
+	r.updatedCredentials = cloneCredentials(credentials)
 	return nil
 }
 
@@ -116,7 +123,15 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 
 	repo := &openAIAccountTestRepo{}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg: &config.Config{
+			Security: config.SecurityConfig{
+				URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+			},
+		},
+	}
 	account := &Account{
 		ID:          89,
 		Platform:    PlatformOpenAI,
@@ -172,7 +187,15 @@ func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testin
 
 	repo := &openAIAccountTestRepo{}
 	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
-	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg: &config.Config{
+			Security: config.SecurityConfig{
+				URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+			},
+		},
+	}
 	account := &Account{
 		ID:          88,
 		Platform:    PlatformOpenAI,
@@ -332,4 +355,48 @@ func TestAccountTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	require.Zero(t, repo.rateLimitedID)
 	require.Zero(t, repo.clearedErrorID)
 	require.Nil(t, account.RateLimitResetAt)
+}
+
+func TestAccountTestService_OpenAIAPIKeyInsufficientBalanceDisablesCurrentKeyAndRetriesNext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	resp1 := newJSONResponse(http.StatusForbidden, `{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}`)
+	resp2 := newJSONResponse(http.StatusOK, "")
+	resp2.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
+
+	`))
+	repo := &openAIAccountTestRepo{}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp1, resp2}}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg: &config.Config{
+			Security: config.SecurityConfig{
+				URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+			},
+		},
+	}
+	account := &Account{
+		ID:          90,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-empty", "key-ok"},
+			"base_url": "https://example.com",
+		},
+		Extra: map[string]any{"openai_responses_supported": true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	require.NoError(t, err)
+	require.NotContains(t, recorder.Body.String(), "API returned 403")
+	require.NotNil(t, repo.updatedCredentials)
+	require.NotContains(t, repo.updatedCredentials, "key-empty")
+	require.Equal(t, []string{"key-ok"}, account.GetAPIKeys())
+	require.Zero(t, repo.setErrorID)
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "Bearer key-empty", upstream.requests[0].Header.Get("Authorization"))
+	require.Equal(t, "Bearer key-ok", upstream.requests[1].Header.Get("Authorization"))
 }

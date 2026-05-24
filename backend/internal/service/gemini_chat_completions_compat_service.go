@@ -294,7 +294,7 @@ func (s *GeminiMessagesCompatService) buildGeminiChatCompletionsUpstreamRequestF
 	switch account.Type {
 	case AccountTypeAPIKey:
 		return func(ctx context.Context) (*http.Request, string, error) {
-			apiKey := account.GetCredential("api_key")
+			apiKey := account.GetAPIKey()
 			if strings.TrimSpace(apiKey) == "" {
 				return nil, "", errors.New("gemini api_key not configured")
 			}

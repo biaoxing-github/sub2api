@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type openAISnapshotCacheStub struct {
@@ -456,6 +457,429 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_EnabledUsesAdvancedPrev
 	require.Equal(t, int64(37001), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerPreviousResponse, decision.Layer)
 	require.True(t, decision.StickyPreviousHit)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedLoadBalanceHonorsLowestPriorityFirst(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(10110)
+	accounts := []Account{
+		{
+			ID:          38001,
+			Name:        "okapi-aggregate",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    1,
+		},
+		{
+			ID:          38002,
+			Name:        "mikuapi",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    9,
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	cfg.Gateway.OpenAIWS.LBTopK = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Queue = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT = 0
+	svc := &OpenAIGatewayService{
+		accountRepo:      schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:            &schedulerTestGatewayCache{},
+		cfg:              cfg,
+		rateLimitService: newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{
+			loadMap: map[int64]*AccountLoadInfo{
+				38001: {AccountID: 38001, LoadRate: 90, WaitingCount: 1},
+				38002: {AccountID: 38002, LoadRate: 0, WaitingCount: 0},
+			},
+		}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"",
+		"gpt-5.5",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(38001), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_PrefersLowerUpstreamBalance(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(10111)
+	accounts := []Account{
+		{
+			ID:          38101,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			Extra:       map[string]any{UpstreamBalanceAvailableKey: 2.0},
+		},
+		{
+			ID:          38102,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			Extra:       map[string]any{UpstreamBalanceAvailableKey: 50.0},
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	cfg.Gateway.OpenAIWS.LBTopK = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Balance = 1
+	svc := &OpenAIGatewayService{
+		accountRepo:      schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:            &schedulerTestGatewayCache{},
+		cfg:              cfg,
+		rateLimitService: newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{
+			loadMap: map[int64]*AccountLoadInfo{
+				38101: {AccountID: 38101, LoadRate: 0, WaitingCount: 0},
+				38102: {AccountID: 38102, LoadRate: 0, WaitingCount: 0},
+			},
+		}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"",
+		"gpt-5.5",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(38101), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceRequiresVerifiedRealtimeBalance(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(10114)
+	accounts := []Account{
+		{
+			ID:          38201,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+		},
+		{
+			ID:          38202,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    1,
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	checks := make([]int64, 0, 2)
+	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
+		checks = append(checks, account.ID)
+		switch account.ID {
+		case 38201:
+			return &UpstreamBalanceSnapshot{Available: 10, OKCount: 0, Error: "unverified"}, nil
+		case 38202:
+			return &UpstreamBalanceSnapshot{Available: 3, OKCount: 1}, nil
+		default:
+			return nil, errors.New("unexpected account")
+		}
+	}), RealtimeBalanceCheckerOptions{Timeout: time.Second})
+	svc := &OpenAIGatewayService{
+		accountRepo:            schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:                  &schedulerTestGatewayCache{},
+		cfg:                    cfg,
+		rateLimitService:       newOpenAIAdvancedSchedulerRateLimitService("true"),
+		realtimeBalanceChecker: checker,
+		concurrencyService:     NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"",
+		"gpt-5.5",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(38202), selection.Account.ID)
+	require.Equal(t, []int64{38201, 38202}, checks)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyExhaustedSafeReplaySwitchesCandidate(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(10115)
+	sessionHash := "session_hash_continuity_replay"
+	accounts := []Account{
+		{
+			ID:          38301,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+		},
+		{
+			ID:          38302,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    1,
+		},
+	}
+	cache := &schedulerTestGatewayCache{
+		sessionBindings: map[string]int64{
+			"openai:" + sessionHash: 38301,
+		},
+	}
+	checks := make([]int64, 0, 2)
+	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
+		checks = append(checks, account.ID)
+		if account.ID == 38301 {
+			return &UpstreamBalanceSnapshot{Available: 0, OKCount: 1}, nil
+		}
+		return &UpstreamBalanceSnapshot{Available: 2, OKCount: 1}, nil
+	}), RealtimeBalanceCheckerOptions{Timeout: time.Second})
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	cfg.Gateway.OpenAIWS.LBTopK = 1
+	svc := &OpenAIGatewayService{
+		accountRepo:            schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:                  cache,
+		cfg:                    cfg,
+		rateLimitService:       newOpenAIAdvancedSchedulerRateLimitService("true"),
+		realtimeBalanceChecker: checker,
+		concurrencyService:     NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithSchedulerAndContinuity(
+		ctx,
+		&groupID,
+		"",
+		sessionHash,
+		"gpt-5.5",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+		[]byte(`{"model":"gpt-5.5","input":[{"type":"input_text","text":"continue"}]}`),
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(38302), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.Equal(t, OpenAIContinuityActionReplay, decision.ContinuityAction)
+	require.Equal(t, OpenAIContinuityReasonBalanceExhausted, decision.ContinuityReason)
+	require.Equal(t, int64(38301), decision.ContinuityFromAccountID)
+	require.Equal(t, []int64{38301, 38302}, checks)
+	require.Equal(t, int64(38302), cache.sessionBindings["openai:"+sessionHash])
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyExhaustedUnsafeReplayProtected(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(10116)
+	sessionHash := "session_hash_continuity_protected"
+	account := Account{
+		ID:          38311,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+	}
+	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
+		return &UpstreamBalanceSnapshot{Available: 0, OKCount: 1}, nil
+	}), RealtimeBalanceCheckerOptions{Timeout: time.Second})
+	svc := &OpenAIGatewayService{
+		accountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{
+			account,
+			{ID: 38312, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+		}},
+		cache: &schedulerTestGatewayCache{
+			sessionBindings: map[string]int64{
+				"openai:" + sessionHash: account.ID,
+			},
+		},
+		cfg:                    &config.Config{},
+		rateLimitService:       newOpenAIAdvancedSchedulerRateLimitService("true"),
+		realtimeBalanceChecker: checker,
+		concurrencyService:     NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithSchedulerAndContinuity(
+		ctx,
+		&groupID,
+		"",
+		sessionHash,
+		"gpt-5.5",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+		[]byte(`{"model":"gpt-5.5","previous_response_id":"resp_prev_only"}`),
+	)
+
+	require.Error(t, err)
+	require.Nil(t, selection)
+	var continuityErr *OpenAIContextContinuityError
+	require.ErrorAs(t, err, &continuityErr)
+	require.Equal(t, "context_replay_not_safe", continuityErr.Code)
+	require.Equal(t, account.ID, continuityErr.CurrentAccountID)
+	require.Equal(t, OpenAIContinuityActionProtected, decision.ContinuityAction)
+	require.Equal(t, OpenAIContinuityReasonReplayNotSafe, decision.ContinuityReason)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseExhaustedSafeReplayDropsPreviousID(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(10117)
+	sessionHash := "session_hash_prev_replay"
+	accounts := []Account{
+		{
+			ID:          38321,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    0,
+			Extra: map[string]any{
+				"openai_apikey_responses_websockets_v2_enabled": true,
+			},
+		},
+		{
+			ID:          38322,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    1,
+			Extra: map[string]any{
+				"openai_apikey_responses_websockets_v2_enabled": true,
+			},
+		},
+	}
+	cache := &schedulerTestGatewayCache{}
+	store := NewOpenAIWSStateStore(cache)
+	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
+		if account.ID == 38321 {
+			return &UpstreamBalanceSnapshot{Available: 0, OKCount: 1}, nil
+		}
+		return &UpstreamBalanceSnapshot{Available: 2, OKCount: 1}, nil
+	}), RealtimeBalanceCheckerOptions{Timeout: time.Second})
+	journal := NewMemoryContextJournal(ContextJournalOptions{})
+	priorTurn, err := journal.AppendTurn(ctx, ContextJournalAppendInput{
+		GroupID:     groupID,
+		SessionHash: sessionHash,
+		AccountID:   38321,
+		Protocol:    ContextJournalProtocolOpenAIResponses,
+		RequestBody: []byte(`{"type":"response.create","model":"gpt-5.5","input":[{"type":"input_text","text":"hello"}]}`),
+		ResponseID:  "resp_prev_replay",
+	})
+	require.NoError(t, err)
+	require.NoError(t, journal.BindResponse(ctx, groupID, "resp_prev_replay", ContextJournalResponseRef{
+		GroupID:     groupID,
+		SessionHash: sessionHash,
+		AccountID:   38321,
+		TurnID:      priorTurn.TurnID,
+	}, time.Hour))
+	cfg := newSchedulerTestOpenAIWSV2Config()
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	cfg.Gateway.OpenAIWS.LBTopK = 1
+	svc := &OpenAIGatewayService{
+		accountRepo:            schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:                  cache,
+		cfg:                    cfg,
+		rateLimitService:       newOpenAIAdvancedSchedulerRateLimitService("true"),
+		contextJournal:         journal,
+		realtimeBalanceChecker: checker,
+		concurrencyService:     NewConcurrencyService(schedulerTestConcurrencyCache{}),
+		openaiWSStateStore:     store,
+	}
+	require.NoError(t, store.BindResponseAccount(ctx, groupID, "resp_prev_replay", 38321, time.Hour))
+
+	selection, decision, err := svc.SelectAccountWithSchedulerAndContinuity(
+		ctx,
+		&groupID,
+		"resp_prev_replay",
+		sessionHash,
+		"gpt-5.5",
+		nil,
+		OpenAIUpstreamTransportResponsesWebsocketV2,
+		false,
+		[]byte(`{"type":"response.create","model":"gpt-5.5","previous_response_id":"resp_prev_replay","input":[{"type":"input_text","text":"hello"},{"type":"input_text","text":"continue"}]}`),
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(38322), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.Equal(t, OpenAIContinuityActionReplay, decision.ContinuityAction)
+	require.Equal(t, OpenAIContinuityReasonBalanceExhausted, decision.ContinuityReason)
+	require.NotEmpty(t, decision.ContinuityReplayBody)
+	require.False(t, gjson.GetBytes(decision.ContinuityReplayBody, "previous_response_id").Exists())
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
 }
 
 func TestOpenAIGatewayService_OpenAIAccountSchedulerMetrics_DisabledNoOp(t *testing.T) {

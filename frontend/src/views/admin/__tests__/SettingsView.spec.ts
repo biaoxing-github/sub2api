@@ -159,8 +159,8 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.paymentVisibleMethods.sourceRequiredError": "{title} 已启用，请先选择支付来源。",
     "admin.settings.payment.configGuide": "查看支付配置说明",
     "admin.settings.payment.findProvider": "查看支持的支付方式",
-    "admin.settings.openaiExperimentalScheduler.title": "OpenAI 实验调度策略",
-    "admin.settings.openaiExperimentalScheduler.description": "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。",
+    "admin.settings.openaiExperimentalScheduler.title": "OpenAI 高级调度",
+    "admin.settings.openaiExperimentalScheduler.description": "默认关闭。开启后使用粘性会话、响应链路和分层负载均衡选择 OpenAI 账号；只影响本网关账号选择，不代表上游 OpenAI 官方能力。",
     "admin.settings.site.uploadImage": "上传图片",
     "admin.settings.site.remove": "移除",
   };
@@ -707,16 +707,16 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(getProviders).toHaveBeenCalledTimes(2);
   });
 
-  it("renders advanced scheduler copy as local experimental gateway policy", async () => {
+  it("renders advanced scheduler copy as local gateway account selection policy", async () => {
     const wrapper = mountView();
 
     await flushPromises();
 
-    expect(wrapper.text()).toContain("OpenAI 实验调度策略");
+    expect(wrapper.text()).toContain("OpenAI 高级调度");
     expect(wrapper.text()).toContain(
-      "默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑",
+      "默认关闭。开启后使用粘性会话、响应链路和分层负载均衡选择 OpenAI 账号",
     );
-    expect(wrapper.text()).not.toContain("OpenAI 高级调度器");
+    expect(wrapper.text()).not.toContain("OpenAI 实验调度策略");
   });
 
   it("passes translated upload and remove labels to the payment help image uploader", async () => {

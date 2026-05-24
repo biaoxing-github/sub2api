@@ -115,3 +115,43 @@ func TestUpdateAccount_EmptyCredentialsSkipsUpdate(t *testing.T) {
 	require.Equal(t, "rt-existing", repo.account.Credentials["refresh_token"], "空 credentials 不应触碰已有 token")
 	require.Equal(t, "renamed", repo.account.Name)
 }
+
+func TestUpdateAccount_AppendsAPIKeysWithoutReturningExistingPlaintext(t *testing.T) {
+	accountID := int64(205)
+	oldKey := "sk-old"
+	disabledKey := "sk-disabled"
+	newKey := "sk-new"
+	repo := &updateAccountCredsRepoStub{
+		account: &Account{
+			ID:       accountID,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Status:   StatusActive,
+			Credentials: map[string]any{
+				"api_keys": []any{oldKey, disabledKey},
+				"api_keys_disabled": map[string]any{
+					FingerprintAPIKey(disabledKey): map[string]any{"reason": "insufficient_balance"},
+				},
+				"api_key":  "sk-legacy",
+				"base_url": "https://old.example.com",
+			},
+		},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	updated, err := svc.UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Credentials: map[string]any{
+			"base_url":        "https://new.example.com",
+			"api_keys_append": []any{" " + oldKey + " ", newKey},
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	require.Equal(t, 1, repo.updateCalls)
+	require.Equal(t, "https://new.example.com", repo.account.Credentials["base_url"])
+	require.Equal(t, []string{oldKey, disabledKey, newKey}, normalizeAPIKeys(repo.account.Credentials["api_keys"]))
+	require.NotContains(t, repo.account.Credentials, "api_key")
+	require.NotContains(t, repo.account.Credentials, "api_keys_append")
+	require.Contains(t, repo.account.Credentials["api_keys_disabled"], FingerprintAPIKey(disabledKey))
+}

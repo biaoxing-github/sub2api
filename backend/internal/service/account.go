@@ -2,18 +2,29 @@
 package service
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"log/slog"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+)
+
+var accountAPIKeyRoundRobin sync.Map // map[int64]*atomic.Uint64
+
+const (
+	CredentialAPIKeysDisabled = "api_keys_disabled"
+	apiKeyFingerprintPrefix   = "sha256:"
 )
 
 type Account struct {
@@ -64,6 +75,8 @@ type Account struct {
 	modelMappingCacheRawPtr         uintptr
 	modelMappingCacheRawLen         int
 	modelMappingCacheRawSig         uint64
+
+	lastSelectedAPIKey string
 }
 
 type TempUnschedulableRule struct {
@@ -220,6 +233,192 @@ func (a *Account) GetCredential(key string) string {
 		return strconv.Itoa(val)
 	default:
 		return ""
+	}
+}
+
+func (a *Account) GetAPIKey() string {
+	keys := a.GetAPIKeys()
+	if len(keys) == 0 {
+		return a.rememberSelectedAPIKey(a.GetCredential("api_key"))
+	}
+	if len(keys) == 1 {
+		return a.rememberSelectedAPIKey(keys[0])
+	}
+	counterAny, _ := accountAPIKeyRoundRobin.LoadOrStore(a.ID, &atomic.Uint64{})
+	counter, ok := counterAny.(*atomic.Uint64)
+	if !ok || counter == nil {
+		return a.rememberSelectedAPIKey(keys[0])
+	}
+	idx := counter.Add(1) - 1
+	return a.rememberSelectedAPIKey(keys[int(idx%uint64(len(keys)))])
+}
+
+func (a *Account) rememberSelectedAPIKey(apiKey string) string {
+	apiKey = strings.TrimSpace(apiKey)
+	if a != nil {
+		a.lastSelectedAPIKey = apiKey
+	}
+	return apiKey
+}
+
+func (a *Account) LastSelectedAPIKey() string {
+	if a == nil {
+		return ""
+	}
+	return strings.TrimSpace(a.lastSelectedAPIKey)
+}
+
+func (a *Account) GetAPIKeys() []string {
+	if a.Credentials == nil {
+		return nil
+	}
+	raw, ok := a.Credentials["api_keys"]
+	if !ok || raw == nil {
+		return nil
+	}
+	keys := normalizeAPIKeys(raw)
+	if len(keys) > 0 {
+		keys = filterDisabledAPIKeys(keys, a.disabledAPIKeyFingerprints())
+	}
+	if len(keys) > 0 {
+		return keys
+	}
+	return nil
+}
+
+func (a *Account) disabledAPIKeyFingerprints() map[string]struct{} {
+	if a == nil || a.Credentials == nil {
+		return nil
+	}
+	return normalizeDisabledAPIKeyFingerprints(a.Credentials[CredentialAPIKeysDisabled])
+}
+
+func filterDisabledAPIKeys(keys []string, disabled map[string]struct{}) []string {
+	if len(keys) == 0 || len(disabled) == 0 {
+		return keys
+	}
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if _, ok := disabled[FingerprintAPIKey(key)]; ok {
+			continue
+		}
+		out = append(out, key)
+	}
+	return out
+}
+
+func normalizeDisabledAPIKeyFingerprints(raw any) map[string]struct{} {
+	if raw == nil {
+		return nil
+	}
+	out := make(map[string]struct{})
+	add := func(rawFingerprint string) {
+		fp := strings.TrimSpace(rawFingerprint)
+		if fp == "" {
+			return
+		}
+		out[fp] = struct{}{}
+	}
+
+	switch v := raw.(type) {
+	case map[string]any:
+		for fp := range v {
+			add(fp)
+		}
+	case map[string]string:
+		for fp := range v {
+			add(fp)
+		}
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				add(s)
+			}
+		}
+	case []string:
+		for _, item := range v {
+			add(item)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// FingerprintAPIKey returns a stable non-secret identifier for an API key.
+func FingerprintAPIKey(apiKey string) string {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(apiKey))
+	return apiKeyFingerprintPrefix + fmt.Sprintf("%x", sum[:])
+}
+
+func (a *Account) DisableAPIKey(apiKey, reason string, now time.Time) bool {
+	apiKey = strings.TrimSpace(apiKey)
+	if a == nil || apiKey == "" {
+		return false
+	}
+	fingerprint := FingerprintAPIKey(apiKey)
+	if fingerprint == "" {
+		return false
+	}
+	if a.Credentials == nil {
+		a.Credentials = make(map[string]any)
+	}
+
+	disabled, _ := a.Credentials[CredentialAPIKeysDisabled].(map[string]any)
+	if disabled == nil {
+		disabled = make(map[string]any)
+	}
+	if _, exists := disabled[fingerprint]; exists {
+		return false
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "disabled"
+	}
+	disabled[fingerprint] = map[string]any{
+		"reason":      reason,
+		"disabled_at": now.UTC().Format(time.RFC3339),
+	}
+	a.Credentials[CredentialAPIKeysDisabled] = disabled
+	return true
+}
+
+func normalizeAPIKeys(raw any) []string {
+	add := func(out []string, v string) []string {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return out
+		}
+		return append(out, v)
+	}
+
+	switch v := raw.(type) {
+	case []string:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			out = add(out, item)
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			switch x := item.(type) {
+			case string:
+				out = add(out, x)
+			case json.Number:
+				out = add(out, x.String())
+			}
+		}
+		return out
+	case string:
+		return add(nil, v)
+	default:
+		return nil
 	}
 }
 
@@ -1015,7 +1214,7 @@ func (a *Account) GetOpenAIApiKey() string {
 	if !a.IsOpenAIApiKey() {
 		return ""
 	}
-	return a.GetCredential("api_key")
+	return a.GetAPIKey()
 }
 
 func (a *Account) GetOpenAIUserAgent() string {

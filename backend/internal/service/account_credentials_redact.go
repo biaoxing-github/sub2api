@@ -1,12 +1,16 @@
 package service
 
+import "strings"
+
 // SensitiveCredentialKeys 列出 Account.Credentials JSON map 中绝不允许返回到前端的子键。
 // dto 层做响应脱敏、service 层做更新合并都引用此清单——新增凭证类型时务必同步。
 var SensitiveCredentialKeys = []string{
 	// OAuth
 	"access_token", "refresh_token", "id_token",
 	// API Key 类
-	"api_key", "session_key", "cookie",
+	"api_key", "api_keys", "api_keys_append", "api_keys_disabled", "session_key", "cookie",
+	// 上游站点登录凭据，用于定时刷新余额/分组倍率。
+	"upstream_auth_password", "upstream_auth_token",
 	// 云服务凭据
 	"aws_secret_access_key", "aws_session_token",
 	"service_account_json", "service_account", "private_key",
@@ -46,5 +50,48 @@ func MergePreservingSensitiveCreds(existing, incoming map[string]any) map[string
 			out[key] = existingVal
 		}
 	}
+	return out
+}
+
+func MergeAccountCredentialsForUpdate(existing, incoming map[string]any) map[string]any {
+	out := MergePreservingSensitiveCreds(existing, incoming)
+	if len(incoming) == 0 {
+		return out
+	}
+
+	appendKeys := normalizeAPIKeys(incoming["api_keys_append"])
+	if len(appendKeys) > 0 {
+		keys := normalizeAPIKeys(out["api_keys"])
+		if len(keys) == 0 {
+			if legacy, ok := out["api_key"].(string); ok {
+				legacy = strings.TrimSpace(legacy)
+				if legacy != "" {
+					keys = append(keys, legacy)
+				}
+			}
+		}
+		seen := make(map[string]struct{}, len(keys)+len(appendKeys))
+		merged := make([]string, 0, len(keys)+len(appendKeys))
+		for _, key := range append(keys, appendKeys...) {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, key)
+		}
+		out["api_keys"] = merged
+		delete(out, "api_key")
+	}
+
+	if _, hasAPIKeys := incoming["api_keys"]; hasAPIKeys {
+		delete(out, "api_key")
+	}
+	if _, hasAPIKey := incoming["api_key"]; hasAPIKey {
+		if _, hasAPIKeys := incoming["api_keys"]; !hasAPIKeys && len(appendKeys) == 0 {
+			delete(out, "api_keys")
+			delete(out, CredentialAPIKeysDisabled)
+		}
+	}
+	delete(out, "api_keys_append")
 	return out
 }

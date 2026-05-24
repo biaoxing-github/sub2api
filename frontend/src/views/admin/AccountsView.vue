@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <TablePageLayout page-scroll>
       <template #filters>
         <div class="flex flex-wrap-reverse items-start justify-between gap-3">
           <AccountTableFilters
@@ -125,6 +125,12 @@
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.errorPassthrough.title') }}</span>
                     </button>
+                    <button class="account-tools-menu-item" @click="handleRefreshUpstreamBalances" :disabled="upstreamBalanceRefreshing">
+                      <span class="account-tools-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
+                        <Icon name="refresh" size="sm" :class="{ 'animate-spin': upstreamBalanceRefreshing }" />
+                      </span>
+                      <span class="flex-1 text-left">{{ t('admin.accounts.refreshUpstreamBalances') }}</span>
+                    </button>
                     <button class="account-tools-menu-item" @click="openTLSFingerprintProfiles">
                       <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                         <Icon name="lock" size="sm" />
@@ -169,6 +175,47 @@
           >
             {{ t('admin.accounts.listPendingSyncAction') }}
           </button>
+        </div>
+        <AccountUsageSummaryPanel
+          :summary="usageSummary"
+          :loading="usageSummaryLoading"
+          :error="usageSummaryError"
+        />
+        <div class="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+          <div class="flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                {{ t('admin.accounts.statusSummary.title') }}
+              </div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.statusSummary.scope', { total: formatNumber(statusSummaryTotal) }) }}
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+              <span v-if="statusSummaryLoading" class="inline-flex items-center gap-1">
+                <Icon name="refresh" size="xs" class="animate-spin" />
+                {{ t('common.loading') }}
+              </span>
+              <span v-else-if="statusSummaryError" class="text-rose-600 dark:text-rose-300">
+                {{ statusSummaryError }}
+              </span>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 border-t border-gray-100 dark:border-gray-700 sm:grid-cols-3 lg:grid-cols-5">
+            <div
+              v-for="item in accountStatusSummaryItems"
+              :key="item.key"
+              class="flex items-center justify-between gap-3 border-b border-r border-gray-100 px-4 py-3 last:border-r-0 dark:border-gray-700 sm:last:border-r lg:border-b-0"
+            >
+              <div class="flex min-w-0 items-center gap-2">
+                <span :class="['h-2 w-2 shrink-0 rounded-full', item.dotClass]" />
+                <span class="truncate text-xs font-medium text-gray-500 dark:text-gray-400">{{ item.label }}</span>
+              </div>
+              <span :class="['text-lg font-semibold tabular-nums', item.valueClass]">
+                {{ formatNumber(item.value) }}
+              </span>
+            </div>
+          </div>
         </div>
       </template>
       <template #table>
@@ -281,6 +328,41 @@
               :manual-refresh-token="usageManualRefreshToken"
             />
           </template>
+          <template #cell-upstream_balance="{ row }">
+            <div v-if="row.upstream_balance" class="min-w-[14rem] text-sm">
+              <div class="font-medium text-blue-700 dark:text-blue-300">
+                {{ t('admin.accounts.upstreamBalanceActual') }} {{ formatCurrency(row.upstream_balance.available || 0) }}
+              </div>
+              <div v-if="formatConvertedGroups(row.upstream_balance)" class="mt-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-300" :title="formatConvertedGroups(row.upstream_balance, false)">
+                {{ t('admin.accounts.upstreamBalanceUsable') }} {{ formatConvertedGroups(row.upstream_balance) }}
+              </div>
+              <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.upstreamBalanceKeys', { ok: row.upstream_balance.ok_count || 0, total: row.upstream_balance.key_count || 0 }) }}
+              </div>
+              <div v-if="row.upstream_balance.failed_count" class="mt-0.5 text-xs text-amber-600 dark:text-amber-300">
+                {{ t('admin.accounts.upstreamBalanceFailed', { count: row.upstream_balance.failed_count }) }}
+              </div>
+              <div v-if="formatUpstreamGroups(row.upstream_balance.groups)" class="mt-0.5 max-w-[16rem] truncate text-xs text-violet-600 dark:text-violet-300" :title="formatUpstreamGroups(row.upstream_balance.groups)">
+                {{ formatUpstreamGroups(row.upstream_balance.groups) }}
+              </div>
+              <div v-if="row.upstream_balance.keys?.length" class="mt-1 flex max-w-[16rem] flex-wrap gap-1">
+                <span
+                  v-for="key in row.upstream_balance.keys"
+                  :key="key.fingerprint"
+                  :title="formatUpstreamKeyTitle(key)"
+                  :class="[
+                    'inline-flex items-center rounded border px-1.5 py-0.5 text-[11px]',
+                    key.status === 'ok'
+                      ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300'
+                      : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300'
+                  ]"
+                >
+                  {{ key.masked }} · {{ key.status === 'ok' ? formatUpstreamKeyBalance(key) : t('admin.accounts.upstreamBalanceError') }}
+                </span>
+              </div>
+            </div>
+            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+          </template>
           <template #cell-proxy="{ row }">
             <div v-if="row.proxy" class="flex items-center gap-2">
               <span class="text-sm text-gray-700 dark:text-gray-300">{{ row.proxy.name }}</span>
@@ -322,6 +404,16 @@
           </template>
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
+              <button
+                v-if="canRefreshUpstreamBalance(row)"
+                @click="handleRefreshUpstreamBalance(row)"
+                :disabled="refreshingUpstreamBalanceIds.has(row.id)"
+                :title="t('admin.accounts.refreshUpstreamBalance')"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-blue-900/20 dark:hover:text-blue-300"
+              >
+                <Icon name="refresh" size="sm" :class="{ 'animate-spin': refreshingUpstreamBalanceIds.has(row.id) }" />
+                <span class="text-xs">{{ t('admin.accounts.refreshBalanceShort') }}</span>
+              </button>
               <button @click="handleEdit(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400">
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>
                 <span class="text-xs">{{ t('common.edit') }}</span>
@@ -369,6 +461,42 @@
         <span>{{ t('admin.accounts.dataExportIncludeProxies') }}</span>
       </label>
     </ConfirmDialog>
+    <BaseDialog
+      :show="showBulkRefreshErrors"
+      :title="t('admin.accounts.bulkActions.refreshTokenErrorsTitle')"
+      width="wide"
+      @close="showBulkRefreshErrors = false"
+    >
+      <div class="space-y-3">
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          {{ t('admin.accounts.bulkActions.refreshTokenErrorsDescription', { count: bulkRefreshErrors.length }) }}
+        </p>
+        <div class="max-h-96 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700">
+          <div
+            v-for="item in bulkRefreshErrors"
+            :key="item.account_id"
+            class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-3 border-b border-gray-100 px-3 py-2 text-sm last:border-b-0 dark:border-gray-700"
+          >
+            <div class="min-w-0">
+              <div class="truncate font-medium text-gray-900 dark:text-gray-100" :title="item.account_name">
+                {{ item.account_name }}
+              </div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">ID {{ item.account_id }}</div>
+            </div>
+            <div class="whitespace-pre-wrap break-words text-rose-700 dark:text-rose-300">
+              {{ item.error }}
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end">
+          <button class="btn btn-primary" type="button" @click="showBulkRefreshErrors = false">
+            {{ t('common.close') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
     <ErrorPassthroughRulesModal :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
     <TLSFingerprintProfilesModal :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
   </AppLayout>
@@ -389,6 +517,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
@@ -399,6 +528,7 @@ import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vu
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
+import AccountUsageSummaryPanel from '@/components/admin/account/AccountUsageSummaryPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
@@ -411,11 +541,78 @@ import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRules
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
-import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel } from '@/types'
+import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, AccountPoolUsageSummary, AccountStatusSummary } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+
+const formatNumber = (value: number | string) => {
+  const numeric = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(numeric)) return '0'
+  return numeric.toLocaleString()
+}
+
+const formatCurrency = (value: number | string) => {
+  const numeric = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(numeric)) return '$0.0000'
+  return `$${numeric.toFixed(4)}`
+}
+
+const formatConvertedGroups = (
+  balance?: { available?: number | null; converted_available_by_group?: Record<string, number> | null } | null,
+  compact = true
+) => {
+  const groups = balance?.converted_available_by_group
+  if (!groups) return ''
+  const actual = Number(balance?.available ?? 0)
+  const items = Object.entries(groups)
+    .filter(([, value]) => Number.isFinite(Number(value)))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .filter(([, value]) => Math.abs(Number(value) - actual) > 0.000001)
+  const shown = compact ? items.slice(0, 3) : items
+  const text = shown.map(([name, value]) => `${name} ${formatCurrency(value)}`).join(' / ')
+  if (!compact || items.length <= shown.length) return text
+  return `${text} +${items.length - shown.length}`
+}
+
+const firstConvertedAvailable = (groups?: Array<{ converted_available?: number | null }> | null) => {
+  const hit = groups?.find(group => Number.isFinite(Number(group.converted_available)))
+  return hit ? Number(hit.converted_available) : null
+}
+
+const formatUpstreamKeyBalance = (key: { available?: number | null; groups?: Array<{ converted_available?: number | null }> }) => {
+  const actual = formatCurrency(key.available || 0)
+  const converted = firstConvertedAvailable(key.groups)
+  if (converted == null || Math.abs(converted - Number(key.available || 0)) <= 0.000001) {
+    return actual
+  }
+  return `${actual} -> ${formatCurrency(converted)}`
+}
+
+const formatUpstreamKeyTitle = (key: { error?: string; endpoint?: string; masked?: string; available?: number | null; groups?: Array<{ name: string; ratio: number; converted_available?: number | null }> }) => {
+  if (key.error) return key.error
+  const actualText = `${t('admin.accounts.upstreamBalanceActual')} ${formatCurrency(key.available || 0)}`
+  const groupText = key.groups?.length
+    ? key.groups
+        .map(group => {
+          const converted = Number.isFinite(Number(group.converted_available))
+            ? `, ${t('admin.accounts.upstreamBalanceUsable')} ${formatCurrency(group.converted_available || 0)}`
+            : ''
+          return `${group.name} x${group.ratio}${converted}`
+        })
+        .join(' / ')
+    : ''
+  return [key.endpoint, actualText, groupText, key.masked].filter(Boolean).join('\n')
+}
+
+const formatUpstreamGroups = (groups?: Array<{ name: string; ratio: number }> | null) => {
+  if (!groups?.length) return ''
+  return groups
+    .slice(0, 4)
+    .map(group => `${group.name} x${group.ratio}`)
+    .join(' / ')
+}
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
@@ -437,6 +634,7 @@ type AccountBulkEditTarget =
         group?: string
         search?: string
         privacy_mode?: string
+        plan_type?: string
         sort_by?: string
         sort_order?: AccountSortOrder
       }
@@ -475,6 +673,7 @@ const showTest = ref(false)
 const showStats = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
+const showBulkRefreshErrors = ref(false)
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -487,6 +686,7 @@ const scheduleModelOptions = ref<SelectOption[]>([])
 const togglingSchedulable = ref<number | null>(null)
 const menu = reactive<{show:boolean, acc:Account|null, pos:{top:number, left:number}|null}>({ show: false, acc: null, pos: null })
 const exportingData = ref(false)
+const bulkRefreshErrors = ref<Array<{ account_id: number; account_name: string; error: string }>>([])
 
 // Account tools dropdown
 const showAccountToolsDropdown = ref(false)
@@ -548,6 +748,180 @@ const todayStatsError = ref<string | null>(null)
 const todayStatsReqSeq = ref(0)
 const pendingTodayStatsRefresh = ref(false)
 const usageManualRefreshToken = ref(0)
+const usageSummary = ref<AccountPoolUsageSummary | null>(null)
+const usageSummaryLoading = ref(false)
+const usageSummaryError = ref<string | null>(null)
+let usageSummaryAbortController: AbortController | null = null
+const statusSummary = ref<AccountStatusSummary | null>(null)
+const statusSummaryLoading = ref(false)
+const statusSummaryError = ref<string | null>(null)
+const upstreamBalanceRefreshing = ref(false)
+const refreshingUpstreamBalanceIds = reactive<Set<number>>(new Set())
+let statusSummaryAbortController: AbortController | null = null
+
+const buildUsageSummaryFilters = () => {
+  const rawParams = toRaw(params) as Record<string, unknown>
+  const filters: {
+    platform: string
+    type?: string
+    status?: string
+    group?: string
+    search?: string
+    privacy_mode?: string
+    plan_type?: string
+    sort_by?: string
+    sort_order?: AccountSortOrder
+  } = {
+    platform: 'openai'
+  }
+  const currentPlatform = typeof rawParams.platform === 'string' ? rawParams.platform : ''
+  const shouldUseOpenAIOnlyFilters = currentPlatform === '' || currentPlatform === 'openai'
+  const stringFields = ['status', 'group', 'search', 'sort_by'] as const
+  for (const field of stringFields) {
+    const value = rawParams[field]
+    if (typeof value === 'string' && value.trim() !== '') {
+      filters[field] = value
+    }
+  }
+  if (shouldUseOpenAIOnlyFilters) {
+    const typeValue = rawParams.type
+    if (typeof typeValue === 'string' && typeValue.trim() !== '') {
+      filters.type = typeValue
+    }
+    const privacyValue = rawParams.privacy_mode
+    if (typeof privacyValue === 'string' && privacyValue.trim() !== '') {
+      filters.privacy_mode = privacyValue
+    }
+    const planTypeValue = rawParams.plan_type
+    if (typeof planTypeValue === 'string' && planTypeValue.trim() !== '') {
+      filters.plan_type = planTypeValue
+    }
+  }
+  if (rawParams.sort_order === 'asc' || rawParams.sort_order === 'desc') {
+    filters.sort_order = rawParams.sort_order
+  }
+  return filters
+}
+
+const buildStatusSummaryFilters = () => {
+  const rawParams = toRaw(params) as Record<string, unknown>
+  const filters: {
+    platform?: string
+    type?: string
+    group?: string
+    search?: string
+    privacy_mode?: string
+    plan_type?: string
+  } = {}
+  const stringFields = ['platform', 'type', 'group', 'search', 'privacy_mode', 'plan_type'] as const
+  for (const field of stringFields) {
+    const value = rawParams[field]
+    if (typeof value === 'string' && value.trim() !== '') {
+      filters[field] = value
+    }
+  }
+  return filters
+}
+
+const loadUsageSummary = async () => {
+  usageSummaryAbortController?.abort()
+  const controller = new AbortController()
+  usageSummaryAbortController = controller
+  usageSummaryLoading.value = true
+  usageSummaryError.value = null
+  try {
+    usageSummary.value = await adminAPI.accounts.getUsageSummary(buildUsageSummaryFilters(), {
+      signal: controller.signal
+    })
+  } catch (error: any) {
+    if (error?.name === 'AbortError' || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
+      return
+    }
+    console.error('Failed to load account usage summary:', error)
+    usageSummaryError.value = error?.response?.data?.message || error?.message || t('admin.accounts.usageSummary.loadFailed')
+  } finally {
+    if (usageSummaryAbortController === controller) {
+      usageSummaryLoading.value = false
+      usageSummaryAbortController = null
+    }
+  }
+}
+
+const loadStatusSummary = async () => {
+  statusSummaryAbortController?.abort()
+  const controller = new AbortController()
+  statusSummaryAbortController = controller
+  statusSummaryLoading.value = true
+  statusSummaryError.value = null
+  try {
+    statusSummary.value = await adminAPI.accounts.getStatusSummary(buildStatusSummaryFilters(), {
+      signal: controller.signal
+    })
+  } catch (error: any) {
+    if (error?.name === 'AbortError' || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
+      return
+    }
+    console.error('Failed to load account status summary:', error)
+    statusSummaryError.value = error?.response?.data?.message || error?.message || t('admin.accounts.statusSummary.loadFailed')
+  } finally {
+    if (statusSummaryAbortController === controller) {
+      statusSummaryLoading.value = false
+      statusSummaryAbortController = null
+    }
+  }
+}
+
+type AccountStatusSummaryKey = keyof AccountStatusSummary
+
+const accountStatusSummaryItems = computed(() => {
+  const current = statusSummary.value
+  const items: Array<{
+    key: AccountStatusSummaryKey
+    label: string
+    value: number
+    dotClass: string
+    valueClass: string
+  }> = [
+    {
+      key: 'active',
+      label: t('admin.accounts.statusSummary.active'),
+      value: current?.active ?? 0,
+      dotClass: 'bg-emerald-500',
+      valueClass: 'text-emerald-700 dark:text-emerald-300',
+    },
+    {
+      key: 'rate_limited',
+      label: t('admin.accounts.statusSummary.rateLimited'),
+      value: current?.rate_limited ?? 0,
+      dotClass: 'bg-amber-500',
+      valueClass: 'text-amber-700 dark:text-amber-300',
+    },
+    {
+      key: 'error',
+      label: t('admin.accounts.statusSummary.error'),
+      value: current?.error ?? 0,
+      dotClass: 'bg-rose-500',
+      valueClass: 'text-rose-700 dark:text-rose-300',
+    },
+    {
+      key: 'inactive',
+      label: t('admin.accounts.statusSummary.inactive'),
+      value: current?.inactive ?? 0,
+      dotClass: 'bg-gray-400',
+      valueClass: 'text-gray-700 dark:text-gray-200',
+    },
+    {
+      key: 'temp_unschedulable',
+      label: t('admin.accounts.statusSummary.tempUnschedulable'),
+      value: current?.temp_unschedulable ?? 0,
+      dotClass: 'bg-orange-500',
+      valueClass: 'text-orange-700 dark:text-orange-300',
+    },
+  ]
+  return items
+})
+
+const statusSummaryTotal = computed(() => accountStatusSummaryItems.value.reduce((sum, item) => sum + item.value, 0))
 
 const buildDefaultTodayStats = (): WindowStats => ({
   requests: 0,
@@ -726,6 +1100,7 @@ const {
     type: '',
     status: '',
     privacy_mode: '',
+    plan_type: '',
     group: '',
     search: '',
     sort_by: sortState.sort_by,
@@ -783,7 +1158,7 @@ const load = async () => {
     isFirstLoad.value = false
     delete requestParams.lite
   }
-  await refreshTodayStatsBatch()
+  await Promise.all([refreshTodayStatsBatch(), loadUsageSummary(), loadStatusSummary()])
 }
 
 const reload = async () => {
@@ -791,7 +1166,7 @@ const reload = async () => {
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
   await baseReload()
-  await refreshTodayStatsBatch()
+  await Promise.all([refreshTodayStatsBatch(), loadUsageSummary(), loadStatusSummary()])
 }
 
 const debouncedReload = () => {
@@ -831,8 +1206,8 @@ const handleSort = (key: string, order: AccountSortOrder) => {
 watch(loading, (isLoading, wasLoading) => {
   if (wasLoading && !isLoading && pendingTodayStatsRefresh.value) {
     pendingTodayStatsRefresh.value = false
-    refreshTodayStatsBatch().catch((error) => {
-      console.error('Failed to refresh account today stats after table load:', error)
+    Promise.all([refreshTodayStatsBatch(), loadUsageSummary(), loadStatusSummary()]).catch((error) => {
+      console.error('Failed to refresh account stats after table load:', error)
     })
   }
 })
@@ -930,6 +1305,7 @@ const refreshAccountsIncrementally = async () => {
         type?: string
         status?: string
         privacy_mode?: string
+        plan_type?: string
         group?: string
         search?: string
         sort_by?: string
@@ -949,7 +1325,7 @@ const refreshAccountsIncrementally = async () => {
       hasPendingListSync.value = false
     }
 
-    await refreshTodayStatsBatch()
+    await Promise.all([refreshTodayStatsBatch(), loadUsageSummary(), loadStatusSummary()])
   } catch (error) {
     console.error('Auto refresh failed:', error)
   } finally {
@@ -985,6 +1361,43 @@ const openExportDataDialogFromMenu = () => {
 const openErrorPassthrough = () => {
   closeAccountToolsDropdown()
   showErrorPassthrough.value = true
+}
+
+const handleRefreshUpstreamBalances = async () => {
+  if (upstreamBalanceRefreshing.value) return
+  upstreamBalanceRefreshing.value = true
+  try {
+    const result = await adminAPI.accounts.refreshUpstreamBalances()
+    appStore.showSuccess(t('admin.accounts.refreshUpstreamBalancesSuccess', { count: result.refreshed }))
+    closeAccountToolsDropdown()
+    await Promise.all([load(), loadUsageSummary()])
+  } catch (error: any) {
+    console.error('Failed to refresh upstream balances:', error)
+    appStore.showError(error?.response?.data?.message || error?.message || t('admin.accounts.refreshUpstreamBalancesFailed'))
+  } finally {
+    upstreamBalanceRefreshing.value = false
+  }
+}
+
+const canRefreshUpstreamBalance = (account: Account) => {
+  return account.platform === 'openai' && account.type === 'apikey'
+}
+
+const handleRefreshUpstreamBalance = async (account: Account) => {
+  if (!canRefreshUpstreamBalance(account) || refreshingUpstreamBalanceIds.has(account.id)) return
+  refreshingUpstreamBalanceIds.add(account.id)
+  try {
+    const updated = await adminAPI.accounts.refreshUpstreamBalance(account.id)
+    patchAccountInList(updated)
+    enterAutoRefreshSilentWindow()
+    appStore.showSuccess(t('admin.accounts.refreshUpstreamBalanceSuccess'))
+    await loadUsageSummary()
+  } catch (error: any) {
+    console.error('Failed to refresh upstream balance:', error)
+    appStore.showError(error?.response?.data?.message || error?.message || t('admin.accounts.refreshUpstreamBalanceFailed'))
+  } finally {
+    refreshingUpstreamBalanceIds.delete(account.id)
+  }
 }
 
 const openTLSFingerprintProfiles = () => {
@@ -1123,6 +1536,7 @@ const allColumns = computed(() => {
   }
   c.push(
     { key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false },
+    { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false },
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
@@ -1219,13 +1633,25 @@ const handleBulkResetStatus = async () => {
     appStore.showError(String(error))
   }
 }
+const normalizeBulkRefreshErrors = (errors: Array<{ account_id: number; error: string }>) => {
+  const accountNameById = new Map(accounts.value.map((account) => [account.id, account.name]))
+  return errors.map((item) => ({
+    account_id: item.account_id,
+    account_name: accountNameById.get(item.account_id) || t('admin.accounts.bulkActions.unknownAccount'),
+    error: item.error || t('common.error')
+  }))
+}
 const handleBulkRefreshToken = async () => {
   if (!confirm(t('common.confirm'))) return
   try {
     const result = await adminAPI.accounts.batchRefresh(selIds.value)
     if (result.failed > 0) {
+      bulkRefreshErrors.value = normalizeBulkRefreshErrors(result.errors ?? [])
+      showBulkRefreshErrors.value = bulkRefreshErrors.value.length > 0
       appStore.showError(t('admin.accounts.bulkActions.partialSuccess', { success: result.success, failed: result.failed }))
     } else {
+      bulkRefreshErrors.value = []
+      showBulkRefreshErrors.value = false
       appStore.showSuccess(t('admin.accounts.bulkActions.refreshTokenSuccess', { count: result.success }))
       clearSelection()
     }
@@ -1347,6 +1773,7 @@ const buildBulkEditFilterSnapshot = () => {
     group: typeof rawParams.group === 'string' ? rawParams.group : '',
     search: typeof rawParams.search === 'string' ? rawParams.search : '',
     privacy_mode: typeof rawParams.privacy_mode === 'string' ? rawParams.privacy_mode : '',
+    plan_type: typeof rawParams.plan_type === 'string' ? rawParams.plan_type : '',
     sort_by: typeof rawParams.sort_by === 'string' ? rawParams.sort_by : '',
     sort_order: sortOrder
   }
@@ -1397,6 +1824,7 @@ const buildAccountQueryFilters = () => ({
   status: params.status || '',
   group: params.group || '',
   privacy_mode: params.privacy_mode || '',
+  plan_type: params.plan_type || '',
   search: params.search || '',
   sort_by: sortState.sort_by,
   sort_order: sortState.sort_order
@@ -1439,6 +1867,10 @@ const accountMatchesCurrentFilters = (account: Account) => {
     } else if (privacyMode !== filters.privacy_mode) {
       return false
     }
+  }
+  if (filters.plan_type) {
+    const planType = typeof account.credentials?.plan_type === 'string' ? account.credentials.plan_type : ''
+    if (planType.toLowerCase() !== filters.plan_type.toLowerCase()) return false
   }
   const search = String(filters.search || '').trim().toLowerCase()
   if (search && !account.name.toLowerCase().includes(search)) return false
@@ -1665,6 +2097,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  usageSummaryAbortController?.abort()
+  statusSummaryAbortController?.abort()
   window.removeEventListener('scroll', handleScroll, true)
   document.removeEventListener('click', handleClickOutside)
 })

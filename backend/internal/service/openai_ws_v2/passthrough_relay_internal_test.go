@@ -48,6 +48,7 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 			func(_ coderws.MessageType, _ []byte) error { return nil },
 			func() {},
 			nil,
+			&relayState{},
 			nil,
 			exitCh,
 		)
@@ -68,6 +69,7 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 			func(_ coderws.MessageType, _ []byte) error { return errors.New("boom") },
 			func() {},
 			nil,
+			&relayState{},
 			nil,
 			exitCh,
 		)
@@ -90,6 +92,7 @@ func TestRunClientToUpstream_ErrorPaths(t *testing.T) {
 			func(_ coderws.MessageType, _ []byte) error { return nil },
 			func() {},
 			forwarded,
+			&relayState{},
 			func(event RelayTraceEvent) {
 				traces = append(traces, event)
 			},

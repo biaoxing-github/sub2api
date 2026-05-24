@@ -501,8 +501,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					turnResult.Usage.OutputTokens,
 					turnResult.Usage.CacheReadInputTokens,
 				)
-				if hooks != nil && hooks.AfterTurn != nil {
-					hooks.AfterTurn(turnNo, turnResult, nil)
+				if hooks != nil {
+					if hooks.AfterTurnPayload != nil {
+						hooks.AfterTurnPayload(turnNo, cloneOpenAIWSPayloadBytes(turn.RequestPayload), turnResult, nil)
+					} else if hooks.AfterTurn != nil {
+						hooks.AfterTurn(turnNo, turnResult, nil)
+					}
 				}
 			},
 			OnTrace: func(event openaiwsv2.RelayTraceEvent) {
@@ -553,8 +557,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			turnCount,
 		)
 		// 正常路径按 terminal 事件逐 turn 已回调；仅在零 turn 场景兜底回调一次。
-		if turnCount == 0 && hooks != nil && hooks.AfterTurn != nil {
-			hooks.AfterTurn(1, result, nil)
+		if turnCount == 0 && hooks != nil {
+			if hooks.AfterTurnPayload != nil {
+				hooks.AfterTurnPayload(1, nil, result, nil)
+			} else if hooks.AfterTurn != nil {
+				hooks.AfterTurn(1, result, nil)
+			}
 		}
 		return nil
 	}
@@ -584,8 +592,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		relayErr,
 		relayExit.WroteDownstream,
 	)
-	if hooks != nil && hooks.AfterTurn != nil {
-		hooks.AfterTurn(turnCount+1, nil, turnErr)
+	if hooks != nil {
+		if hooks.AfterTurnPayload != nil {
+			hooks.AfterTurnPayload(turnCount+1, nil, nil, turnErr)
+		} else if hooks.AfterTurn != nil {
+			hooks.AfterTurn(turnCount+1, nil, turnErr)
+		}
 	}
 	return turnErr
 }

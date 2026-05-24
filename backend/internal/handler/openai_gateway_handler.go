@@ -266,7 +266,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	for {
 		// Select account supporting the requested model
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
+		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerAndContinuity(
 			c.Request.Context(),
 			apiKey.GroupID,
 			previousResponseID,
@@ -275,12 +275,18 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			failedAccountIDs,
 			service.OpenAIUpstreamTransportAny,
 			requireCompact,
+			body,
 		)
 		if err != nil {
 			reqLog.Warn("openai.account_select_failed",
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
+			var continuityErr *service.OpenAIContextContinuityError
+			if errors.As(err, &continuityErr) {
+				h.handleOpenAIContextContinuityError(c, continuityErr, streamStarted)
+				return
+			}
 			if len(failedAccountIDs) == 0 {
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				if errors.Is(err, service.ErrNoAvailableCompactAccounts) {
@@ -318,6 +324,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
+		setOpenAIContinuityHeaders(c, scheduleDecision, account.ID)
 
 		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if !acquired {
@@ -329,8 +336,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		forwardStart := time.Now()
 		// 应用渠道模型映射到请求体
 		forwardBody := body
+		if len(scheduleDecision.ContinuityReplayBody) > 0 {
+			forwardBody = scheduleDecision.ContinuityReplayBody
+		}
 		if channelMapping.Mapped {
-			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
+			forwardBody = h.gatewayService.ReplaceModelInBody(forwardBody, channelMapping.MappedModel)
 		}
 		writerSizeBeforeForward := c.Writer.Size()
 		result, err := h.gatewayService.Forward(c.Request.Context(), c, account, forwardBody)
@@ -417,6 +427,21 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(c.Request.Context(), account.ID, result.ResponseHeaders)
 			}
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs)
+			if _, journalErr := h.gatewayService.RecordContextJournalTurn(
+				c.Request.Context(),
+				apiKey.GroupID,
+				sessionHash,
+				account,
+				service.ContextJournalProtocolOpenAIResponses,
+				body,
+				result,
+			); journalErr != nil {
+				reqLog.Warn("openai.context_journal_record_failed",
+					zap.Int64("account_id", account.ID),
+					zap.String("response_id", result.ResponseID),
+					zap.Error(journalErr),
+				)
+			}
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
 		}
@@ -1230,7 +1255,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		firstMessage,
 		openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
 	)
-	selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
+	selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerAndContinuity(
 		ctx,
 		apiKey.GroupID,
 		previousResponseID,
@@ -1239,9 +1264,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		nil,
 		service.OpenAIUpstreamTransportResponsesWebsocketV2,
 		false,
+		firstMessage,
 	)
 	if err != nil {
 		reqLog.Warn("openai.websocket_account_select_failed", zap.Error(err))
+		var continuityErr *service.OpenAIContextContinuityError
+		if errors.As(err, &continuityErr) {
+			writeOpenAIContextContinuityWSError(ctx, wsConn, continuityErr)
+			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "context continuity protected")
+			return
+		}
 		closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
 		return
 	}
@@ -1393,12 +1425,81 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 			})
 		},
+		AfterTurnPayload: func(turn int, payload []byte, result *service.OpenAIForwardResult, turnErr error) {
+			releaseTurnSlots()
+			if turnErr != nil {
+				if result == nil || result.ImageCount <= 0 {
+					return
+				}
+				reqLog.Warn("openai.websocket_partial_error_with_image_result",
+					zap.Int64("account_id", account.ID),
+					zap.Int("image_count", result.ImageCount),
+					zap.Error(turnErr),
+				)
+			}
+			if result == nil {
+				return
+			}
+			if account.Type == service.AccountTypeOAuth {
+				h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, result.ResponseHeaders)
+			}
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs)
+			if len(payload) > 0 {
+				if _, journalErr := h.gatewayService.RecordContextJournalTurn(
+					ctx,
+					apiKey.GroupID,
+					sessionHash,
+					account,
+					service.ContextJournalProtocolOpenAIResponses,
+					payload,
+					result,
+				); journalErr != nil {
+					reqLog.Warn("openai.websocket_context_journal_record_failed",
+						zap.Int64("account_id", account.ID),
+						zap.String("response_id", result.RequestID),
+						zap.Int("turn", turn),
+						zap.Error(journalErr),
+					)
+				}
+			}
+			inboundEndpoint := GetInboundEndpoint(c)
+			upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+			requestPayloadHash := service.HashUsageRequestPayload(firstMessage)
+			if len(payload) > 0 {
+				requestPayloadHash = service.HashUsageRequestPayload(payload)
+			}
+			h.submitOpenAIUsageRecordTask(result, func(taskCtx context.Context) {
+				if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
+					Result:             result,
+					APIKey:             apiKey,
+					User:               apiKey.User,
+					Account:            account,
+					Subscription:       subscription,
+					InboundEndpoint:    inboundEndpoint,
+					UpstreamEndpoint:   upstreamEndpoint,
+					UserAgent:          userAgent,
+					IPAddress:          clientIP,
+					RequestPayloadHash: requestPayloadHash,
+					APIKeyService:      h.apiKeyService,
+					ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
+				}); err != nil {
+					reqLog.Error("openai.websocket_record_usage_failed",
+						zap.Int64("account_id", account.ID),
+						zap.String("request_id", result.RequestID),
+						zap.Error(err),
+					)
+				}
+			})
+		},
 	}
 
 	// 应用渠道模型映射到 WebSocket 首条消息
 	wsFirstMessage := firstMessage
+	if len(scheduleDecision.ContinuityReplayBody) > 0 {
+		wsFirstMessage = scheduleDecision.ContinuityReplayBody
+	}
 	if channelMappingWS.Mapped {
-		wsFirstMessage = h.gatewayService.ReplaceModelInBody(firstMessage, channelMappingWS.MappedModel)
+		wsFirstMessage = h.gatewayService.ReplaceModelInBody(wsFirstMessage, channelMappingWS.MappedModel)
 	}
 
 	if err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
@@ -1655,6 +1756,56 @@ func (h *OpenAIGatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, sta
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
+func (h *OpenAIGatewayHandler) handleOpenAIContextContinuityError(c *gin.Context, err *service.OpenAIContextContinuityError, streamStarted bool) {
+	if err == nil {
+		h.handleStreamingAwareError(c, http.StatusConflict, "context_continuity_error", "Current session cannot be safely replayed to another account.", streamStarted)
+		return
+	}
+	c.Header("X-Sub2API-Continuity-Action", service.OpenAIContinuityActionProtected)
+	c.Header("X-Sub2API-Continuity-Reason", strings.TrimSpace(err.Reason))
+	if err.CurrentAccountID > 0 {
+		c.Header("X-Sub2API-Upstream-Account", strconv.FormatInt(err.CurrentAccountID, 10))
+	}
+	message := strings.TrimSpace(err.Message)
+	if message == "" {
+		message = "Current session cannot be safely replayed to another account."
+	}
+	if streamStarted {
+		h.handleStreamingAwareError(c, http.StatusConflict, "context_continuity_error", message, true)
+		return
+	}
+	c.JSON(http.StatusConflict, gin.H{
+		"error": gin.H{
+			"type":    "context_continuity_error",
+			"code":    err.Code,
+			"message": message,
+			"details": gin.H{
+				"session_hash":         err.SessionHash,
+				"previous_response_id": err.PreviousResponseID,
+				"current_account_id":   err.CurrentAccountID,
+				"reason":               err.Reason,
+			},
+		},
+	})
+}
+
+func setOpenAIContinuityHeaders(c *gin.Context, decision service.OpenAIAccountScheduleDecision, accountID int64) {
+	if c == nil {
+		return
+	}
+	action := strings.TrimSpace(decision.ContinuityAction)
+	if action == "" {
+		action = service.OpenAIContinuityActionNewSession
+	}
+	c.Header("X-Sub2API-Continuity-Action", action)
+	if reason := strings.TrimSpace(decision.ContinuityReason); reason != "" {
+		c.Header("X-Sub2API-Continuity-Reason", reason)
+	}
+	if accountID > 0 {
+		c.Header("X-Sub2API-Upstream-Account", strconv.FormatInt(accountID, 10))
+	}
+}
+
 func (h *OpenAIGatewayHandler) mapUpstreamError(statusCode int) (int, string, string) {
 	switch statusCode {
 	case 401:
@@ -1789,6 +1940,43 @@ func writeContentModerationWSError(ctx context.Context, conn *coderws.Conn, deci
 	})
 	if err != nil {
 		payload = []byte(`{"event_id":"evt_content_moderation_blocked","type":"error","error":{"type":"invalid_request_error","code":"content_policy_violation","message":"content moderation blocked this request"}}`)
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_ = conn.Write(writeCtx, coderws.MessageText, payload)
+}
+
+func writeOpenAIContextContinuityWSError(ctx context.Context, conn *coderws.Conn, continuityErr *service.OpenAIContextContinuityError) {
+	if conn == nil {
+		return
+	}
+	message := "Current session cannot be safely replayed to another account."
+	code := "context_replay_not_safe"
+	reason := ""
+	if continuityErr != nil {
+		if strings.TrimSpace(continuityErr.Message) != "" {
+			message = continuityErr.Message
+		}
+		if strings.TrimSpace(continuityErr.Code) != "" {
+			code = continuityErr.Code
+		}
+		reason = strings.TrimSpace(continuityErr.Reason)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	payload, err := json.Marshal(gin.H{
+		"event_id": "evt_context_continuity_protected",
+		"type":     "error",
+		"error": gin.H{
+			"type":    "context_continuity_error",
+			"code":    code,
+			"message": message,
+			"reason":  reason,
+		},
+	})
+	if err != nil {
+		payload = []byte(`{"event_id":"evt_context_continuity_protected","type":"error","error":{"type":"context_continuity_error","code":"context_replay_not_safe","message":"Current session cannot be safely replayed to another account."}}`)
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()

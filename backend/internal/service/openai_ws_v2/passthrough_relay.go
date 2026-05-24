@@ -44,6 +44,7 @@ type RelayTurnResult struct {
 	Usage             Usage
 	RequestID         string
 	TerminalEventType string
+	RequestPayload    []byte
 	Duration          time.Duration
 	FirstTokenMs      *int
 }
@@ -76,13 +77,14 @@ type RelayTraceEvent struct {
 }
 
 type relayState struct {
-	usage             Usage
-	requestModel      string
-	lastResponseID    string
-	terminalEventType string
-	firstTokenMs      *int
-	turnTimingByID    map[string]*relayTurnTiming
-	activeTurn        *relayTurnTiming
+	usage              Usage
+	requestModel       string
+	lastResponseID     string
+	terminalEventType  string
+	lastRequestPayload []byte
+	firstTokenMs       *int
+	turnTimingByID     map[string]*relayTurnTiming
+	activeTurn         *relayTurnTiming
 }
 
 type relayExitSignal struct {
@@ -181,6 +183,7 @@ func Relay(
 		})
 		return result, &RelayExit{Stage: "write_upstream", Err: err}
 	}
+	observeClientTurnRequest(state, firstMessageType, firstClientMessage)
 	clientToUpstreamFrames.Add(1)
 	emitRelayTrace(onTrace, RelayTraceEvent{
 		Stage:        "write_first_message_ok",
@@ -192,7 +195,7 @@ func Relay(
 
 	exitCh := make(chan relayExitSignal, 3)
 	dropDownstreamWrites := atomic.Bool{}
-	go runClientToUpstream(relayCtx, clientConn, writeUpstream, markActivity, clientToUpstreamFrames, onTrace, exitCh)
+	go runClientToUpstream(relayCtx, clientConn, writeUpstream, markActivity, clientToUpstreamFrames, state, onTrace, exitCh)
 	go runUpstreamToClient(
 		relayCtx,
 		upstreamConn,
@@ -325,6 +328,7 @@ func runClientToUpstream(
 	writeUpstream func(msgType coderws.MessageType, payload []byte) error,
 	markActivity func(),
 	forwardedFrames *atomic.Int64,
+	state *relayState,
 	onTrace func(event RelayTraceEvent),
 	exitCh chan<- relayExitSignal,
 ) {
@@ -355,6 +359,7 @@ func runClientToUpstream(
 		if forwardedFrames != nil {
 			forwardedFrames.Add(1)
 		}
+		observeClientTurnRequest(state, msgType, payload)
 		markActivity()
 	}
 }
@@ -613,9 +618,37 @@ func emitTurnComplete(
 		Usage:             observed.usage,
 		RequestID:         responseID,
 		TerminalEventType: observed.eventType,
+		RequestPayload:    cloneRelayBytes(relayLastRequestPayload(state)),
 		Duration:          observed.duration,
 		FirstTokenMs:      openAIWSRelayCloneIntPtr(observed.firstToken),
 	})
+}
+
+func observeClientTurnRequest(state *relayState, msgType coderws.MessageType, payload []byte) {
+	if state == nil || msgType != coderws.MessageText || len(payload) == 0 {
+		return
+	}
+	if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) != "response.create" {
+		return
+	}
+	state.lastRequestPayload = cloneRelayBytes(payload)
+	if model := strings.TrimSpace(gjson.GetBytes(payload, "model").String()); model != "" {
+		state.requestModel = model
+	}
+}
+
+func relayLastRequestPayload(state *relayState) []byte {
+	if state == nil {
+		return nil
+	}
+	return state.lastRequestPayload
+}
+
+func cloneRelayBytes(src []byte) []byte {
+	if len(src) == 0 {
+		return nil
+	}
+	return append([]byte(nil), src...)
 }
 
 func openAIWSRelayGetOrInitTurnTiming(state *relayState, responseID string, now time.Time) *relayTurnTiming {

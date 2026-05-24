@@ -234,7 +234,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	} else if account.Type == "apikey" {
 		// API Key - use x-api-key header
 		useBearer = false
-		authToken = account.GetCredential("api_key")
+		authToken = account.GetAPIKey()
 		if authToken == "" {
 			return s.sendErrorAndEnd(c, "No API key available")
 		}
@@ -436,7 +436,7 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 
 	// Sign or set auth based on account type
 	if account.IsBedrockAPIKey() {
-		apiKey := account.GetCredential("api_key")
+		apiKey := account.GetAPIKey()
 		if apiKey == "" {
 			return s.sendErrorAndEnd(c, "No API key available")
 		}
@@ -542,8 +542,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		chatgptAccountID = account.GetChatGPTAccountID()
 	} else if account.Type == "apikey" {
 		// API Key - use Platform API
-		authToken = account.GetOpenAIApiKey()
-		if authToken == "" {
+		if len(account.GetAPIKeys()) == 0 && account.GetOpenAIApiKey() == "" {
 			return s.sendErrorAndEnd(c, "No API key available")
 		}
 
@@ -583,58 +582,82 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Send test_start event
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return s.sendErrorAndEnd(c, "Failed to create request")
-	}
-
-	// Set common headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+authToken)
-
-	// Set OAuth-specific headers for ChatGPT internal API
-	if isOAuth {
-		req.Host = "chatgpt.com"
-		req.Header.Set("accept", "text/event-stream")
-		if chatgptAccountID != "" {
-			req.Header.Set("chatgpt-account-id", chatgptAccountID)
-		}
-	}
-
 	// Get proxy URL
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
 
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
-	if err != nil {
-		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if isOAuth && s.accountRepo != nil {
-		if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
-			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
-			mergeAccountExtra(account, updates)
+	attempts := 1
+	if account.Type == AccountTypeAPIKey {
+		if keyCount := len(account.GetAPIKeys()); keyCount > 0 {
+			attempts = keyCount
 		}
 	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		if account.Type == AccountTypeAPIKey {
+			authToken = account.GetOpenAIApiKey()
+			if authToken == "" {
+				return s.sendErrorAndEnd(c, "No API key available")
+			}
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusTooManyRequests {
-			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
+		req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
+		if err != nil {
+			return s.sendErrorAndEnd(c, "Failed to create request")
 		}
-		// 401 Unauthorized: 标记账号为永久错误
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
-			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+
+		// Set common headers
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+authToken)
+
+		// Set OAuth-specific headers for ChatGPT internal API
+		if isOAuth {
+			req.Host = "chatgpt.com"
+			req.Header.Set("accept", "text/event-stream")
+			if chatgptAccountID != "" {
+				req.Header.Set("chatgpt-account-id", chatgptAccountID)
+			}
 		}
-		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+
+		resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+		if err != nil {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+		}
+
+		if isOAuth && s.accountRepo != nil {
+			if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
+				_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
+				mergeAccountExtra(account, updates)
+			}
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusTooManyRequests {
+				s.reconcileOpenAI429State(ctx, account, resp.Header, body)
+			}
+			if account.Type == AccountTypeAPIKey && shouldDisableCurrentAPIKey(resp.StatusCode, body) {
+				if disabled := disableAccountAPIKey(ctx, s.accountRepo, account, authToken, disableAPIKeyReason(resp.StatusCode, body)); disabled {
+					if len(account.GetAPIKeys()) > 0 {
+						continue
+					}
+				}
+			}
+			// 401 Unauthorized: 标记账号为永久错误
+			if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+				errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
+				_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+			}
+			return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+		}
+
+		// Process SSE stream
+		return s.processOpenAIStream(c, resp.Body)
 	}
 
-	// Process SSE stream
-	return s.processOpenAIStream(c, resp.Body)
+	return s.sendErrorAndEnd(c, "No API key available")
 }
 
 // testOpenAICompactConnection probes /responses/compact and persists the
@@ -914,7 +937,7 @@ func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, ac
 
 // buildGeminiAPIKeyRequest builds request for Gemini API Key accounts
 func (s *AccountTestService) buildGeminiAPIKeyRequest(ctx context.Context, account *Account, modelID string, payload []byte) (*http.Request, error) {
-	apiKey := account.GetCredential("api_key")
+	apiKey := account.GetAPIKey()
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("no API key available")
 	}

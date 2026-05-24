@@ -196,6 +196,14 @@ func ProvideUserMessageQueueService(cache UserMsgQueueCache, rpmCache RPMCache, 
 	return svc
 }
 
+func ProvideContextJournal() ContextJournal {
+	return NewMemoryContextJournal(ContextJournalOptions{})
+}
+
+func ProvideRealtimeBalanceChecker(upstreamBalance *UpstreamBalanceService) *RealtimeBalanceChecker {
+	return NewRealtimeBalanceChecker(upstreamBalance, RealtimeBalanceCheckerOptions{})
+}
+
 // ProvideSchedulerSnapshotService creates and starts SchedulerSnapshotService.
 func ProvideSchedulerSnapshotService(
 	cache SchedulerCache,
@@ -487,7 +495,10 @@ var ProviderSet = wire.NewSet(
 	ProvideConcurrencyService,
 	ProvideUserMessageQueueService,
 	NewUsageRecordWorkerPool,
+	ProvideContextJournal,
+	ProvideRealtimeBalanceChecker,
 	ProvideSchedulerSnapshotService,
+	ProvideUpstreamBalanceService,
 	NewIdentityService,
 	NewCRSSyncService,
 	ProvideUpdateService,

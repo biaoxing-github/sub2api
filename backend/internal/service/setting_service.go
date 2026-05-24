@@ -4430,6 +4430,59 @@ func (s *SettingService) SetOpenAIFastPolicySettings(ctx context.Context, settin
 	return s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data))
 }
 
+func (s *SettingService) GetOpenAIPromptCacheSettings(ctx context.Context) (*OpenAIPromptCacheSettings, error) {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIPromptCacheSettings)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return DefaultOpenAIPromptCacheSettings(), nil
+		}
+		return nil, fmt.Errorf("get openai prompt cache settings: %w", err)
+	}
+	if value == "" {
+		return DefaultOpenAIPromptCacheSettings(), nil
+	}
+
+	var settings OpenAIPromptCacheSettings
+	if err := json.Unmarshal([]byte(value), &settings); err != nil {
+		slog.Warn("failed to unmarshal openai prompt cache settings, falling back to defaults",
+			"error", err,
+			"key", SettingKeyOpenAIPromptCacheSettings)
+		return DefaultOpenAIPromptCacheSettings(), nil
+	}
+	return &settings, nil
+}
+
+func (s *SettingService) SetOpenAIPromptCacheSettings(ctx context.Context, settings *OpenAIPromptCacheSettings) error {
+	if settings == nil {
+		return fmt.Errorf("settings cannot be nil")
+	}
+	for i, rule := range settings.Rules {
+		key := strings.TrimSpace(rule.PromptCacheKey)
+		if key == "" {
+			return fmt.Errorf("rule[%d]: prompt_cache_key cannot be empty", i)
+		}
+		settings.Rules[i].PromptCacheKey = key
+		retention := strings.TrimSpace(rule.PromptCacheRetention)
+		if retention != "" && retention != "24h" {
+			return fmt.Errorf("rule[%d]: invalid prompt_cache_retention %q", i, rule.PromptCacheRetention)
+		}
+		settings.Rules[i].PromptCacheRetention = retention
+		for j, pattern := range rule.ModelWhitelist {
+			trimmed := strings.TrimSpace(pattern)
+			if trimmed == "" {
+				return fmt.Errorf("rule[%d]: model_whitelist[%d] cannot be empty", i, j)
+			}
+			settings.Rules[i].ModelWhitelist[j] = trimmed
+		}
+	}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("marshal openai prompt cache settings: %w", err)
+	}
+	return s.settingRepo.Set(ctx, SettingKeyOpenAIPromptCacheSettings, string(data))
+}
+
 // SetStreamTimeoutSettings 设置流超时处理配置
 func (s *SettingService) SetStreamTimeoutSettings(ctx context.Context, settings *StreamTimeoutSettings) error {
 	if settings == nil {

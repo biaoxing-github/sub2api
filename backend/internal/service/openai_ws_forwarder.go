@@ -225,6 +225,7 @@ type OpenAIWSIngressHooks struct {
 	BeforeTurn          func(turn int) error
 	BeforeRequest       func(turn int, payload []byte, originalModel string) error
 	AfterTurn           func(turn int, result *OpenAIForwardResult, turnErr error)
+	AfterTurnPayload    func(turn int, payload []byte, result *OpenAIForwardResult, turnErr error)
 }
 
 func normalizeOpenAIWSLogValue(value string) string {
@@ -3551,8 +3552,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			if unwrapped := errors.Unwrap(relayErr); unwrapped != nil {
 				finalErr = unwrapped
 			}
-			if hooks != nil && hooks.AfterTurn != nil {
-				hooks.AfterTurn(turn, nil, finalErr)
+			if hooks != nil {
+				if hooks.AfterTurnPayload != nil {
+					hooks.AfterTurnPayload(turn, cloneOpenAIWSPayloadBytes(currentPayload), nil, finalErr)
+				} else if hooks.AfterTurn != nil {
+					hooks.AfterTurn(turn, nil, finalErr)
+				}
 			}
 			sessionLease.MarkBroken()
 			return finalErr
@@ -3561,8 +3566,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		turnPrevRecoveryTried = false
 		lastTurnFinishedAt = time.Now()
 		lastTurnClean = true
-		if hooks != nil && hooks.AfterTurn != nil {
-			hooks.AfterTurn(turn, result, nil)
+		if hooks != nil {
+			if hooks.AfterTurnPayload != nil {
+				hooks.AfterTurnPayload(turn, cloneOpenAIWSPayloadBytes(currentPayload), result, nil)
+			} else if hooks.AfterTurn != nil {
+				hooks.AfterTurn(turn, result, nil)
+			}
 		}
 		if result == nil {
 			return errors.New("websocket turn result is nil")

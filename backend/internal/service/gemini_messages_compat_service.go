@@ -502,7 +502,7 @@ func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx cont
 		}
 		switch a.Type {
 		case AccountTypeAPIKey:
-			if strings.TrimSpace(a.GetCredential("api_key")) != "" {
+			if strings.TrimSpace(a.GetAPIKey()) != "" {
 				return 0
 			}
 			return 9
@@ -610,7 +610,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	switch account.Type {
 	case AccountTypeAPIKey:
 		buildReq = func(ctx context.Context) (*http.Request, string, error) {
-			apiKey := account.GetCredential("api_key")
+			apiKey := account.GetAPIKey()
 			if strings.TrimSpace(apiKey) == "" {
 				return nil, "", errors.New("gemini api_key not configured")
 			}
@@ -1148,7 +1148,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	switch account.Type {
 	case AccountTypeAPIKey:
 		buildReq = func(ctx context.Context) (*http.Request, string, error) {
-			apiKey := account.GetCredential("api_key")
+			apiKey := account.GetAPIKey()
 			if strings.TrimSpace(apiKey) == "" {
 				return nil, "", errors.New("gemini api_key not configured")
 			}
@@ -2628,7 +2628,7 @@ func (s *GeminiMessagesCompatService) ForwardAIStudioGET(ctx context.Context, ac
 
 	switch account.Type {
 	case AccountTypeAPIKey:
-		apiKey := strings.TrimSpace(account.GetCredential("api_key"))
+		apiKey := strings.TrimSpace(account.GetAPIKey())
 		if apiKey == "" {
 			return nil, errors.New("gemini api_key not configured")
 		}

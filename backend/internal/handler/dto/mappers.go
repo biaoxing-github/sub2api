@@ -3,6 +3,7 @@ package dto
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -207,6 +208,7 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		Type:                    a.Type,
 		Credentials:             redactedCreds,
 		CredentialsStatus:       credsStatus,
+		APIKeyItems:             APIKeyItemsFromService(a),
 		Extra:                   a.Extra,
 		ProxyID:                 a.ProxyID,
 		Concurrency:             a.Concurrency,
@@ -358,7 +360,170 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		}
 	}
 
+	if balance := service.UpstreamBalanceSnapshotFromExtra(a.Extra); balance != nil {
+		out.UpstreamBalance = upstreamBalanceSnapshotFromService(balance)
+	}
+
 	return out
+}
+
+func upstreamBalanceSnapshotFromService(s *service.UpstreamBalanceSnapshot) *UpstreamBalanceSnapshot {
+	if s == nil {
+		return nil
+	}
+	out := &UpstreamBalanceSnapshot{
+		Available:                 s.Available,
+		Used:                      s.Used,
+		Total:                     s.Total,
+		KeyCount:                  s.KeyCount,
+		OKCount:                   s.OKCount,
+		FailedCount:               s.FailedCount,
+		UpdatedAt:                 s.UpdatedAt,
+		Error:                     s.Error,
+		Keys:                      make([]UpstreamBalanceKeySnapshot, 0, len(s.Keys)),
+		Groups:                    upstreamBalanceGroupsFromService(s.Groups),
+		ConvertedAvailableByGroup: s.ConvertedAvailableByGroup,
+	}
+	for _, key := range s.Keys {
+		out.Keys = append(out.Keys, UpstreamBalanceKeySnapshot{
+			Fingerprint: key.Fingerprint,
+			Masked:      key.Masked,
+			Available:   key.Available,
+			Used:        key.Used,
+			Total:       key.Total,
+			Status:      key.Status,
+			Error:       key.Error,
+			Endpoint:    key.Endpoint,
+			UpdatedAt:   key.UpdatedAt,
+			Groups:      upstreamBalanceGroupsFromService(key.Groups),
+		})
+	}
+	return out
+}
+
+func upstreamBalanceGroupsFromService(groups []service.UpstreamBalanceGroupSnapshot) []UpstreamBalanceGroupSnapshot {
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make([]UpstreamBalanceGroupSnapshot, 0, len(groups))
+	for _, group := range groups {
+		out = append(out, UpstreamBalanceGroupSnapshot{
+			Name:               group.Name,
+			Ratio:              group.Ratio,
+			Description:        group.Description,
+			ConvertedAvailable: group.ConvertedAvailable,
+			ConvertedTotal:     group.ConvertedTotal,
+			ConvertedUsed:      group.ConvertedUsed,
+		})
+	}
+	return out
+}
+
+func APIKeyItemsFromService(a *service.Account) []APIKeyItem {
+	if a == nil || a.Credentials == nil {
+		return nil
+	}
+	rawKeys, ok := a.Credentials["api_keys"]
+	if !ok || rawKeys == nil {
+		rawKeys = a.Credentials["api_key"]
+	}
+	keys := normalizeCredentialAPIKeys(rawKeys)
+	if len(keys) == 0 {
+		return nil
+	}
+	disabled := disabledAPIKeyDetails(a.Credentials[service.CredentialAPIKeysDisabled])
+	out := make([]APIKeyItem, 0, len(keys))
+	for _, key := range keys {
+		fingerprint := service.FingerprintAPIKey(key)
+		item := APIKeyItem{
+			Fingerprint: fingerprint,
+			Masked:      maskAPIKey(key),
+		}
+		if detail, ok := disabled[fingerprint]; ok {
+			item.Disabled = true
+			item.Reason = detail.Reason
+			item.DisabledAt = detail.DisabledAt
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+type disabledAPIKeyDetail struct {
+	Reason     string
+	DisabledAt string
+}
+
+func disabledAPIKeyDetails(raw any) map[string]disabledAPIKeyDetail {
+	out := make(map[string]disabledAPIKeyDetail)
+	switch v := raw.(type) {
+	case map[string]any:
+		for fingerprint, detail := range v {
+			fp := strings.TrimSpace(fingerprint)
+			if fp == "" {
+				continue
+			}
+			item := disabledAPIKeyDetail{}
+			if m, ok := detail.(map[string]any); ok {
+				if reason, ok := m["reason"].(string); ok {
+					item.Reason = reason
+				}
+				if disabledAt, ok := m["disabled_at"].(string); ok {
+					item.DisabledAt = disabledAt
+				}
+			}
+			out[fp] = item
+		}
+	}
+	return out
+}
+
+func normalizeCredentialAPIKeys(raw any) []string {
+	add := func(out []string, value string) []string {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return out
+		}
+		return append(out, value)
+	}
+	switch v := raw.(type) {
+	case string:
+		return add(nil, v)
+	case []string:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			out = add(out, item)
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = add(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func maskAPIKey(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if len(value) <= 10 {
+		if len(value) <= 4 {
+			return "..." + value
+		}
+		return value[:2] + "..." + value[len(value)-4:]
+	}
+	prefixLen := 6
+	if len(value) < prefixLen {
+		prefixLen = len(value)
+	}
+	return value[:prefixLen] + "..." + value[len(value)-4:]
 }
 
 func AccountFromService(a *service.Account) *Account {

@@ -371,6 +371,10 @@ const (
 	// anthropic-beta header.
 	SettingKeyOpenAIFastPolicySettings = "openai_fast_policy_settings"
 
+	// SettingKeyOpenAIPromptCacheSettings stores JSON config for injecting
+	// OpenAI prompt cache fields into matching request bodies.
+	SettingKeyOpenAIPromptCacheSettings = "openai_prompt_cache_settings"
+
 	// =========================
 	// Claude Code Version Check
 	// =========================

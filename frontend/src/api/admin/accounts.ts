@@ -6,13 +6,16 @@
 import { apiClient } from '../client'
 import type {
   Account,
+  AccountStatusSummary,
   CreateAccountRequest,
   UpdateAccountRequest,
   PaginatedResponse,
   AccountUsageInfo,
+  AccountPoolUsageSummary,
   WindowStats,
   ClaudeModel,
   AccountUsageStatsResponse,
+  UpstreamBalanceRefreshResult,
   TempUnschedulableStatus,
   AdminDataPayload,
   AdminDataImportResult,
@@ -21,6 +24,28 @@ import type {
   CheckMixedChannelRequest,
   CheckMixedChannelResponse
 } from '@/types'
+
+export interface AccountUsageSummaryFilters {
+  platform?: string
+  type?: string
+  status?: string
+  group?: string
+  search?: string
+  plan_type?: string
+  privacy_mode?: string
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
+}
+
+export type AccountStatusSummaryFilters = AccountUsageSummaryFilters
+
+const accountStatusSummaryStatuses = [
+  'active',
+  'rate_limited',
+  'error',
+  'inactive',
+  'temp_unschedulable',
+] as const
 
 /**
  * List all accounts with pagination
@@ -38,6 +63,7 @@ export async function list(
     status?: string
     group?: string
     search?: string
+    plan_type?: string
     privacy_mode?: string
     lite?: string
     sort_by?: string
@@ -73,6 +99,7 @@ export async function listWithEtag(
     status?: string
     group?: string
     search?: string
+    plan_type?: string
     privacy_mode?: string
     lite?: string
     sort_by?: string
@@ -239,6 +266,57 @@ export async function getUsage(id: number, source?: 'passive' | 'active', force?
   const { data } = await apiClient.get<AccountUsageInfo>(`/admin/accounts/${id}/usage`, {
     params: Object.keys(params).length > 0 ? params : undefined
   })
+  return data
+}
+
+/**
+ * Get aggregated OpenAI account usage across the current account filters.
+ */
+export async function getUsageSummary(
+  filters?: AccountUsageSummaryFilters,
+  options?: {
+    signal?: AbortSignal
+  }
+): Promise<AccountPoolUsageSummary> {
+  const { data } = await apiClient.get<AccountPoolUsageSummary>('/admin/accounts/usage-summary', {
+    params: filters,
+    signal: options?.signal
+  })
+  return data
+}
+
+/**
+ * Get account status totals across the current non-status filters.
+ */
+export async function getStatusSummary(
+  filters?: AccountStatusSummaryFilters,
+  options?: {
+    signal?: AbortSignal
+  }
+): Promise<AccountStatusSummary> {
+  const { status: _status, sort_by: _sortBy, sort_order: _sortOrder, ...baseFilters } = filters ?? {}
+  const entries = await Promise.all(
+    accountStatusSummaryStatuses.map(async (status) => {
+      const result = await list(1, 1, {
+        ...baseFilters,
+        status,
+        lite: '1',
+      }, {
+        signal: options?.signal
+      })
+      return [status, result.total || 0] as const
+    })
+  )
+  return Object.fromEntries(entries) as unknown as AccountStatusSummary
+}
+
+export async function refreshUpstreamBalances(): Promise<UpstreamBalanceRefreshResult> {
+  const { data } = await apiClient.post<UpstreamBalanceRefreshResult>('/admin/accounts/refresh-upstream-balances')
+  return data
+}
+
+export async function refreshUpstreamBalance(id: number): Promise<Account> {
+  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/refresh-upstream-balance`)
   return data
 }
 
@@ -528,6 +606,7 @@ export async function exportData(options?: {
     status?: string
     group?: string
     privacy_mode?: string
+    plan_type?: string
     search?: string
     sort_by?: string
     sort_order?: 'asc' | 'desc'
@@ -538,12 +617,13 @@ export async function exportData(options?: {
   if (options?.ids && options.ids.length > 0) {
     params.ids = options.ids.join(',')
   } else if (options?.filters) {
-    const { platform, type, status, group, privacy_mode, search, sort_by, sort_order } = options.filters
+    const { platform, type, status, group, privacy_mode, plan_type, search, sort_by, sort_order } = options.filters
     if (platform) params.platform = platform
     if (type) params.type = type
     if (status) params.status = status
     if (group) params.group = group
     if (privacy_mode) params.privacy_mode = privacy_mode
+    if (plan_type) params.plan_type = plan_type
     if (search) params.search = search
     if (sort_by) params.sort_by = sort_by
     if (sort_order) params.sort_order = sort_order
@@ -668,6 +748,10 @@ export const accountsAPI = {
   getStats,
   clearError,
   getUsage,
+  getUsageSummary,
+  getStatusSummary,
+  refreshUpstreamBalances,
+  refreshUpstreamBalance,
   getTodayStats,
   getBatchTodayStats,
   clearRateLimit,

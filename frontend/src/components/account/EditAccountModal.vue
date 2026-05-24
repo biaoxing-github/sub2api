@@ -68,6 +68,119 @@
           />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.apiKeys') }}</label>
+          <div
+            v-if="existingApiKeyItems.length > 0"
+            class="mb-2 space-y-1 rounded-lg border border-gray-200 bg-gray-50 p-2 dark:border-dark-600 dark:bg-dark-700"
+          >
+            <div class="flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
+              <span>{{ t('admin.accounts.existingApiKeys') }}</span>
+              <span>{{ existingApiKeySummary }}</span>
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <span
+                v-for="item in existingApiKeyItems"
+                :key="item.fingerprint || item.masked"
+                :class="[
+                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[11px]',
+                  item.disabled
+                    ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                    : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                ]"
+                :title="item.disabled ? (item.reason || t('admin.accounts.apiKeyDisabled')) : t('common.active')"
+              >
+                {{ item.masked }}
+                <span v-if="item.disabled" class="font-sans">{{ t('admin.accounts.apiKeyDisabled') }}</span>
+              </span>
+            </div>
+          </div>
+          <div class="mb-2 grid gap-2 sm:grid-cols-[180px_1fr]">
+            <Select v-model="apiKeysEditMode" :options="apiKeysEditModeOptions" />
+            <p class="input-hint m-0 flex items-center">{{ apiKeysEditModeHint }}</p>
+          </div>
+          <textarea
+            v-model="editApiKeysText"
+            rows="4"
+            class="input font-mono"
+            autocomplete="new-password"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore="true"
+            :placeholder="t('admin.accounts.apiKeysPlaceholderKeep')"
+          ></textarea>
+        </div>
+        <div v-if="account.platform === 'openai'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.authUsername') }}</label>
+            <input
+              v-model="upstreamAuthUsername"
+              type="text"
+              class="input"
+              autocomplete="username"
+              :placeholder="t('admin.accounts.upstream.authUsernamePlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.authUsernameHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.authPassword') }}</label>
+            <input
+              v-model="upstreamAuthPassword"
+              type="password"
+              class="input"
+              autocomplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore="true"
+              :placeholder="hasUpstreamAuthPassword ? t('admin.accounts.leaveEmptyToKeep') : t('admin.accounts.upstream.authPasswordPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.authPasswordHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.commonRateMultiplier') }}</label>
+            <input
+              v-model.number="upstreamCommonRateMultiplier"
+              type="number"
+              min="0"
+              step="0.0001"
+              class="input"
+              :placeholder="t('admin.accounts.upstream.commonRateMultiplierPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.commonRateMultiplierHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.commonRateGroupName') }}</label>
+            <input
+              v-model="upstreamCommonRateGroupName"
+              type="text"
+              class="input"
+              :placeholder="t('admin.accounts.upstream.commonRateGroupNamePlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.commonRateGroupNameHint') }}</p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="input-label">{{ t('admin.accounts.upstream.balanceEndpointPaths') }}</label>
+            <textarea
+              v-model="upstreamBalanceEndpointPathsText"
+              rows="5"
+              class="input font-mono text-xs"
+              :placeholder="t('admin.accounts.upstream.balanceEndpointPathsPlaceholder')"
+            ></textarea>
+            <p class="input-hint">{{ t('admin.accounts.upstream.balanceEndpointPathsHint') }}</p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="input-label">{{ t('admin.accounts.upstream.manualBalanceTotal') }}</label>
+            <input
+              v-model.number="editQuotaLimit"
+              type="number"
+              min="0"
+              step="0.0001"
+              class="input"
+              :placeholder="t('admin.accounts.upstream.manualBalanceTotalPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.manualBalanceTotalHint') }}</p>
+          </div>
+        </div>
 
         <!-- Model Restriction Section (不适用于 Antigravity) -->
         <div v-if="account.platform !== 'antigravity'" class="border-t border-gray-200 pt-4 dark:border-dark-600">
@@ -564,6 +677,67 @@
             placeholder="sk-..."
           />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
+        </div>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.authUsername') }}</label>
+            <input
+              v-model="upstreamAuthUsername"
+              type="text"
+              class="input"
+              autocomplete="username"
+              :placeholder="t('admin.accounts.upstream.authUsernamePlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.authUsernameHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.authPassword') }}</label>
+            <input
+              v-model="upstreamAuthPassword"
+              type="password"
+              class="input"
+              autocomplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore="true"
+              :placeholder="hasUpstreamAuthPassword ? t('admin.accounts.leaveEmptyToKeep') : t('admin.accounts.upstream.authPasswordPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.authPasswordHint') }}</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.commonRateMultiplier') }}</label>
+            <input
+              v-model.number="upstreamCommonRateMultiplier"
+              type="number"
+              min="0"
+              step="0.0001"
+              class="input"
+              :placeholder="t('admin.accounts.upstream.commonRateMultiplierPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.commonRateMultiplierHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.commonRateGroupName') }}</label>
+            <input
+              v-model="upstreamCommonRateGroupName"
+              type="text"
+              class="input"
+              :placeholder="t('admin.accounts.upstream.commonRateGroupNamePlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.commonRateGroupNameHint') }}</p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="input-label">{{ t('admin.accounts.upstream.balanceEndpointPaths') }}</label>
+            <textarea
+              v-model="upstreamBalanceEndpointPathsText"
+              rows="5"
+              class="input font-mono text-xs"
+              :placeholder="t('admin.accounts.upstream.balanceEndpointPathsPlaceholder')"
+            ></textarea>
+            <p class="input-hint">{{ t('admin.accounts.upstream.balanceEndpointPathsHint') }}</p>
+          </div>
         </div>
       </div>
 
@@ -2273,6 +2447,50 @@ const baseUrlHint = computed(() => {
   return t('admin.accounts.baseUrlHint')
 })
 
+function parseAPIKeysText(value: string): string[] {
+  const seen = new Set<string>()
+  const keys: string[] = []
+  value
+    .split(/\r?\n|,/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .forEach(key => {
+      if (seen.has(key)) return
+      seen.add(key)
+      keys.push(key)
+    })
+  return keys
+}
+
+function parseEndpointPathsText(value: string): string[] {
+  const seen = new Set<string>()
+  const paths: string[] = []
+  value
+    .split(/\r?\n|,/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .forEach(path => {
+      if (!path.startsWith('http://') && !path.startsWith('https://') && !path.startsWith('/')) {
+        path = `/${path}`
+      }
+      if (seen.has(path)) return
+      seen.add(path)
+      paths.push(path)
+    })
+  return paths
+}
+
+function endpointPathsToText(raw: unknown): string {
+  if (Array.isArray(raw)) {
+    const values = raw.map(item => String(item).trim()).filter(Boolean)
+    return (values.length > 0 ? values : DEFAULT_UPSTREAM_BALANCE_ENDPOINT_PATHS).join('\n')
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    return raw
+  }
+  return DEFAULT_UPSTREAM_BALANCE_ENDPOINT_PATHS.join('\n')
+}
+
 const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
 const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
 
@@ -2293,6 +2511,31 @@ interface TempUnschedRuleForm {
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
+const editApiKeysText = ref('')
+const apiKeysEditMode = ref<'append' | 'replace'>('append')
+const upstreamAuthUsername = ref('')
+const upstreamAuthPassword = ref('')
+const upstreamCommonRateMultiplier = ref<number | null>(null)
+const upstreamCommonRateGroupName = ref('')
+const DEFAULT_UPSTREAM_BALANCE_ENDPOINT_PATHS = [
+  '/v1/usage',
+  '/v1/dashboard/billing/subscription',
+  '/dashboard/billing/subscription',
+  '/api/usage/token/',
+  '/dashboard/billing/credit_grants',
+  '/v1/dashboard/billing/credit_grants',
+  '/api/user/self',
+  '/api/user/self/stat',
+  '/api/user/self/usage',
+  '/api/user/balance',
+  '/user/balance',
+  '/balance',
+  '/api/v1/usage'
+]
+const upstreamBalanceEndpointPathsText = ref(DEFAULT_UPSTREAM_BALANCE_ENDPOINT_PATHS.join('\n'))
+const hasUpstreamAuthPassword = computed(() =>
+  Boolean(props.account?.credentials_status?.has_upstream_auth_password)
+)
 // Bedrock credentials
 const editBedrockAccessKeyId = ref('')
 const editBedrockSecretAccessKey = ref('')
@@ -2332,6 +2575,24 @@ const getModelMappingKey = createStableObjectKeyResolver<ModelMapping>('edit-mod
 const getOpenAICompactModelMappingKey = createStableObjectKeyResolver<ModelMapping>('edit-openai-compact-model-mapping')
 const getAntigravityModelMappingKey = createStableObjectKeyResolver<ModelMapping>('edit-antigravity-model-mapping')
 const getTempUnschedRuleKey = createStableObjectKeyResolver<TempUnschedRuleForm>('edit-temp-unsched-rule')
+
+const existingApiKeyItems = computed(() => props.account?.api_key_items || [])
+const existingApiKeySummary = computed(() => {
+  const total = existingApiKeyItems.value.length
+  const disabled = existingApiKeyItems.value.filter(item => item.disabled).length
+  return disabled > 0
+    ? t('admin.accounts.apiKeysSummaryWithDisabled', { total, disabled })
+    : t('admin.accounts.apiKeysSummary', { total })
+})
+const apiKeysEditModeOptions = computed(() => [
+  { value: 'append', label: t('admin.accounts.apiKeysAppendMode') },
+  { value: 'replace', label: t('admin.accounts.apiKeysReplaceMode') }
+])
+const apiKeysEditModeHint = computed(() =>
+  apiKeysEditMode.value === 'append'
+    ? t('admin.accounts.apiKeysAppendHint')
+    : t('admin.accounts.apiKeysReplaceHint')
+)
 
 const showMixedChannelWarning = ref(false)
 const mixedChannelWarningDetails = ref<{ groupName: string; currentPlatform: string; otherPlatform: string } | null>(
@@ -2699,6 +2960,22 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       codexCLIOnlyEnabled.value = extra?.codex_cli_only === true
     }
     const credentials = newAccount.credentials as Record<string, unknown> | undefined
+    if (newAccount.type === 'apikey') {
+      upstreamAuthUsername.value = (credentials?.upstream_auth_username as string) || ''
+      upstreamCommonRateMultiplier.value =
+        typeof extra?.upstream_common_rate_multiplier === 'number'
+          ? extra.upstream_common_rate_multiplier
+          : typeof credentials?.upstream_common_rate_multiplier === 'number'
+            ? credentials.upstream_common_rate_multiplier
+            : null
+      upstreamCommonRateGroupName.value =
+        typeof extra?.upstream_common_rate_group_name === 'string' && extra.upstream_common_rate_group_name
+          ? extra.upstream_common_rate_group_name
+          : (credentials?.upstream_common_rate_group_name as string) || ''
+      upstreamBalanceEndpointPathsText.value = endpointPathsToText(
+        credentials?.upstream_balance_endpoint_paths ?? extra?.upstream_balance_endpoint_paths
+      )
+    }
     const compactMappings = credentials?.compact_model_mapping as Record<string, string> | undefined
     if (compactMappings && typeof compactMappings === 'object') {
       openAICompactModelMappings.value = Object.entries(compactMappings).map(([from, to]) => ({ from, to }))
@@ -2843,7 +3120,22 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     loadModelRestrictionFromMapping(bedrockCreds.model_mapping as Record<string, unknown> | undefined)
   } else if (newAccount.type === 'upstream' && newAccount.credentials) {
     const credentials = newAccount.credentials as Record<string, unknown>
+    const extra = (newAccount.extra as Record<string, unknown>) || {}
     editBaseUrl.value = (credentials.base_url as string) || ''
+    upstreamAuthUsername.value = (credentials.upstream_auth_username as string) || ''
+    upstreamCommonRateMultiplier.value =
+      typeof extra.upstream_common_rate_multiplier === 'number'
+        ? extra.upstream_common_rate_multiplier
+        : typeof credentials.upstream_common_rate_multiplier === 'number'
+          ? credentials.upstream_common_rate_multiplier
+          : null
+    upstreamCommonRateGroupName.value =
+      typeof extra.upstream_common_rate_group_name === 'string' && extra.upstream_common_rate_group_name
+        ? extra.upstream_common_rate_group_name
+        : (credentials.upstream_common_rate_group_name as string) || ''
+    upstreamBalanceEndpointPathsText.value = endpointPathsToText(
+      credentials.upstream_balance_endpoint_paths ?? extra.upstream_balance_endpoint_paths
+    )
   } else if ((newAccount.platform === 'gemini' || newAccount.platform === 'anthropic') && newAccount.type === 'service_account' && newAccount.credentials) {
     const credentials = newAccount.credentials as Record<string, unknown>
     editVertexProjectId.value = (credentials.project_id as string) || ''
@@ -2876,6 +3168,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     selectedErrorCodes.value = []
   }
   editApiKey.value = ''
+  editApiKeysText.value = ''
+  apiKeysEditMode.value = 'append'
+  upstreamAuthPassword.value = ''
 }
 
 async function loadTLSProfiles() {
@@ -3105,6 +3400,28 @@ const applyTempUnschedConfig = (credentials: Record<string, unknown>) => {
   credentials.temp_unschedulable_enabled = true
   credentials.temp_unschedulable_rules = rules
   return true
+}
+
+const applyUpstreamAuthCredentials = (credentials: Record<string, unknown>) => {
+  if (upstreamAuthUsername.value.trim()) {
+    credentials.upstream_auth_username = upstreamAuthUsername.value.trim()
+  } else {
+    delete credentials.upstream_auth_username
+  }
+  if (upstreamAuthPassword.value.trim()) {
+    credentials.upstream_auth_password = upstreamAuthPassword.value.trim()
+  }
+  if (upstreamCommonRateMultiplier.value != null && upstreamCommonRateMultiplier.value > 0) {
+    credentials.upstream_common_rate_multiplier = upstreamCommonRateMultiplier.value
+  } else {
+    delete credentials.upstream_common_rate_multiplier
+  }
+  if (upstreamCommonRateGroupName.value.trim()) {
+    credentials.upstream_common_rate_group_name = upstreamCommonRateGroupName.value.trim()
+  } else {
+    delete credentials.upstream_common_rate_group_name
+  }
+  credentials.upstream_balance_endpoint_paths = parseEndpointPathsText(upstreamBalanceEndpointPathsText.value)
 }
 
 function loadTempUnschedRules(credentials?: Record<string, unknown>) {
@@ -3385,15 +3702,25 @@ const handleSubmit = async () => {
         base_url: newBaseUrl
       }
 
-      // Handle API key
-      // 后端响应已脱敏：currentCredentials 不会再包含 api_key 原文。
-      // 用户填入新值则覆盖；留空时优先看 credentials_status.has_api_key；
-      // 若后端尚未升级（无 credentials_status），回退读旧结构 currentCredentials.api_key。
-      // 两者都无才报错。
+      // Handle API key. 后端响应已脱敏，追加模式通过 api_keys_append 让服务端用已保存明文合并。
+      const apiKeys = parseAPIKeysText(editApiKeysText.value)
       const hasExistingApiKey =
-        props.account.credentials_status?.has_api_key ?? Boolean(currentCredentials.api_key)
-      if (editApiKey.value.trim()) {
+        Boolean(props.account.credentials_status?.has_api_key) ||
+        Boolean(props.account.credentials_status?.has_api_keys) ||
+        existingApiKeyItems.value.length > 0 ||
+        Boolean(currentCredentials.api_key) ||
+        Array.isArray(currentCredentials.api_keys)
+      if (apiKeys.length > 0) {
+        if (apiKeysEditMode.value === 'append' && hasExistingApiKey) {
+          newCredentials.api_keys_append = apiKeys
+        } else {
+          newCredentials.api_keys = apiKeys
+          delete newCredentials.api_key
+        }
+      } else if (editApiKey.value.trim()) {
         newCredentials.api_key = editApiKey.value.trim()
+        delete newCredentials.api_keys
+        delete newCredentials.api_keys_append
       } else if (!hasExistingApiKey) {
         appStore.showError(t('admin.accounts.apiKeyIsRequired'))
         return
@@ -3417,6 +3744,7 @@ const handleSubmit = async () => {
         } else {
           delete newCredentials.compact_model_mapping
         }
+        applyUpstreamAuthCredentials(newCredentials)
       }
 
       // Add pool mode if enabled
@@ -3453,6 +3781,7 @@ const handleSubmit = async () => {
       if (editApiKey.value.trim()) {
         newCredentials.api_key = editApiKey.value.trim()
       }
+      applyUpstreamAuthCredentials(newCredentials)
 
       // Add intercept warmup requests setting
       applyInterceptWarmup(newCredentials, interceptWarmupRequests.value, 'edit')

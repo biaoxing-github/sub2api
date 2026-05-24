@@ -443,14 +443,50 @@ func TestRelay_OnTurnComplete_PerTerminalEvent(t *testing.T) {
 	require.Len(t, turns, 2)
 	require.Equal(t, "resp_turn_1", turns[0].RequestID)
 	require.Equal(t, "response.completed", turns[0].TerminalEventType)
+	require.JSONEq(t, string(firstPayload), string(turns[0].RequestPayload))
 	require.Equal(t, 2, turns[0].Usage.InputTokens)
 	require.Equal(t, 1, turns[0].Usage.OutputTokens)
 	require.Equal(t, "resp_turn_2", turns[1].RequestID)
 	require.Equal(t, "response.failed", turns[1].TerminalEventType)
+	require.JSONEq(t, string(firstPayload), string(turns[1].RequestPayload))
 	require.Equal(t, 3, turns[1].Usage.InputTokens)
 	require.Equal(t, 4, turns[1].Usage.OutputTokens)
 	require.Equal(t, 5, result.Usage.InputTokens)
 	require.Equal(t, 5, result.Usage.OutputTokens)
+}
+
+func TestRelay_OnTurnComplete_UsesLatestResponseCreatePayload(t *testing.T) {
+	t.Parallel()
+
+	nextPayload := []byte(`{"type":"response.create","model":"gpt-5.4-codex","input":[{"type":"input_text","text":"next"}]}`)
+	firstPayload := []byte(`{"type":"response.create","model":"gpt-5.3-codex","input":[{"type":"input_text","text":"first"}]}`)
+	state := &relayState{}
+
+	observeClientTurnRequest(state, coderws.MessageText, firstPayload)
+	require.JSONEq(t, string(firstPayload), string(relayLastRequestPayload(state)))
+	require.Equal(t, "gpt-5.3-codex", state.requestModel)
+
+	observeClientTurnRequest(state, coderws.MessageText, []byte(`{"type":"session.update","session":{"model":"ignored"}}`))
+	require.JSONEq(t, string(firstPayload), string(relayLastRequestPayload(state)))
+
+	observeClientTurnRequest(state, coderws.MessageText, nextPayload)
+	require.JSONEq(t, string(nextPayload), string(relayLastRequestPayload(state)))
+	require.Equal(t, "gpt-5.4-codex", state.requestModel)
+
+	var turn RelayTurnResult
+	emitTurnComplete(func(current RelayTurnResult) {
+		turn = current
+	}, state, observedUpstreamEvent{
+		terminal:   true,
+		eventType:  "response.completed",
+		responseID: "resp_next",
+		usage:      Usage{InputTokens: 2, OutputTokens: 1},
+	})
+	require.Equal(t, "resp_next", turn.RequestID)
+	require.JSONEq(t, string(nextPayload), string(turn.RequestPayload))
+
+	nextPayload[0] = '['
+	require.JSONEq(t, `{"type":"response.create","model":"gpt-5.4-codex","input":[{"type":"input_text","text":"next"}]}`, string(turn.RequestPayload))
 }
 
 func TestRelay_OnTurnComplete_ProvidesTurnMetrics(t *testing.T) {

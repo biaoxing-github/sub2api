@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -130,6 +131,42 @@ func TestOpenAIHandleStreamingAwareError_NonStreaming(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "upstream_error", errorObj["type"])
 	assert.Equal(t, "test error", errorObj["message"])
+}
+
+func TestSetOpenAIContinuityHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	setOpenAIContinuityHeaders(c, service.OpenAIAccountScheduleDecision{
+		ContinuityAction: service.OpenAIContinuityActionReplay,
+		ContinuityReason: service.OpenAIContinuityReasonBalanceExhausted,
+	}, 43102)
+
+	require.Equal(t, service.OpenAIContinuityActionReplay, w.Header().Get("X-Sub2API-Continuity-Action"))
+	require.Equal(t, service.OpenAIContinuityReasonBalanceExhausted, w.Header().Get("X-Sub2API-Continuity-Reason"))
+	require.Equal(t, "43102", w.Header().Get("X-Sub2API-Upstream-Account"))
+}
+
+func TestOpenAIContextContinuityErrorHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	h := &OpenAIGatewayHandler{}
+	h.handleOpenAIContextContinuityError(c, &service.OpenAIContextContinuityError{
+		Code:             "context_replay_not_safe",
+		Message:          "protected",
+		CurrentAccountID: 43101,
+		Reason:           service.OpenAIContinuityReasonReplayNotSafe,
+	}, false)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	require.Equal(t, service.OpenAIContinuityActionProtected, w.Header().Get("X-Sub2API-Continuity-Action"))
+	require.Equal(t, service.OpenAIContinuityReasonReplayNotSafe, w.Header().Get("X-Sub2API-Continuity-Reason"))
+	require.Equal(t, "43101", w.Header().Get("X-Sub2API-Upstream-Account"))
 }
 
 func TestReadRequestBodyWithPrealloc(t *testing.T) {
@@ -1074,6 +1111,442 @@ func (s *openAIWSUsageHandlerChannelRepoStub) GetGroupPlatforms(ctx context.Cont
 	return out, nil
 }
 
+type openAIContinuityHandlerAccountRepoStub struct {
+	service.AccountRepository
+	accounts map[int64]service.Account
+	order    []int64
+}
+
+func (s *openAIContinuityHandlerAccountRepoStub) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]service.Account, error) {
+	return s.listSchedulableByPlatform(platform), nil
+}
+
+func (s *openAIContinuityHandlerAccountRepoStub) ListSchedulableByPlatform(ctx context.Context, platform string) ([]service.Account, error) {
+	return s.listSchedulableByPlatform(platform), nil
+}
+
+func (s *openAIContinuityHandlerAccountRepoStub) listSchedulableByPlatform(platform string) []service.Account {
+	if s == nil {
+		return nil
+	}
+	out := make([]service.Account, 0, len(s.order))
+	for _, id := range s.order {
+		account, ok := s.accounts[id]
+		if !ok || account.Platform != platform {
+			continue
+		}
+		out = append(out, account)
+	}
+	return out
+}
+
+func (s *openAIContinuityHandlerAccountRepoStub) GetByID(ctx context.Context, id int64) (*service.Account, error) {
+	if s == nil {
+		return nil, service.ErrAccountNotFound
+	}
+	account, ok := s.accounts[id]
+	if !ok {
+		return nil, service.ErrAccountNotFound
+	}
+	return &account, nil
+}
+
+func (s *openAIContinuityHandlerAccountRepoStub) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
+	if s == nil {
+		return nil
+	}
+	account, ok := s.accounts[id]
+	if !ok {
+		return nil
+	}
+	if account.Extra == nil {
+		account.Extra = make(map[string]any)
+	}
+	for k, v := range updates {
+		account.Extra[k] = v
+	}
+	s.accounts[id] = account
+	return nil
+}
+
+type openAIHandlerRealtimeBalanceRefresherFunc func(ctx context.Context, account *service.Account) (*service.UpstreamBalanceSnapshot, error)
+
+func (f openAIHandlerRealtimeBalanceRefresherFunc) RefreshAccount(ctx context.Context, account *service.Account) (*service.UpstreamBalanceSnapshot, error) {
+	return f(ctx, account)
+}
+
+type openAIContinuityHandlerGatewayCacheStub struct {
+	sessions map[string]int64
+}
+
+func (s *openAIContinuityHandlerGatewayCacheStub) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
+	if s == nil || s.sessions == nil {
+		return 0, nil
+	}
+	return s.sessions[fmt.Sprintf("%d:%s", groupID, sessionHash)], nil
+}
+
+func (s *openAIContinuityHandlerGatewayCacheStub) SetSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) error {
+	if s.sessions == nil {
+		s.sessions = map[string]int64{}
+	}
+	s.sessions[fmt.Sprintf("%d:%s", groupID, sessionHash)] = accountID
+	return nil
+}
+
+func (s *openAIContinuityHandlerGatewayCacheStub) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
+	return nil
+}
+
+func (s *openAIContinuityHandlerGatewayCacheStub) DeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string) error {
+	if s != nil && s.sessions != nil {
+		delete(s.sessions, fmt.Sprintf("%d:%s", groupID, sessionHash))
+	}
+	return nil
+}
+
+type openAIHandlerAdvancedSchedulerSettingRepo struct {
+	values map[string]string
+}
+
+func (s *openAIHandlerAdvancedSchedulerSettingRepo) Get(ctx context.Context, key string) (*service.Setting, error) {
+	value, err := s.GetValue(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return &service.Setting{Key: key, Value: value}, nil
+}
+
+func (s *openAIHandlerAdvancedSchedulerSettingRepo) GetValue(ctx context.Context, key string) (string, error) {
+	if s == nil || s.values == nil {
+		return "", service.ErrSettingNotFound
+	}
+	value, ok := s.values[key]
+	if !ok {
+		return "", service.ErrSettingNotFound
+	}
+	return value, nil
+}
+
+func (s *openAIHandlerAdvancedSchedulerSettingRepo) Set(ctx context.Context, key, value string) error {
+	if s.values == nil {
+		s.values = map[string]string{}
+	}
+	s.values[key] = value
+	return nil
+}
+
+func (s *openAIHandlerAdvancedSchedulerSettingRepo) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	out := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := s.values[key]; ok {
+			out[key] = value
+		}
+	}
+	return out, nil
+}
+
+func (s *openAIHandlerAdvancedSchedulerSettingRepo) SetMultiple(ctx context.Context, settings map[string]string) error {
+	if s.values == nil {
+		s.values = map[string]string{}
+	}
+	for key, value := range settings {
+		s.values[key] = value
+	}
+	return nil
+}
+
+func (s *openAIHandlerAdvancedSchedulerSettingRepo) GetAll(ctx context.Context) (map[string]string, error) {
+	out := make(map[string]string, len(s.values))
+	for key, value := range s.values {
+		out[key] = value
+	}
+	return out, nil
+}
+
+func (s *openAIHandlerAdvancedSchedulerSettingRepo) Delete(ctx context.Context, key string) error {
+	delete(s.values, key)
+	return nil
+}
+
+func newOpenAIHandlerAdvancedSchedulerRateLimitService() *service.RateLimitService {
+	repo := &openAIHandlerAdvancedSchedulerSettingRepo{
+		values: map[string]string{
+			"openai_advanced_scheduler_enabled": "true",
+		},
+	}
+	svc := service.NewRateLimitService(nil, nil, &config.Config{}, nil, nil)
+	svc.SetSettingService(service.NewSettingService(repo, &config.Config{}))
+	return svc
+}
+
+type openAIContinuityHandlerCase struct {
+	gatewaySvc      *service.OpenAIGatewayService
+	journal         service.ContextJournal
+	accountPayloads map[int64]chan []byte
+	handlerURL      string
+	cleanup         func()
+}
+
+func newOpenAIContinuityHandlerCase(t *testing.T, checker *service.RealtimeBalanceChecker) openAIContinuityHandlerCase {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	ctx := context.Background()
+
+	groupID := int64(4301)
+	userID := int64(4302)
+	apiKeyID := int64(4303)
+	sessionHash := service.DeriveSessionHashFromSeed("ws-continuity-session")
+	previousResponseID := "resp_handler_continuity_prev"
+
+	accountPayloads := map[int64]chan []byte{
+		43101: make(chan []byte, 1),
+		43102: make(chan []byte, 1),
+	}
+	startUpstream := func(t *testing.T, accountID int64, responseID string) *httptest.Server {
+		t.Helper()
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{
+				CompressionMode: coderws.CompressionContextTakeover,
+			})
+			if err != nil {
+				return
+			}
+			defer func() {
+				_ = conn.CloseNow()
+			}()
+
+			readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+			msgType, payload, readErr := conn.Read(readCtx)
+			cancelRead()
+			if readErr != nil {
+				return
+			}
+			if msgType == coderws.MessageText || msgType == coderws.MessageBinary {
+				accountPayloads[accountID] <- payload
+			}
+
+			writeCtx, cancelWrite := context.WithTimeout(r.Context(), 3*time.Second)
+			_ = conn.Write(writeCtx, coderws.MessageText, []byte(
+				`{"type":"response.completed","response":{"id":"`+responseID+`","model":"gpt-5.5","usage":{"input_tokens":2,"output_tokens":1}}}`,
+			))
+			cancelWrite()
+			_ = conn.Close(coderws.StatusNormalClosure, "done")
+		}))
+	}
+
+	upstreamA := startUpstream(t, 43101, "resp_should_not_use_exhausted")
+	upstreamB := startUpstream(t, 43102, "resp_handler_continuity_replayed")
+
+	accountA := service.Account{
+		ID:          43101,
+		Name:        "openai-continuity-exhausted",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeAPIKey,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		Credentials: map[string]any{
+			"api_key":  "sk-account-a",
+			"base_url": upstreamA.URL,
+		},
+		Extra: map[string]any{
+			"openai_apikey_responses_websockets_v2_enabled": true,
+		},
+	}
+	accountB := service.Account{
+		ID:          43102,
+		Name:        "openai-continuity-candidate",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeAPIKey,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    1,
+		Credentials: map[string]any{
+			"api_key":  "sk-account-b",
+			"base_url": upstreamB.URL,
+		},
+		Extra: map[string]any{
+			"openai_apikey_responses_websockets_v2_enabled": true,
+		},
+	}
+
+	accountRepo := &openAIContinuityHandlerAccountRepoStub{
+		accounts: map[int64]service.Account{
+			accountA.ID: accountA,
+			accountB.ID: accountB,
+		},
+		order: []int64{accountA.ID, accountB.ID},
+	}
+
+	cfg := &config.Config{}
+	cfg.RunMode = config.RunModeSimple
+	cfg.Default.RateMultiplier = 1
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	cfg.Gateway.OpenAIWS.LBTopK = 1
+
+	journal := service.NewMemoryContextJournal(service.ContextJournalOptions{})
+	priorTurn, err := journal.AppendTurn(ctx, service.ContextJournalAppendInput{
+		GroupID:     groupID,
+		SessionHash: sessionHash,
+		AccountID:   accountA.ID,
+		Protocol:    service.ContextJournalProtocolOpenAIResponses,
+		RequestBody: []byte(`{"type":"response.create","model":"gpt-5.5","prompt_cache_key":"ws-continuity-session","input":[{"type":"input_text","text":"hello"}]}`),
+		ResponseID:  previousResponseID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, journal.BindResponse(ctx, groupID, previousResponseID, service.ContextJournalResponseRef{
+		GroupID:     groupID,
+		SessionHash: sessionHash,
+		AccountID:   accountA.ID,
+		TurnID:      priorTurn.TurnID,
+	}, time.Hour))
+
+	gatewayCache := &openAIContinuityHandlerGatewayCacheStub{}
+	require.NoError(t, gatewayCache.SetSessionAccountID(ctx, groupID, "openai:"+sessionHash, accountA.ID, time.Hour))
+	require.NoError(t, gatewayCache.SetSessionAccountID(ctx, groupID, "openai:response:"+previousResponseID, accountA.ID, time.Hour))
+
+	concurrencyCache := &concurrencyCacheMock{
+		acquireUserSlotFn: func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
+			return true, nil
+		},
+		acquireAccountSlotFn: func(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+			return true, nil
+		},
+	}
+	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg)
+	gatewaySvc := service.NewOpenAIGatewayService(
+		accountRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		gatewayCache,
+		cfg,
+		nil,
+		service.NewConcurrencyService(concurrencyCache),
+		service.NewBillingService(cfg, nil),
+		newOpenAIHandlerAdvancedSchedulerRateLimitService(),
+		billingCacheSvc,
+		nil,
+		&service.DeferredService{},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		journal,
+		checker,
+	)
+	_ = gatewaySvc.BindStickySession(ctx, &groupID, sessionHash, accountA.ID)
+
+	h := &OpenAIGatewayHandler{
+		gatewayService:      gatewaySvc,
+		billingCacheService: billingCacheSvc,
+		apiKeyService:       &service.APIKeyService{},
+		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(concurrencyCache), SSEPingFormatNone, time.Second),
+		cfg:                 cfg,
+	}
+
+	apiKey := &service.APIKey{
+		ID:      apiKeyID,
+		GroupID: &groupID,
+		User:    &service.User{ID: userID, Status: service.StatusActive},
+	}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: userID, Concurrency: 1})
+		c.Next()
+	})
+	router.GET("/openai/v1/responses", h.ResponsesWebSocket)
+	handlerServer := httptest.NewServer(router)
+
+	return openAIContinuityHandlerCase{
+		gatewaySvc:      gatewaySvc,
+		journal:         journal,
+		accountPayloads: accountPayloads,
+		handlerURL:      handlerServer.URL,
+		cleanup: func() {
+			handlerServer.Close()
+			upstreamA.Close()
+			upstreamB.Close()
+		},
+	}
+}
+
+func TestOpenAIResponsesWebSocket_ContinuityReplayForwardsSanitizedBodyToNextAccount(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(4301)
+	checker := service.NewRealtimeBalanceChecker(openAIHandlerRealtimeBalanceRefresherFunc(func(ctx context.Context, account *service.Account) (*service.UpstreamBalanceSnapshot, error) {
+		switch account.ID {
+		case 43101:
+			return &service.UpstreamBalanceSnapshot{Available: 0, OKCount: 1}, nil
+		case 43102:
+			return &service.UpstreamBalanceSnapshot{Available: 4, OKCount: 1}, nil
+		default:
+			return nil, errors.New("unexpected account")
+		}
+	}), service.RealtimeBalanceCheckerOptions{Timeout: time.Second})
+	tc := newOpenAIContinuityHandlerCase(t, checker)
+	defer tc.cleanup()
+
+	dialCtx, cancelDial := context.WithTimeout(ctx, 3*time.Second)
+	clientConn, _, err := coderws.Dial(
+		dialCtx,
+		"ws"+strings.TrimPrefix(tc.handlerURL, "http")+"/openai/v1/responses",
+		&coderws.DialOptions{CompressionMode: coderws.CompressionContextTakeover},
+	)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() {
+		_ = clientConn.CloseNow()
+	}()
+
+	firstPayload := []byte(`{"type":"response.create","model":"gpt-5.5","prompt_cache_key":"ws-continuity-session","previous_response_id":"resp_handler_continuity_prev","input":[{"type":"input_text","text":"hello"},{"type":"input_text","text":"continue"}]}`)
+	writeCtx, cancelWrite := context.WithTimeout(ctx, 3*time.Second)
+	err = clientConn.Write(writeCtx, coderws.MessageText, firstPayload)
+	cancelWrite()
+	require.NoError(t, err)
+
+	readCtx, cancelRead := context.WithTimeout(ctx, 3*time.Second)
+	_, event, err := clientConn.Read(readCtx)
+	cancelRead()
+	require.NoError(t, err)
+	require.Equal(t, "response.completed", gjson.GetBytes(event, "type").String())
+	require.Equal(t, "resp_handler_continuity_replayed", gjson.GetBytes(event, "response.id").String())
+	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
+
+	select {
+	case exhaustedPayload := <-tc.accountPayloads[43101]:
+		t.Fatalf("exhausted account received replayed request: %s", string(exhaustedPayload))
+	case replayedPayload := <-tc.accountPayloads[43102]:
+		require.Equal(t, "gpt-5.5", gjson.GetBytes(replayedPayload, "model").String())
+		require.Equal(t, "ws-continuity-session", gjson.GetBytes(replayedPayload, "prompt_cache_key").String())
+		require.False(t, gjson.GetBytes(replayedPayload, "previous_response_id").Exists())
+		require.Equal(t, "continue", gjson.GetBytes(replayedPayload, "input.1.text").String())
+	case <-time.After(3 * time.Second):
+		t.Fatal("等待候选账号收到 replay payload 超时")
+	}
+
+	ref, err := tc.journal.GetResponse(ctx, groupID, "resp_handler_continuity_replayed")
+	require.NoError(t, err)
+	require.NotNil(t, ref)
+	require.Equal(t, int64(43102), ref.AccountID)
+}
+
 func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSUsageLogCase) openAIResponsesWSUsageLogResult {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -1188,6 +1661,8 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		nil,
 		nil,
 		channelSvc,
+		nil,
+		nil,
 		nil,
 		nil,
 	)

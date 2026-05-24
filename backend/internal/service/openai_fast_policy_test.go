@@ -75,6 +75,78 @@ func openAIFastFilterPriorityPolicy() *OpenAIFastPolicySettings {
 	}
 }
 
+func newOpenAIGatewayServiceWithPromptCacheSettings(t *testing.T, settings *OpenAIPromptCacheSettings) *OpenAIGatewayService {
+	t.Helper()
+	repo := &openAIFastPolicyRepoStub{values: map[string]string{}}
+	if settings != nil {
+		raw, err := json.Marshal(settings)
+		require.NoError(t, err)
+		repo.values[SettingKeyOpenAIPromptCacheSettings] = string(raw)
+	}
+	return &OpenAIGatewayService{
+		settingService: NewSettingService(repo, &config.Config{}),
+	}
+}
+
+func TestApplyOpenAIPromptCacheSettingsToBody_InjectsConfiguredKey(t *testing.T) {
+	svc := newOpenAIGatewayServiceWithPromptCacheSettings(t, &OpenAIPromptCacheSettings{
+		Rules: []OpenAIPromptCacheRule{{
+			PromptCacheKey: "hermes-codex-gpt55-main",
+			ModelWhitelist: []string{"gpt-5.5", "gpt-5.5*"},
+		}},
+	})
+
+	updated, err := svc.applyOpenAIPromptCacheSettingsToBody(context.Background(), "gpt-5.5", []byte(`{"model":"gpt-5.5","input":"hi"}`))
+	require.NoError(t, err)
+	require.Equal(t, "hermes-codex-gpt55-main", gjson.GetBytes(updated, "prompt_cache_key").String())
+}
+
+func TestApplyOpenAIPromptCacheSettingsToBody_DoesNotOverrideClientKey(t *testing.T) {
+	svc := newOpenAIGatewayServiceWithPromptCacheSettings(t, &OpenAIPromptCacheSettings{
+		Rules: []OpenAIPromptCacheRule{{
+			PromptCacheKey: "hermes-codex-gpt55-main",
+			ModelWhitelist: []string{"gpt-5.5"},
+		}},
+	})
+
+	updated, err := svc.applyOpenAIPromptCacheSettingsToBody(context.Background(), "gpt-5.5", []byte(`{"model":"gpt-5.5","prompt_cache_key":"client-key"}`))
+	require.NoError(t, err)
+	require.Equal(t, "client-key", gjson.GetBytes(updated, "prompt_cache_key").String())
+}
+
+func TestApplyOpenAIPromptCacheSettingsToBody_SkipsUnmatchedModel(t *testing.T) {
+	svc := newOpenAIGatewayServiceWithPromptCacheSettings(t, &OpenAIPromptCacheSettings{
+		Rules: []OpenAIPromptCacheRule{{
+			PromptCacheKey: "hermes-codex-gpt55-main",
+			ModelWhitelist: []string{"gpt-5.5"},
+		}},
+	})
+
+	updated, err := svc.applyOpenAIPromptCacheSettingsToBody(context.Background(), "gpt-4o", []byte(`{"model":"gpt-4o"}`))
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(updated, "prompt_cache_key").Exists())
+}
+
+func TestSetOpenAIPromptCacheSettings_NormalizesAndStores(t *testing.T) {
+	repo := &openAIFastPolicyRepoStub{values: map[string]string{}}
+	settingService := NewSettingService(repo, &config.Config{})
+
+	err := settingService.SetOpenAIPromptCacheSettings(context.Background(), &OpenAIPromptCacheSettings{
+		Rules: []OpenAIPromptCacheRule{{
+			PromptCacheKey:       "  hermes-codex-gpt55-main  ",
+			PromptCacheRetention: "24h",
+			ModelWhitelist:       []string{" gpt-5.5 ", "gpt-5.5*"},
+		}},
+	})
+	require.NoError(t, err)
+
+	loaded, err := settingService.GetOpenAIPromptCacheSettings(context.Background())
+	require.NoError(t, err)
+	require.Len(t, loaded.Rules, 1)
+	require.Equal(t, "hermes-codex-gpt55-main", loaded.Rules[0].PromptCacheKey)
+	require.Equal(t, []string{"gpt-5.5", "gpt-5.5*"}, loaded.Rules[0].ModelWhitelist)
+}
+
 func TestEvaluateOpenAIFastPolicy_DefaultPassesKnownTiers(t *testing.T) {
 	require.Empty(t, DefaultOpenAIFastPolicySettings().Rules, "default policy must not rewrite service_tier unless admin configured rules")
 

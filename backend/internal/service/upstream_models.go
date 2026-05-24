@@ -172,7 +172,7 @@ func (s *AccountTestService) buildAnthropicUpstreamModelsRequest(ctx context.Con
 		authHeaderValue = "Bearer " + accessToken
 		betaHeader = claude.DefaultBetaHeader
 	} else if account.Type == AccountTypeAPIKey {
-		apiKey := strings.TrimSpace(account.GetCredential("api_key"))
+		apiKey := strings.TrimSpace(account.GetAPIKey())
 		if apiKey == "" {
 			return nil, newUpstreamModelSyncConfigError("No Anthropic API key is available", nil)
 		}
@@ -213,7 +213,7 @@ func (s *AccountTestService) buildAntigravityAPIKeyModelsRequest(ctx context.Con
 			fmt.Sprintf("Unsupported Antigravity account type for upstream model sync: %s", account.Type), nil,
 		)
 	}
-	apiKey := strings.TrimSpace(account.GetCredential("api_key"))
+	apiKey := strings.TrimSpace(account.GetAPIKey())
 	if apiKey == "" {
 		return nil, newUpstreamModelSyncConfigError("No Antigravity API key is available", nil)
 	}
@@ -294,7 +294,7 @@ func (s *AccountTestService) buildGeminiUpstreamModelsRequest(ctx context.Contex
 
 	switch account.Type {
 	case AccountTypeAPIKey:
-		apiKey := strings.TrimSpace(account.GetCredential("api_key"))
+		apiKey := strings.TrimSpace(account.GetAPIKey())
 		if apiKey == "" {
 			return nil, newUpstreamModelSyncConfigError("No Gemini API key is available", nil)
 		}

@@ -158,6 +158,7 @@ type Account struct {
 	// 的存在性通过 CredentialsStatus（has_<key>）暴露，原始值不返回前端。
 	Credentials        map[string]any  `json:"credentials"`
 	CredentialsStatus  map[string]bool `json:"credentials_status,omitempty"`
+	APIKeyItems        []APIKeyItem    `json:"api_key_items,omitempty"`
 	Extra              map[string]any  `json:"extra"`
 	ProxyID            *int64          `json:"proxy_id"`
 	Concurrency        int             `json:"concurrency"`
@@ -247,11 +248,57 @@ type Account struct {
 	QuotaNotifyTotalEnabled    *bool    `json:"quota_notify_total_enabled,omitempty"`
 	QuotaNotifyTotalThreshold  *float64 `json:"quota_notify_total_threshold,omitempty"`
 
+	UpstreamBalance *UpstreamBalanceSnapshot `json:"upstream_balance,omitempty"`
+
 	Proxy         *Proxy         `json:"proxy,omitempty"`
 	AccountGroups []AccountGroup `json:"account_groups,omitempty"`
 
 	GroupIDs []int64  `json:"group_ids,omitempty"`
 	Groups   []*Group `json:"groups,omitempty"`
+}
+
+type APIKeyItem struct {
+	Fingerprint string `json:"fingerprint"`
+	Masked      string `json:"masked"`
+	Disabled    bool   `json:"disabled,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	DisabledAt  string `json:"disabled_at,omitempty"`
+}
+
+type UpstreamBalanceKeySnapshot struct {
+	Fingerprint string                         `json:"fingerprint"`
+	Masked      string                         `json:"masked"`
+	Available   *float64                       `json:"available,omitempty"`
+	Used        *float64                       `json:"used,omitempty"`
+	Total       *float64                       `json:"total,omitempty"`
+	Status      string                         `json:"status"`
+	Error       string                         `json:"error,omitempty"`
+	Endpoint    string                         `json:"endpoint,omitempty"`
+	UpdatedAt   *time.Time                     `json:"updated_at,omitempty"`
+	Groups      []UpstreamBalanceGroupSnapshot `json:"groups,omitempty"`
+}
+
+type UpstreamBalanceGroupSnapshot struct {
+	Name               string   `json:"name"`
+	Ratio              float64  `json:"ratio"`
+	Description        string   `json:"description,omitempty"`
+	ConvertedAvailable *float64 `json:"converted_available,omitempty"`
+	ConvertedTotal     *float64 `json:"converted_total,omitempty"`
+	ConvertedUsed      *float64 `json:"converted_used,omitempty"`
+}
+
+type UpstreamBalanceSnapshot struct {
+	Available                 float64                        `json:"available"`
+	Used                      float64                        `json:"used"`
+	Total                     float64                        `json:"total"`
+	KeyCount                  int                            `json:"key_count"`
+	OKCount                   int                            `json:"ok_count"`
+	FailedCount               int                            `json:"failed_count"`
+	UpdatedAt                 *time.Time                     `json:"updated_at,omitempty"`
+	Error                     string                         `json:"error,omitempty"`
+	Keys                      []UpstreamBalanceKeySnapshot   `json:"keys,omitempty"`
+	Groups                    []UpstreamBalanceGroupSnapshot `json:"groups,omitempty"`
+	ConvertedAvailableByGroup map[string]float64             `json:"converted_available_by_group,omitempty"`
 }
 
 type AccountGroup struct {

@@ -519,3 +519,21 @@ func DefaultOpenAIFastPolicySettings() *OpenAIFastPolicySettings {
 		Rules: []OpenAIFastPolicyRule{},
 	}
 }
+
+// OpenAIPromptCacheRule configures prompt cache field injection for matching
+// OpenAI request models. Existing client-supplied fields are preserved.
+type OpenAIPromptCacheRule struct {
+	PromptCacheKey       string   `json:"prompt_cache_key"`
+	PromptCacheRetention string   `json:"prompt_cache_retention,omitempty"`
+	ModelWhitelist       []string `json:"model_whitelist,omitempty"`
+}
+
+type OpenAIPromptCacheSettings struct {
+	Rules []OpenAIPromptCacheRule `json:"rules"`
+}
+
+func DefaultOpenAIPromptCacheSettings() *OpenAIPromptCacheSettings {
+	return &OpenAIPromptCacheSettings{
+		Rules: []OpenAIPromptCacheRule{},
+	}
+}

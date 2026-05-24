@@ -4204,7 +4204,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 
 	// 获取上游配置
 	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
-	apiKey := strings.TrimSpace(account.GetCredential("api_key"))
+	apiKey := strings.TrimSpace(account.GetAPIKey())
 	if baseURL == "" || apiKey == "" {
 		return nil, fmt.Errorf("upstream account missing base_url or api_key")
 	}

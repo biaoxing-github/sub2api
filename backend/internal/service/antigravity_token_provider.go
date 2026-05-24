@@ -75,7 +75,7 @@ func (p *AntigravityTokenProvider) GetAccessToken(ctx context.Context, account *
 
 	// upstream accounts use static api_key and never refresh oauth token.
 	if account.Type == AccountTypeUpstream {
-		apiKey := account.GetCredential("api_key")
+		apiKey := account.GetAPIKey()
 		if apiKey == "" {
 			return "", errors.New("upstream account missing api_key in credentials")
 		}

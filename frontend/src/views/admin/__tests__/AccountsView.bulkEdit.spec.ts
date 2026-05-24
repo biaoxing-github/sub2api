@@ -7,12 +7,18 @@ const {
   listAccounts,
   listWithEtag,
   getBatchTodayStats,
+  batchRefresh,
+  getUsageSummary,
+  getStatusSummary,
   getAllProxies,
   getAllGroups
 } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
+  batchRefresh: vi.fn(),
+  getUsageSummary: vi.fn(),
+  getStatusSummary: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn()
 }))
@@ -25,7 +31,9 @@ vi.mock('@/api/admin', () => ({
       getBatchTodayStats,
       delete: vi.fn(),
       batchClearError: vi.fn(),
-      batchRefresh: vi.fn(),
+      batchRefresh,
+      getUsageSummary,
+      getStatusSummary,
       toggleSchedulable: vi.fn()
     },
     proxies: {
@@ -68,8 +76,13 @@ const DataTableStub = {
 
 const AccountBulkActionsBarStub = {
   props: ['selectedIds'],
-  emits: ['edit-filtered'],
-  template: '<button data-test="edit-filtered" @click="$emit(\'edit-filtered\')">edit filtered</button>'
+  emits: ['edit-filtered', 'refresh-token'],
+  template: `
+    <div>
+      <button data-test="edit-filtered" @click="$emit('edit-filtered')">edit filtered</button>
+      <button data-test="refresh-token" @click="$emit('refresh-token')">refresh token</button>
+    </div>
+  `
 }
 
 const BulkEditAccountModalStub = {
@@ -84,6 +97,9 @@ describe('admin AccountsView bulk edit scope', () => {
     listAccounts.mockReset()
     listWithEtag.mockReset()
     getBatchTodayStats.mockReset()
+    batchRefresh.mockReset()
+    getUsageSummary.mockReset()
+    getStatusSummary.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
 
@@ -100,6 +116,9 @@ describe('admin AccountsView bulk edit scope', () => {
       data: null
     })
     getBatchTodayStats.mockResolvedValue({ stats: {} })
+    batchRefresh.mockResolvedValue({ total: 0, success: 0, failed: 0, errors: [] })
+    getUsageSummary.mockResolvedValue(null)
+    getStatusSummary.mockResolvedValue({})
     getAllProxies.mockResolvedValue([])
     getAllGroups.mockResolvedValue([])
   })
@@ -148,5 +167,78 @@ describe('admin AccountsView bulk edit scope', () => {
 
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-show')).toBe('true')
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-mode')).toBe('filtered')
+  })
+
+  it('shows account-level token refresh errors in a dialog', async () => {
+    window.confirm = vi.fn(() => true)
+    listAccounts.mockResolvedValueOnce({
+      items: [
+        {
+          id: 1,
+          name: 'free-one@example.com',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'active',
+          schedulable: true,
+          credentials: { plan_type: 'free' },
+          extra: {},
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+    batchRefresh.mockResolvedValue({
+      total: 1,
+      success: 0,
+      failed: 1,
+      errors: [{ account_id: 1, error: 'invalid_grant' }]
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          BaseDialog: { template: '<section data-test="base-dialog"><slot /><slot name="footer" /></section>' },
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.get('[data-test="refresh-token"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('free-one@example.com')
+    expect(wrapper.text()).toContain('invalid_grant')
   })
 })

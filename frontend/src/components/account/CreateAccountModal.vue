@@ -798,6 +798,79 @@
           />
           <p class="input-hint">{{ t('admin.accounts.upstream.apiKeyHint') }}</p>
         </div>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.authUsername') }}</label>
+            <input
+              v-model="upstreamAuthUsername"
+              type="text"
+              class="input"
+              autocomplete="username"
+              :placeholder="t('admin.accounts.upstream.authUsernamePlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.authUsernameHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.authPassword') }}</label>
+            <input
+              v-model="upstreamAuthPassword"
+              type="password"
+              class="input"
+              autocomplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore="true"
+              :placeholder="t('admin.accounts.upstream.authPasswordPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.authPasswordHint') }}</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.commonRateMultiplier') }}</label>
+            <input
+              v-model.number="upstreamCommonRateMultiplier"
+              type="number"
+              min="0"
+              step="0.0001"
+              class="input"
+              :placeholder="t('admin.accounts.upstream.commonRateMultiplierPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.commonRateMultiplierHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.commonRateGroupName') }}</label>
+            <input
+              v-model="upstreamCommonRateGroupName"
+              type="text"
+              class="input"
+              :placeholder="t('admin.accounts.upstream.commonRateGroupNamePlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.commonRateGroupNameHint') }}</p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="input-label">{{ t('admin.accounts.upstream.balanceEndpointPaths') }}</label>
+            <textarea
+              v-model="upstreamBalanceEndpointPathsText"
+              rows="5"
+              class="input font-mono text-xs"
+              :placeholder="t('admin.accounts.upstream.balanceEndpointPathsPlaceholder')"
+            ></textarea>
+            <p class="input-hint">{{ t('admin.accounts.upstream.balanceEndpointPathsHint') }}</p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="input-label">{{ t('admin.accounts.upstream.manualBalanceTotal') }}</label>
+            <input
+              v-model.number="editQuotaLimit"
+              type="number"
+              min="0"
+              step="0.0001"
+              class="input"
+              :placeholder="t('admin.accounts.upstream.manualBalanceTotalPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.manualBalanceTotalHint') }}</p>
+          </div>
+        </div>
       </div>
 
       <!-- Vertex Service Account -->
@@ -1031,7 +1104,6 @@
           <input
             v-model="apiKeyValue"
             type="password"
-            required
             class="input font-mono"
             :placeholder="
               form.platform === 'openai'
@@ -1042,6 +1114,79 @@
             "
           />
           <p class="input-hint">{{ apiKeyHint }}</p>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.apiKeys') }}</label>
+          <textarea
+            v-model="apiKeysText"
+            rows="4"
+            class="input font-mono"
+            autocomplete="new-password"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore="true"
+            :placeholder="t('admin.accounts.apiKeysPlaceholder')"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.accounts.apiKeysHint') }}</p>
+        </div>
+        <div v-if="form.platform === 'openai'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.authUsername') }}</label>
+            <input
+              v-model="upstreamAuthUsername"
+              type="text"
+              class="input"
+              autocomplete="username"
+              :placeholder="t('admin.accounts.upstream.authUsernamePlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.authUsernameHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.authPassword') }}</label>
+            <input
+              v-model="upstreamAuthPassword"
+              type="password"
+              class="input"
+              autocomplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore="true"
+              :placeholder="t('admin.accounts.upstream.authPasswordPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.authPasswordHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.commonRateMultiplier') }}</label>
+            <input
+              v-model.number="upstreamCommonRateMultiplier"
+              type="number"
+              min="0"
+              step="0.0001"
+              class="input"
+              :placeholder="t('admin.accounts.upstream.commonRateMultiplierPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.commonRateMultiplierHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.upstream.commonRateGroupName') }}</label>
+            <input
+              v-model="upstreamCommonRateGroupName"
+              type="text"
+              class="input"
+              :placeholder="t('admin.accounts.upstream.commonRateGroupNamePlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.upstream.commonRateGroupNameHint') }}</p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="input-label">{{ t('admin.accounts.upstream.balanceEndpointPaths') }}</label>
+            <textarea
+              v-model="upstreamBalanceEndpointPathsText"
+              rows="5"
+              class="input font-mono text-xs"
+              :placeholder="t('admin.accounts.upstream.balanceEndpointPathsPlaceholder')"
+            ></textarea>
+            <p class="input-hint">{{ t('admin.accounts.upstream.balanceEndpointPathsHint') }}</p>
+          </div>
         </div>
 
         <!-- Gemini API Key tier selection -->
@@ -3206,6 +3351,39 @@ const apiKeyHint = computed(() => {
   return t('admin.accounts.apiKeyHint')
 })
 
+function parseAPIKeysText(value: string): string[] {
+  const seen = new Set<string>()
+  const keys: string[] = []
+  value
+    .split(/\r?\n|,/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .forEach(key => {
+      if (seen.has(key)) return
+      seen.add(key)
+      keys.push(key)
+    })
+  return keys
+}
+
+function parseEndpointPathsText(value: string): string[] {
+  const seen = new Set<string>()
+  const paths: string[] = []
+  value
+    .split(/\r?\n|,/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .forEach(path => {
+      if (!path.startsWith('http://') && !path.startsWith('https://') && !path.startsWith('/')) {
+        path = `/${path}`
+      }
+      if (seen.has(path)) return
+      seen.add(path)
+      paths.push(path)
+    })
+  return paths
+}
+
 interface Props {
   show: boolean
   proxies: Proxy[]
@@ -3278,6 +3456,7 @@ const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_acco
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
+const apiKeysText = ref('')
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
 const editQuotaWeeklyLimit = ref<number | null>(null)
@@ -3327,6 +3506,26 @@ const allowOverages = ref(false) // For antigravity accounts: enable AI Credits 
 const antigravityAccountType = ref<'oauth' | 'upstream'>('oauth') // For antigravity: oauth or upstream
 const upstreamBaseUrl = ref('') // For upstream type: base URL
 const upstreamApiKey = ref('') // For upstream type: API key
+const upstreamAuthUsername = ref('')
+const upstreamAuthPassword = ref('')
+const upstreamCommonRateMultiplier = ref<number | null>(null)
+const upstreamCommonRateGroupName = ref('')
+const DEFAULT_UPSTREAM_BALANCE_ENDPOINT_PATHS = [
+  '/v1/usage',
+  '/v1/dashboard/billing/subscription',
+  '/dashboard/billing/subscription',
+  '/api/usage/token/',
+  '/dashboard/billing/credit_grants',
+  '/v1/dashboard/billing/credit_grants',
+  '/api/user/self',
+  '/api/user/self/stat',
+  '/api/user/self/usage',
+  '/api/user/balance',
+  '/user/balance',
+  '/balance',
+  '/api/v1/usage'
+]
+const upstreamBalanceEndpointPathsText = ref(DEFAULT_UPSTREAM_BALANCE_ENDPOINT_PATHS.join('\n'))
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMapping[]>([])
@@ -4043,6 +4242,7 @@ const resetForm = () => {
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
+  apiKeysText.value = ''
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
   editQuotaWeeklyLimit.value = null
@@ -4100,6 +4300,11 @@ const resetForm = () => {
   antigravityAccountType.value = 'oauth'
   upstreamBaseUrl.value = ''
   upstreamApiKey.value = ''
+  upstreamAuthUsername.value = ''
+  upstreamAuthPassword.value = ''
+  upstreamCommonRateMultiplier.value = null
+  upstreamCommonRateGroupName.value = ''
+  upstreamBalanceEndpointPathsText.value = DEFAULT_UPSTREAM_BALANCE_ENDPOINT_PATHS.join('\n')
   vertexServiceAccountJson.value = ''
   vertexProjectId.value = ''
   vertexClientEmail.value = ''
@@ -4374,6 +4579,19 @@ const handleSubmit = async () => {
       base_url: upstreamBaseUrl.value.trim(),
       api_key: upstreamApiKey.value.trim()
     }
+    if (upstreamAuthUsername.value.trim()) {
+      credentials.upstream_auth_username = upstreamAuthUsername.value.trim()
+    }
+    if (upstreamAuthPassword.value.trim()) {
+      credentials.upstream_auth_password = upstreamAuthPassword.value.trim()
+    }
+    if (upstreamCommonRateMultiplier.value != null && upstreamCommonRateMultiplier.value > 0) {
+      credentials.upstream_common_rate_multiplier = upstreamCommonRateMultiplier.value
+    }
+    if (upstreamCommonRateGroupName.value.trim()) {
+      credentials.upstream_common_rate_group_name = upstreamCommonRateGroupName.value.trim()
+    }
+    credentials.upstream_balance_endpoint_paths = parseEndpointPathsText(upstreamBalanceEndpointPathsText.value)
 
     // Antigravity 只使用映射模式
     const antigravityModelMapping = buildModelMappingObject(
@@ -4416,7 +4634,8 @@ const handleSubmit = async () => {
   }
 
   // For apikey type, create directly
-  if (!apiKeyValue.value.trim()) {
+  const apiKeys = parseAPIKeysText(apiKeysText.value)
+  if (!apiKeyValue.value.trim() && apiKeys.length === 0) {
     appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
     return
   }
@@ -4431,8 +4650,27 @@ const handleSubmit = async () => {
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
-    base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
-    api_key: apiKeyValue.value.trim()
+    base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl
+  }
+  if (apiKeys.length > 0) {
+    credentials.api_keys = apiKeys
+  } else {
+    credentials.api_key = apiKeyValue.value.trim()
+  }
+  if (form.platform === 'openai') {
+    if (upstreamAuthUsername.value.trim()) {
+      credentials.upstream_auth_username = upstreamAuthUsername.value.trim()
+    }
+    if (upstreamAuthPassword.value.trim()) {
+      credentials.upstream_auth_password = upstreamAuthPassword.value.trim()
+    }
+    if (upstreamCommonRateMultiplier.value != null && upstreamCommonRateMultiplier.value > 0) {
+      credentials.upstream_common_rate_multiplier = upstreamCommonRateMultiplier.value
+    }
+    if (upstreamCommonRateGroupName.value.trim()) {
+      credentials.upstream_common_rate_group_name = upstreamCommonRateGroupName.value.trim()
+    }
+    credentials.upstream_balance_endpoint_paths = parseEndpointPathsText(upstreamBalanceEndpointPathsText.value)
   }
   if (form.platform === 'gemini') {
     credentials.tier_id = geminiTierAIStudio.value

@@ -53,6 +53,7 @@ type AccountHandler struct {
 	rateLimitService        *service.RateLimitService
 	accountUsageService     *service.AccountUsageService
 	accountTestService      *service.AccountTestService
+	upstreamBalanceService  *service.UpstreamBalanceService
 	concurrencyService      *service.ConcurrencyService
 	crsSyncService          *service.CRSSyncService
 	sessionLimitCache       service.SessionLimitCache
@@ -70,6 +71,7 @@ func NewAccountHandler(
 	rateLimitService *service.RateLimitService,
 	accountUsageService *service.AccountUsageService,
 	accountTestService *service.AccountTestService,
+	upstreamBalanceService *service.UpstreamBalanceService,
 	concurrencyService *service.ConcurrencyService,
 	crsSyncService *service.CRSSyncService,
 	sessionLimitCache service.SessionLimitCache,
@@ -85,6 +87,7 @@ func NewAccountHandler(
 		rateLimitService:        rateLimitService,
 		accountUsageService:     accountUsageService,
 		accountTestService:      accountTestService,
+		upstreamBalanceService:  upstreamBalanceService,
 		concurrencyService:      concurrencyService,
 		crsSyncService:          crsSyncService,
 		sessionLimitCache:       sessionLimitCache,
@@ -157,6 +160,7 @@ type BulkUpdateAccountFilters struct {
 	Group       string `json:"group"`
 	Search      string `json:"search"`
 	PrivacyMode string `json:"privacy_mode"`
+	PlanType    string `json:"plan_type"`
 }
 
 // CheckMixedChannelRequest represents check mixed channel risk request
@@ -231,6 +235,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 	status := c.Query("status")
 	search := c.Query("search")
 	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+	planType := strings.ToLower(strings.TrimSpace(c.Query("plan_type")))
 	sortBy := c.DefaultQuery("sort_by", "name")
 	sortOrder := c.DefaultQuery("sort_order", "asc")
 	// 标准化和验证 search 参数
@@ -258,7 +263,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 
-	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, sortBy, sortOrder)
+	accounts, total, err := h.adminService.ListAccounts(c.Request.Context(), page, pageSize, platform, accountType, status, search, groupID, privacyMode, planType, sortBy, sortOrder)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -391,6 +396,105 @@ func (h *AccountHandler) List(c *gin.Context) {
 	}
 
 	response.Paginated(c, result, total, page, pageSize)
+}
+
+// GetUsageSummary handles aggregated OpenAI account usage by ChatGPT plan and account type.
+// GET /api/v1/admin/accounts/usage-summary
+func (h *AccountHandler) GetUsageSummary(c *gin.Context) {
+	if h.accountUsageService == nil {
+		response.InternalError(c, "Account usage service is not configured")
+		return
+	}
+
+	platform := c.DefaultQuery("platform", service.PlatformOpenAI)
+	accountType := c.Query("type")
+	status := c.Query("status")
+	search := strings.TrimSpace(c.Query("search"))
+	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
+	planType := strings.ToLower(strings.TrimSpace(c.Query("plan_type")))
+	sortBy := c.DefaultQuery("sort_by", "name")
+	sortOrder := c.DefaultQuery("sort_order", "asc")
+	if len(search) > 100 {
+		search = search[:100]
+	}
+
+	groupID, ok := parseAccountListGroupFilter(c)
+	if !ok {
+		return
+	}
+
+	accounts, err := h.listAccountsFiltered(c.Request.Context(), platform, accountType, status, search, groupID, privacyMode, planType, sortBy, sortOrder)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	summary, err := h.accountUsageService.GetAccountUsageSummary(c.Request.Context(), accounts)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, summary)
+}
+
+// RefreshUpstreamBalances refreshes upstream API-key balances for the current account filters.
+// POST /api/v1/admin/accounts/refresh-upstream-balances
+func (h *AccountHandler) RefreshUpstreamBalances(c *gin.Context) {
+	if h.upstreamBalanceService == nil {
+		response.InternalError(c, "Upstream balance service is not configured")
+		return
+	}
+
+	result, err := h.upstreamBalanceService.RefreshAll(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// RefreshUpstreamBalance refreshes one upstream API-key account balance.
+// POST /api/v1/admin/accounts/:id/refresh-upstream-balance
+func (h *AccountHandler) RefreshUpstreamBalance(c *gin.Context) {
+	if h.upstreamBalanceService == nil {
+		response.InternalError(c, "Upstream balance service is not configured")
+		return
+	}
+
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+
+	if _, err := h.upstreamBalanceService.RefreshOne(c.Request.Context(), accountID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
+}
+
+func parseAccountListGroupFilter(c *gin.Context) (int64, bool) {
+	groupIDStr := c.Query("group")
+	if groupIDStr == "" {
+		return 0, true
+	}
+	if groupIDStr == accountListGroupUngroupedQueryValue {
+		return service.AccountListGroupUngrouped, true
+	}
+	parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
+	if parseErr != nil || parsedGroupID < 0 {
+		response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
+		return 0, false
+	}
+	return parsedGroupID, true
 }
 
 func buildAccountsListETag(
@@ -1495,6 +1599,7 @@ func toServiceBulkUpdateAccountFilters(filters *BulkUpdateAccountFilters) *servi
 		Group:       filters.Group,
 		Search:      filters.Search,
 		PrivacyMode: filters.PrivacyMode,
+		PlanType:    filters.PlanType,
 	}
 }
 
@@ -2150,7 +2255,7 @@ func (h *AccountHandler) BatchRefreshTier(c *gin.Context) {
 	accounts := make([]*service.Account, 0)
 
 	if len(req.AccountIDs) == 0 {
-		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", "name", "asc")
+		allAccounts, _, err := h.adminService.ListAccounts(ctx, 1, 10000, "gemini", "oauth", "", "", 0, "", "", "name", "asc")
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return

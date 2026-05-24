@@ -319,29 +319,31 @@ var ErrNoAvailableCompactAccounts = errors.New("no available OpenAI accounts sup
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
-	accountRepo           AccountRepository
-	usageLogRepo          UsageLogRepository
-	usageBillingRepo      UsageBillingRepository
-	userRepo              UserRepository
-	userSubRepo           UserSubscriptionRepository
-	cache                 GatewayCache
-	cfg                   *config.Config
-	codexDetector         CodexClientRestrictionDetector
-	schedulerSnapshot     *SchedulerSnapshotService
-	concurrencyService    *ConcurrencyService
-	billingService        *BillingService
-	rateLimitService      *RateLimitService
-	billingCacheService   *BillingCacheService
-	userGroupRateResolver *userGroupRateResolver
-	httpUpstream          HTTPUpstream
-	deferredService       *DeferredService
-	openAITokenProvider   *OpenAITokenProvider
-	toolCorrector         *CodexToolCorrector
-	openaiWSResolver      OpenAIWSProtocolResolver
-	resolver              *ModelPricingResolver
-	channelService        *ChannelService
-	balanceNotifyService  *BalanceNotifyService
-	settingService        *SettingService
+	accountRepo            AccountRepository
+	usageLogRepo           UsageLogRepository
+	usageBillingRepo       UsageBillingRepository
+	userRepo               UserRepository
+	userSubRepo            UserSubscriptionRepository
+	cache                  GatewayCache
+	cfg                    *config.Config
+	codexDetector          CodexClientRestrictionDetector
+	schedulerSnapshot      *SchedulerSnapshotService
+	concurrencyService     *ConcurrencyService
+	billingService         *BillingService
+	rateLimitService       *RateLimitService
+	billingCacheService    *BillingCacheService
+	userGroupRateResolver  *userGroupRateResolver
+	httpUpstream           HTTPUpstream
+	deferredService        *DeferredService
+	openAITokenProvider    *OpenAITokenProvider
+	toolCorrector          *CodexToolCorrector
+	openaiWSResolver       OpenAIWSProtocolResolver
+	resolver               *ModelPricingResolver
+	channelService         *ChannelService
+	balanceNotifyService   *BalanceNotifyService
+	settingService         *SettingService
+	contextJournal         ContextJournal
+	realtimeBalanceChecker *RealtimeBalanceChecker
 
 	openaiWSPoolOnce              sync.Once
 	openaiWSStateStoreOnce        sync.Once
@@ -383,6 +385,8 @@ func NewOpenAIGatewayService(
 	channelService *ChannelService,
 	balanceNotifyService *BalanceNotifyService,
 	settingService *SettingService,
+	contextJournal ContextJournal,
+	realtimeBalanceChecker *RealtimeBalanceChecker,
 ) *OpenAIGatewayService {
 	svc := &OpenAIGatewayService{
 		accountRepo:         accountRepo,
@@ -405,17 +409,19 @@ func NewOpenAIGatewayService(
 			nil,
 			"service.openai_gateway",
 		),
-		httpUpstream:          httpUpstream,
-		deferredService:       deferredService,
-		openAITokenProvider:   openAITokenProvider,
-		toolCorrector:         NewCodexToolCorrector(),
-		openaiWSResolver:      NewOpenAIWSProtocolResolver(cfg),
-		resolver:              resolver,
-		channelService:        channelService,
-		balanceNotifyService:  balanceNotifyService,
-		settingService:        settingService,
-		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
-		codexSnapshotThrottle: newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
+		httpUpstream:           httpUpstream,
+		deferredService:        deferredService,
+		openAITokenProvider:    openAITokenProvider,
+		toolCorrector:          NewCodexToolCorrector(),
+		openaiWSResolver:       NewOpenAIWSProtocolResolver(cfg),
+		resolver:               resolver,
+		channelService:         channelService,
+		balanceNotifyService:   balanceNotifyService,
+		settingService:         settingService,
+		contextJournal:         contextJournal,
+		realtimeBalanceChecker: realtimeBalanceChecker,
+		responseHeaderFilter:   compileResponseHeaderFilter(cfg),
+		codexSnapshotThrottle:  newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
 	}
 	svc.logOpenAIWSModeBootstrap()
 	return svc
@@ -1706,6 +1712,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel, requireCompact) {
 				continue
 			}
+			if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, fresh) {
+				continue
+			}
 			result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
 			if err == nil && result.Acquired {
 				if sessionHash != "" {
@@ -1782,6 +1791,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel, requireCompact) {
 					continue
 				}
+				if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, fresh) {
+					continue
+				}
 				result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
 				if err == nil && result.Acquired {
 					if sessionHash != "" {
@@ -1808,6 +1820,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			continue
 		}
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel, requireCompact) {
+			continue
+		}
+		if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, fresh) {
 			continue
 		}
 		return s.newSelectionResult(ctx, fresh, false, nil, &AccountWaitPlan{
@@ -1849,6 +1864,20 @@ func (s *OpenAIGatewayService) tryAcquireAccountSlot(ctx context.Context, accoun
 		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
 	}
 	return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
+}
+
+func (s *OpenAIGatewayService) hasVerifiedRealtimeBalanceForCandidate(ctx context.Context, account *Account) bool {
+	if s == nil || s.realtimeBalanceChecker == nil || account == nil {
+		return true
+	}
+	if account.Type != AccountTypeAPIKey || !account.IsOpenAI() {
+		return true
+	}
+	snapshot, err := s.realtimeBalanceChecker.CheckAccount(ctx, account)
+	if err != nil {
+		return false
+	}
+	return snapshot != nil && snapshot.Available > 0
 }
 
 func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.Context, account *Account, requestedModel string, requireCompact bool) *Account {
@@ -2932,6 +2961,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			writeOpenAIFastPolicyBlockedResponse(c, blocked)
 		}
 		return nil, policyErr
+	}
+	body = updatedBody
+
+	updatedBody, promptCacheErr := s.applyOpenAIPromptCacheSettingsToBody(ctx, policyModel, body)
+	if promptCacheErr != nil {
+		return nil, promptCacheErr
 	}
 	body = updatedBody
 
@@ -6249,6 +6284,43 @@ func (s *OpenAIGatewayService) applyOpenAIFastPolicyToBody(ctx context.Context, 
 		}
 		return updated, nil
 	}
+}
+
+func (s *OpenAIGatewayService) applyOpenAIPromptCacheSettingsToBody(ctx context.Context, model string, body []byte) ([]byte, error) {
+	if len(body) == 0 || s == nil || s.settingService == nil {
+		return body, nil
+	}
+	settings, err := s.settingService.GetOpenAIPromptCacheSettings(ctx)
+	if err != nil || settings == nil {
+		return body, nil
+	}
+	for _, rule := range settings.Rules {
+		key := strings.TrimSpace(rule.PromptCacheKey)
+		if key == "" {
+			continue
+		}
+		if len(rule.ModelWhitelist) > 0 && !matchModelWhitelist(model, rule.ModelWhitelist) {
+			continue
+		}
+		updated := body
+		if !gjson.GetBytes(updated, "prompt_cache_key").Exists() {
+			next, err := sjson.SetBytes(updated, "prompt_cache_key", key)
+			if err != nil {
+				return body, fmt.Errorf("set prompt_cache_key: %w", err)
+			}
+			updated = next
+		}
+		retention := strings.TrimSpace(rule.PromptCacheRetention)
+		if retention != "" && !gjson.GetBytes(updated, "prompt_cache_retention").Exists() {
+			next, err := sjson.SetBytes(updated, "prompt_cache_retention", retention)
+			if err != nil {
+				return body, fmt.Errorf("set prompt_cache_retention: %w", err)
+			}
+			updated = next
+		}
+		return updated, nil
+	}
+	return body, nil
 }
 
 // writeOpenAIFastPolicyBlockedResponse writes a 403 JSON response for a

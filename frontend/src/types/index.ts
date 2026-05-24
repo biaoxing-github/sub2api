@@ -802,6 +802,14 @@ export interface Account {
   // 改为通过 credentials_status.has_<key> 暴露存在性。
   credentials?: Record<string, unknown>
   credentials_status?: Record<string, boolean>
+  api_key_items?: Array<{
+    fingerprint: string
+    masked: string
+    disabled?: boolean
+    reason?: string
+    disabled_at?: string
+  }>
+  upstream_balance?: UpstreamBalanceSnapshot | null
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.
   extra?: (CodexUsageSnapshot & OpenAICompactState & {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
@@ -891,6 +899,64 @@ export interface Account {
   current_rpm?: number | null // 当前分钟 RPM 计数
 }
 
+export interface UpstreamBalanceKeySnapshot {
+  fingerprint: string
+  masked: string
+  available?: number | null
+  used?: number | null
+  total?: number | null
+  status: 'ok' | 'error' | string
+  error?: string
+  endpoint?: string
+  updated_at?: string | null
+  groups?: UpstreamBalanceGroupSnapshot[]
+}
+
+export interface UpstreamBalanceGroupSnapshot {
+  name: string
+  ratio: number
+  description?: string
+  converted_available?: number | null
+  converted_total?: number | null
+  converted_used?: number | null
+}
+
+export interface UpstreamBalanceSnapshot {
+  available: number
+  used: number
+  total: number
+  key_count: number
+  ok_count: number
+  failed_count: number
+  updated_at?: string | null
+  error?: string
+  keys?: UpstreamBalanceKeySnapshot[]
+  groups?: UpstreamBalanceGroupSnapshot[]
+  converted_available_by_group?: Record<string, number>
+}
+
+export interface UpstreamBalanceSummary {
+  available: number
+  used: number
+  total: number
+  account_count: number
+  key_count: number
+  ok_key_count: number
+  failed_key_count: number
+  missing_accounts: number
+  converted_available_by_group?: Record<string, number>
+  latest_updated_at?: string | null
+  oldest_updated_at?: string | null
+}
+
+export interface UpstreamBalanceRefreshResult {
+  generated_at: string
+  matched_accounts: number
+  refreshed: number
+  failed: number
+  summary: UpstreamBalanceSummary
+}
+
 // Account Usage types
 export interface WindowStats {
   requests: number
@@ -948,6 +1014,56 @@ export interface AccountUsageInfo {
   error_code?: string
 
   error?: string            // usage 获取失败时的错误信息
+}
+
+export interface AccountPoolUsageSummaryWindow {
+  used_cost: number
+  estimated_limit_cost: number
+  utilization: number
+  used_percent_sum: number
+  remaining_percent_sum: number
+  accounts_in_window: number
+  requests: number
+  accounts_with_snapshot: number
+  accounts_with_limit_estimate: number
+  earliest_reset_at?: string | null
+}
+
+export interface AccountPoolUsageSummaryGroup {
+  plan_type: string
+  plan_label: string
+  account_type?: string
+  account_type_label?: string
+  account_count: number
+  schedulable_count: number
+  rate_limited_count: number
+  missing_snapshot_count: number
+  five_hour: AccountPoolUsageSummaryWindow
+  seven_day: AccountPoolUsageSummaryWindow
+  latest_updated_at?: string | null
+  oldest_updated_at?: string | null
+  upstream_balance: UpstreamBalanceSummary
+  types?: AccountPoolUsageSummaryGroup[]
+}
+
+export interface AccountPoolUsageSummary {
+  generated_at: string
+  total_accounts: number
+  schedulable_accounts: number
+  rate_limited_accounts: number
+  missing_snapshot_accounts: number
+  five_hour: AccountPoolUsageSummaryWindow
+  seven_day: AccountPoolUsageSummaryWindow
+  upstream_balance: UpstreamBalanceSummary
+  plans: AccountPoolUsageSummaryGroup[]
+}
+
+export interface AccountStatusSummary {
+  active: number
+  rate_limited: number
+  error: number
+  inactive: number
+  temp_unschedulable: number
 }
 
 // OpenAI Codex usage snapshot (from response headers)

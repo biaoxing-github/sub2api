@@ -58,6 +58,42 @@ func TestAccountFromServiceShallow_RedactsSensitiveCredentials(t *testing.T) {
 	require.Equal(t, "rt-secret", src.Credentials["refresh_token"])
 }
 
+func TestAccountFromServiceShallow_ExposesMaskedAPIKeyItems(t *testing.T) {
+	keyA := "sk-proj-abcdefghijklmnopqrstuvwxyz"
+	keyB := "sk-disabled-abcdefghijklmnopqrstuvwxyz"
+	src := &service.Account{
+		ID:       43,
+		Name:     "openai",
+		Platform: "openai",
+		Type:     "apikey",
+		Credentials: map[string]any{
+			"api_keys": []any{keyA, keyB},
+			"api_keys_disabled": map[string]any{
+				service.FingerprintAPIKey(keyB): map[string]any{
+					"reason":      "insufficient_balance",
+					"disabled_at": "2026-05-22T00:00:00Z",
+				},
+			},
+		},
+	}
+
+	got := AccountFromServiceShallow(src)
+	require.NotNil(t, got)
+	require.Len(t, got.APIKeyItems, 2)
+	require.Equal(t, service.FingerprintAPIKey(keyA), got.APIKeyItems[0].Fingerprint)
+	require.Equal(t, "sk-pro...wxyz", got.APIKeyItems[0].Masked)
+	require.False(t, got.APIKeyItems[0].Disabled)
+	require.True(t, got.APIKeyItems[1].Disabled)
+	require.Equal(t, "insufficient_balance", got.APIKeyItems[1].Reason)
+
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), keyA)
+	require.NotContains(t, string(raw), keyB)
+	require.Contains(t, string(raw), "api_key_items")
+	require.Contains(t, string(raw), "sk-pro...wxyz")
+}
+
 func TestAccountFromServiceShallow_NilCredentialsOmitsStatus(t *testing.T) {
 	src := &service.Account{ID: 1, Name: "n", Platform: "anthropic", Type: "oauth"}
 	got := AccountFromServiceShallow(src)

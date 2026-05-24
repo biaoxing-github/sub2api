@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -532,6 +533,46 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyUnschedulableClearsSession(t
 	}
 	if cache.sessionBindings["openai:"+sessionHash] != 2 {
 		t.Fatalf("expected sticky session to bind to account 2")
+	}
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+func TestOpenAISelectAccountWithLoadAwareness_RequiresVerifiedRealtimeBalance(t *testing.T) {
+	groupID := int64(1)
+	repo := stubOpenAIAccountRepo{
+		accounts: []Account{
+			{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+			{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 2},
+		},
+	}
+	cache := &stubGatewayCache{}
+	checks := make([]int64, 0, 2)
+	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
+		checks = append(checks, account.ID)
+		if account.ID == 1 {
+			return &UpstreamBalanceSnapshot{Available: 10, OKCount: 0, Error: "unverified"}, nil
+		}
+		return &UpstreamBalanceSnapshot{Available: 1.5, OKCount: 1}, nil
+	}), RealtimeBalanceCheckerOptions{Timeout: time.Second})
+
+	svc := &OpenAIGatewayService{
+		accountRepo:            repo,
+		cache:                  cache,
+		concurrencyService:     NewConcurrencyService(stubConcurrencyCache{}),
+		realtimeBalanceChecker: checker,
+	}
+
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, "", "gpt-4", nil)
+	if err != nil {
+		t.Fatalf("SelectAccountWithLoadAwareness error: %v", err)
+	}
+	if selection == nil || selection.Account == nil || selection.Account.ID != 2 {
+		t.Fatalf("expected account 2, got %+v", selection)
+	}
+	if !reflect.DeepEqual(checks, []int64{1, 2}) {
+		t.Fatalf("checks = %+v", checks)
 	}
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
