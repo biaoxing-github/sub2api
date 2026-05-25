@@ -537,6 +537,9 @@ const loadAvailableModels = async () => {
     if (availableModels.value.length > 0) {
       if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
+      } else if (props.account.platform === 'openai') {
+        const gpt54Model = availableModels.value.find((m) => m.id === 'gpt-5.4')
+        selectedModelId.value = gpt54Model?.id || availableModels.value[0].id
       } else {
         // Try to select Sonnet as default, otherwise use first model
         const sonnetModel = availableModels.value.find((m) => m.id.includes('sonnet'))
