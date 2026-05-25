@@ -98,6 +98,12 @@
       >
         {{ errorMessage }}
       </div>
+      <div
+        v-if="infoMessage"
+        class="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-500/10 dark:text-blue-300"
+      >
+        {{ infoMessage }}
+      </div>
 
       <div v-if="latestProbeRun" class="rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -223,6 +229,7 @@ const probeHistoryLoading = ref(false)
 const probeHistory = ref<AccountProbeRun[]>([])
 const latestProbeRun = ref<AccountProbeRun | null>(null)
 const errorMessage = ref('')
+const infoMessage = ref('')
 
 const supportsAccountProbe = computed(() => props.account?.platform === 'openai' && props.account?.type === 'apikey')
 
@@ -244,6 +251,7 @@ watch(
   async (visible) => {
     if (visible) {
       errorMessage.value = ''
+      infoMessage.value = ''
       latestProbeRun.value = null
       await loadProbeHistory()
     }
@@ -254,6 +262,7 @@ const startProbe = async () => {
   if (!props.account || !props.modelId) return
   probeSubmitting.value = true
   errorMessage.value = ''
+  infoMessage.value = ''
   try {
     latestProbeRun.value = await adminAPI.accounts.createProbeRun(props.account.id, {
       mode: probeMode.value,
@@ -261,6 +270,7 @@ const startProbe = async () => {
       codex_stability: probeCodexStability.value,
       long_context: probeLongContext.value
     })
+    infoMessage.value = t('admin.accounts.probe.started')
     await loadProbeHistory()
   } catch (error: any) {
     errorMessage.value = error?.message || t('admin.accounts.probe.runFailed')
@@ -289,6 +299,7 @@ const loadProbeHistory = async () => {
 const openProbeRun = async (runId: number) => {
   if (!props.account) return
   errorMessage.value = ''
+  infoMessage.value = ''
   try {
     latestProbeRun.value = await adminAPI.accounts.getProbeRun(props.account.id, runId)
   } catch (error: any) {

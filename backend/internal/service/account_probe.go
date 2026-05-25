@@ -29,6 +29,8 @@ const (
 	AccountProbeSampleFailed  = APIKeyProbeSampleFailed
 )
 
+const accountProbePersistenceTimeout = 5 * time.Second
+
 type AccountProbeRunRequest struct {
 	AccountID             int64  `json:"-"`
 	Profile               string `json:"mode"`
@@ -126,53 +128,22 @@ func NewAccountProbeService(accounts AccountProbeAccountReader, repo AccountProb
 }
 
 func (s *AccountProbeService) Run(ctx context.Context, req AccountProbeRunRequest) (AccountProbeResult, error) {
-	if s.accounts == nil {
-		return AccountProbeResult{}, fmt.Errorf("account probe account repository is nil")
-	}
-	account, err := s.accounts.GetByID(ctx, req.AccountID)
+	run, err := s.Start(ctx, req)
 	if err != nil {
 		return AccountProbeResult{}, err
 	}
-	if account == nil {
-		return AccountProbeResult{}, ErrAccountNotFound
-	}
-	if !account.IsOpenAIApiKey() {
-		return AccountProbeResult{}, fmt.Errorf("only openai api key accounts support probe runs")
-	}
-	keys := account.GetAPIKeys()
-	if len(keys) == 0 {
-		if key := strings.TrimSpace(account.GetOpenAIApiKey()); key != "" {
-			keys = []string{key}
-		}
-	}
-	if len(keys) == 0 {
-		return AccountProbeResult{}, fmt.Errorf("no api key available")
-	}
+	return s.RunExisting(ctx, run, req)
+}
 
-	plan, err := buildAccountProbePlan(req)
+func (s *AccountProbeService) Start(ctx context.Context, req AccountProbeRunRequest) (AccountProbeResult, error) {
+	_, _, plan, model, _, _, err := s.prepareRun(ctx, req)
 	if err != nil {
 		return AccountProbeResult{}, err
-	}
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = openai.DefaultTestModel
-	}
-	model = account.GetMappedModel(model)
-	baseURL := account.GetOpenAIBaseURL()
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
-	}
-	if s.testSvc != nil {
-		normalized, err := s.testSvc.validateUpstreamBaseURL(baseURL)
-		if err != nil {
-			return AccountProbeResult{}, fmt.Errorf("invalid base URL: %w", err)
-		}
-		baseURL = normalized
 	}
 
 	now := time.Now()
 	run := AccountProbeResult{
-		AccountID:             account.ID,
+		AccountID:             req.AccountID,
 		Profile:               plan.Profile,
 		Status:                AccountProbeStatusRunning,
 		Model:                 model,
@@ -188,8 +159,29 @@ func (s *AccountProbeService) Run(ctx context.Context, req AccountProbeRunReques
 			return AccountProbeResult{}, err
 		}
 	}
+	return run, nil
+}
 
-	useResponses := openai_compat.ShouldUseResponsesAPI(account.Extra)
+func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeResult, req AccountProbeRunRequest) (AccountProbeResult, error) {
+	account, keys, plan, model, baseURL, useResponses, err := s.prepareRun(ctx, req)
+	if err != nil {
+		return s.failExistingRun(ctx, run, err.Error()), err
+	}
+	run.AccountID = account.ID
+	run.Profile = plan.Profile
+	run.Model = model
+	run.IncludeCodexStability = req.IncludeCodexStability
+	run.IncludeLongContext = req.IncludeLongContext
+	run.Estimate = plan.Estimate
+	run.RequestCount = len(plan.Samples)
+	if run.Status == "" {
+		run.Status = AccountProbeStatusRunning
+	}
+	if run.StartedAt == nil {
+		now := time.Now()
+		run.StartedAt = &now
+	}
+
 	for idx, planned := range plan.Samples {
 		key := keys[idx%len(keys)]
 		sample := s.runOpenAIAPIKeySample(ctx, account, baseURL, model, key, planned, useResponses)
@@ -199,19 +191,90 @@ func (s *AccountProbeService) Run(ctx context.Context, req AccountProbeRunReques
 		sample.Label = planned.Label
 		sample.Model = model
 		if s.repo != nil {
-			if err := s.repo.SaveAccountProbeSample(ctx, sample); err != nil {
-				return AccountProbeResult{}, err
+			persistCtx, cancel := context.WithTimeout(context.Background(), accountProbePersistenceTimeout)
+			err := s.repo.SaveAccountProbeSample(persistCtx, sample)
+			cancel()
+			if err != nil {
+				return s.failExistingRun(ctx, run, err.Error()), err
 			}
 		}
 		run.Samples = append(run.Samples, sample)
+		if ctx.Err() != nil {
+			break
+		}
 	}
 	finalizeAccountProbeResult(&run)
 	if s.repo != nil {
-		if err := s.repo.UpdateAccountProbeRun(ctx, &run); err != nil {
-			return AccountProbeResult{}, err
+		persistCtx, cancel := context.WithTimeout(context.Background(), accountProbePersistenceTimeout)
+		err := s.repo.UpdateAccountProbeRun(persistCtx, &run)
+		cancel()
+		if err != nil {
+			return run, err
 		}
 	}
 	return run, nil
+}
+
+func (s *AccountProbeService) prepareRun(ctx context.Context, req AccountProbeRunRequest) (*Account, []string, accountProbePlan, string, string, bool, error) {
+	if s.accounts == nil {
+		return nil, nil, accountProbePlan{}, "", "", false, fmt.Errorf("account probe account repository is nil")
+	}
+	account, err := s.accounts.GetByID(ctx, req.AccountID)
+	if err != nil {
+		return nil, nil, accountProbePlan{}, "", "", false, err
+	}
+	if account == nil {
+		return nil, nil, accountProbePlan{}, "", "", false, ErrAccountNotFound
+	}
+	if !account.IsOpenAIApiKey() {
+		return nil, nil, accountProbePlan{}, "", "", false, fmt.Errorf("only openai api key accounts support probe runs")
+	}
+	keys := account.GetAPIKeys()
+	if len(keys) == 0 {
+		if key := strings.TrimSpace(account.GetOpenAIApiKey()); key != "" {
+			keys = []string{key}
+		}
+	}
+	if len(keys) == 0 {
+		return nil, nil, accountProbePlan{}, "", "", false, fmt.Errorf("no api key available")
+	}
+
+	plan, err := buildAccountProbePlan(req)
+	if err != nil {
+		return nil, nil, accountProbePlan{}, "", "", false, err
+	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = openai.DefaultTestModel
+	}
+	model = account.GetMappedModel(model)
+	baseURL := account.GetOpenAIBaseURL()
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	if s.testSvc != nil {
+		normalized, err := s.testSvc.validateUpstreamBaseURL(baseURL)
+		if err != nil {
+			return nil, nil, accountProbePlan{}, "", "", false, fmt.Errorf("invalid base URL: %w", err)
+		}
+		baseURL = normalized
+	}
+
+	useResponses := openai_compat.ShouldUseResponsesAPI(account.Extra)
+	return account, keys, plan, model, baseURL, useResponses, nil
+}
+
+func (s *AccountProbeService) failExistingRun(ctx context.Context, run AccountProbeResult, message string) AccountProbeResult {
+	run.Status = AccountProbeStatusFailed
+	run.ErrorMessage = strings.TrimSpace(message)
+	finished := time.Now()
+	run.FinishedAt = &finished
+	if s.repo != nil {
+		persistCtx, cancel := context.WithTimeout(context.Background(), accountProbePersistenceTimeout)
+		_ = s.repo.UpdateAccountProbeRun(persistCtx, &run)
+		cancel()
+	}
+	return run
 }
 
 func (s *AccountProbeService) List(ctx context.Context, filter AccountProbeHistoryFilter) ([]AccountProbeResult, error) {

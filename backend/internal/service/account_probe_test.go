@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -63,6 +64,19 @@ func (r *accountProbeRepoStub) ListAccountProbeSamples(ctx context.Context, runI
 	return r.samples, nil
 }
 
+type contextCanceledProbeRepoStub struct {
+	accountProbeRepoStub
+	updatedWithCanceledCtx bool
+}
+
+func (r *contextCanceledProbeRepoStub) UpdateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		r.updatedWithCanceledCtx = true
+		return ctx.Err()
+	}
+	return r.accountProbeRepoStub.UpdateAccountProbeRun(ctx, run)
+}
+
 type accountProbeHTTPClientStub struct {
 	requests []*http.Request
 }
@@ -76,6 +90,13 @@ func (c *accountProbeHTTPClientStub) Do(req *http.Request) (*http.Response, erro
 		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     make(http.Header),
 	}, nil
+}
+
+type contextDeadlineProbeHTTPClientStub struct{}
+
+func (c *contextDeadlineProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
+	<-req.Context().Done()
+	return nil, req.Context().Err()
 }
 
 func TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples(t *testing.T) {
@@ -117,6 +138,48 @@ func TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples(t *testing.T) {
 	require.Contains(t, client.requests[0].URL.String(), "/v1/responses")
 	require.NotEmpty(t, repo.samples[0].APIKeyFingerprint)
 	require.NotContains(t, repo.samples[0].APIKeyMasked, "sk-one")
+}
+
+func TestAccountProbeService_RunExistingFinalizesAfterCallerContextDeadline(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "encore",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://example.test/v1",
+			"api_key":  "sk-one",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	repo := &contextCanceledProbeRepoStub{}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, &contextDeadlineProbeHTTPClientStub{}, nil)
+
+	run, err := svc.Start(context.Background(), AccountProbeRunRequest{
+		AccountID: 128,
+		Profile:   AccountProbeProfileQuick,
+		Model:     "gpt-test",
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := svc.RunExisting(ctx, run, AccountProbeRunRequest{
+		AccountID: 128,
+		Profile:   AccountProbeProfileQuick,
+		Model:     "gpt-test",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeStatusFailed, result.Status)
+	require.NotNil(t, repo.updated)
+	require.False(t, repo.updatedWithCanceledCtx)
+	require.Equal(t, AccountProbeStatusFailed, repo.updated.Status)
+	require.Equal(t, 1, repo.updated.FailureCount)
+	require.NotNil(t, repo.updated.FinishedAt)
 }
 
 func TestAccountProbeService_RunRejectsUnsupportedAccount(t *testing.T) {

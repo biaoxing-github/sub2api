@@ -235,9 +235,7 @@ export async function createProbeRun(
   id: number,
   payload: CreateAccountProbeRunRequest
 ): Promise<AccountProbeRun> {
-  const { data } = await apiClient.post<AccountProbeRun>(`/admin/accounts/${id}/probe-runs`, payload, {
-    timeout: 180000
-  })
+  const { data } = await apiClient.post<AccountProbeRun>(`/admin/accounts/${id}/probe-runs`, payload)
   return data
 }
 

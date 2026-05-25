@@ -4066,6 +4066,7 @@ export default {
         longContext: 'Long Context Check',
         run: 'Start Probe',
         running: 'Running...',
+        started: 'Probe task has started and will continue in the background. Refresh history or open the run later to view results.',
         avgLatency: 'Avg Latency',
         successRate: 'Success Rate',
         tokensUsed: 'Tokens Used',

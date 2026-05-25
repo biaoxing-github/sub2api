@@ -53,13 +53,20 @@ type AccountHandler struct {
 	rateLimitService        *service.RateLimitService
 	accountUsageService     *service.AccountUsageService
 	accountTestService      *service.AccountTestService
-	accountProbeService     *service.AccountProbeService
+	accountProbeService     accountProbeRunner
 	upstreamBalanceService  *service.UpstreamBalanceService
 	concurrencyService      *service.ConcurrencyService
 	crsSyncService          *service.CRSSyncService
 	sessionLimitCache       service.SessionLimitCache
 	rpmCache                service.RPMCache
 	tokenCacheInvalidator   service.TokenCacheInvalidator
+}
+
+type accountProbeRunner interface {
+	Start(ctx context.Context, req service.AccountProbeRunRequest) (service.AccountProbeResult, error)
+	RunExisting(ctx context.Context, run service.AccountProbeResult, req service.AccountProbeRunRequest) (service.AccountProbeResult, error)
+	List(ctx context.Context, filter service.AccountProbeHistoryFilter) ([]service.AccountProbeResult, error)
+	Get(ctx context.Context, accountID, runID int64) (*service.AccountProbeResult, error)
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -97,7 +104,7 @@ func NewAccountHandler(
 	}
 }
 
-func (h *AccountHandler) SetAccountProbeService(accountProbeService *service.AccountProbeService) {
+func (h *AccountHandler) SetAccountProbeService(accountProbeService accountProbeRunner) {
 	h.accountProbeService = accountProbeService
 }
 
@@ -921,18 +928,49 @@ func (h *AccountHandler) CreateProbeRun(c *gin.Context) {
 	if mode == "" {
 		mode = service.AccountProbeProfileStandard
 	}
-	result, err := h.accountProbeService.Run(c.Request.Context(), service.AccountProbeRunRequest{
+	probeReq := service.AccountProbeRunRequest{
 		AccountID:             accountID,
 		Profile:               mode,
 		Model:                 req.Model,
 		IncludeCodexStability: req.IncludeCodexStability || req.CodexStability,
 		IncludeLongContext:    req.IncludeLongContext || req.LongContext,
-	})
+	}
+	result, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, result)
+	go h.runAccountProbeBackground(result, probeReq)
+	response.Accepted(c, result)
+}
+
+func (h *AccountHandler) runAccountProbeBackground(run service.AccountProbeResult, req service.AccountProbeRunRequest) {
+	if h == nil || h.accountProbeService == nil {
+		return
+	}
+	bgCtx, cancel := context.WithTimeout(context.Background(), accountProbeBackgroundTimeout(req))
+	defer cancel()
+	if _, err := h.accountProbeService.RunExisting(bgCtx, run, req); err != nil {
+		slog.Warn("account probe background run failed",
+			"account_id", req.AccountID,
+			"run_id", run.ID,
+			"error", err.Error(),
+		)
+	}
+}
+
+func accountProbeBackgroundTimeout(req service.AccountProbeRunRequest) time.Duration {
+	timeout := 2 * time.Minute
+	if strings.EqualFold(strings.TrimSpace(req.Profile), service.AccountProbeProfileStandard) {
+		timeout = 4 * time.Minute
+	}
+	if req.IncludeCodexStability {
+		timeout += 6 * time.Minute
+	}
+	if req.IncludeLongContext {
+		timeout += 4 * time.Minute
+	}
+	return timeout
 }
 
 // ListProbeRuns returns persisted probe history for an upstream account.
