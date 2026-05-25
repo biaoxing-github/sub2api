@@ -125,7 +125,7 @@ LIMIT $2`, filter.AccountID, limit)
 	}
 	defer rows.Close()
 
-	var out []service.AccountProbeResult
+	out := make([]service.AccountProbeResult, 0)
 	for rows.Next() {
 		run, err := scanAccountProbeRun(rows)
 		if err != nil {

@@ -277,7 +277,8 @@ const loadProbeHistory = async () => {
   }
   probeHistoryLoading.value = true
   try {
-    probeHistory.value = await adminAPI.accounts.listProbeRuns(props.account.id)
+    const history = await adminAPI.accounts.listProbeRuns(props.account.id)
+    probeHistory.value = Array.isArray(history) ? history : []
   } catch {
     probeHistory.value = []
   } finally {
