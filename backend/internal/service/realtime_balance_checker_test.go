@@ -278,3 +278,44 @@ func TestRealtimeBalanceCheckerTimeoutReturnsUnknownDecision(t *testing.T) {
 		t.Fatalf("Error = %q, want timeout text", decision.Error)
 	}
 }
+
+func TestRealtimeBalanceCheckerSelectFirstVerifiedCandidateChecksTopNConcurrently(t *testing.T) {
+	wait := make(chan struct{})
+	refresher := &fakeRealtimeBalanceRefresher{
+		wait:     wait,
+		snapshot: &UpstreamBalanceSnapshot{Available: 5, OKCount: 1},
+	}
+	checker := NewRealtimeBalanceChecker(refresher, RealtimeBalanceCheckerOptions{
+		Enabled:           true,
+		DrainThresholdUSD: 2,
+		StickyReserveUSD:  0.5,
+		Timeout:           time.Second,
+		CandidateTopN:     3,
+	})
+	accounts := []*Account{
+		{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+		{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+		{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_, _, _ = checker.SelectFirstVerifiedCandidate(context.Background(), accounts, 1)
+		close(done)
+	}()
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		if refresher.callCount() == 3 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if refresher.callCount() != 3 {
+		t.Fatalf("calls before release = %d, want 3", refresher.callCount())
+	}
+	close(wait)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SelectFirstVerifiedCandidate did not return")
+	}
+}

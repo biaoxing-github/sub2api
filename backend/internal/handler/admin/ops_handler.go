@@ -614,6 +614,22 @@ func (h *OpsHandler) GetRequestTimeline(c *gin.Context) {
 	response.Success(c, timeline)
 }
 
+// GetCodexDiagnosis returns a compact diagnosis for a Codex/OpenAI Responses request.
+// GET /api/v1/admin/ops/requests/:request_id/codex-diagnosis
+func (h *OpsHandler) GetCodexDiagnosis(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	requestID := strings.TrimSpace(c.Param("request_id"))
+	diagnosis, err := h.opsService.GetCodexDiagnosis(c.Request.Context(), requestID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, diagnosis)
+}
+
 type opsResolveRequest struct {
 	Resolved bool `json:"resolved"`
 }

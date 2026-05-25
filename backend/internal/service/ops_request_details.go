@@ -134,6 +134,17 @@ type OpsRequestTimeline struct {
 	Events          []OpsRequestTimelineEvent `json:"events"`
 }
 
+type OpsCodexDiagnosis struct {
+	RequestID       string                    `json:"request_id"`
+	Status          string                    `json:"status"`
+	Headline        string                    `json:"headline"`
+	Path            map[string]any            `json:"path,omitempty"`
+	Latency         map[string]any            `json:"latency,omitempty"`
+	Context         map[string]any            `json:"context,omitempty"`
+	SuggestedAction string                    `json:"suggested_action,omitempty"`
+	Timeline        []OpsRequestTimelineEvent `json:"timeline,omitempty"`
+}
+
 func (s *OpsService) ListRequestDetails(ctx context.Context, filter *OpsRequestDetailFilter) (*OpsRequestDetailList, error) {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return nil, err
@@ -227,4 +238,73 @@ func (s *OpsService) GetRequestTimeline(ctx context.Context, requestID string) (
 		},
 	})
 	return timeline, nil
+}
+
+func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*OpsCodexDiagnosis, error) {
+	timeline, err := s.GetRequestTimeline(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	diagnosis := &OpsCodexDiagnosis{
+		RequestID: strings.TrimSpace(requestID),
+		Status:    timeline.Status,
+		Headline:  "未找到足够的 Codex 请求诊断信息",
+		Timeline:  timeline.Events,
+		Latency:   map[string]any{},
+		Path:      map[string]any{},
+		Context:   map[string]any{},
+	}
+	if timeline == nil || len(timeline.Events) == 0 {
+		diagnosis.SuggestedAction = "确认 ops 监控已开启，并用 request_id 查询最近 72 小时内的请求。"
+		return diagnosis, nil
+	}
+	var lastReason string
+	for _, event := range timeline.Events {
+		if event.Reason != "" {
+			lastReason = event.Reason
+		}
+		if event.AccountID != nil {
+			diagnosis.Path["account_id"] = *event.AccountID
+		}
+		if event.LatencyMs != nil {
+			diagnosis.Latency[event.Phase+"_latency_ms"] = *event.LatencyMs
+		}
+		for key, value := range event.Details {
+			switch key {
+			case "status_code", "stream", "model", "platform":
+				diagnosis.Path[key] = value
+			case "time_to_first_token_ms", "ttft_ms", "header_wait_ms", "upstream_latency_ms":
+				diagnosis.Latency[key] = value
+			case "context_replay_reason", "context_continuity", "journal_reason", "replay_safe":
+				diagnosis.Context[key] = value
+			}
+		}
+	}
+	reason := strings.ToLower(lastReason)
+	switch {
+	case strings.Contains(reason, "context") || strings.Contains(reason, "replay") || strings.Contains(reason, "function_call_output") || strings.Contains(reason, "encrypted"):
+		diagnosis.Status = "protected"
+		diagnosis.Headline = "不可安全重放，已保护会话"
+		diagnosis.SuggestedAction = "继续原账号或新开会话；当前续链依赖上游状态，不能静默跨账号重放。"
+	case strings.Contains(reason, "timeout awaiting response headers") || strings.Contains(reason, "timed out waiting"):
+		diagnosis.Status = "header_timeout"
+		diagnosis.Headline = "上游响应头等待超时"
+		diagnosis.SuggestedAction = "优先查看 path health 是否熔断该账号/代理/endpoint；未输出前可安全快速切号。"
+	case strings.Contains(reason, "unexpected eof") || strings.Contains(reason, "eof"):
+		diagnosis.Status = "unexpected_eof"
+		diagnosis.Headline = "上游连接提前断开"
+		diagnosis.SuggestedAction = "检查代理和 HTTP/2 线路；连续 EOF 应临时降权该 path。"
+	case strings.Contains(reason, "401") || strings.Contains(reason, "unauthorized"):
+		diagnosis.Status = "unauthorized"
+		diagnosis.Headline = "账号认证失败"
+		diagnosis.SuggestedAction = "刷新账号凭据或暂停该账号，避免继续调度。"
+	case strings.Contains(reason, "429") || strings.Contains(reason, "rate limit"):
+		diagnosis.Status = "rate_limited"
+		diagnosis.Headline = "上游限流"
+		diagnosis.SuggestedAction = "等待 reset 时间或让调度器切到实时余额确认通过的候选账号。"
+	default:
+		diagnosis.Headline = "请求已记录，可查看 timeline 细节"
+		diagnosis.SuggestedAction = "如果仍感觉卡顿，重点看 TTFT、upstream latency 和账号切换次数。"
+	}
+	return diagnosis, nil
 }

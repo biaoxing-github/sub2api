@@ -4918,6 +4918,16 @@ export default {
         copyFailed: 'Copy failed',
         copy: 'Copy',
         viewError: 'View Error',
+        codexDiagnosis: {
+          button: 'Codex Diagnosis',
+          title: 'Codex Diagnosis',
+          loadFailed: 'Failed to load Codex diagnosis',
+          noHeadline: 'No diagnosis headline',
+          path: 'Path',
+          latency: 'Latency',
+          context: 'Context',
+          timeline: 'Timeline'
+        },
         kind: {
           success: 'SUCCESS',
           error: 'ERROR'

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -115,18 +116,51 @@ func (c *RealtimeBalanceChecker) SelectFirstVerifiedCandidate(ctx context.Contex
 	if c == nil {
 		return nil, nil, errors.New("realtime balance checker is not configured")
 	}
-	for _, account := range accounts {
+	topN := c.candidateTopN
+	if topN <= 0 || topN > len(accounts) {
+		topN = len(accounts)
+	}
+	type candidateDecision struct {
+		index    int
+		account  *Account
+		decision *RealtimeBalanceDecision
+	}
+	results := make([]candidateDecision, 0, topN)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for i, account := range accounts {
+		if i >= topN {
+			break
+		}
 		if account == nil {
 			continue
 		}
-		decision, err := c.CheckAccount(ctx, account)
-		if err != nil {
-			continue
+		wg.Add(1)
+		go func(index int, candidate *Account) {
+			defer wg.Done()
+			decision, err := c.CheckAccount(ctx, candidate)
+			if err != nil || decision == nil {
+				return
+			}
+			mu.Lock()
+			results = append(results, candidateDecision{index: index, account: candidate, decision: decision})
+			mu.Unlock()
+		}(i, account)
+	}
+	wg.Wait()
+	if len(results) == 0 {
+		return nil, nil, ErrNoVerifiedRealtimeBalanceCandidate
+	}
+	for i := 0; i < topN; i++ {
+		for _, result := range results {
+			if result.index != i || result.decision == nil {
+				continue
+			}
+			if result.decision.State == RealtimeBalanceStateUnknown || result.decision.Available < minAvailable {
+				continue
+			}
+			return result.account, &UpstreamBalanceSnapshot{Available: result.decision.Available, OKCount: 1}, nil
 		}
-		if decision == nil || decision.State == RealtimeBalanceStateUnknown || decision.Available < minAvailable {
-			continue
-		}
-		return account, &UpstreamBalanceSnapshot{Available: decision.Available, OKCount: 1}, nil
 	}
 	return nil, nil, ErrNoVerifiedRealtimeBalanceCandidate
 }

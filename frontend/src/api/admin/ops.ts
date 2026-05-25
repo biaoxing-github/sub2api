@@ -181,6 +181,17 @@ export interface OpsRequestTimeline {
   events: OpsRequestTimelineEvent[]
 }
 
+export interface OpsCodexDiagnosis {
+  request_id: string
+  status: string
+  headline: string
+  path?: Record<string, unknown>
+  latency?: Record<string, unknown>
+  context?: Record<string, unknown>
+  suggested_action?: string
+  timeline?: OpsRequestTimelineEvent[]
+}
+
 export interface OpsLatencyHistogramBucket {
   range: string
   count: number
@@ -1166,6 +1177,11 @@ export async function getRequestTimeline(requestId: string): Promise<OpsRequestT
   return data
 }
 
+export async function getCodexDiagnosis(requestId: string): Promise<OpsCodexDiagnosis> {
+  const { data } = await apiClient.get<OpsCodexDiagnosis>(`/admin/ops/requests/${encodeURIComponent(requestId)}/codex-diagnosis`)
+  return data
+}
+
 // Alert rules
 export async function listAlertRules(): Promise<AlertRule[]> {
   const { data } = await apiClient.get<AlertRule[]>('/admin/ops/alert-rules')
@@ -1329,6 +1345,7 @@ export const opsAPI = {
 
   listRequestDetails,
   getRequestTimeline,
+  getCodexDiagnosis,
   listAlertRules,
   createAlertRule,
   updateAlertRule,

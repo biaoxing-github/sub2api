@@ -345,6 +345,7 @@ type OpenAIGatewayService struct {
 	settingService         *SettingService
 	contextJournal         ContextJournal
 	realtimeBalanceChecker *RealtimeBalanceChecker
+	openaiPathHealth       *OpenAIPathHealthTracker
 
 	openaiWSPoolOnce              sync.Once
 	openaiWSStateStoreOnce        sync.Once
@@ -424,6 +425,7 @@ func NewOpenAIGatewayService(
 		settingService:         settingService,
 		contextJournal:         contextJournal,
 		realtimeBalanceChecker: realtimeBalanceChecker,
+		openaiPathHealth:       newOpenAIPathHealthTrackerFromConfig(cfg),
 		responseHeaderFilter:   compileResponseHeaderFilter(cfg),
 		codexSnapshotThrottle:  newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
 	}
@@ -435,6 +437,21 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	return svc
+}
+
+func newOpenAIPathHealthTrackerFromConfig(cfg *config.Config) *OpenAIPathHealthTracker {
+	if cfg == nil {
+		return NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true})
+	}
+	pathCfg := cfg.Gateway.OpenAIPathHealth
+	return NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:                  pathCfg.Enabled,
+		CircuitBreakerEnabled:    pathCfg.CircuitBreakerEnabled,
+		Cooldown:                 time.Duration(pathCfg.CooldownSeconds) * time.Second,
+		DegradedFailureThreshold: int64(pathCfg.DegradedFailures),
+		OpenFailureThreshold:     int64(pathCfg.OpenFailures),
+		HalfOpenMaxProbes:        int64(pathCfg.HalfOpenMaxProbes),
+	})
 }
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）
@@ -3743,9 +3760,14 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 		return nil, errors.New("upstream request is nil")
 	}
 	timeout := s.openAIRequestHeaderTimeoutForBodyWithPolicy(body, stabilityPolicy)
+	upstreamStart := time.Now()
+	pathKey := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
 	if timeout <= 0 {
 		accountID, accountConcurrency := openAIRequestAccountParams(account)
-		return s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
+		resp, err := s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
+		headerWait := time.Since(upstreamStart).Milliseconds()
+		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, resp, err, &headerWait)
+		return resp, err
 	}
 	if parent == nil {
 		parent = context.Background()
@@ -3765,6 +3787,8 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 
 	select {
 	case result := <-resultCh:
+		headerWait := time.Since(upstreamStart).Milliseconds()
+		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, result.resp, result.err, &headerWait)
 		if result.err != nil {
 			cancel()
 			return nil, result.err
@@ -3784,10 +3808,40 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 		return result.resp, result.err
 	case <-timer.C:
 		cancel()
+		headerWait := time.Since(upstreamStart).Milliseconds()
+		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, nil, errors.New("timed out waiting for OpenAI upstream response headers"), &headerWait)
 		return nil, fmt.Errorf("timed out waiting for OpenAI upstream response headers after %s", timeout)
 	case <-parent.Done():
 		cancel()
+		headerWait := time.Since(upstreamStart).Milliseconds()
+		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, nil, parent.Err(), &headerWait)
 		return nil, parent.Err()
+	}
+}
+
+func (s *OpenAIGatewayService) recordOpenAIPathHealthFromUpstreamResult(key OpenAIPathHealthKey, resp *http.Response, err error, headerWaitMs *int64) {
+	if s == nil || s.openaiPathHealth == nil {
+		return
+	}
+	if err != nil {
+		s.openaiPathHealth.RecordFailure(key, err.Error(), headerWaitMs)
+		return
+	}
+	if resp == nil {
+		s.openaiPathHealth.RecordFailure(key, "nil upstream response", headerWaitMs)
+		return
+	}
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		s.openaiPathHealth.RecordFailure(key, OpenAIPathFailureHTTP401, headerWaitMs)
+	case http.StatusTooManyRequests:
+		s.openaiPathHealth.RecordFailure(key, OpenAIPathFailureHTTP429, headerWaitMs)
+	default:
+		if resp.StatusCode >= 500 {
+			s.openaiPathHealth.RecordFailure(key, fmt.Sprintf("http_%d", resp.StatusCode), headerWaitMs)
+			return
+		}
+		s.openaiPathHealth.RecordSuccess(key, nil, headerWaitMs)
 	}
 }
 

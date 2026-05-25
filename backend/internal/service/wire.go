@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -200,12 +201,35 @@ func ProvideUserMessageQueueService(cache UserMsgQueueCache, rpmCache RPMCache, 
 	return svc
 }
 
-func ProvideContextJournal() ContextJournal {
-	return NewMemoryContextJournal(ContextJournalOptions{})
+func ProvideContextJournal(redisClient *redis.Client, cfg *config.Config) ContextJournal {
+	options := ContextJournalOptions{}
+	if cfg != nil {
+		if cfg.Gateway.ContextJournal.TTLHours > 0 {
+			options.TTL = time.Duration(cfg.Gateway.ContextJournal.TTLHours) * time.Hour
+		}
+		options.MaxSessionBytes = cfg.Gateway.ContextJournal.MaxSessionBytes
+	}
+	if cfg != nil && strings.EqualFold(strings.TrimSpace(cfg.Gateway.ContextJournal.Backend), "redis") && redisClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := redisClient.Ping(ctx).Err(); err == nil {
+			return NewRedisContextJournal(redisClient, options)
+		} else {
+			logger.LegacyPrintf("service.context_journal", "redis context journal unavailable, falling back to memory: %v", err)
+		}
+	}
+	return NewMemoryContextJournal(options)
 }
 
-func ProvideRealtimeBalanceChecker(upstreamBalance *UpstreamBalanceService) *RealtimeBalanceChecker {
-	return NewRealtimeBalanceChecker(upstreamBalance, RealtimeBalanceCheckerOptions{})
+func ProvideRealtimeBalanceChecker(upstreamBalance *UpstreamBalanceService, cfg *config.Config) *RealtimeBalanceChecker {
+	options := RealtimeBalanceCheckerOptions{}
+	if cfg != nil {
+		if cfg.Gateway.RealtimeBalanceConfirmTimeoutMs > 0 {
+			options.Timeout = time.Duration(cfg.Gateway.RealtimeBalanceConfirmTimeoutMs) * time.Millisecond
+		}
+		options.CandidateTopN = cfg.Gateway.RealtimeBalanceConfirmTopN
+	}
+	return NewRealtimeBalanceChecker(upstreamBalance, options)
 }
 
 // ProvideSchedulerSnapshotService creates and starts SchedulerSnapshotService.

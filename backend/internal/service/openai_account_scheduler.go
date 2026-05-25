@@ -3,6 +3,7 @@ package service
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
@@ -400,12 +401,16 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 }
 
 type openAIAccountCandidateScore struct {
-	account   *Account
-	loadInfo  *AccountLoadInfo
-	score     float64
-	errorRate float64
-	ttft      float64
-	hasTTFT   bool
+	account       *Account
+	loadInfo      *AccountLoadInfo
+	score         float64
+	errorRate     float64
+	ttft          float64
+	hasTTFT       bool
+	pathKey       OpenAIPathHealthKey
+	pathState     string
+	pathBoost     float64
+	hasPathSample bool
 }
 
 type openAIAccountCandidateHeap []openAIAccountCandidateScore
@@ -651,12 +656,24 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		if s.stats != nil {
 			errorRate, ttft, hasTTFT = s.stats.snapshot(account.ID)
 		}
+		pathKey := OpenAIPathHealthKeyForAccount(account, string(req.RequiredTransport))
+		pathState := OpenAIPathHealthStateHealthy
+		pathBoost, hasPathSample := 0.0, false
+		if s.service != nil && s.service.openaiPathHealth != nil {
+			snapshot := s.service.openaiPathHealth.Snapshot(pathKey)
+			pathState = snapshot.State
+			pathBoost, hasPathSample = s.service.openaiPathHealth.ScoreBoost(pathKey, int64(s.service.openAIFastLaneMinSamples()))
+		}
 		allCandidates = append(allCandidates, openAIAccountCandidateScore{
-			account:   account,
-			loadInfo:  loadInfo,
-			errorRate: errorRate,
-			ttft:      ttft,
-			hasTTFT:   hasTTFT,
+			account:       account,
+			loadInfo:      loadInfo,
+			errorRate:     errorRate,
+			ttft:          ttft,
+			hasTTFT:       hasTTFT,
+			pathKey:       pathKey,
+			pathState:     pathState,
+			pathBoost:     pathBoost,
+			hasPathSample: hasPathSample,
 		})
 	}
 
@@ -670,6 +687,18 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 				continue
 			}
 			candidates = append(candidates, candidate)
+		}
+	}
+	if s.service != nil && s.service.openAIPathHealthCircuitBreakerEnabled() {
+		filteredByHealth := make([]openAIAccountCandidateScore, 0, len(candidates))
+		for _, candidate := range candidates {
+			if candidate.pathState == OpenAIPathHealthStateOpenCircuit {
+				continue
+			}
+			filteredByHealth = append(filteredByHealth, candidate)
+		}
+		if len(filteredByHealth) > 0 {
+			candidates = filteredByHealth
 		}
 	}
 
@@ -739,6 +768,15 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			weights.Queue*queueFactor +
 			weights.ErrorRate*errorFactor +
 			weights.TTFT*ttftFactor
+		if s.service != nil && s.service.openAIFastLaneEnabled(req) {
+			item.score += s.service.openAIFastLaneTTFTWeight() * item.pathBoost
+			if item.pathState == OpenAIPathHealthStateDegraded {
+				item.score -= s.service.openAIFastLaneTTFTWeight() * 0.25
+			}
+			if !item.hasPathSample && s.service.openAIFastLaneExploreRatio() > 0 {
+				item.score += s.service.openAIFastLaneExploreRatio()
+			}
+		}
 	}
 	plan.candidates = candidates
 
@@ -823,6 +861,9 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 	req OpenAIAccountScheduleRequest,
 	selectionOrder []openAIAccountCandidateScore,
 ) (*AccountSelectionResult, bool, error) {
+	if result, compactBlocked, attempted, err := s.tryAcquireVerifiedOpenAISelectionTopN(ctx, req, selectionOrder); attempted {
+		return result, compactBlocked, err
+	}
 	compactBlocked := false
 	for i := 0; i < len(selectionOrder); i++ {
 		candidate := selectionOrder[i]
@@ -857,6 +898,66 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 		}
 	}
 	return nil, compactBlocked, nil
+}
+
+func (s *defaultOpenAIAccountScheduler) tryAcquireVerifiedOpenAISelectionTopN(
+	ctx context.Context,
+	req OpenAIAccountScheduleRequest,
+	selectionOrder []openAIAccountCandidateScore,
+) (*AccountSelectionResult, bool, bool, error) {
+	if s == nil || s.service == nil || s.service.realtimeBalanceChecker == nil || len(selectionOrder) == 0 {
+		return nil, false, false, nil
+	}
+	topN := s.service.realtimeBalanceChecker.candidateTopN
+	if topN <= 1 {
+		return nil, false, false, nil
+	}
+	candidates := make([]*Account, 0, topN)
+	compactBlocked := false
+	for i := 0; i < len(selectionOrder) && len(candidates) < topN; i++ {
+		candidate := selectionOrder[i]
+		fresh := s.service.resolveFreshSchedulableOpenAIAccount(ctx, candidate.account, req.RequestedModel, false)
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
+			continue
+		}
+		fresh = s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.RequestedModel, false)
+		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
+			continue
+		}
+		if req.RequireCompact && openAICompactSupportTier(fresh) == 0 {
+			compactBlocked = true
+			continue
+		}
+		candidates = append(candidates, fresh)
+	}
+	if len(candidates) == 0 {
+		return nil, compactBlocked, false, nil
+	}
+	selected, _, err := s.service.realtimeBalanceChecker.SelectFirstVerifiedCandidate(ctx, candidates, 1)
+	if err != nil {
+		if errors.Is(err, ErrNoVerifiedRealtimeBalanceCandidate) {
+			return nil, compactBlocked, true, nil
+		}
+		return nil, compactBlocked, true, err
+	}
+	if selected == nil {
+		return nil, compactBlocked, true, nil
+	}
+	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, selected.ID, selected.Concurrency)
+	if acquireErr != nil {
+		return nil, compactBlocked, true, acquireErr
+	}
+	if result == nil || !result.Acquired {
+		return nil, compactBlocked, true, nil
+	}
+	if req.SessionHash != "" {
+		_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, selected.ID)
+	}
+	return &AccountSelectionResult{
+		Account:     selected,
+		Acquired:    true,
+		ReleaseFunc: result.ReleaseFunc,
+	}, compactBlocked, true, nil
 }
 
 func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
@@ -1030,6 +1131,44 @@ func (s *defaultOpenAIAccountScheduler) hasVerifiedRealtimeBalance(ctx context.C
 		return true
 	}
 	return s.service.hasVerifiedRealtimeBalanceForCandidate(ctx, account)
+}
+
+func (s *OpenAIGatewayService) openAIPathHealthCircuitBreakerEnabled() bool {
+	return s != nil && s.cfg != nil &&
+		s.cfg.Gateway.OpenAIPathHealth.Enabled &&
+		s.cfg.Gateway.OpenAIPathHealth.CircuitBreakerEnabled &&
+		s.openaiPathHealth != nil
+}
+
+func (s *OpenAIGatewayService) openAIFastLaneEnabled(req OpenAIAccountScheduleRequest) bool {
+	if s == nil || s.cfg == nil || !s.cfg.Gateway.OpenAIFastLane.Enabled {
+		return false
+	}
+	if s.cfg.Gateway.OpenAIFastLane.NewSessionOnly {
+		return strings.TrimSpace(req.SessionHash) == "" && strings.TrimSpace(req.PreviousResponseID) == ""
+	}
+	return true
+}
+
+func (s *OpenAIGatewayService) openAIFastLaneMinSamples() int {
+	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIFastLane.MinSamples <= 0 {
+		return 3
+	}
+	return s.cfg.Gateway.OpenAIFastLane.MinSamples
+}
+
+func (s *OpenAIGatewayService) openAIFastLaneTTFTWeight() float64 {
+	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIFastLane.TTFTWeight <= 0 {
+		return 0
+	}
+	return s.cfg.Gateway.OpenAIFastLane.TTFTWeight
+}
+
+func (s *OpenAIGatewayService) openAIFastLaneExploreRatio() float64 {
+	if s == nil || s.cfg == nil {
+		return 0
+	}
+	return clamp01(s.cfg.Gateway.OpenAIFastLane.ExploreRatio)
 }
 
 func (s *defaultOpenAIAccountScheduler) ReportResult(accountID int64, success bool, firstTokenMs *int) {
@@ -1290,10 +1429,22 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 
 func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int) {
 	scheduler := s.getOpenAIAccountScheduler(context.Background())
-	if scheduler == nil {
+	if scheduler != nil {
+		scheduler.ReportResult(accountID, success, firstTokenMs)
+	}
+	if s == nil || s.openaiPathHealth == nil || accountID <= 0 {
 		return
 	}
-	scheduler.ReportResult(accountID, success, firstTokenMs)
+	account, err := s.getSchedulableAccount(context.Background(), accountID)
+	if err != nil || account == nil {
+		account = &Account{ID: accountID, Platform: PlatformOpenAI}
+	}
+	key := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	if success {
+		s.openaiPathHealth.RecordSuccess(key, firstTokenMs, nil)
+		return
+	}
+	s.openaiPathHealth.RecordFailure(key, OpenAIPathFailureOther, nil)
 }
 
 func (s *OpenAIGatewayService) RecordOpenAIAccountSwitch() {

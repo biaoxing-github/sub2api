@@ -694,6 +694,54 @@ type GatewayCodexStabilityConfig struct {
 	StreamKeepaliveEnabled bool `mapstructure:"stream_keepalive_enabled"`
 }
 
+type GatewayCodexAutopilotConfig struct {
+	Enabled                    bool `mapstructure:"enabled"`
+	ObserveOnly                bool `mapstructure:"observe_only"`
+	WindowSeconds              int  `mapstructure:"window_seconds"`
+	MinSamples                 int  `mapstructure:"min_samples"`
+	HeaderTimeoutThreshold     int  `mapstructure:"header_timeout_threshold"`
+	EOFThreshold               int  `mapstructure:"eof_threshold"`
+	SilentStreamTimeoutSeconds int  `mapstructure:"silent_stream_timeout_seconds"`
+}
+
+type GatewayOpenAIPathHealthConfig struct {
+	Enabled               bool `mapstructure:"enabled"`
+	CircuitBreakerEnabled bool `mapstructure:"circuit_breaker_enabled"`
+	CooldownSeconds       int  `mapstructure:"cooldown_seconds"`
+	DegradedFailures      int  `mapstructure:"degraded_failures"`
+	OpenFailures          int  `mapstructure:"open_failures"`
+	HalfOpenMaxProbes     int  `mapstructure:"half_open_max_probes"`
+}
+
+type GatewayOpenAIFastLaneConfig struct {
+	Enabled          bool    `mapstructure:"enabled"`
+	NewSessionOnly   bool    `mapstructure:"new_session_only"`
+	TTFTWeight       float64 `mapstructure:"ttft_weight"`
+	HeaderWaitWeight float64 `mapstructure:"header_wait_weight"`
+	MinSamples       int     `mapstructure:"min_samples"`
+	ExploreRatio     float64 `mapstructure:"explore_ratio"`
+}
+
+type GatewayRealtimeBalancePrewarmConfig struct {
+	Enabled            bool `mapstructure:"enabled"`
+	IntervalSeconds    int  `mapstructure:"interval_seconds"`
+	ActiveAccountLimit int  `mapstructure:"active_account_limit"`
+}
+
+type GatewayCodexWaitGuardConfig struct {
+	Enabled                  bool `mapstructure:"enabled"`
+	MaxHeaderWaitSeconds     int  `mapstructure:"max_header_wait_seconds"`
+	MaxStreamSilentSeconds   int  `mapstructure:"max_stream_silent_seconds"`
+	KeepaliveIntervalSeconds int  `mapstructure:"keepalive_interval_seconds"`
+	ProtectAfterOutput       bool `mapstructure:"protect_after_output_started"`
+}
+
+type GatewayContextJournalConfig struct {
+	Backend         string `mapstructure:"backend"`
+	TTLHours        int    `mapstructure:"ttl_hours"`
+	MaxSessionBytes int64  `mapstructure:"max_session_bytes"`
+}
+
 // GatewayConfig API网关相关配置
 type GatewayConfig struct {
 	// 等待上游响应头的超时时间（秒），0表示无超时
@@ -703,7 +751,15 @@ type GatewayConfig struct {
 	// 比全局 response_header_timeout 更短，用于快速切换卡在思考前的账号；0 表示不启用额外保护。
 	OpenAIRequestHeaderTimeoutSeconds int `mapstructure:"openai_request_header_timeout_seconds"`
 	// CodexStability: Codex/OpenAI Responses 稳定模式总开关与策略细项。
-	CodexStability GatewayCodexStabilityConfig `mapstructure:"codex_stability"`
+	CodexStability                  GatewayCodexStabilityConfig         `mapstructure:"codex_stability"`
+	CodexAutopilot                  GatewayCodexAutopilotConfig         `mapstructure:"codex_autopilot"`
+	OpenAIPathHealth                GatewayOpenAIPathHealthConfig       `mapstructure:"openai_path_health"`
+	OpenAIFastLane                  GatewayOpenAIFastLaneConfig         `mapstructure:"openai_fast_lane"`
+	RealtimeBalancePrewarm          GatewayRealtimeBalancePrewarmConfig `mapstructure:"realtime_balance_prewarm"`
+	RealtimeBalanceConfirmTopN      int                                 `mapstructure:"realtime_balance_confirm_top_n"`
+	RealtimeBalanceConfirmTimeoutMs int                                 `mapstructure:"realtime_balance_confirm_timeout_ms"`
+	CodexWaitGuard                  GatewayCodexWaitGuardConfig         `mapstructure:"codex_wait_guard"`
+	ContextJournal                  GatewayContextJournalConfig         `mapstructure:"context_journal"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
 	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
@@ -1837,6 +1893,38 @@ func setDefaults() {
 	viper.SetDefault("gateway.codex_stability.request_phase_failover_enabled", true)
 	viper.SetDefault("gateway.codex_stability.suppress_client_timeout_headers", true)
 	viper.SetDefault("gateway.codex_stability.stream_keepalive_enabled", true)
+	viper.SetDefault("gateway.codex_autopilot.enabled", true)
+	viper.SetDefault("gateway.codex_autopilot.observe_only", true)
+	viper.SetDefault("gateway.codex_autopilot.window_seconds", 300)
+	viper.SetDefault("gateway.codex_autopilot.min_samples", 5)
+	viper.SetDefault("gateway.codex_autopilot.header_timeout_threshold", 2)
+	viper.SetDefault("gateway.codex_autopilot.eof_threshold", 2)
+	viper.SetDefault("gateway.codex_autopilot.silent_stream_timeout_seconds", 90)
+	viper.SetDefault("gateway.openai_path_health.enabled", true)
+	viper.SetDefault("gateway.openai_path_health.circuit_breaker_enabled", true)
+	viper.SetDefault("gateway.openai_path_health.cooldown_seconds", 60)
+	viper.SetDefault("gateway.openai_path_health.degraded_failures", 2)
+	viper.SetDefault("gateway.openai_path_health.open_failures", 4)
+	viper.SetDefault("gateway.openai_path_health.half_open_max_probes", 2)
+	viper.SetDefault("gateway.openai_fast_lane.enabled", true)
+	viper.SetDefault("gateway.openai_fast_lane.new_session_only", true)
+	viper.SetDefault("gateway.openai_fast_lane.ttft_weight", 0.8)
+	viper.SetDefault("gateway.openai_fast_lane.header_wait_weight", 0.2)
+	viper.SetDefault("gateway.openai_fast_lane.min_samples", 3)
+	viper.SetDefault("gateway.openai_fast_lane.explore_ratio", 0.1)
+	viper.SetDefault("gateway.realtime_balance_prewarm.enabled", true)
+	viper.SetDefault("gateway.realtime_balance_prewarm.interval_seconds", 60)
+	viper.SetDefault("gateway.realtime_balance_prewarm.active_account_limit", 20)
+	viper.SetDefault("gateway.realtime_balance_confirm_top_n", 3)
+	viper.SetDefault("gateway.realtime_balance_confirm_timeout_ms", 1200)
+	viper.SetDefault("gateway.codex_wait_guard.enabled", true)
+	viper.SetDefault("gateway.codex_wait_guard.max_header_wait_seconds", 20)
+	viper.SetDefault("gateway.codex_wait_guard.max_stream_silent_seconds", 90)
+	viper.SetDefault("gateway.codex_wait_guard.keepalive_interval_seconds", 10)
+	viper.SetDefault("gateway.codex_wait_guard.protect_after_output_started", true)
+	viper.SetDefault("gateway.context_journal.backend", "memory")
+	viper.SetDefault("gateway.context_journal.ttl_hours", 24)
+	viper.SetDefault("gateway.context_journal.max_session_bytes", int64(50*1024*1024))
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
 	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
 	viper.SetDefault("gateway.proxy_probe_response_read_max_bytes", int64(1024*1024))
@@ -2434,6 +2522,41 @@ func (c *Config) Validate() error {
 			GatewayCodexStabilityModeOff,
 			GatewayCodexStabilityModeCodex,
 			GatewayCodexStabilityModeAllOpenAIResponses)
+	}
+	if c.Gateway.CodexAutopilot.WindowSeconds < 0 ||
+		c.Gateway.CodexAutopilot.MinSamples < 0 ||
+		c.Gateway.CodexAutopilot.HeaderTimeoutThreshold < 0 ||
+		c.Gateway.CodexAutopilot.EOFThreshold < 0 ||
+		c.Gateway.CodexAutopilot.SilentStreamTimeoutSeconds < 0 {
+		return fmt.Errorf("gateway.codex_autopilot values must be non-negative")
+	}
+	if c.Gateway.OpenAIPathHealth.CooldownSeconds < 0 ||
+		c.Gateway.OpenAIPathHealth.DegradedFailures < 0 ||
+		c.Gateway.OpenAIPathHealth.OpenFailures < 0 ||
+		c.Gateway.OpenAIPathHealth.HalfOpenMaxProbes < 0 {
+		return fmt.Errorf("gateway.openai_path_health values must be non-negative")
+	}
+	if c.Gateway.OpenAIFastLane.TTFTWeight < 0 ||
+		c.Gateway.OpenAIFastLane.HeaderWaitWeight < 0 ||
+		c.Gateway.OpenAIFastLane.MinSamples < 0 {
+		return fmt.Errorf("gateway.openai_fast_lane values must be non-negative")
+	}
+	if c.Gateway.OpenAIFastLane.ExploreRatio < 0 || c.Gateway.OpenAIFastLane.ExploreRatio > 1 {
+		return fmt.Errorf("gateway.openai_fast_lane.explore_ratio must be within [0,1]")
+	}
+	if c.Gateway.RealtimeBalancePrewarm.IntervalSeconds < 0 ||
+		c.Gateway.RealtimeBalancePrewarm.ActiveAccountLimit < 0 ||
+		c.Gateway.RealtimeBalanceConfirmTopN < 0 ||
+		c.Gateway.RealtimeBalanceConfirmTimeoutMs < 0 {
+		return fmt.Errorf("gateway realtime balance values must be non-negative")
+	}
+	if c.Gateway.CodexWaitGuard.MaxHeaderWaitSeconds < 0 ||
+		c.Gateway.CodexWaitGuard.MaxStreamSilentSeconds < 0 ||
+		c.Gateway.CodexWaitGuard.KeepaliveIntervalSeconds < 0 {
+		return fmt.Errorf("gateway.codex_wait_guard values must be non-negative")
+	}
+	if c.Gateway.ContextJournal.TTLHours < 0 || c.Gateway.ContextJournal.MaxSessionBytes < 0 {
+		return fmt.Errorf("gateway.context_journal values must be non-negative")
 	}
 	if c.Gateway.MaxIdleConns <= 0 {
 		return fmt.Errorf("gateway.max_idle_conns must be positive")

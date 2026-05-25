@@ -190,6 +190,7 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// Request drilldown (success + error)
 		ops.GET("/requests", h.Admin.Ops.ListRequestDetails)
 		ops.GET("/requests/:request_id/timeline", h.Admin.Ops.GetRequestTimeline)
+		ops.GET("/requests/:request_id/codex-diagnosis", h.Admin.Ops.GetCodexDiagnosis)
 
 		// Indexed system logs
 		ops.GET("/system-logs", h.Admin.Ops.ListSystemLogs)

@@ -5,7 +5,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore } from '@/stores'
-import { opsAPI, type OpsRequestDetailsParams, type OpsRequestDetail } from '@/api/admin/ops'
+import { opsAPI, type OpsCodexDiagnosis, type OpsRequestDetailsParams, type OpsRequestDetail } from '@/api/admin/ops'
 import { parseTimeRangeMinutes, formatDateTime } from '../utils/opsFormatters'
 
 export interface OpsRequestDetailsPreset {
@@ -39,6 +39,9 @@ const items = ref<OpsRequestDetail[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
+const diagnosisLoadingRequestId = ref('')
+const diagnosisModalOpen = ref(false)
+const diagnosisResult = ref<OpsCodexDiagnosis | null>(null)
 
 const close = () => emit('update:modelValue', false)
 
@@ -142,9 +145,55 @@ function openErrorDetail(errorId: number | null | undefined) {
   emit('openErrorDetail', errorId)
 }
 
+async function openCodexDiagnosis(requestId: string | null | undefined) {
+  if (!requestId) return
+  diagnosisLoadingRequestId.value = requestId
+  try {
+    diagnosisResult.value = await opsAPI.getCodexDiagnosis(requestId)
+    diagnosisModalOpen.value = true
+  } catch (e: any) {
+    console.error('[OpsRequestDetailsModal] Failed to fetch Codex diagnosis', e)
+    appStore.showError(e?.message || t('admin.ops.requestDetails.codexDiagnosis.loadFailed'))
+  } finally {
+    diagnosisLoadingRequestId.value = ''
+  }
+}
+
+function closeCodexDiagnosis() {
+  diagnosisModalOpen.value = false
+}
+
 const kindBadgeClass = (kind: string) => {
   if (kind === 'error') return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
   return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+}
+
+const diagnosisStatusClass = computed(() => {
+  const status = String(diagnosisResult.value?.status || '').toLowerCase()
+  if (['success', 'ok', 'healthy'].includes(status)) return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+  if (['protected', 'header_timeout', 'unexpected_eof', 'unauthorized', 'rate_limited'].includes(status)) {
+    return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+  }
+  if (['error', 'failed'].includes(status)) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+  return 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-300'
+})
+
+const diagnosisSections = computed(() => {
+  const diagnosis = diagnosisResult.value
+  if (!diagnosis) return []
+  return [
+    { key: 'path', title: t('admin.ops.requestDetails.codexDiagnosis.path'), data: diagnosis.path },
+    { key: 'latency', title: t('admin.ops.requestDetails.codexDiagnosis.latency'), data: diagnosis.latency },
+    { key: 'context', title: t('admin.ops.requestDetails.codexDiagnosis.context'), data: diagnosis.context }
+  ].filter((section) => section.data && Object.keys(section.data).length > 0)
+})
+
+function formatDiagnosisValue(value: unknown): string {
+  if (value == null) return '-'
+  if (typeof value === 'boolean') return value ? t('common.yes') : t('common.no')
+  if (typeof value === 'number') return Number.isFinite(value) ? String(Math.round(value)) : '-'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
 }
 </script>
 
@@ -255,14 +304,24 @@ const kindBadgeClass = (kind: string) => {
                     <span v-else class="text-xs text-gray-400">-</span>
                   </td>
                   <td class="whitespace-nowrap px-4 py-3 text-right">
-                    <button
-                      v-if="row.kind === 'error' && row.error_id"
-                      class="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
-                      @click="openErrorDetail(row.error_id)"
-                    >
-                      {{ t('admin.ops.requestDetails.viewError') }}
-                    </button>
-                    <span v-else class="text-xs text-gray-400">-</span>
+                    <div class="flex justify-end gap-2">
+                      <button
+                        v-if="row.request_id"
+                        class="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-600 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-900/20 dark:text-blue-300 dark:hover:bg-blue-900/30"
+                        :disabled="diagnosisLoadingRequestId === row.request_id"
+                        @click="openCodexDiagnosis(row.request_id)"
+                      >
+                        {{ diagnosisLoadingRequestId === row.request_id ? t('common.loading') : t('admin.ops.requestDetails.codexDiagnosis.button') }}
+                      </button>
+                      <button
+                        v-if="row.kind === 'error' && row.error_id"
+                        class="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
+                        @click="openErrorDetail(row.error_id)"
+                      >
+                        {{ t('admin.ops.requestDetails.viewError') }}
+                      </button>
+                      <span v-if="!row.request_id && !(row.kind === 'error' && row.error_id)" class="text-xs text-gray-400">-</span>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -276,6 +335,80 @@ const kindBadgeClass = (kind: string) => {
               @update:page="handlePageChange"
               @update:pageSize="handlePageSizeChange"
             />
+          </div>
+        </div>
+      </div>
+    </template>
+  </BaseDialog>
+
+  <BaseDialog
+    :show="diagnosisModalOpen"
+    :title="t('admin.ops.requestDetails.codexDiagnosis.title')"
+    width="wide"
+    :z-index="60"
+    @close="closeCodexDiagnosis"
+  >
+    <template #default>
+      <div v-if="diagnosisResult" class="space-y-5">
+        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-sm font-bold text-gray-900 dark:text-white">
+                {{ diagnosisResult.headline || t('admin.ops.requestDetails.codexDiagnosis.noHeadline') }}
+              </div>
+              <div class="mt-1 truncate font-mono text-[11px] text-gray-500 dark:text-gray-400" :title="diagnosisResult.request_id">
+                {{ diagnosisResult.request_id }}
+              </div>
+            </div>
+            <span class="rounded-full px-2.5 py-1 text-[11px] font-bold" :class="diagnosisStatusClass">
+              {{ diagnosisResult.status || 'unknown' }}
+            </span>
+          </div>
+          <div v-if="diagnosisResult.suggested_action" class="mt-3 text-sm leading-6 text-gray-700 dark:text-gray-300">
+            {{ diagnosisResult.suggested_action }}
+          </div>
+        </div>
+
+        <div v-if="diagnosisSections.length > 0" class="grid gap-3 md:grid-cols-3">
+          <section
+            v-for="section in diagnosisSections"
+            :key="section.key"
+            class="rounded-lg border border-gray-200 p-3 dark:border-dark-700"
+          >
+            <h4 class="mb-2 text-xs font-bold uppercase text-gray-500 dark:text-gray-400">
+              {{ section.title }}
+            </h4>
+            <dl class="space-y-2">
+              <div v-for="[key, value] in Object.entries(section.data || {})" :key="key" class="min-w-0">
+                <dt class="text-[11px] font-semibold text-gray-500 dark:text-gray-400">{{ key }}</dt>
+                <dd class="mt-0.5 break-words font-mono text-xs text-gray-800 dark:text-gray-100">
+                  {{ formatDiagnosisValue(value) }}
+                </dd>
+              </div>
+            </dl>
+          </section>
+        </div>
+
+        <div v-if="(diagnosisResult.timeline || []).length > 0" class="rounded-lg border border-gray-200 dark:border-dark-700">
+          <div class="border-b border-gray-200 px-3 py-2 text-xs font-bold text-gray-600 dark:border-dark-700 dark:text-gray-300">
+            {{ t('admin.ops.requestDetails.codexDiagnosis.timeline') }}
+          </div>
+          <div class="max-h-72 overflow-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-700">
+              <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
+                <tr v-for="(event, idx) in diagnosisResult.timeline" :key="idx">
+                  <td class="whitespace-nowrap px-3 py-2 text-[11px] text-gray-500 dark:text-gray-400">
+                    {{ formatDateTime(event.at) }}
+                  </td>
+                  <td class="whitespace-nowrap px-3 py-2 font-mono text-xs text-gray-700 dark:text-gray-200">
+                    {{ event.phase }} / {{ event.event_type }}
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+                    {{ event.reason || '-' }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

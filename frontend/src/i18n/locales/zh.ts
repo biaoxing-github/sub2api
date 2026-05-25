@@ -5080,6 +5080,16 @@ export default {
         copyFailed: '复制失败',
         copy: '复制',
         viewError: '查看错误',
+        codexDiagnosis: {
+          button: 'Codex 诊断',
+          title: 'Codex 诊断',
+          loadFailed: '加载 Codex 诊断失败',
+          noHeadline: '暂无诊断结论',
+          path: '线路',
+          latency: '延迟',
+          context: '上下文',
+          timeline: '时间线'
+        },
         kind: {
           success: '成功',
           error: '失败'
