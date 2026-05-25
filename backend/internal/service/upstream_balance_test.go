@@ -17,6 +17,8 @@ type upstreamBalanceRefreshOneRepo struct {
 	account       *Account
 	updateExtraID int64
 	updateExtra   map[string]any
+	bulkUpdateIDs []int64
+	bulkUpdate    AccountBulkUpdate
 }
 
 func (r *upstreamBalanceRefreshOneRepo) Create(context.Context, *Account) error { return nil }
@@ -131,8 +133,10 @@ func (r *upstreamBalanceRefreshOneRepo) UpdateExtra(_ context.Context, id int64,
 	r.updateExtra = updates
 	return nil
 }
-func (r *upstreamBalanceRefreshOneRepo) BulkUpdate(context.Context, []int64, AccountBulkUpdate) (int64, error) {
-	return 0, nil
+func (r *upstreamBalanceRefreshOneRepo) BulkUpdate(_ context.Context, ids []int64, updates AccountBulkUpdate) (int64, error) {
+	r.bulkUpdateIDs = ids
+	r.bulkUpdate = updates
+	return int64(len(ids)), nil
 }
 func (r *upstreamBalanceRefreshOneRepo) IncrementQuotaUsed(context.Context, int64, float64) error {
 	return nil
@@ -142,13 +146,19 @@ func (r *upstreamBalanceRefreshOneRepo) ResetQuotaUsed(context.Context, int64) e
 }
 
 type upstreamBalanceRefreshOneHTTP struct {
-	requests []*http.Request
-	body     string
+	requests  []*http.Request
+	body      string
+	responses map[string]string
 }
 
 func (h *upstreamBalanceRefreshOneHTTP) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	h.requests = append(h.requests, req)
 	body := h.body
+	if h.responses != nil {
+		if matched, ok := h.responses[req.URL.Path]; ok {
+			body = matched
+		}
+	}
 	if body == "" {
 		body = `{"total_granted":20,"total_used":7.5,"total_available":12.5}`
 	}
@@ -221,6 +231,41 @@ func TestUpstreamBalanceServiceRefreshOneUsesNewAPIUsageGroups(t *testing.T) {
 	}
 	if snapshot.ConvertedAvailableByGroup["codex"] == 0 {
 		t.Fatalf("converted groups = %+v", snapshot.ConvertedAvailableByGroup)
+	}
+}
+
+func TestUpstreamBalanceServiceRefreshOneSyncsUpstreamAuthMeConcurrency(t *testing.T) {
+	repo := &upstreamBalanceRefreshOneRepo{
+		account: &Account{
+			ID:          42,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Concurrency: 3,
+			Credentials: map[string]any{
+				"api_key":                         "sk-test",
+				UpstreamAuthUsernameCredentialKey: "alice@example.com",
+				UpstreamAuthPasswordCredentialKey: "secret",
+				UpstreamBalanceEndpointPathsKey:   []any{"/api/v1/auth/me"},
+			},
+		},
+	}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{
+		responses: map[string]string{
+			"/api/user/login":        `{"success":true,"token":"login-token","data":{"id":99}}`,
+			"/api/v1/auth/me":        `{"code":0,"message":"success","data":{"id":99,"balance":12.5,"concurrency":8}}`,
+			"/api/subscription/self": `{"code":404}`,
+		},
+	}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+
+	if _, err := svc.RefreshOne(context.Background(), 42); err != nil {
+		t.Fatalf("RefreshOne() error = %v", err)
+	}
+	if len(repo.bulkUpdateIDs) != 1 || repo.bulkUpdateIDs[0] != 42 {
+		t.Fatalf("bulk update ids = %+v", repo.bulkUpdateIDs)
+	}
+	if repo.bulkUpdate.Concurrency == nil || *repo.bulkUpdate.Concurrency != 8 {
+		t.Fatalf("synced concurrency = %+v, want 8", repo.bulkUpdate.Concurrency)
 	}
 }
 

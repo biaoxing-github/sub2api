@@ -120,6 +120,7 @@ type upstreamAuthContext struct {
 	cookie      string
 	newAPIUser  string
 	userBalance *parsedUpstreamBalance
+	concurrency *int
 	groupsByKey map[string][]UpstreamBalanceGroupSnapshot
 	allGroups   []UpstreamBalanceGroupSnapshot
 }
@@ -337,6 +338,12 @@ func (s *UpstreamBalanceService) RefreshAccount(ctx context.Context, account *Ac
 	if err := s.accountRepo.UpdateExtra(ctx, account.ID, snapshot.toExtraUpdates(now)); err != nil {
 		return nil, err
 	}
+	if authCtx != nil && authCtx.concurrency != nil && *authCtx.concurrency != account.Concurrency {
+		if _, err := s.accountRepo.BulkUpdate(ctx, []int64{account.ID}, AccountBulkUpdate{Concurrency: authCtx.concurrency}); err != nil {
+			return nil, err
+		}
+		account.Concurrency = *authCtx.concurrency
+	}
 	return snapshot, nil
 }
 
@@ -454,7 +461,10 @@ func (s *UpstreamBalanceService) fetchUpstreamAuthContext(ctx context.Context, a
 		return nil
 	}
 	auth := &upstreamAuthContext{token: token, cookie: cookie, newAPIUser: newAPIUser}
-	auth.userBalance = s.fetchAuthenticatedAccountBalance(ctx, account, baseURL, auth)
+	auth.userBalance, auth.concurrency = s.fetchAuthenticatedAuthMe(ctx, account, baseURL, auth)
+	if balance := s.fetchAuthenticatedAccountBalance(ctx, account, baseURL, auth); balance != nil {
+		auth.userBalance = balance
+	}
 	auth.allGroups = s.fetchAuthenticatedGroups(ctx, account, baseURL, auth)
 	auth.groupsByKey = s.fetchAuthenticatedKeyGroups(ctx, account, baseURL, auth, keys, auth.allGroups)
 	return auth
@@ -492,6 +502,16 @@ func (s *UpstreamBalanceService) loginUpstream(ctx context.Context, account *Acc
 		lastErr = "no upstream login endpoint matched"
 	}
 	return "", "", "", errors.New(lastErr)
+}
+
+func (s *UpstreamBalanceService) fetchAuthenticatedAuthMe(ctx context.Context, account *Account, baseURL string, auth *upstreamAuthContext) (*parsedUpstreamBalance, *int) {
+	status, body, _, err := s.doUpstreamJSON(ctx, account, http.MethodGet, baseURL+"/api/v1/auth/me", nil, auth.token, auth.cookie, auth.newAPIUser)
+	if err != nil || status < 200 || status >= 300 {
+		return nil, nil
+	}
+	balance, _ := parseNewAPIUserSelfResponse(body)
+	concurrency := parseAuthMeConcurrency(body)
+	return balance, concurrency
 }
 
 func (s *UpstreamBalanceService) fetchAuthenticatedAccountBalance(ctx context.Context, account *Account, baseURL string, auth *upstreamAuthContext) *parsedUpstreamBalance {
@@ -768,6 +788,27 @@ func parseNewAPIUserSelfResponse(body []byte) (*parsedUpstreamBalance, error) {
 	usedUSD := used / newAPIQuotaPerUSD
 	total := available + usedUSD
 	return &parsedUpstreamBalance{Available: &available, Used: &usedUSD, Total: &total}, nil
+}
+
+func parseAuthMeConcurrency(body []byte) *int {
+	var raw any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil
+	}
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	data, ok := obj["data"].(map[string]any)
+	if !ok {
+		data = obj
+	}
+	value, ok := parseAnyFloat(data["concurrency"])
+	if !ok || value < 0 || value != float64(int(value)) {
+		return nil
+	}
+	concurrency := int(value)
+	return &concurrency
 }
 
 func parseNewAPIUsageResponse(body []byte) (*parsedUpstreamBalance, error) {
