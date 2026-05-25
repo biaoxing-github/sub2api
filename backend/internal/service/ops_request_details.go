@@ -41,6 +41,18 @@ type OpsRequestDetail struct {
 	GroupID   *int64 `json:"group_id,omitempty"`
 
 	Stream bool `json:"stream"`
+
+	AccountName      string `json:"account_name,omitempty"`
+	RequestedModel   string `json:"requested_model,omitempty"`
+	UpstreamEndpoint string `json:"upstream_endpoint,omitempty"`
+
+	InputTokens  *int `json:"input_tokens,omitempty"`
+	OutputTokens *int `json:"output_tokens,omitempty"`
+	TotalTokens  *int `json:"total_tokens,omitempty"`
+	FirstTokenMs *int `json:"first_token_ms,omitempty"`
+
+	TotalCost  string `json:"total_cost,omitempty"`
+	ActualCost string `json:"actual_cost,omitempty"`
 }
 
 type OpsRequestDetailFilter struct {
@@ -141,6 +153,8 @@ type OpsCodexDiagnosis struct {
 	Path            map[string]any            `json:"path,omitempty"`
 	Latency         map[string]any            `json:"latency,omitempty"`
 	Context         map[string]any            `json:"context,omitempty"`
+	Routing         map[string]any            `json:"routing,omitempty"`
+	Usage           map[string]any            `json:"usage,omitempty"`
 	SuggestedAction string                    `json:"suggested_action,omitempty"`
 	Timeline        []OpsRequestTimelineEvent `json:"timeline,omitempty"`
 }
@@ -225,16 +239,30 @@ func (s *OpsService) GetRequestTimeline(ctx context.Context, requestID string) (
 	}
 	timeline.Status = string(item.Kind)
 	timeline.Events = append(timeline.Events, OpsRequestTimelineEvent{
-		At:        item.CreatedAt,
-		Phase:     "request",
-		EventType: "request_recorded",
-		Reason:    item.Message,
+		At:          item.CreatedAt,
+		Phase:       "request",
+		EventType:   "request_recorded",
+		Reason:      item.Message,
+		AccountID:   item.AccountID,
+		AccountName: item.AccountName,
 		Details: map[string]any{
-			"kind":        item.Kind,
-			"platform":    item.Platform,
-			"model":       item.Model,
-			"status_code": item.StatusCode,
-			"stream":      item.Stream,
+			"kind":              item.Kind,
+			"platform":          item.Platform,
+			"model":             item.Model,
+			"requested_model":   item.RequestedModel,
+			"status_code":       item.StatusCode,
+			"stream":            item.Stream,
+			"user_id":           item.UserID,
+			"api_key_id":        item.APIKeyID,
+			"group_id":          item.GroupID,
+			"duration_ms":       item.DurationMs,
+			"first_token_ms":    item.FirstTokenMs,
+			"input_tokens":      item.InputTokens,
+			"output_tokens":     item.OutputTokens,
+			"total_tokens":      item.TotalTokens,
+			"total_cost":        item.TotalCost,
+			"actual_cost":       item.ActualCost,
+			"upstream_endpoint": item.UpstreamEndpoint,
 		},
 	})
 	return timeline, nil
@@ -253,6 +281,8 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 		Latency:   map[string]any{},
 		Path:      map[string]any{},
 		Context:   map[string]any{},
+		Routing:   map[string]any{},
+		Usage:     map[string]any{},
 	}
 	if timeline == nil || len(timeline.Events) == 0 {
 		diagnosis.SuggestedAction = "确认 ops 监控已开启，并用 request_id 查询最近 72 小时内的请求。"
@@ -264,7 +294,10 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 			lastReason = event.Reason
 		}
 		if event.AccountID != nil {
-			diagnosis.Path["account_id"] = *event.AccountID
+			diagnosis.Routing["account_id"] = *event.AccountID
+		}
+		if event.AccountName != "" {
+			diagnosis.Routing["account_name"] = event.AccountName
 		}
 		if event.LatencyMs != nil {
 			diagnosis.Latency[event.Phase+"_latency_ms"] = *event.LatencyMs
@@ -273,10 +306,14 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 			switch key {
 			case "status_code", "stream", "model", "platform":
 				diagnosis.Path[key] = value
-			case "time_to_first_token_ms", "ttft_ms", "header_wait_ms", "upstream_latency_ms":
+			case "duration_ms", "first_token_ms", "time_to_first_token_ms", "ttft_ms", "header_wait_ms", "upstream_latency_ms":
 				diagnosis.Latency[key] = value
 			case "context_replay_reason", "context_continuity", "journal_reason", "replay_safe":
 				diagnosis.Context[key] = value
+			case "requested_model", "upstream_endpoint", "user_id", "api_key_id", "group_id":
+				diagnosis.Routing[key] = value
+			case "input_tokens", "output_tokens", "total_tokens", "total_cost", "actual_cost":
+				diagnosis.Usage[key] = value
 			}
 		}
 	}

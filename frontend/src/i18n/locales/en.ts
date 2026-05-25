@@ -4925,6 +4925,8 @@ export default {
           noHeadline: 'No diagnosis headline',
           path: 'Path',
           latency: 'Latency',
+          routing: 'Routing',
+          usage: 'Usage',
           context: 'Context',
           timeline: 'Timeline'
         },

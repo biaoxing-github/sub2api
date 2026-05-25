@@ -184,6 +184,8 @@ const diagnosisSections = computed(() => {
   return [
     { key: 'path', title: t('admin.ops.requestDetails.codexDiagnosis.path'), data: diagnosis.path },
     { key: 'latency', title: t('admin.ops.requestDetails.codexDiagnosis.latency'), data: diagnosis.latency },
+    { key: 'routing', title: t('admin.ops.requestDetails.codexDiagnosis.routing'), data: diagnosis.routing },
+    { key: 'usage', title: t('admin.ops.requestDetails.codexDiagnosis.usage'), data: diagnosis.usage },
     { key: 'context', title: t('admin.ops.requestDetails.codexDiagnosis.context'), data: diagnosis.context }
   ].filter((section) => section.data && Object.keys(section.data).length > 0)
 })
@@ -369,7 +371,7 @@ function formatDiagnosisValue(value: unknown): string {
           </div>
         </div>
 
-        <div v-if="diagnosisSections.length > 0" class="grid gap-3 md:grid-cols-3">
+        <div v-if="diagnosisSections.length > 0" class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           <section
             v-for="section in diagnosisSections"
             :key="section.key"

@@ -102,7 +102,16 @@ WITH combined AS (
     ul.api_key_id AS api_key_id,
     ul.account_id AS account_id,
     ul.group_id AS group_id,
-    ul.stream AS stream
+    ul.stream AS stream,
+    a.name AS account_name,
+    ul.requested_model AS requested_model,
+    ul.upstream_endpoint AS upstream_endpoint,
+    ul.input_tokens AS input_tokens,
+    ul.output_tokens AS output_tokens,
+    (COALESCE(ul.input_tokens, 0) + COALESCE(ul.output_tokens, 0) + COALESCE(ul.cache_creation_tokens, 0) + COALESCE(ul.cache_read_tokens, 0) + COALESCE(ul.image_output_tokens, 0))::INT AS total_tokens,
+    ul.first_token_ms AS first_token_ms,
+    ul.total_cost::TEXT AS total_cost,
+    ul.actual_cost::TEXT AS actual_cost
   FROM usage_logs ul
   LEFT JOIN groups g ON g.id = ul.group_id
   LEFT JOIN accounts a ON a.id = ul.account_id
@@ -126,7 +135,16 @@ WITH combined AS (
     o.api_key_id AS api_key_id,
     o.account_id AS account_id,
     o.group_id AS group_id,
-    o.stream AS stream
+    o.stream AS stream,
+    a.name AS account_name,
+    o.model AS requested_model,
+    o.upstream_endpoint AS upstream_endpoint,
+    NULL::INT AS input_tokens,
+    NULL::INT AS output_tokens,
+    NULL::INT AS total_tokens,
+    o.time_to_first_token_ms::INT AS first_token_ms,
+    NULL::TEXT AS total_cost,
+    NULL::TEXT AS actual_cost
   FROM ops_error_logs o
   LEFT JOIN groups g ON g.id = o.group_id
   LEFT JOIN accounts a ON a.id = o.account_id
@@ -175,7 +193,16 @@ SELECT
   api_key_id,
   account_id,
   group_id,
-  stream
+  stream,
+  account_name,
+  requested_model,
+  upstream_endpoint,
+  input_tokens,
+  output_tokens,
+  total_tokens,
+  first_token_ms,
+  total_cost,
+  actual_cost
 FROM combined
 %s
 %s
@@ -227,6 +254,16 @@ LIMIT $%d OFFSET $%d
 			groupID   sql.NullInt64
 
 			stream bool
+
+			accountName      sql.NullString
+			requestedModel   sql.NullString
+			upstreamEndpoint sql.NullString
+			inputTokens      sql.NullInt64
+			outputTokens     sql.NullInt64
+			totalTokens      sql.NullInt64
+			firstTokenMs     sql.NullInt64
+			totalCost        sql.NullString
+			actualCost       sql.NullString
 		)
 
 		if err := rows.Scan(
@@ -246,6 +283,15 @@ LIMIT $%d OFFSET $%d
 			&accountID,
 			&groupID,
 			&stream,
+			&accountName,
+			&requestedModel,
+			&upstreamEndpoint,
+			&inputTokens,
+			&outputTokens,
+			&totalTokens,
+			&firstTokenMs,
+			&totalCost,
+			&actualCost,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -270,6 +316,16 @@ LIMIT $%d OFFSET $%d
 			GroupID:   toInt64Ptr(groupID),
 
 			Stream: stream,
+
+			AccountName:      strings.TrimSpace(accountName.String),
+			RequestedModel:   strings.TrimSpace(requestedModel.String),
+			UpstreamEndpoint: strings.TrimSpace(upstreamEndpoint.String),
+			InputTokens:      toIntPtr(inputTokens),
+			OutputTokens:     toIntPtr(outputTokens),
+			TotalTokens:      toIntPtr(totalTokens),
+			FirstTokenMs:     toIntPtr(firstTokenMs),
+			TotalCost:        strings.TrimSpace(totalCost.String),
+			ActualCost:       strings.TrimSpace(actualCost.String),
 		}
 
 		if item.Platform == "" {

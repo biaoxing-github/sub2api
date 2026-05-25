@@ -188,6 +188,8 @@ export interface OpsCodexDiagnosis {
   path?: Record<string, unknown>
   latency?: Record<string, unknown>
   context?: Record<string, unknown>
+  routing?: Record<string, unknown>
+  usage?: Record<string, unknown>
   suggested_action?: string
   timeline?: OpsRequestTimelineEvent[]
 }

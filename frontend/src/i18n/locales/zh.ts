@@ -5087,6 +5087,8 @@ export default {
           noHeadline: '暂无诊断结论',
           path: '线路',
           latency: '延迟',
+          routing: '路由',
+          usage: '用量',
           context: '上下文',
           timeline: '时间线'
         },
