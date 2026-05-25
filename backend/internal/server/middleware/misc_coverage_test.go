@@ -55,6 +55,65 @@ func TestClientRequestID_PreservesExisting(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestClientRequestID_PreservesSafeIncomingHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(ClientRequestID())
+	r.GET("/t", func(c *gin.Context) {
+		id, ok := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+		require.True(t, ok)
+		require.Equal(t, "api-key-probe-abc_123:01", id)
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/t", nil)
+	req.Header.Set(clientRequestIDHeader, "api-key-probe-abc_123:01")
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestClientRequestID_RejectsUnsafeIncomingHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(ClientRequestID())
+	r.GET("/t", func(c *gin.Context) {
+		id, ok := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+		require.True(t, ok)
+		require.NotEqual(t, "bad header", id)
+		require.NotEmpty(t, id)
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/t", nil)
+	req.Header.Set(clientRequestIDHeader, "bad header")
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestClientRequestID_RejectsNonProbeIncomingHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	r.Use(ClientRequestID())
+	r.GET("/t", func(c *gin.Context) {
+		id, ok := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+		require.True(t, ok)
+		require.NotEqual(t, "external-client-123", id)
+		require.NotEmpty(t, id)
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/t", nil)
+	req.Header.Set(clientRequestIDHeader, "external-client-123")
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
 func TestRequestBodyLimit_LimitsBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -4,7 +4,14 @@
  */
 
 import { apiClient } from './client'
-import type { ApiKey, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
+import type {
+  ApiKey,
+  ApiKeyProbeRun,
+  CreateApiKeyProbeRunRequest,
+  CreateApiKeyRequest,
+  PaginatedResponse,
+  UpdateApiKeyRequest
+} from '@/types'
 
 /**
  * List all API keys for current user
@@ -131,13 +138,28 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
   return update(id, { status })
 }
 
+export async function listProbeRuns(id: number): Promise<ApiKeyProbeRun[]> {
+  const { data } = await apiClient.get<ApiKeyProbeRun[]>(`/keys/${id}/probe-runs`)
+  return data
+}
+
+export async function createProbeRun(
+  id: number,
+  payload: CreateApiKeyProbeRunRequest
+): Promise<ApiKeyProbeRun> {
+  const { data } = await apiClient.post<ApiKeyProbeRun>(`/keys/${id}/probe-runs`, payload)
+  return data
+}
+
 export const keysAPI = {
   list,
   getById,
   create,
   update,
   delete: deleteKey,
-  toggleStatus
+  toggleStatus,
+  listProbeRuns,
+  createProbeRun
 }
 
 export default keysAPI

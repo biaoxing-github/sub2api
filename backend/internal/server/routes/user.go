@@ -62,6 +62,9 @@ func RegisterUserRoutes(
 			keys.POST("", h.APIKey.Create)
 			keys.PUT("/:id", h.APIKey.Update)
 			keys.DELETE("/:id", h.APIKey.Delete)
+			keys.POST("/:id/probe-runs", h.APIKeyProbe.CreateProbeRun)
+			keys.GET("/:id/probe-runs", h.APIKeyProbe.ListProbeRuns)
+			keys.GET("/:id/probe-runs/:run_id", h.APIKeyProbe.GetProbeRun)
 		}
 
 		// 用户可用分组（非管理员接口）

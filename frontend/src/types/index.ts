@@ -611,6 +611,81 @@ export interface UpdateApiKeyRequest {
   reset_rate_limit_usage?: boolean
 }
 
+export type ApiKeyProbeMode = 'quick' | 'standard'
+
+export interface CreateApiKeyProbeRunRequest {
+  mode: ApiKeyProbeMode
+  include_codex_stability?: boolean
+  include_long_context?: boolean
+  codex_stability?: boolean
+  long_context?: boolean
+}
+
+export interface ApiKeyProbeEstimate {
+  requests: number
+  input_tokens_min?: number
+  input_tokens_max?: number
+  output_tokens_min?: number
+  output_tokens_max?: number
+  total_tokens_min?: number
+  total_tokens_max?: number
+}
+
+export interface ApiKeyProbeLatency {
+  p50_ms?: number
+  p95_ms?: number
+  avg_ms?: number
+  max_ms?: number
+}
+
+export interface ApiKeyProbeUsage {
+  input_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
+  total_cost?: number
+  actual_cost?: number
+}
+
+export interface ApiKeyProbeRunMetric {
+  name?: string
+  label?: string
+  status?: string
+  latency_ms?: number | null
+  first_token_ms?: number | null
+  tokens?: number | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  error?: string | null
+  message?: string | null
+}
+
+export interface ApiKeyProbeRun {
+  id: number
+  api_key_id?: number
+  mode: ApiKeyProbeMode | string
+  status: 'pending' | 'running' | 'success' | 'failed' | 'partial' | string
+  request_count?: number
+  estimate?: ApiKeyProbeEstimate
+  latency?: ApiKeyProbeLatency
+  usage?: ApiKeyProbeUsage
+  estimated_tokens?: number
+  total_tokens?: number | null
+  success_count?: number | null
+  failure_count?: number | null
+  avg_latency_ms?: number | null
+  min_latency_ms?: number | null
+  max_latency_ms?: number | null
+  first_token_ms?: number | null
+  codex_stability?: boolean
+  long_context?: boolean
+  metrics?: ApiKeyProbeRunMetric[]
+  error_message?: string | null
+  summary?: string | null
+  created_at: string
+  started_at?: string | null
+  finished_at?: string | null
+}
+
 export interface CreateGroupRequest {
   name: string
   description?: string | null
