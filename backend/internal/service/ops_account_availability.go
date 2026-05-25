@@ -66,6 +66,10 @@ func (s *OpsService) GetAccountAvailabilityStats(ctx context.Context, platformFi
 		}
 
 		isAvailable := acc.Status == StatusActive && acc.Schedulable && !isRateLimited && !isOverloaded && !isTempUnsched
+		pathHealth, hasPathHealth := s.openAIPathHealthForAvailability(&acc)
+		if hasPathHealth && pathHealth.State == OpenAIPathHealthStateOpenCircuit {
+			isAvailable = false
+		}
 
 		if acc.Platform != "" {
 			if _, ok := platform[acc.Platform]; !ok {
@@ -150,6 +154,17 @@ func (s *OpsService) GetAccountAvailabilityStats(ctx context.Context, platformFi
 		if isTempUnsched && acc.TempUnschedulableUntil != nil {
 			item.TempUnschedulableUntil = acc.TempUnschedulableUntil
 		}
+		if hasPathHealth {
+			item.PathHealthState = pathHealth.State
+			item.PathHealthCooldownUntil = pathHealth.CooldownUntil
+			item.PathHealthLastFailureReason = pathHealth.LastFailureReason
+			item.PathHealthConsecutiveFailures = pathHealth.ConsecutiveFailures
+			item.PathHealthWindowFailures = pathHealth.WindowFailures
+			item.PathHealthEOFCount = pathHealth.EOFCount
+			item.PathHealthHeaderTimeoutCount = pathHealth.HeaderTimeoutCount
+			item.PathHealthTTFTEWMAMs = pathHealth.TTFTEWMAMs
+			item.PathHealthHeaderWaitEWMAMs = pathHealth.HeaderWaitEWMAMs
+		}
 
 		account[acc.ID] = item
 	}
@@ -191,4 +206,11 @@ func (s *OpsService) GetAccountAvailability(ctx context.Context, platformFilter 
 		Accounts:    accountStats,
 		CollectedAt: collectedAt,
 	}, nil
+}
+
+func (s *OpsService) openAIPathHealthForAvailability(account *Account) (OpenAIPathHealthRecord, bool) {
+	if s == nil || s.openAIGatewayService == nil || account == nil || !account.IsOpenAI() {
+		return OpenAIPathHealthRecord{}, false
+	}
+	return s.openAIGatewayService.SnapshotOpenAIPathHealthForAccount(account, OpenAIUpstreamTransportHTTPSSE)
 }

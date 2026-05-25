@@ -85,6 +85,15 @@ interface AccountRow {
   overload_remaining_sec?: number
   has_error: boolean
   error_message?: string
+  path_health_state?: string
+  path_health_cooldown_until?: string
+  path_health_last_failure_reason?: string
+  path_health_consecutive_failures?: number
+  path_health_window_failures?: number
+  path_health_eof_count?: number
+  path_health_header_timeout_count?: number
+  path_health_ttft_ewma_ms?: number
+  path_health_header_wait_ewma_ms?: number
 }
 
 // 用户行数据
@@ -209,7 +218,16 @@ const accountRows = computed((): AccountRow[] => {
         is_overloaded: avail.is_overloaded || false,
         overload_remaining_sec: avail.overload_remaining_sec,
         has_error: avail.has_error || false,
-        error_message: avail.error_message || ''
+        error_message: avail.error_message || '',
+        path_health_state: avail.path_health_state || '',
+        path_health_cooldown_until: avail.path_health_cooldown_until,
+        path_health_last_failure_reason: avail.path_health_last_failure_reason || '',
+        path_health_consecutive_failures: avail.path_health_consecutive_failures,
+        path_health_window_failures: avail.path_health_window_failures,
+        path_health_eof_count: avail.path_health_eof_count,
+        path_health_header_timeout_count: avail.path_health_header_timeout_count,
+        path_health_ttft_ewma_ms: avail.path_health_ttft_ewma_ms,
+        path_health_header_wait_ewma_ms: avail.path_health_header_wait_ewma_ms
       }
     })
     .filter((row): row is NonNullable<typeof row> => row !== null)
@@ -326,6 +344,43 @@ function formatDuration(seconds: number): string {
   if (minutes < 60) return `${minutes}m`
   const hours = Math.floor(minutes / 60)
   return `${hours}h`
+}
+
+function formatMs(value?: number): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-'
+  return `${Math.round(value)}ms`
+}
+
+function getPathHealthClass(state?: string): string {
+  switch (state) {
+    case 'open_circuit':
+      return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+    case 'degraded':
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+    case 'half_open':
+      return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+    case 'healthy':
+      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+    default:
+      return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
+  }
+}
+
+function getPathHealthLabel(state?: string): string {
+  const key = state && ['healthy', 'degraded', 'open_circuit', 'half_open'].includes(state) ? state : 'unknown'
+  return t(`admin.ops.accountAvailability.pathHealth.${key}`)
+}
+
+function getPathHealthTitle(row: AccountRow): string {
+  const parts = [
+    `${t('admin.ops.accountAvailability.pathHealth.reason')}: ${row.path_health_last_failure_reason || '-'}`,
+    `${t('admin.ops.accountAvailability.pathHealth.windowFailures')}: ${row.path_health_window_failures ?? 0}`,
+    `EOF: ${row.path_health_eof_count ?? 0}`,
+    `Header timeout: ${row.path_health_header_timeout_count ?? 0}`,
+    `TTFT: ${formatMs(row.path_health_ttft_ewma_ms)}`,
+    `Header wait: ${formatMs(row.path_health_header_wait_ewma_ms)}`
+  ]
+  return parts.join('\n')
 }
 
 
@@ -533,7 +588,15 @@ watch(
               <span class="font-mono text-[11px] font-bold text-gray-900 dark:text-white"> {{ row.current_in_use }}/{{ row.max_capacity }} </span>
               <!-- 状态徽章 -->
               <span
-                v-if="row.is_available"
+                v-if="row.path_health_state && row.path_health_state !== 'healthy'"
+                class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium"
+                :class="getPathHealthClass(row.path_health_state)"
+                :title="getPathHealthTitle(row)"
+              >
+                {{ getPathHealthLabel(row.path_health_state) }}
+              </span>
+              <span
+                v-else-if="row.is_available"
                 class="inline-flex items-center gap-1 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
               >
                 <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

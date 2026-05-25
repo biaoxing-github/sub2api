@@ -5375,7 +5375,16 @@ export default {
       accountAvailability: {
         available: 'Available',
         unavailable: 'Unavailable',
-        accountError: 'Error'
+        accountError: 'Error',
+        pathHealth: {
+          healthy: 'Path healthy',
+          degraded: 'Slow path',
+          open_circuit: 'Cooling down',
+          half_open: 'Recovering',
+          unknown: 'Path unknown',
+          reason: 'Reason',
+          windowFailures: 'Window failures'
+        }
       },
       tooltips: {
         totalRequests: 'Total number of requests (including both successful and failed requests) in the selected time window.',

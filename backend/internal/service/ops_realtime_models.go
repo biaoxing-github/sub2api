@@ -89,4 +89,14 @@ type AccountAvailability struct {
 	OverloadRemainingSec   *int64     `json:"overload_remaining_sec"`
 	ErrorMessage           string     `json:"error_message"`
 	TempUnschedulableUntil *time.Time `json:"temp_unschedulable_until,omitempty"`
+
+	PathHealthState               string     `json:"path_health_state,omitempty"`
+	PathHealthCooldownUntil       *time.Time `json:"path_health_cooldown_until,omitempty"`
+	PathHealthLastFailureReason   string     `json:"path_health_last_failure_reason,omitempty"`
+	PathHealthConsecutiveFailures int64      `json:"path_health_consecutive_failures,omitempty"`
+	PathHealthWindowFailures      int64      `json:"path_health_window_failures,omitempty"`
+	PathHealthEOFCount            int64      `json:"path_health_eof_count,omitempty"`
+	PathHealthHeaderTimeoutCount  int64      `json:"path_health_header_timeout_count,omitempty"`
+	PathHealthTTFTEWMAMs          float64    `json:"path_health_ttft_ewma_ms,omitempty"`
+	PathHealthHeaderWaitEWMAMs    float64    `json:"path_health_header_wait_ewma_ms,omitempty"`
 }

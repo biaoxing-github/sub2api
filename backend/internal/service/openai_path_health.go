@@ -32,6 +32,8 @@ type OpenAIPathHealthRecord struct {
 	SuccessCount         int64               `json:"success_count"`
 	FailureCount         int64               `json:"failure_count"`
 	ConsecutiveFailures  int64               `json:"consecutive_failures"`
+	WindowFailures       int64               `json:"window_failures"`
+	FailureWindowStarted *time.Time          `json:"failure_window_started_at,omitempty"`
 	EOFCount             int64               `json:"eof_count"`
 	HeaderTimeoutCount   int64               `json:"header_timeout_count"`
 	Status401Count       int64               `json:"status_401_count"`
@@ -48,6 +50,7 @@ type OpenAIPathHealthRecord struct {
 type OpenAIPathHealthOptions struct {
 	Enabled                  bool
 	CircuitBreakerEnabled    bool
+	FailureWindow            time.Duration
 	Cooldown                 time.Duration
 	DegradedFailureThreshold int64
 	OpenFailureThreshold     int64
@@ -65,6 +68,9 @@ type OpenAIPathHealthTracker struct {
 func NewOpenAIPathHealthTracker(options OpenAIPathHealthOptions) *OpenAIPathHealthTracker {
 	if options.Cooldown <= 0 {
 		options.Cooldown = time.Minute
+	}
+	if options.FailureWindow <= 0 {
+		options.FailureWindow = 2 * time.Minute
 	}
 	if options.DegradedFailureThreshold <= 0 {
 		options.DegradedFailureThreshold = 2
@@ -123,6 +129,8 @@ func (t *OpenAIPathHealthTracker) RecordSuccess(key OpenAIPathHealthKey, ttftMs 
 	record.SuccessCount++
 	record.Samples++
 	record.ConsecutiveFailures = 0
+	record.WindowFailures = 0
+	record.FailureWindowStarted = nil
 	record.ConsecutiveSuccesses++
 	if ttftMs != nil && *ttftMs > 0 {
 		record.TTFTEWMAMs = updateOpenAIPathEWMA(record.TTFTEWMAMs, float64(*ttftMs), t.options.EWMAAlpha)
@@ -148,9 +156,16 @@ func (t *OpenAIPathHealthTracker) RecordFailure(key OpenAIPathHealthKey, reason 
 	record := t.ensureLocked(key)
 	now := t.now()
 	t.refreshStateLocked(record, now)
+	countsForCircuit := openAIPathFailureCountsForCircuit(reason)
+	if countsForCircuit {
+		t.prepareFailureWindowLocked(record, now)
+	}
 	record.FailureCount++
 	record.Samples++
-	record.ConsecutiveFailures++
+	if countsForCircuit {
+		record.ConsecutiveFailures++
+		record.WindowFailures++
+	}
 	record.ConsecutiveSuccesses = 0
 	record.LastFailureReason = reason
 	record.LastFailureAt = &now
@@ -167,19 +182,28 @@ func (t *OpenAIPathHealthTracker) RecordFailure(key OpenAIPathHealthKey, reason 
 	case OpenAIPathFailureHTTP429:
 		record.Status429Count++
 	}
+	if !countsForCircuit {
+		return
+	}
 	if !t.options.CircuitBreakerEnabled {
-		if record.ConsecutiveFailures >= t.options.DegradedFailureThreshold {
+		if record.WindowFailures >= t.options.DegradedFailureThreshold {
 			record.State = OpenAIPathHealthStateDegraded
 		}
 		return
 	}
-	if record.ConsecutiveFailures >= t.options.OpenFailureThreshold {
+	if record.State == OpenAIPathHealthStateHalfOpen {
 		record.State = OpenAIPathHealthStateOpenCircuit
 		cooldownUntil := now.Add(t.options.Cooldown)
 		record.CooldownUntil = &cooldownUntil
 		return
 	}
-	if record.ConsecutiveFailures >= t.options.DegradedFailureThreshold {
+	if record.WindowFailures >= t.options.OpenFailureThreshold {
+		record.State = OpenAIPathHealthStateOpenCircuit
+		cooldownUntil := now.Add(t.options.Cooldown)
+		record.CooldownUntil = &cooldownUntil
+		return
+	}
+	if record.WindowFailures >= t.options.DegradedFailureThreshold {
 		record.State = OpenAIPathHealthStateDegraded
 	}
 }
@@ -192,24 +216,40 @@ func (t *OpenAIPathHealthTracker) IsOpenCircuit(key OpenAIPathHealthKey) bool {
 	return snapshot.State == OpenAIPathHealthStateOpenCircuit
 }
 
-func (t *OpenAIPathHealthTracker) ScoreBoost(key OpenAIPathHealthKey, minSamples int64) (boost float64, hasSample bool) {
+func (t *OpenAIPathHealthTracker) ScoreBoost(key OpenAIPathHealthKey, minSamples int64, ttftWeight, headerWaitWeight float64) (boost float64, hasSample bool) {
 	snapshot := t.Snapshot(key)
 	if snapshot.State == OpenAIPathHealthStateOpenCircuit {
 		return -1, snapshot.Samples >= minSamples
 	}
-	if snapshot.Samples < minSamples || snapshot.TTFTEWMAMs <= 0 {
+	if snapshot.Samples < minSamples || (snapshot.TTFTEWMAMs <= 0 && snapshot.HeaderWaitEWMAMs <= 0) {
 		return 0, false
+	}
+	if ttftWeight <= 0 && headerWaitWeight <= 0 {
+		ttftWeight = 1
 	}
 	const targetMs = 1000.0
 	const maxMs = 10000.0
-	ttftScore := 1 - clamp01((snapshot.TTFTEWMAMs-targetMs)/(maxMs-targetMs))
+	scoreSum := 0.0
+	weightSum := 0.0
+	if snapshot.TTFTEWMAMs > 0 && ttftWeight > 0 {
+		scoreSum += ttftWeight * (1 - clamp01((snapshot.TTFTEWMAMs-targetMs)/(maxMs-targetMs)))
+		weightSum += ttftWeight
+	}
+	if snapshot.HeaderWaitEWMAMs > 0 && headerWaitWeight > 0 {
+		scoreSum += headerWaitWeight * (1 - clamp01((snapshot.HeaderWaitEWMAMs-targetMs)/(maxMs-targetMs)))
+		weightSum += headerWaitWeight
+	}
+	if weightSum <= 0 {
+		return 0, false
+	}
+	latencyScore := scoreSum / weightSum
 	switch snapshot.State {
 	case OpenAIPathHealthStateHealthy:
-		return ttftScore, true
+		return latencyScore, true
 	case OpenAIPathHealthStateHalfOpen:
-		return ttftScore * 0.6, true
+		return latencyScore * 0.6, true
 	case OpenAIPathHealthStateDegraded:
-		return ttftScore * 0.3, true
+		return latencyScore * 0.3, true
 	default:
 		return 0, true
 	}
@@ -235,12 +275,31 @@ func (t *OpenAIPathHealthTracker) refreshStateLocked(record *OpenAIPathHealthRec
 	}
 }
 
+func (t *OpenAIPathHealthTracker) prepareFailureWindowLocked(record *OpenAIPathHealthRecord, now time.Time) {
+	if record == nil {
+		return
+	}
+	if record.FailureWindowStarted == nil || now.Sub(*record.FailureWindowStarted) > t.options.FailureWindow {
+		record.WindowFailures = 0
+		record.ConsecutiveFailures = 0
+		started := now
+		record.FailureWindowStarted = &started
+	}
+}
+
+func openAIPathFailureCountsForCircuit(reason string) bool {
+	return reason != OpenAIPathFailureHTTP429
+}
+
 func NormalizeOpenAIPathFailureReason(reason string) string {
 	msg := strings.ToLower(strings.TrimSpace(reason))
 	switch {
 	case strings.Contains(msg, "unexpected eof") || msg == "eof" || strings.Contains(msg, "stream error"):
 		return OpenAIPathFailureEOF
-	case strings.Contains(msg, "timeout awaiting response headers") || strings.Contains(msg, "timed out waiting for openai upstream response headers") || strings.Contains(msg, "header timeout"):
+	case strings.Contains(msg, "timeout awaiting response headers") ||
+		strings.Contains(msg, "timed out waiting for openai upstream response headers") ||
+		strings.Contains(msg, "header timeout") ||
+		strings.Contains(msg, "context deadline exceeded"):
 		return OpenAIPathFailureHeaderTimeout
 	case strings.Contains(msg, "401") || strings.Contains(msg, "unauthorized"):
 		return OpenAIPathFailureHTTP401
@@ -291,6 +350,10 @@ func cloneOpenAIPathHealthRecord(record *OpenAIPathHealthRecord) OpenAIPathHealt
 	if record.LastFailureAt != nil {
 		v := *record.LastFailureAt
 		out.LastFailureAt = &v
+	}
+	if record.FailureWindowStarted != nil {
+		v := *record.FailureWindowStarted
+		out.FailureWindowStarted = &v
 	}
 	if record.CooldownUntil != nil {
 		v := *record.CooldownUntil

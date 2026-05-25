@@ -707,6 +707,7 @@ type GatewayCodexAutopilotConfig struct {
 type GatewayOpenAIPathHealthConfig struct {
 	Enabled               bool `mapstructure:"enabled"`
 	CircuitBreakerEnabled bool `mapstructure:"circuit_breaker_enabled"`
+	FailureWindowSeconds  int  `mapstructure:"failure_window_seconds"`
 	CooldownSeconds       int  `mapstructure:"cooldown_seconds"`
 	DegradedFailures      int  `mapstructure:"degraded_failures"`
 	OpenFailures          int  `mapstructure:"open_failures"`
@@ -1902,6 +1903,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.codex_autopilot.silent_stream_timeout_seconds", 90)
 	viper.SetDefault("gateway.openai_path_health.enabled", true)
 	viper.SetDefault("gateway.openai_path_health.circuit_breaker_enabled", true)
+	viper.SetDefault("gateway.openai_path_health.failure_window_seconds", 120)
 	viper.SetDefault("gateway.openai_path_health.cooldown_seconds", 60)
 	viper.SetDefault("gateway.openai_path_health.degraded_failures", 2)
 	viper.SetDefault("gateway.openai_path_health.open_failures", 4)
@@ -2531,6 +2533,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("gateway.codex_autopilot values must be non-negative")
 	}
 	if c.Gateway.OpenAIPathHealth.CooldownSeconds < 0 ||
+		c.Gateway.OpenAIPathHealth.FailureWindowSeconds < 0 ||
 		c.Gateway.OpenAIPathHealth.DegradedFailures < 0 ||
 		c.Gateway.OpenAIPathHealth.OpenFailures < 0 ||
 		c.Gateway.OpenAIPathHealth.HalfOpenMaxProbes < 0 {

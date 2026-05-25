@@ -447,11 +447,24 @@ func newOpenAIPathHealthTrackerFromConfig(cfg *config.Config) *OpenAIPathHealthT
 	return NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
 		Enabled:                  pathCfg.Enabled,
 		CircuitBreakerEnabled:    pathCfg.CircuitBreakerEnabled,
+		FailureWindow:            time.Duration(pathCfg.FailureWindowSeconds) * time.Second,
 		Cooldown:                 time.Duration(pathCfg.CooldownSeconds) * time.Second,
 		DegradedFailureThreshold: int64(pathCfg.DegradedFailures),
 		OpenFailureThreshold:     int64(pathCfg.OpenFailures),
 		HalfOpenMaxProbes:        int64(pathCfg.HalfOpenMaxProbes),
 	})
+}
+
+func (s *OpenAIGatewayService) SnapshotOpenAIPathHealthForAccount(account *Account, transport OpenAIUpstreamTransport) (OpenAIPathHealthRecord, bool) {
+	if s == nil || s.openaiPathHealth == nil || account == nil || account.ID <= 0 {
+		return OpenAIPathHealthRecord{}, false
+	}
+	key := OpenAIPathHealthKeyForAccount(account, string(transport))
+	snapshot := s.openaiPathHealth.Snapshot(key)
+	if snapshot.Samples <= 0 && snapshot.State == OpenAIPathHealthStateHealthy {
+		return snapshot, false
+	}
+	return snapshot, true
 }
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）

@@ -423,6 +423,15 @@ export interface AccountAvailability {
   overload_remaining_sec?: number
   has_error: boolean
   error_message?: string
+  path_health_state?: string
+  path_health_cooldown_until?: string
+  path_health_last_failure_reason?: string
+  path_health_consecutive_failures?: number
+  path_health_window_failures?: number
+  path_health_eof_count?: number
+  path_health_header_timeout_count?: number
+  path_health_ttft_ewma_ms?: number
+  path_health_header_wait_ewma_ms?: number
 }
 
 export interface OpsAccountAvailabilityStatsResponse {

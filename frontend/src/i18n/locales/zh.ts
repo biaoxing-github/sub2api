@@ -5538,7 +5538,16 @@ export default {
       accountAvailability: {
         available: '可用',
         unavailable: '不可用',
-        accountError: '异常'
+        accountError: '异常',
+        pathHealth: {
+          healthy: '线路正常',
+          degraded: '慢路径',
+          open_circuit: '冷却中',
+          half_open: '探测恢复',
+          unknown: '线路未知',
+          reason: '原因',
+          windowFailures: '窗口失败'
+        }
       },
       tooltips: {
         totalRequests: '当前时间窗口内的总请求数和Token消耗量。',

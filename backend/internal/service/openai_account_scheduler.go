@@ -662,7 +662,12 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		if s.service != nil && s.service.openaiPathHealth != nil {
 			snapshot := s.service.openaiPathHealth.Snapshot(pathKey)
 			pathState = snapshot.State
-			pathBoost, hasPathSample = s.service.openaiPathHealth.ScoreBoost(pathKey, int64(s.service.openAIFastLaneMinSamples()))
+			pathBoost, hasPathSample = s.service.openaiPathHealth.ScoreBoost(
+				pathKey,
+				int64(s.service.openAIFastLaneMinSamples()),
+				s.service.openAIFastLaneTTFTWeight(),
+				s.service.openAIFastLaneHeaderWaitWeight(),
+			)
 		}
 		allCandidates = append(allCandidates, openAIAccountCandidateScore{
 			account:       account,
@@ -769,7 +774,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			weights.ErrorRate*errorFactor +
 			weights.TTFT*ttftFactor
 		if s.service != nil && s.service.openAIFastLaneEnabled(req) {
-			item.score += s.service.openAIFastLaneTTFTWeight() * item.pathBoost
+			item.score += item.pathBoost
 			if item.pathState == OpenAIPathHealthStateDegraded {
 				item.score -= s.service.openAIFastLaneTTFTWeight() * 0.25
 			}
@@ -1164,6 +1169,13 @@ func (s *OpenAIGatewayService) openAIFastLaneTTFTWeight() float64 {
 	return s.cfg.Gateway.OpenAIFastLane.TTFTWeight
 }
 
+func (s *OpenAIGatewayService) openAIFastLaneHeaderWaitWeight() float64 {
+	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIFastLane.HeaderWaitWeight <= 0 {
+		return 0
+	}
+	return s.cfg.Gateway.OpenAIFastLane.HeaderWaitWeight
+}
+
 func (s *OpenAIGatewayService) openAIFastLaneExploreRatio() float64 {
 	if s == nil || s.cfg == nil {
 		return 0
@@ -1442,9 +1454,7 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64
 	key := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
 	if success {
 		s.openaiPathHealth.RecordSuccess(key, firstTokenMs, nil)
-		return
 	}
-	s.openaiPathHealth.RecordFailure(key, OpenAIPathFailureOther, nil)
 }
 
 func (s *OpenAIGatewayService) RecordOpenAIAccountSwitch() {
