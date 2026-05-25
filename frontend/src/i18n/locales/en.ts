@@ -4049,6 +4049,38 @@ export default {
       imageTestMode: 'Mode: Image generation test',
       imagePreview: 'Generated images:',
       imageReceived: 'Received test image #{count}',
+      probe: {
+        title: 'Upstream Probe',
+        description: 'Directly tests this upstream account for latency, success rate, and multi-key behavior without user-key scheduling.',
+        show: 'Show Probe',
+        hide: 'Hide',
+        unsupported: 'Only OpenAI API key upstream accounts are supported for now.',
+        requestCount: 'Requests',
+        estimatedTokens: 'Estimated Tokens',
+        modeLabel: 'Mode',
+        modes: {
+          quick: 'Quick',
+          standard: 'Standard'
+        },
+        codexStability: 'Codex Stability Check',
+        longContext: 'Long Context Check',
+        run: 'Start Probe',
+        running: 'Running...',
+        avgLatency: 'Avg Latency',
+        successRate: 'Success Rate',
+        tokensUsed: 'Tokens Used',
+        history: 'History',
+        noHistory: 'No upstream probe history yet',
+        runFailed: 'Upstream probe failed',
+        historyFailed: 'Failed to load upstream probe history',
+        status: {
+          pending: 'Pending',
+          running: 'Running',
+          success: 'Success',
+          failed: 'Failed',
+          partial: 'Partial'
+        }
+      },
       // Stats Modal
       viewStats: 'View Stats',
       usageStatistics: 'Usage Statistics',

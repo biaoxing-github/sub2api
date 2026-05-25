@@ -686,6 +686,66 @@ export interface ApiKeyProbeRun {
   finished_at?: string | null
 }
 
+export type AccountProbeMode = ApiKeyProbeMode
+
+export interface CreateAccountProbeRunRequest {
+  mode: AccountProbeMode
+  model?: string
+  include_codex_stability?: boolean
+  include_long_context?: boolean
+  codex_stability?: boolean
+  long_context?: boolean
+}
+
+export interface AccountProbeSample {
+  id: number
+  run_id: number
+  request_index: number
+  type?: string
+  label?: string
+  status: 'success' | 'failed' | string
+  model?: string
+  api_key_fingerprint?: string
+  api_key_masked?: string
+  upstream_endpoint?: string
+  http_status?: number | null
+  latency_ms?: number | null
+  first_token_ms?: number | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  tokens?: number | null
+  error_code?: string | null
+  error?: string | null
+  created_at: string
+}
+
+export interface AccountProbeRun {
+  id: number
+  account_id: number
+  mode: AccountProbeMode | string
+  status: 'pending' | 'running' | 'success' | 'failed' | 'partial' | string
+  model?: string
+  request_count?: number
+  estimate?: ApiKeyProbeEstimate
+  latency?: ApiKeyProbeLatency
+  input_tokens?: number | null
+  output_tokens?: number | null
+  total_tokens?: number | null
+  success_count?: number | null
+  failure_count?: number | null
+  avg_latency_ms?: number | null
+  max_latency_ms?: number | null
+  first_token_ms?: number | null
+  codex_stability?: boolean
+  long_context?: boolean
+  samples?: AccountProbeSample[]
+  error_message?: string | null
+  summary?: string | null
+  created_at: string
+  started_at?: string | null
+  finished_at?: string | null
+}
+
 export interface CreateGroupRequest {
   name: string
   description?: string | null

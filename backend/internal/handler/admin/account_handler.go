@@ -53,6 +53,7 @@ type AccountHandler struct {
 	rateLimitService        *service.RateLimitService
 	accountUsageService     *service.AccountUsageService
 	accountTestService      *service.AccountTestService
+	accountProbeService     *service.AccountProbeService
 	upstreamBalanceService  *service.UpstreamBalanceService
 	concurrencyService      *service.ConcurrencyService
 	crsSyncService          *service.CRSSyncService
@@ -94,6 +95,10 @@ func NewAccountHandler(
 		rpmCache:                rpmCache,
 		tokenCacheInvalidator:   tokenCacheInvalidator,
 	}
+}
+
+func (h *AccountHandler) SetAccountProbeService(accountProbeService *service.AccountProbeService) {
+	h.accountProbeService = accountProbeService
 }
 
 // CreateAccountRequest represents create account request
@@ -846,6 +851,15 @@ type TestAccountRequest struct {
 	Mode    string `json:"mode"`
 }
 
+type CreateAccountProbeRunRequest struct {
+	Mode                  string `json:"mode"`
+	Model                 string `json:"model"`
+	IncludeCodexStability bool   `json:"include_codex_stability"`
+	IncludeLongContext    bool   `json:"include_long_context"`
+	CodexStability        bool   `json:"codex_stability"`
+	LongContext           bool   `json:"long_context"`
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -884,6 +898,90 @@ func (h *AccountHandler) Test(c *gin.Context) {
 			_ = c.Error(err)
 		}
 	}
+}
+
+// CreateProbeRun runs and persists an upstream account probe.
+// POST /api/v1/admin/accounts/:id/probe-runs
+func (h *AccountHandler) CreateProbeRun(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	var req CreateAccountProbeRunRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = service.AccountProbeProfileStandard
+	}
+	result, err := h.accountProbeService.Run(c.Request.Context(), service.AccountProbeRunRequest{
+		AccountID:             accountID,
+		Profile:               mode,
+		Model:                 req.Model,
+		IncludeCodexStability: req.IncludeCodexStability || req.CodexStability,
+		IncludeLongContext:    req.IncludeLongContext || req.LongContext,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// ListProbeRuns returns persisted probe history for an upstream account.
+// GET /api/v1/admin/accounts/:id/probe-runs
+func (h *AccountHandler) ListProbeRuns(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	result, err := h.accountProbeService.List(c.Request.Context(), service.AccountProbeHistoryFilter{
+		AccountID: accountID,
+		Limit:     limit,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// GetProbeRun returns one persisted probe run with samples.
+// GET /api/v1/admin/accounts/:id/probe-runs/:run_id
+func (h *AccountHandler) GetProbeRun(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	runID, err := strconv.ParseInt(c.Param("run_id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid probe run ID")
+		return
+	}
+	result, err := h.accountProbeService.Get(c.Request.Context(), accountID, runID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 // RecoverState handles unified recovery of recoverable account runtime state.

@@ -24,7 +24,9 @@ import type {
   CodexSessionImportRequest,
   CodexSessionImportResult,
   CheckMixedChannelRequest,
-  CheckMixedChannelResponse
+  CheckMixedChannelResponse,
+  AccountProbeRun,
+  CreateAccountProbeRunRequest
 } from '@/types'
 
 export interface AccountUsageSummaryFilters {
@@ -226,6 +228,28 @@ export async function testAccount(id: number): Promise<{
     message: string
     latency_ms?: number
   }>(`/admin/accounts/${id}/test`)
+  return data
+}
+
+export async function createProbeRun(
+  id: number,
+  payload: CreateAccountProbeRunRequest
+): Promise<AccountProbeRun> {
+  const { data } = await apiClient.post<AccountProbeRun>(`/admin/accounts/${id}/probe-runs`, payload, {
+    timeout: 180000
+  })
+  return data
+}
+
+export async function listProbeRuns(id: number, limit = 20): Promise<AccountProbeRun[]> {
+  const { data } = await apiClient.get<AccountProbeRun[]>(`/admin/accounts/${id}/probe-runs`, {
+    params: { limit }
+  })
+  return data
+}
+
+export async function getProbeRun(id: number, runId: number): Promise<AccountProbeRun> {
+  const { data } = await apiClient.get<AccountProbeRun>(`/admin/accounts/${id}/probe-runs/${runId}`)
   return data
 }
 
@@ -787,6 +811,9 @@ export const accountsAPI = {
   delete: deleteAccount,
   toggleStatus,
   testAccount,
+  createProbeRun,
+  listProbeRuns,
+  getProbeRun,
   refreshCredentials,
   getStats,
   clearError,

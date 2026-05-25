@@ -4177,6 +4177,38 @@ export default {
       imageTestMode: '模式：生图测试',
       imagePreview: '生成结果：',
       imageReceived: '已收到第 {count} 张测试图片',
+      probe: {
+        title: '上游测速体检',
+        description: '直连当前上游账号验证延迟、成功率和多 Key 表现，不走用户侧调度。',
+        show: '展开测速',
+        hide: '收起',
+        unsupported: '当前只支持 OpenAI API Key 类型上游账号。',
+        requestCount: '请求数',
+        estimatedTokens: '预计 Token',
+        modeLabel: '模式',
+        modes: {
+          quick: '快速',
+          standard: '标准'
+        },
+        codexStability: 'Codex 稳定性小测',
+        longContext: '长上下文小测',
+        run: '开始测速',
+        running: '测速中...',
+        avgLatency: '平均延迟',
+        successRate: '成功率',
+        tokensUsed: '已用 Token',
+        history: '历史记录',
+        noHistory: '暂无上游测速记录',
+        runFailed: '上游测速失败',
+        historyFailed: '加载上游测速记录失败',
+        status: {
+          pending: '等待中',
+          running: '运行中',
+          success: '成功',
+          failed: '失败',
+          partial: '部分成功'
+        }
+      },
       // Stats Modal
       viewStats: '查看统计',
       usageStatistics: '使用统计',

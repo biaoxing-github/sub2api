@@ -1,0 +1,498 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+)
+
+const (
+	AccountProbeProfileQuick    = APIKeyProbeProfileQuick
+	AccountProbeProfileStandard = APIKeyProbeProfileStandard
+
+	AccountProbeStatusSuccess = APIKeyProbeStatusSuccess
+	AccountProbeStatusPartial = APIKeyProbeStatusPartial
+	AccountProbeStatusFailed  = APIKeyProbeStatusFailed
+	AccountProbeStatusRunning = APIKeyProbeStatusRunning
+
+	AccountProbeSampleSuccess = APIKeyProbeSampleSuccess
+	AccountProbeSampleFailed  = APIKeyProbeSampleFailed
+)
+
+type AccountProbeRunRequest struct {
+	AccountID             int64  `json:"-"`
+	Profile               string `json:"mode"`
+	Model                 string `json:"model"`
+	IncludeCodexStability bool   `json:"codex_stability"`
+	IncludeLongContext    bool   `json:"long_context"`
+}
+
+type AccountProbeEstimate = APIKeyProbeEstimate
+type AccountProbeLatencyStats = APIKeyProbeLatencyStats
+
+type AccountProbeResult struct {
+	ID                    int64                    `json:"id"`
+	AccountID             int64                    `json:"account_id"`
+	Profile               string                   `json:"mode"`
+	Status                string                   `json:"status"`
+	Model                 string                   `json:"model"`
+	IncludeCodexStability bool                     `json:"codex_stability"`
+	IncludeLongContext    bool                     `json:"long_context"`
+	Estimate              AccountProbeEstimate     `json:"estimate"`
+	Latency               AccountProbeLatencyStats `json:"latency"`
+	RequestCount          int                      `json:"request_count"`
+	SuccessCount          int                      `json:"success_count"`
+	FailureCount          int                      `json:"failure_count"`
+	InputTokens           int                      `json:"input_tokens"`
+	OutputTokens          int                      `json:"output_tokens"`
+	TotalTokens           int                      `json:"total_tokens"`
+	AvgLatencyMillis      int                      `json:"avg_latency_ms"`
+	MaxLatencyMillis      int                      `json:"max_latency_ms"`
+	FirstTokenMillis      *int                     `json:"first_token_ms,omitempty"`
+	ErrorMessage          string                   `json:"error_message,omitempty"`
+	Summary               string                   `json:"summary,omitempty"`
+	Samples               []AccountProbeSample     `json:"samples,omitempty"`
+	CreatedAt             time.Time                `json:"created_at"`
+	StartedAt             *time.Time               `json:"started_at,omitempty"`
+	FinishedAt            *time.Time               `json:"finished_at,omitempty"`
+}
+
+type AccountProbeSample struct {
+	ID                int64     `json:"id"`
+	RunID             int64     `json:"run_id"`
+	RequestIndex      int       `json:"request_index"`
+	Type              string    `json:"type"`
+	Label             string    `json:"label"`
+	Status            string    `json:"status"`
+	Model             string    `json:"model"`
+	APIKeyFingerprint string    `json:"api_key_fingerprint,omitempty"`
+	APIKeyMasked      string    `json:"api_key_masked,omitempty"`
+	UpstreamEndpoint  string    `json:"upstream_endpoint,omitempty"`
+	HTTPStatus        int       `json:"http_status,omitempty"`
+	DurationMillis    int       `json:"latency_ms"`
+	FirstTokenMillis  *int      `json:"first_token_ms,omitempty"`
+	InputTokens       int       `json:"input_tokens"`
+	OutputTokens      int       `json:"output_tokens"`
+	TotalTokens       int       `json:"tokens"`
+	ErrorCode         string    `json:"error_code,omitempty"`
+	ErrorMessage      string    `json:"error,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type AccountProbeHistoryFilter struct {
+	AccountID int64
+	Limit     int
+}
+
+type AccountProbeRepository interface {
+	CreateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error
+	UpdateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error
+	SaveAccountProbeSample(ctx context.Context, sample AccountProbeSample) error
+	ListAccountProbeRuns(ctx context.Context, filter AccountProbeHistoryFilter) ([]AccountProbeResult, error)
+	GetAccountProbeRun(ctx context.Context, accountID, runID int64) (*AccountProbeResult, error)
+	ListAccountProbeSamples(ctx context.Context, runID int64) ([]AccountProbeSample, error)
+}
+
+type AccountProbeHTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+type AccountProbeAccountReader interface {
+	GetByID(ctx context.Context, id int64) (*Account, error)
+}
+
+type AccountProbeService struct {
+	accounts AccountProbeAccountReader
+	repo     AccountProbeRepository
+	client   AccountProbeHTTPClient
+	testSvc  *AccountTestService
+}
+
+func NewAccountProbeService(accounts AccountProbeAccountReader, repo AccountProbeRepository, client AccountProbeHTTPClient, testSvc *AccountTestService) *AccountProbeService {
+	if client == nil {
+		client = &http.Client{}
+	}
+	return &AccountProbeService{accounts: accounts, repo: repo, client: client, testSvc: testSvc}
+}
+
+func (s *AccountProbeService) Run(ctx context.Context, req AccountProbeRunRequest) (AccountProbeResult, error) {
+	if s.accounts == nil {
+		return AccountProbeResult{}, fmt.Errorf("account probe account repository is nil")
+	}
+	account, err := s.accounts.GetByID(ctx, req.AccountID)
+	if err != nil {
+		return AccountProbeResult{}, err
+	}
+	if account == nil {
+		return AccountProbeResult{}, ErrAccountNotFound
+	}
+	if !account.IsOpenAIApiKey() {
+		return AccountProbeResult{}, fmt.Errorf("only openai api key accounts support probe runs")
+	}
+	keys := account.GetAPIKeys()
+	if len(keys) == 0 {
+		if key := strings.TrimSpace(account.GetOpenAIApiKey()); key != "" {
+			keys = []string{key}
+		}
+	}
+	if len(keys) == 0 {
+		return AccountProbeResult{}, fmt.Errorf("no api key available")
+	}
+
+	plan, err := buildAccountProbePlan(req)
+	if err != nil {
+		return AccountProbeResult{}, err
+	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = openai.DefaultTestModel
+	}
+	model = account.GetMappedModel(model)
+	baseURL := account.GetOpenAIBaseURL()
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	if s.testSvc != nil {
+		normalized, err := s.testSvc.validateUpstreamBaseURL(baseURL)
+		if err != nil {
+			return AccountProbeResult{}, fmt.Errorf("invalid base URL: %w", err)
+		}
+		baseURL = normalized
+	}
+
+	now := time.Now()
+	run := AccountProbeResult{
+		AccountID:             account.ID,
+		Profile:               plan.Profile,
+		Status:                AccountProbeStatusRunning,
+		Model:                 model,
+		IncludeCodexStability: req.IncludeCodexStability,
+		IncludeLongContext:    req.IncludeLongContext,
+		Estimate:              plan.Estimate,
+		RequestCount:          len(plan.Samples),
+		CreatedAt:             now,
+		StartedAt:             &now,
+	}
+	if s.repo != nil {
+		if err := s.repo.CreateAccountProbeRun(ctx, &run); err != nil {
+			return AccountProbeResult{}, err
+		}
+	}
+
+	useResponses := openai_compat.ShouldUseResponsesAPI(account.Extra)
+	for idx, planned := range plan.Samples {
+		key := keys[idx%len(keys)]
+		sample := s.runOpenAIAPIKeySample(ctx, account, baseURL, model, key, planned, useResponses)
+		sample.RunID = run.ID
+		sample.RequestIndex = idx + 1
+		sample.Type = planned.Type
+		sample.Label = planned.Label
+		sample.Model = model
+		if s.repo != nil {
+			if err := s.repo.SaveAccountProbeSample(ctx, sample); err != nil {
+				return AccountProbeResult{}, err
+			}
+		}
+		run.Samples = append(run.Samples, sample)
+	}
+	finalizeAccountProbeResult(&run)
+	if s.repo != nil {
+		if err := s.repo.UpdateAccountProbeRun(ctx, &run); err != nil {
+			return AccountProbeResult{}, err
+		}
+	}
+	return run, nil
+}
+
+func (s *AccountProbeService) List(ctx context.Context, filter AccountProbeHistoryFilter) ([]AccountProbeResult, error) {
+	if s.repo == nil {
+		return nil, fmt.Errorf("account probe repository is nil")
+	}
+	if filter.Limit <= 0 || filter.Limit > 50 {
+		filter.Limit = 20
+	}
+	return s.repo.ListAccountProbeRuns(ctx, filter)
+}
+
+func (s *AccountProbeService) Get(ctx context.Context, accountID, runID int64) (*AccountProbeResult, error) {
+	if s.repo == nil {
+		return nil, fmt.Errorf("account probe repository is nil")
+	}
+	run, err := s.repo.GetAccountProbeRun(ctx, accountID, runID)
+	if err != nil {
+		return nil, err
+	}
+	samples, err := s.repo.ListAccountProbeSamples(ctx, run.ID)
+	if err != nil {
+		return nil, err
+	}
+	run.Samples = samples
+	return run, nil
+}
+
+func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account *Account, baseURL, model, apiKey string, sample APIKeyProbePlannedSample, useResponses bool) AccountProbeSample {
+	timeout := sample.Timeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	sampleCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	endpoint := buildOpenAIResponsesURL(baseURL)
+	var payload map[string]any
+	if useResponses {
+		payload = map[string]any{
+			"model":             model,
+			"input":             sample.Prompt,
+			"stream":            false,
+			"store":             false,
+			"max_output_tokens": sample.MaxOutputTokens,
+		}
+	} else {
+		endpoint = buildOpenAIChatCompletionsURL(baseURL)
+		payload = map[string]any{
+			"model": model,
+			"messages": []map[string]any{
+				{"role": "user", "content": sample.Prompt},
+			},
+			"stream":     false,
+			"max_tokens": sample.MaxOutputTokens,
+		}
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(sampleCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return failedAccountProbeSample(account, apiKey, endpoint, "request_create_failed", err.Error(), 0, 0)
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+	req.Header.Set("Content-Type", "application/json")
+
+	proxyURL := ""
+	if account != nil && account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+	start := time.Now()
+	resp, err := s.doAccountProbeHTTP(req, proxyURL, account)
+	duration := time.Since(start)
+	if err != nil {
+		return failedAccountProbeSample(account, apiKey, endpoint, "request_failed", err.Error(), 0, duration)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	result := AccountProbeSample{
+		Status:            AccountProbeSampleSuccess,
+		APIKeyFingerprint: FingerprintAPIKey(apiKey),
+		APIKeyMasked:      MaskAPIKey(apiKey),
+		UpstreamEndpoint:  endpoint,
+		HTTPStatus:        resp.StatusCode,
+		DurationMillis:    int(math.Round(float64(duration / time.Millisecond))),
+		CreatedAt:         time.Now(),
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		result.Status = AccountProbeSampleFailed
+		result.ErrorCode = fmt.Sprintf("http_%d", resp.StatusCode)
+		result.ErrorMessage = truncateAccountProbeError(data, resp.Status)
+		return result
+	}
+	input, output := parseOpenAIProbeUsage(data)
+	result.InputTokens = input
+	result.OutputTokens = output
+	result.TotalTokens = input + output
+	if result.TotalTokens == 0 {
+		result.TotalTokens = parseOpenAIProbeTotalTokens(data)
+	}
+	return result
+}
+
+func (s *AccountProbeService) doAccountProbeHTTP(req *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+	if s.testSvc != nil && s.testSvc.httpUpstream != nil && account != nil {
+		return s.testSvc.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.testSvc.tlsFPProfileService.ResolveTLSProfile(account))
+	}
+	return s.client.Do(req)
+}
+
+func failedAccountProbeSample(account *Account, apiKey, endpoint, code, message string, httpStatus int, duration time.Duration) AccountProbeSample {
+	return AccountProbeSample{
+		Status:            AccountProbeSampleFailed,
+		APIKeyFingerprint: FingerprintAPIKey(apiKey),
+		APIKeyMasked:      MaskAPIKey(apiKey),
+		UpstreamEndpoint:  endpoint,
+		HTTPStatus:        httpStatus,
+		DurationMillis:    int(math.Round(float64(duration / time.Millisecond))),
+		ErrorCode:         code,
+		ErrorMessage:      message,
+		CreatedAt:         time.Now(),
+	}
+}
+
+type accountProbePlan struct {
+	Profile  string
+	Estimate AccountProbeEstimate
+	Samples  []APIKeyProbePlannedSample
+}
+
+func buildAccountProbePlan(req AccountProbeRunRequest) (accountProbePlan, error) {
+	profile := normalizeAPIKeyProbeProfile(req.Profile)
+	samples := make([]APIKeyProbePlannedSample, 0, 9)
+	baseCount := 3
+	if profile == AccountProbeProfileQuick {
+		baseCount = 1
+	}
+	for i := 0; i < baseCount; i++ {
+		samples = append(samples, shortProbeSample("基础测速"))
+	}
+	if req.IncludeCodexStability {
+		for i := 0; i < 5; i++ {
+			samples = append(samples, shortProbeSample("Codex 稳定性小测"))
+		}
+	}
+	if req.IncludeLongContext {
+		samples = append(samples, longContextProbeSample())
+	}
+	estimate := estimateFromPlan(APIKeyProbePlan{Profile: profile, Samples: samples, EstimatedRequests: len(samples)})
+	return accountProbePlan{Profile: profile, Estimate: estimate, Samples: samples}, nil
+}
+
+func finalizeAccountProbeResult(run *AccountProbeResult) {
+	if run == nil {
+		return
+	}
+	durations := make([]int, 0, len(run.Samples))
+	var firstTokens []int
+	for _, sample := range run.Samples {
+		if sample.Status == AccountProbeSampleFailed {
+			run.FailureCount++
+			if run.ErrorMessage == "" && sample.ErrorMessage != "" {
+				run.ErrorMessage = sample.ErrorMessage
+			}
+		} else {
+			run.SuccessCount++
+		}
+		if sample.DurationMillis > 0 {
+			durations = append(durations, sample.DurationMillis)
+		}
+		if sample.FirstTokenMillis != nil {
+			firstTokens = append(firstTokens, *sample.FirstTokenMillis)
+		}
+		run.InputTokens += sample.InputTokens
+		run.OutputTokens += sample.OutputTokens
+		run.TotalTokens += sample.TotalTokens
+	}
+	run.Latency = accountProbeLatencyStats(durations)
+	run.AvgLatencyMillis = run.Latency.AvgMillis
+	run.MaxLatencyMillis = run.Latency.MaxMillis
+	if len(firstTokens) > 0 {
+		v := accountProbeLatencyStats(firstTokens).P50Millis
+		run.FirstTokenMillis = &v
+	}
+	switch {
+	case run.FailureCount == 0:
+		run.Status = AccountProbeStatusSuccess
+	case run.SuccessCount == 0:
+		run.Status = AccountProbeStatusFailed
+	default:
+		run.Status = AccountProbeStatusPartial
+	}
+	finished := time.Now()
+	run.FinishedAt = &finished
+	run.Summary = fmt.Sprintf("完成 %d/%d 次请求，平均延迟 %d ms，消耗 %d tokens", run.SuccessCount, len(run.Samples), run.Latency.AvgMillis, run.TotalTokens)
+}
+
+func accountProbeLatencyStats(values []int) AccountProbeLatencyStats {
+	if len(values) == 0 {
+		return AccountProbeLatencyStats{}
+	}
+	sort.Ints(values)
+	sum := 0
+	for _, v := range values {
+		sum += v
+	}
+	return AccountProbeLatencyStats{
+		P50Millis: percentileNearestRank(values, 0.50),
+		P95Millis: percentileNearestRank(values, 0.95),
+		AvgMillis: sum / len(values),
+		MaxMillis: values[len(values)-1],
+	}
+}
+
+func parseOpenAIProbeUsage(data []byte) (int, int) {
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return 0, 0
+	}
+	usage, _ := payload["usage"].(map[string]any)
+	if usage == nil {
+		return 0, 0
+	}
+	input := parseProbeInt(usage["input_tokens"])
+	if input == 0 {
+		input = parseProbeInt(usage["prompt_tokens"])
+	}
+	output := parseProbeInt(usage["output_tokens"])
+	if output == 0 {
+		output = parseProbeInt(usage["completion_tokens"])
+	}
+	return input, output
+}
+
+func parseOpenAIProbeTotalTokens(data []byte) int {
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return 0
+	}
+	usage, _ := payload["usage"].(map[string]any)
+	if usage == nil {
+		return 0
+	}
+	return parseProbeInt(usage["total_tokens"])
+}
+
+func parseProbeInt(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case json.Number:
+		i, _ := n.Int64()
+		return int(i)
+	default:
+		return 0
+	}
+}
+
+func truncateAccountProbeError(data []byte, fallback string) string {
+	msg := strings.TrimSpace(extractUpstreamErrorMessage(data))
+	if msg == "" {
+		msg = strings.TrimSpace(string(data))
+	}
+	if msg == "" {
+		msg = fallback
+	}
+	if len(msg) > 1000 {
+		return msg[:1000]
+	}
+	return msg
+}
+
+func MaskAPIKey(apiKey string) string {
+	apiKey = strings.TrimSpace(apiKey)
+	if len(apiKey) <= 10 {
+		if apiKey == "" {
+			return ""
+		}
+		return apiKey[:min(3, len(apiKey))] + "..."
+	}
+	return apiKey[:6] + "..." + apiKey[len(apiKey)-4:]
+}
