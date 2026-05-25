@@ -2,7 +2,7 @@
   <BaseDialog
     :show="show"
     :title="t('admin.accounts.testAccountConnection')"
-    width="normal"
+    width="wide"
     @close="handleClose"
   >
     <div class="space-y-4">

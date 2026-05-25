@@ -2,15 +2,17 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AccountTestModal from '../AccountTestModal.vue'
 
-const { getAvailableModels, copyToClipboard } = vi.hoisted(() => ({
+const { getAvailableModels, listProbeRuns, copyToClipboard } = vi.hoisted(() => ({
   getAvailableModels: vi.fn(),
+  listProbeRuns: vi.fn(),
   copyToClipboard: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
-      getAvailableModels
+      getAvailableModels,
+      listProbeRuns
     }
   }
 }))
@@ -93,6 +95,7 @@ describe('AccountTestModal', () => {
       { id: 'gemini-2.5-flash-image', display_name: 'Gemini 2.5 Flash Image' },
       { id: 'gemini-3.1-flash-image', display_name: 'Gemini 3.1 Flash Image' }
     ])
+    listProbeRuns.mockResolvedValue([])
     copyToClipboard.mockReset()
     Object.defineProperty(globalThis, 'localStorage', {
       value: {
@@ -143,5 +146,45 @@ describe('AccountTestModal', () => {
     const preview = wrapper.find('img[alt="test-image-1"]')
     expect(preview.exists()).toBe(true)
     expect(preview.attributes('src')).toBe('data:image/png;base64,QUJD')
+  })
+
+  it('OpenAI API Key 展开上游测速时保持弹窗打开并加载历史', async () => {
+    getAvailableModels.mockResolvedValueOnce([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' }
+    ])
+    listProbeRuns.mockResolvedValueOnce([])
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: {
+          id: 128,
+          name: 'encore',
+          platform: 'openai',
+          type: 'apikey',
+          status: 'active'
+        }
+      } as any,
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Select: { template: '<div class="select-stub"></div>' },
+          TextArea: true,
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    const toggle = wrapper.findAll('button').find((button) => button.text().includes('admin.accounts.probe.show'))
+    expect(toggle).toBeTruthy()
+    await toggle!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(listProbeRuns).toHaveBeenCalledWith(128)
+    expect(wrapper.text()).toContain('admin.accounts.probe.requestCount')
   })
 })
