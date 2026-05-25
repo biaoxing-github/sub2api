@@ -1407,10 +1407,10 @@ func groupsForAccount(auth *upstreamAuthContext, account *Account) []UpstreamBal
 	if auth != nil && len(auth.allGroups) > 0 {
 		return auth.allGroups
 	}
-	if groups := fetchedRateGroups(account); len(groups) > 0 {
+	if groups := manualRateGroups(account); len(groups) > 0 {
 		return groups
 	}
-	if groups := manualRateGroups(account); len(groups) > 0 {
+	if groups := fetchedRateGroups(account); len(groups) > 0 {
 		return groups
 	}
 	return nil
@@ -1425,10 +1425,10 @@ func groupsForKey(auth *upstreamAuthContext, account *Account, apiKey string) []
 			return auth.allGroups
 		}
 	}
-	if groups := fetchedRateGroups(account); len(groups) > 0 && len(allAccountAPIKeys(account)) == 1 {
+	if groups := manualRateGroups(account); len(groups) > 0 {
 		return groups
 	}
-	if groups := manualRateGroups(account); len(groups) > 0 {
+	if groups := fetchedRateGroups(account); len(groups) > 0 && len(allAccountAPIKeys(account)) == 1 {
 		return groups
 	}
 	return nil

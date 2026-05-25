@@ -283,20 +283,40 @@ func TestGroupsForKeyPrefersFetchedGroupsOverManualRate(t *testing.T) {
 	}
 }
 
-func TestManualRateGroupsPrefersPersistedLoginRateOverCredentialRate(t *testing.T) {
+func TestGroupsForKeyPrefersManualRateOverStaleFetchedGroups(t *testing.T) {
+	account := &Account{
+		Credentials: map[string]any{
+			"api_keys":                      []any{"sk-test", "sk-other"},
+			UpstreamCommonRateMultiplierKey: 0.6,
+			UpstreamCommonRateGroupNameKey:  "codex",
+		},
+		Extra: map[string]any{
+			UpstreamCommonRateMultiplierKey: 0.6,
+			UpstreamFetchedGroupsKey: []any{
+				map[string]any{"name": "<nil>", "ratio": 0.6, "description": "manual common rate"},
+			},
+		},
+	}
+
+	got := groupsForKey(nil, account, "sk-test")
+	if len(got) != 1 || got[0].Name != "codex" || got[0].Ratio != 0.6 {
+		t.Fatalf("groupsForKey() = %+v", got)
+	}
+}
+
+func TestManualRateGroupsPrefersExtraRatioAndCredentialName(t *testing.T) {
 	account := &Account{
 		Credentials: map[string]any{
 			UpstreamCommonRateMultiplierKey: 9.0,
-			UpstreamCommonRateGroupNameKey:  "manual",
+			UpstreamCommonRateGroupNameKey:  "codex",
 		},
 		Extra: map[string]any{
 			UpstreamCommonRateMultiplierKey: 0.2,
-			UpstreamCommonRateGroupNameKey:  "login-group",
 		},
 	}
 
 	got := manualRateGroups(account)
-	if len(got) != 1 || got[0].Name != "login-group" || got[0].Ratio != 0.2 {
+	if len(got) != 1 || got[0].Name != "codex" || got[0].Ratio != 0.2 {
 		t.Fatalf("manualRateGroups() = %+v", got)
 	}
 }
