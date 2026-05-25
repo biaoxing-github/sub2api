@@ -2,17 +2,15 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AccountTestModal from '../AccountTestModal.vue'
 
-const { getAvailableModels, listProbeRuns, copyToClipboard } = vi.hoisted(() => ({
+const { getAvailableModels, copyToClipboard } = vi.hoisted(() => ({
   getAvailableModels: vi.fn(),
-  listProbeRuns: vi.fn(),
   copyToClipboard: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
-      getAvailableModels,
-      listProbeRuns
+      getAvailableModels
     }
   }
 }))
@@ -82,7 +80,11 @@ function mountModal() {
           emits: ['update:modelValue'],
           template: '<textarea class="textarea-stub" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
         },
-        Icon: true
+        Icon: true,
+        AccountProbeDialog: {
+          props: ['show', 'account', 'modelId'],
+          template: '<div class="probe-dialog-stub" :data-show="String(show)" :data-account-id="account?.id" :data-model-id="modelId"></div>'
+        }
       }
     }
   })
@@ -95,7 +97,6 @@ describe('AccountTestModal', () => {
       { id: 'gemini-2.5-flash-image', display_name: 'Gemini 2.5 Flash Image' },
       { id: 'gemini-3.1-flash-image', display_name: 'Gemini 3.1 Flash Image' }
     ])
-    listProbeRuns.mockResolvedValue([])
     copyToClipboard.mockReset()
     Object.defineProperty(globalThis, 'localStorage', {
       value: {
@@ -148,11 +149,10 @@ describe('AccountTestModal', () => {
     expect(preview.attributes('src')).toBe('data:image/png;base64,QUJD')
   })
 
-  it('OpenAI API Key 展开上游测速时保持弹窗打开并加载历史', async () => {
+  it('OpenAI API Key 点击上游测速时打开独立测速弹窗', async () => {
     getAvailableModels.mockResolvedValueOnce([
       { id: 'gpt-5.4', display_name: 'GPT-5.4' }
     ])
-    listProbeRuns.mockResolvedValueOnce([])
 
     const wrapper = mount(AccountTestModal, {
       props: {
@@ -170,7 +170,11 @@ describe('AccountTestModal', () => {
           BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
           Select: { template: '<div class="select-stub"></div>' },
           TextArea: true,
-          Icon: true
+          Icon: true,
+          AccountProbeDialog: {
+            props: ['show', 'account', 'modelId'],
+            template: '<div class="probe-dialog-stub" :data-show="String(show)" :data-account-id="account?.id" :data-model-id="modelId"></div>'
+          }
         }
       }
     })
@@ -184,7 +188,9 @@ describe('AccountTestModal', () => {
     await flushPromises()
 
     expect(wrapper.emitted('close')).toBeUndefined()
-    expect(listProbeRuns).toHaveBeenCalledWith(128)
-    expect(wrapper.text()).toContain('admin.accounts.probe.requestCount')
+    const probeDialog = wrapper.find('.probe-dialog-stub')
+    expect(probeDialog.attributes('data-show')).toBe('true')
+    expect(probeDialog.attributes('data-account-id')).toBe('128')
+    expect(probeDialog.attributes('data-model-id')).toBe('gpt-5.4')
   })
 })
