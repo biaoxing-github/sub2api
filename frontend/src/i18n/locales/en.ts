@@ -4062,12 +4062,18 @@ export default {
           quick: 'Quick',
           standard: 'Standard'
         },
+        requestModeLabel: 'Request Mode',
+        requestModes: {
+          non_stream: 'Non-stream',
+          stream: 'Stream'
+        },
         codexStability: 'Codex Stability Check',
         longContext: 'Long Context Check',
         run: 'Start Probe',
         running: 'Running...',
         started: 'Probe task has started and will continue in the background. Refresh history or open the run later to view results.',
         avgLatency: 'Avg Latency',
+        firstToken: 'First Token',
         successRate: 'Success Rate',
         tokensUsed: 'Tokens Used',
         history: 'History',

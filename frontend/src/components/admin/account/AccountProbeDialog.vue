@@ -29,7 +29,7 @@
         {{ t('admin.accounts.probe.unsupported') }}
       </div>
 
-      <div class="grid gap-3 sm:grid-cols-3">
+      <div class="grid gap-3 sm:grid-cols-4">
         <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
           <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.probe.requestCount') }}</div>
           <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{{ probeRequestCount }}</div>
@@ -42,6 +42,12 @@
           <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.probe.modeLabel') }}</div>
           <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
             {{ t(`admin.accounts.probe.modes.${probeMode}`) }}
+          </div>
+        </div>
+        <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-700">
+          <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.probe.requestModeLabel') }}</div>
+          <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
+            {{ formatRequestMode(probeRequestMode) }}
           </div>
         </div>
       </div>
@@ -62,6 +68,22 @@
           @click="probeMode = 'standard'"
         >
           {{ t('admin.accounts.probe.modes.standard') }}
+        </button>
+        <button
+          type="button"
+          :class="probeModeButtonClass(probeRequestMode === 'non_stream')"
+          :disabled="probeSubmitting"
+          @click="probeRequestMode = 'non_stream'"
+        >
+          {{ t('admin.accounts.probe.requestModes.non_stream') }}
+        </button>
+        <button
+          type="button"
+          :class="probeModeButtonClass(probeRequestMode === 'stream')"
+          :disabled="probeSubmitting"
+          @click="probeRequestMode = 'stream'"
+        >
+          {{ t('admin.accounts.probe.requestModes.stream') }}
         </button>
         <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
           <input
@@ -110,9 +132,11 @@
           <span :class="probeStatusBadgeClass(latestProbeRun.status)">
             {{ formatProbeStatus(latestProbeRun.status) }}
           </span>
-          <span class="text-xs text-gray-500 dark:text-gray-400">{{ formatTime(latestProbeRun.created_at) }}</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">
+            {{ formatRequestMode(latestProbeRun.request_mode) }} · {{ formatTime(latestProbeRun.created_at) }}
+          </span>
         </div>
-        <div class="mt-3 grid gap-3 text-sm sm:grid-cols-4">
+        <div class="mt-3 grid gap-3 text-sm sm:grid-cols-5">
           <div>
             <div class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.probe.avgLatency') }}</div>
             <div class="font-medium text-gray-900 dark:text-white">{{ formatMs(latestProbeRun.avg_latency_ms) }}</div>
@@ -129,6 +153,10 @@
             <div class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.probe.tokensUsed') }}</div>
             <div class="font-medium text-gray-900 dark:text-white">{{ latestProbeRun.total_tokens ?? '-' }}</div>
           </div>
+          <div>
+            <div class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.probe.firstToken') }}</div>
+            <div class="font-medium text-gray-900 dark:text-white">{{ formatMs(latestProbeRun.first_token_ms) }}</div>
+          </div>
         </div>
         <p v-if="latestProbeRun.summary || latestProbeRun.error_message" class="mt-2 text-sm text-gray-600 dark:text-gray-300">
           {{ latestProbeRun.summary || latestProbeRun.error_message }}
@@ -137,7 +165,7 @@
           <div
             v-for="sample in latestProbeRun.samples"
             :key="sample.id || sample.request_index"
-            class="grid gap-2 rounded border border-gray-200 bg-white px-3 py-2 text-xs dark:border-dark-600 dark:bg-dark-800 sm:grid-cols-[40px_1fr_90px_90px]"
+            class="grid gap-2 rounded border border-gray-200 bg-white px-3 py-2 text-xs dark:border-dark-600 dark:bg-dark-800 sm:grid-cols-[40px_1fr_90px_90px_90px]"
           >
             <span class="font-medium text-gray-500 dark:text-gray-400">#{{ sample.request_index }}</span>
             <span class="truncate text-gray-700 dark:text-gray-200">
@@ -148,7 +176,8 @@
               {{ formatProbeStatus(sample.status) }}
             </span>
             <span class="text-gray-600 dark:text-gray-300">{{ formatMs(sample.latency_ms) }}</span>
-            <span v-if="sample.error" class="sm:col-span-4 text-red-500 dark:text-red-300">{{ sample.error }}</span>
+            <span class="text-gray-600 dark:text-gray-300">{{ formatMs(sample.first_token_ms) }}</span>
+            <span v-if="sample.error" class="sm:col-span-5 text-red-500 dark:text-red-300">{{ sample.error }}</span>
           </div>
         </div>
       </div>
@@ -181,7 +210,7 @@
           >
             <span class="flex items-center gap-2">
               <span :class="probeStatusBadgeClass(run.status)">{{ formatProbeStatus(run.status) }}</span>
-              <span class="text-gray-600 dark:text-gray-300">{{ formatProbeSuccessRate(run) }} · {{ formatMs(run.avg_latency_ms) }}</span>
+              <span class="text-gray-600 dark:text-gray-300">{{ formatRequestMode(run.request_mode) }} · {{ formatProbeSuccessRate(run) }} · {{ formatMs(run.avg_latency_ms) }}</span>
             </span>
             <span class="shrink-0 text-gray-400">{{ formatTime(run.created_at) }}</span>
           </button>
@@ -207,7 +236,7 @@ import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { Icon } from '@/components/icons'
 import { adminAPI } from '@/api/admin'
-import type { Account, AccountProbeMode, AccountProbeRun } from '@/types'
+import type { Account, AccountProbeMode, AccountProbeRequestMode, AccountProbeRun } from '@/types'
 
 const { t } = useI18n()
 
@@ -222,6 +251,7 @@ const emit = defineEmits<{
 }>()
 
 const probeMode = ref<AccountProbeMode>('quick')
+const probeRequestMode = ref<AccountProbeRequestMode>('non_stream')
 const probeCodexStability = ref(false)
 const probeLongContext = ref(false)
 const probeSubmitting = ref(false)
@@ -267,6 +297,7 @@ const startProbe = async () => {
     latestProbeRun.value = await adminAPI.accounts.createProbeRun(props.account.id, {
       mode: probeMode.value,
       model: props.modelId,
+      request_mode: probeRequestMode.value,
       codex_stability: probeCodexStability.value,
       long_context: probeLongContext.value
     })
@@ -330,6 +361,11 @@ const formatProbeStatus = (status: string) => {
   const key = `admin.accounts.probe.status.${status}`
   const translated = t(key)
   return translated === key ? status : translated
+}
+
+const formatRequestMode = (mode?: string | null) => {
+  const normalized = mode === 'stream' ? 'stream' : 'non_stream'
+  return t(`admin.accounts.probe.requestModes.${normalized}`)
 }
 
 const probeStatusBadgeClass = (status: string) => [

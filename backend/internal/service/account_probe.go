@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -27,6 +28,9 @@ const (
 
 	AccountProbeSampleSuccess = APIKeyProbeSampleSuccess
 	AccountProbeSampleFailed  = APIKeyProbeSampleFailed
+
+	AccountProbeRequestModeNonStream = "non_stream"
+	AccountProbeRequestModeStream    = "stream"
 )
 
 const accountProbePersistenceTimeout = 5 * time.Second
@@ -37,6 +41,7 @@ type AccountProbeRunRequest struct {
 	Model                 string `json:"model"`
 	IncludeCodexStability bool   `json:"codex_stability"`
 	IncludeLongContext    bool   `json:"long_context"`
+	RequestMode           string `json:"request_mode"`
 }
 
 type AccountProbeEstimate = APIKeyProbeEstimate
@@ -48,6 +53,7 @@ type AccountProbeResult struct {
 	Profile               string                   `json:"mode"`
 	Status                string                   `json:"status"`
 	Model                 string                   `json:"model"`
+	RequestMode           string                   `json:"request_mode"`
 	IncludeCodexStability bool                     `json:"codex_stability"`
 	IncludeLongContext    bool                     `json:"long_context"`
 	Estimate              AccountProbeEstimate     `json:"estimate"`
@@ -147,6 +153,7 @@ func (s *AccountProbeService) Start(ctx context.Context, req AccountProbeRunRequ
 		Profile:               plan.Profile,
 		Status:                AccountProbeStatusRunning,
 		Model:                 model,
+		RequestMode:           normalizeAccountProbeRequestMode(req.RequestMode),
 		IncludeCodexStability: req.IncludeCodexStability,
 		IncludeLongContext:    req.IncludeLongContext,
 		Estimate:              plan.Estimate,
@@ -170,6 +177,7 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 	run.AccountID = account.ID
 	run.Profile = plan.Profile
 	run.Model = model
+	run.RequestMode = normalizeAccountProbeRequestMode(req.RequestMode)
 	run.IncludeCodexStability = req.IncludeCodexStability
 	run.IncludeLongContext = req.IncludeLongContext
 	run.Estimate = plan.Estimate
@@ -184,7 +192,7 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 
 	for idx, planned := range plan.Samples {
 		key := keys[idx%len(keys)]
-		sample := s.runOpenAIAPIKeySample(ctx, account, baseURL, model, key, planned, useResponses)
+		sample := s.runOpenAIAPIKeySample(ctx, account, baseURL, model, key, planned, useResponses, run.RequestMode)
 		sample.RunID = run.ID
 		sample.RequestIndex = idx + 1
 		sample.Type = planned.Type
@@ -303,7 +311,7 @@ func (s *AccountProbeService) Get(ctx context.Context, accountID, runID int64) (
 	return run, nil
 }
 
-func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account *Account, baseURL, model, apiKey string, sample APIKeyProbePlannedSample, useResponses bool) AccountProbeSample {
+func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account *Account, baseURL, model, apiKey string, sample APIKeyProbePlannedSample, useResponses bool, requestMode string) AccountProbeSample {
 	timeout := sample.Timeout
 	if timeout <= 0 {
 		timeout = 60 * time.Second
@@ -312,12 +320,13 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 	defer cancel()
 
 	endpoint := buildOpenAIResponsesURL(baseURL)
+	stream := normalizeAccountProbeRequestMode(requestMode) == AccountProbeRequestModeStream
 	var payload map[string]any
 	if useResponses {
 		payload = map[string]any{
 			"model":             model,
 			"input":             sample.Prompt,
-			"stream":            false,
+			"stream":            stream,
 			"store":             false,
 			"max_output_tokens": sample.MaxOutputTokens,
 		}
@@ -328,7 +337,7 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 			"messages": []map[string]any{
 				{"role": "user", "content": sample.Prompt},
 			},
-			"stream":     false,
+			"stream":     stream,
 			"max_tokens": sample.MaxOutputTokens,
 		}
 	}
@@ -339,6 +348,9 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	req.Header.Set("Content-Type", "application/json")
+	if stream {
+		req.Header.Set("Accept", "text/event-stream")
+	}
 
 	proxyURL := ""
 	if account != nil && account.ProxyID != nil && account.Proxy != nil {
@@ -352,7 +364,6 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	result := AccountProbeSample{
 		Status:            AccountProbeSampleSuccess,
 		APIKeyFingerprint: FingerprintAPIKey(apiKey),
@@ -363,11 +374,30 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		CreatedAt:         time.Now(),
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		result.DurationMillis = int(math.Round(float64(time.Since(start) / time.Millisecond)))
 		result.Status = AccountProbeSampleFailed
 		result.ErrorCode = fmt.Sprintf("http_%d", resp.StatusCode)
 		result.ErrorMessage = truncateAccountProbeError(data, resp.Status)
 		return result
 	}
+	if stream {
+		streamResult := readAccountProbeOpenAIStream(resp.Body, useResponses, start)
+		result.DurationMillis = int(math.Round(float64(time.Since(start) / time.Millisecond)))
+		if streamResult.err != "" {
+			result.Status = AccountProbeSampleFailed
+			result.ErrorCode = "stream_parse_failed"
+			result.ErrorMessage = streamResult.err
+			return result
+		}
+		result.FirstTokenMillis = streamResult.firstTokenMillis
+		result.InputTokens = streamResult.inputTokens
+		result.OutputTokens = streamResult.outputTokens
+		result.TotalTokens = streamResult.totalTokens
+		return result
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	result.DurationMillis = int(math.Round(float64(time.Since(start) / time.Millisecond)))
 	input, output := parseOpenAIProbeUsage(data)
 	result.InputTokens = input
 	result.OutputTokens = output
@@ -376,6 +406,166 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		result.TotalTokens = parseOpenAIProbeTotalTokens(data)
 	}
 	return result
+}
+
+func normalizeAccountProbeRequestMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case AccountProbeRequestModeStream:
+		return AccountProbeRequestModeStream
+	default:
+		return AccountProbeRequestModeNonStream
+	}
+}
+
+type accountProbeOpenAIStreamResult struct {
+	firstTokenMillis *int
+	inputTokens      int
+	outputTokens     int
+	totalTokens      int
+	err              string
+}
+
+func readAccountProbeOpenAIStream(body io.Reader, useResponses bool, start time.Time) accountProbeOpenAIStreamResult {
+	if useResponses {
+		return parseAccountProbeResponsesStream(body, start)
+	}
+	return parseAccountProbeChatCompletionsStream(body, start)
+}
+
+func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountProbeOpenAIStreamResult {
+	reader := bufio.NewReader(body)
+	result := accountProbeOpenAIStreamResult{}
+	seenCompleted := false
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				if seenCompleted {
+					return result
+				}
+				if strings.TrimSpace(line) == "" {
+					return accountProbeOpenAIStreamResult{err: "stream ended before response.completed"}
+				}
+			} else {
+				return accountProbeOpenAIStreamResult{err: "stream read error: " + err.Error()}
+			}
+		}
+		line = strings.TrimSpace(line)
+		if line != "" && sseDataPrefix.MatchString(line) {
+			jsonStr := sseDataPrefix.ReplaceAllString(line, "")
+			if jsonStr == "[DONE]" {
+				if seenCompleted {
+					return result
+				}
+				return accountProbeOpenAIStreamResult{err: "stream ended before response.completed"}
+			}
+			var event map[string]any
+			if json.Unmarshal([]byte(jsonStr), &event) == nil {
+				eventType, _ := event["type"].(string)
+				switch eventType {
+				case "response.output_text.delta":
+					if result.firstTokenMillis == nil {
+						if delta, _ := event["delta"].(string); delta != "" {
+							v := int(time.Since(start) / time.Millisecond)
+							result.firstTokenMillis = &v
+						}
+					}
+				case "response.completed", "response.done":
+					if response, _ := event["response"].(map[string]any); response != nil {
+						input, output, total := parseOpenAIProbeUsageObject(response["usage"])
+						result.inputTokens = input
+						result.outputTokens = output
+						result.totalTokens = total
+					}
+					seenCompleted = true
+					return result
+				case "response.failed", "error":
+					return accountProbeOpenAIStreamResult{err: extractAccountProbeStreamError(event, "OpenAI response failed")}
+				}
+			}
+		}
+		if err == io.EOF {
+			if seenCompleted {
+				return result
+			}
+			return accountProbeOpenAIStreamResult{err: "stream ended before response.completed"}
+		}
+	}
+}
+
+func parseAccountProbeChatCompletionsStream(body io.Reader, start time.Time) accountProbeOpenAIStreamResult {
+	reader := bufio.NewReader(body)
+	result := accountProbeOpenAIStreamResult{}
+	seenJSON := false
+	seenFinish := false
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return accountProbeOpenAIStreamResult{err: "stream read error: " + err.Error()}
+		}
+		line = strings.TrimSpace(line)
+		if line != "" && sseDataPrefix.MatchString(line) {
+			jsonStr := sseDataPrefix.ReplaceAllString(line, "")
+			if jsonStr == "[DONE]" {
+				return result
+			}
+			var event map[string]any
+			if json.Unmarshal([]byte(jsonStr), &event) != nil {
+				return accountProbeOpenAIStreamResult{err: "invalid Chat Completions stream JSON"}
+			}
+			seenJSON = true
+			if errData, ok := event["error"].(map[string]any); ok {
+				if msg, _ := errData["message"].(string); msg != "" {
+					return accountProbeOpenAIStreamResult{err: msg}
+				}
+				return accountProbeOpenAIStreamResult{err: "Chat Completions stream returned an error"}
+			}
+			if result.inputTokens == 0 && result.outputTokens == 0 && result.totalTokens == 0 {
+				input, output, total := parseOpenAIProbeUsageObject(event["usage"])
+				result.inputTokens = input
+				result.outputTokens = output
+				result.totalTokens = total
+			}
+			choices, _ := event["choices"].([]any)
+			for _, choiceValue := range choices {
+				choice, _ := choiceValue.(map[string]any)
+				if delta, _ := choice["delta"].(map[string]any); delta != nil && result.firstTokenMillis == nil {
+					if text, _ := delta["content"].(string); text != "" {
+						v := int(time.Since(start) / time.Millisecond)
+						result.firstTokenMillis = &v
+					}
+				}
+				if finishReason, _ := choice["finish_reason"].(string); finishReason != "" {
+					seenFinish = true
+				}
+			}
+		}
+		if err == io.EOF {
+			if !seenJSON {
+				return accountProbeOpenAIStreamResult{err: "Invalid Chat Completions response from /v1/chat/completions: expected SSE JSON data"}
+			}
+			if seenFinish {
+				return result
+			}
+			return accountProbeOpenAIStreamResult{err: "Chat Completions stream ended before [DONE]"}
+		}
+	}
+}
+
+func extractAccountProbeStreamError(event map[string]any, fallback string) string {
+	if errData, _ := event["error"].(map[string]any); errData != nil {
+		if msg, _ := errData["message"].(string); msg != "" {
+			return msg
+		}
+	}
+	if response, _ := event["response"].(map[string]any); response != nil {
+		if errData, _ := response["error"].(map[string]any); errData != nil {
+			if msg, _ := errData["message"].(string); msg != "" {
+				return msg
+			}
+		}
+	}
+	return fallback
 }
 
 func (s *AccountProbeService) doAccountProbeHTTP(req *http.Request, proxyURL string, account *Account) (*http.Response, error) {
@@ -494,9 +684,23 @@ func parseOpenAIProbeUsage(data []byte) (int, int) {
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return 0, 0
 	}
-	usage, _ := payload["usage"].(map[string]any)
+	input, output, _ := parseOpenAIProbeUsageObject(payload["usage"])
+	return input, output
+}
+
+func parseOpenAIProbeTotalTokens(data []byte) int {
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return 0
+	}
+	_, _, total := parseOpenAIProbeUsageObject(payload["usage"])
+	return total
+}
+
+func parseOpenAIProbeUsageObject(raw any) (int, int, int) {
+	usage, _ := raw.(map[string]any)
 	if usage == nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	input := parseProbeInt(usage["input_tokens"])
 	if input == 0 {
@@ -506,19 +710,11 @@ func parseOpenAIProbeUsage(data []byte) (int, int) {
 	if output == 0 {
 		output = parseProbeInt(usage["completion_tokens"])
 	}
-	return input, output
-}
-
-func parseOpenAIProbeTotalTokens(data []byte) int {
-	var payload map[string]any
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return 0
+	total := parseProbeInt(usage["total_tokens"])
+	if total == 0 {
+		total = input + output
 	}
-	usage, _ := payload["usage"].(map[string]any)
-	if usage == nil {
-		return 0
-	}
-	return parseProbeInt(usage["total_tokens"])
+	return input, output, total
 }
 
 func parseProbeInt(v any) int {

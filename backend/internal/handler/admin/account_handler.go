@@ -865,6 +865,7 @@ type CreateAccountProbeRunRequest struct {
 	IncludeLongContext    bool   `json:"include_long_context"`
 	CodexStability        bool   `json:"codex_stability"`
 	LongContext           bool   `json:"long_context"`
+	RequestMode           string `json:"request_mode"`
 }
 
 type SyncFromCRSRequest struct {
@@ -934,6 +935,7 @@ func (h *AccountHandler) CreateProbeRun(c *gin.Context) {
 		Model:                 req.Model,
 		IncludeCodexStability: req.IncludeCodexStability || req.CodexStability,
 		IncludeLongContext:    req.IncludeLongContext || req.LongContext,
+		RequestMode:           req.RequestMode,
 	}
 	result, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
 	if err != nil {

@@ -20,6 +20,7 @@ type blockingAccountProbeService struct {
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
+	req     service.AccountProbeRunRequest
 }
 
 func newBlockingAccountProbeService() *blockingAccountProbeService {
@@ -30,12 +31,14 @@ func newBlockingAccountProbeService() *blockingAccountProbeService {
 }
 
 func (s *blockingAccountProbeService) Start(ctx context.Context, req service.AccountProbeRunRequest) (service.AccountProbeResult, error) {
+	s.req = req
 	return service.AccountProbeResult{
 		ID:           99,
 		AccountID:    req.AccountID,
 		Profile:      req.Profile,
 		Status:       service.AccountProbeStatusRunning,
 		Model:        req.Model,
+		RequestMode:  req.RequestMode,
 		RequestCount: 1,
 	}, nil
 }
@@ -90,5 +93,24 @@ func TestAccountProbeCreateReturnsAcceptedAndRunsInBackground(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("background probe task did not start")
 	}
+	close(probeSvc.release)
+}
+
+func TestAccountProbeCreateParsesRequestMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	probeSvc := newBlockingAccountProbeService()
+	h := &AccountHandler{accountProbeService: probeSvc}
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/:id/probe-runs", h.CreateProbeRun)
+
+	rec := httptest.NewRecorder()
+	body := `{"mode":"quick","model":"gpt-5.4","request_mode":"stream"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/128/probe-runs", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.Equal(t, "stream", probeSvc.req.RequestMode)
 	close(probeSvc.release)
 }

@@ -79,10 +79,15 @@ func (r *contextCanceledProbeRepoStub) UpdateAccountProbeRun(ctx context.Context
 
 type accountProbeHTTPClientStub struct {
 	requests []*http.Request
+	bodies   []string
 }
 
 func (c *accountProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
 	c.requests = append(c.requests, req)
+	if req.Body != nil {
+		data, _ := io.ReadAll(req.Body)
+		c.bodies = append(c.bodies, string(data))
+	}
 	body := `{"usage":{"input_tokens":12,"output_tokens":3,"total_tokens":15}}`
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -136,8 +141,73 @@ func TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples(t *testing.T) {
 	require.Equal(t, "sk-one", strings.TrimPrefix(client.requests[0].Header.Get("Authorization"), "Bearer "))
 	require.Equal(t, "sk-two", strings.TrimPrefix(client.requests[1].Header.Get("Authorization"), "Bearer "))
 	require.Contains(t, client.requests[0].URL.String(), "/v1/responses")
+	require.Contains(t, client.bodies[0], `"stream":false`)
 	require.NotEmpty(t, repo.samples[0].APIKeyFingerprint)
 	require.NotContains(t, repo.samples[0].APIKeyMasked, "sk-one")
+}
+
+type accountProbeStreamHTTPClientStub struct {
+	requests []*http.Request
+	bodies   []string
+}
+
+func (c *accountProbeStreamHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
+	c.requests = append(c.requests, req)
+	if req.Body != nil {
+		data, _ := io.ReadAll(req.Body)
+		c.bodies = append(c.bodies, string(data))
+	}
+	body := strings.Join([]string{
+		`data: {"type":"response.created"}`,
+		``,
+		`data: {"type":"response.output_text.delta","delta":"ok"}`,
+		``,
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}}`,
+		``,
+	}, "\n")
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}, nil
+}
+
+func TestAccountProbeService_RunOpenAIAPIKeyStreamModeRecordsFirstToken(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "encore",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://example.test/v1",
+			"api_key":  "sk-one",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	repo := &accountProbeRepoStub{}
+	client := &accountProbeStreamHTTPClientStub{}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID:   128,
+		Profile:     AccountProbeProfileQuick,
+		Model:       "gpt-test",
+		RequestMode: AccountProbeRequestModeStream,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeRequestModeStream, result.RequestMode)
+	require.Equal(t, AccountProbeStatusSuccess, result.Status)
+	require.Equal(t, 10, result.TotalTokens)
+	require.NotNil(t, result.FirstTokenMillis)
+	require.Len(t, repo.samples, 1)
+	require.NotNil(t, repo.samples[0].FirstTokenMillis)
+	require.Equal(t, "text/event-stream", client.requests[0].Header.Get("Accept"))
+	require.Contains(t, client.bodies[0], `"stream":true`)
 }
 
 func TestAccountProbeService_RunExistingFinalizesAfterCallerContextDeadline(t *testing.T) {

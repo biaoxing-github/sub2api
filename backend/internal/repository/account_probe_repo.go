@@ -22,7 +22,7 @@ func (r *accountProbeRepository) CreateAccountProbeRun(ctx context.Context, run 
 	}
 	return r.db.QueryRowContext(ctx, `
 INSERT INTO account_probe_runs (
-  account_id, mode, status, model, codex_stability, long_context,
+  account_id, mode, status, model, request_mode, codex_stability, long_context,
   request_count, success_count, failure_count,
   input_tokens, output_tokens, total_tokens,
   p50_ms, p95_ms, avg_ms, max_ms, first_token_ms,
@@ -30,14 +30,14 @@ INSERT INTO account_probe_runs (
   estimated_output_tokens_min, estimated_output_tokens_max,
   error_message, summary, created_at, started_at, finished_at
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,
-  $7,$8,$9,
-  $10,$11,$12,
-  $13,$14,$15,$16,$17,
-  $18,$19,$20,$21,
-  NULLIF($22,''), NULLIF($23,''), $24,$25,$26
+  $1,$2,$3,$4,$5,$6,$7,
+  $8,$9,$10,
+  $11,$12,$13,
+  $14,$15,$16,$17,$18,
+  $19,$20,$21,$22,
+  NULLIF($23,''), NULLIF($24,''), $25,$26,$27
 ) RETURNING id, created_at`,
-		run.AccountID, run.Profile, run.Status, run.Model, run.IncludeCodexStability, run.IncludeLongContext,
+		run.AccountID, run.Profile, run.Status, run.Model, run.RequestMode, run.IncludeCodexStability, run.IncludeLongContext,
 		run.RequestCount, run.SuccessCount, run.FailureCount,
 		run.InputTokens, run.OutputTokens, run.TotalTokens,
 		run.Latency.P50Millis, run.Latency.P95Millis, run.Latency.AvgMillis, run.Latency.MaxMillis, run.FirstTokenMillis,
@@ -176,7 +176,7 @@ ORDER BY request_index ASC`, runID)
 }
 
 const accountProbeRunSelectSQL = `
-SELECT id, account_id, mode, status, model, codex_stability, long_context,
+SELECT id, account_id, mode, status, model, COALESCE(request_mode,'non_stream'), codex_stability, long_context,
        request_count, success_count, failure_count,
        input_tokens, output_tokens, total_tokens,
        p50_ms, p95_ms, avg_ms, max_ms, first_token_ms,
@@ -191,7 +191,7 @@ func scanAccountProbeRun(scanner interface{ Scan(...any) error }) (*service.Acco
 	var errorMessage, summary sql.NullString
 	var startedAt, finishedAt sql.NullTime
 	if err := scanner.Scan(
-		&run.ID, &run.AccountID, &run.Profile, &run.Status, &run.Model, &run.IncludeCodexStability, &run.IncludeLongContext,
+		&run.ID, &run.AccountID, &run.Profile, &run.Status, &run.Model, &run.RequestMode, &run.IncludeCodexStability, &run.IncludeLongContext,
 		&run.RequestCount, &run.SuccessCount, &run.FailureCount,
 		&run.InputTokens, &run.OutputTokens, &run.TotalTokens,
 		&run.Latency.P50Millis, &run.Latency.P95Millis, &run.Latency.AvgMillis, &run.Latency.MaxMillis, &firstToken,

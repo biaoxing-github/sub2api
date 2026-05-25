@@ -687,10 +687,12 @@ export interface ApiKeyProbeRun {
 }
 
 export type AccountProbeMode = ApiKeyProbeMode
+export type AccountProbeRequestMode = 'non_stream' | 'stream'
 
 export interface CreateAccountProbeRunRequest {
   mode: AccountProbeMode
   model?: string
+  request_mode?: AccountProbeRequestMode
   include_codex_stability?: boolean
   include_long_context?: boolean
   codex_stability?: boolean
@@ -723,6 +725,7 @@ export interface AccountProbeRun {
   id: number
   account_id: number
   mode: AccountProbeMode | string
+  request_mode?: AccountProbeRequestMode | string
   status: 'pending' | 'running' | 'success' | 'failed' | 'partial' | string
   model?: string
   request_count?: number

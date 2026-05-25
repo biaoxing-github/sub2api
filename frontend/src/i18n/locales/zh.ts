@@ -4190,12 +4190,18 @@ export default {
           quick: '快速',
           standard: '标准'
         },
+        requestModeLabel: '请求方式',
+        requestModes: {
+          non_stream: '非流式',
+          stream: '流式'
+        },
         codexStability: 'Codex 稳定性小测',
         longContext: '长上下文小测',
         run: '开始测速',
         running: '测速中...',
         started: '测速任务已开始，后台会继续执行；稍后刷新历史或打开记录查看结果。',
         avgLatency: '平均延迟',
+        firstToken: '首 Token',
         successRate: '成功率',
         tokensUsed: '已用 Token',
         history: '历史记录',
