@@ -60,6 +60,7 @@ type AccountHandler struct {
 	sessionLimitCache       service.SessionLimitCache
 	rpmCache                service.RPMCache
 	tokenCacheInvalidator   service.TokenCacheInvalidator
+	openAIPathHealthReader  accountPathHealthReader
 }
 
 type accountProbeRunner interface {
@@ -67,6 +68,10 @@ type accountProbeRunner interface {
 	RunExisting(ctx context.Context, run service.AccountProbeResult, req service.AccountProbeRunRequest) (service.AccountProbeResult, error)
 	List(ctx context.Context, filter service.AccountProbeHistoryFilter) ([]service.AccountProbeResult, error)
 	Get(ctx context.Context, accountID, runID int64) (*service.AccountProbeResult, error)
+}
+
+type accountPathHealthReader interface {
+	SnapshotOpenAIPathHealthForAccount(account *service.Account, transport service.OpenAIUpstreamTransport) (service.OpenAIPathHealthRecord, bool)
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -106,6 +111,10 @@ func NewAccountHandler(
 
 func (h *AccountHandler) SetAccountProbeService(accountProbeService accountProbeRunner) {
 	h.accountProbeService = accountProbeService
+}
+
+func (h *AccountHandler) SetOpenAIPathHealthReader(reader accountPathHealthReader) {
+	h.openAIPathHealthReader = reader
 }
 
 // CreateAccountRequest represents create account request
@@ -202,6 +211,7 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 	if account == nil {
 		return item
 	}
+	h.attachAccountLoadFactorAdvice(item.Account, account)
 
 	if h.concurrencyService != nil {
 		if counts, err := h.concurrencyService.GetAccountConcurrencyBatch(ctx, []int64{account.ID}); err == nil {
@@ -372,6 +382,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 			Account:            dto.AccountFromService(acc),
 			CurrentConcurrency: concurrencyCounts[acc.ID],
 		}
+		h.attachAccountLoadFactorAdvice(item.Account, acc)
 
 		// 添加窗口费用（仅当启用时）
 		if windowCosts != nil {
@@ -408,6 +419,20 @@ func (h *AccountHandler) List(c *gin.Context) {
 	}
 
 	response.Paginated(c, result, total, page, pageSize)
+}
+
+func (h *AccountHandler) attachAccountLoadFactorAdvice(out *dto.Account, account *service.Account) {
+	if out == nil || account == nil || !account.IsOpenAI() {
+		return
+	}
+	var health service.OpenAIPathHealthRecord
+	if h.openAIPathHealthReader != nil {
+		if snapshot, ok := h.openAIPathHealthReader.SnapshotOpenAIPathHealthForAccount(account, service.OpenAIUpstreamTransportHTTPSSE); ok {
+			health = snapshot
+		}
+	}
+	advice := service.NewAccountLoadFactorAdvisor(service.AccountLoadFactorAdvisorOptions{}).Advise(account, health)
+	out.LoadFactorAdvice = dto.AccountLoadFactorAdviceFromService(advice)
 }
 
 // GetUsageSummary handles aggregated OpenAI account usage by ChatGPT plan and account type.
@@ -458,6 +483,15 @@ func (h *AccountHandler) GetDashboardSummary(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	statusSummaryAccounts := accounts
+	if strings.TrimSpace(c.Query("status")) != "" {
+		var statusSummaryErr error
+		statusSummaryAccounts, statusSummaryErr = h.listAccountsForCurrentFiltersWithoutStatus(c)
+		if statusSummaryErr != nil {
+			response.ErrorFrom(c, statusSummaryErr)
+			return
+		}
+	}
 
 	var usageSummary *service.AccountUsageSummary
 	var usageErr string
@@ -472,7 +506,11 @@ func (h *AccountHandler) GetDashboardSummary(c *gin.Context) {
 		usageErr = "account usage service is not configured"
 	}
 
-	result := service.BuildAccountDashboardSummary(accounts, usageSummary, time.Now())
+	now := time.Now()
+	result := service.BuildAccountDashboardSummary(accounts, usageSummary, now)
+	if strings.TrimSpace(c.Query("status")) != "" {
+		result.StatusSummary = service.BuildAccountDashboardSummary(statusSummaryAccounts, nil, now).StatusSummary
+	}
 	result.UsageSummaryError = usageErr
 	response.Success(c, result)
 }

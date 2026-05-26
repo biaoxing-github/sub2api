@@ -43,24 +43,25 @@ func TestAccountHandlerDashboardSummaryUsesCurrentFiltersAndSingleAccountFlow(t 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if adminSvc.lastListAccounts.calls != 1 {
-		t.Fatalf("ListAccounts calls = %d, want 1", adminSvc.lastListAccounts.calls)
+	if adminSvc.lastListAccounts.calls != 2 {
+		t.Fatalf("ListAccounts calls = %d, want 2", adminSvc.lastListAccounts.calls)
 	}
 	if adminSvc.lastListAccounts.platform != "openai" ||
 		adminSvc.lastListAccounts.accountType != "oauth" ||
-		adminSvc.lastListAccounts.status != "active" ||
+		adminSvc.lastListAccounts.status != "" ||
 		adminSvc.lastListAccounts.groupID != service.AccountListGroupUngrouped ||
 		adminSvc.lastListAccounts.privacyMode != "training_off" ||
 		adminSvc.lastListAccounts.planType != "free" ||
 		adminSvc.lastListAccounts.search != "free" ||
 		adminSvc.lastListAccounts.sortBy != "name" ||
 		adminSvc.lastListAccounts.sortOrder != "asc" {
-		t.Fatalf("filters = %#v", adminSvc.lastListAccounts)
+		t.Fatalf("status summary filters = %#v", adminSvc.lastListAccounts)
 	}
 
 	var payload struct {
 		Data struct {
 			StatusSummary struct {
+				Total         int `json:"total"`
 				Active        int `json:"active"`
 				Unschedulable int `json:"unschedulable"`
 			} `json:"status_summary"`
@@ -76,6 +77,9 @@ func TestAccountHandlerDashboardSummaryUsesCurrentFiltersAndSingleAccountFlow(t 
 	if payload.Data.StatusSummary.Active != 1 {
 		t.Fatalf("active = %d, want 1", payload.Data.StatusSummary.Active)
 	}
+	if payload.Data.StatusSummary.Total != 1 {
+		t.Fatalf("total = %d, want 1", payload.Data.StatusSummary.Total)
+	}
 	if payload.Data.StatusSummary.Unschedulable != 1 {
 		t.Fatalf("unschedulable = %d, want 1", payload.Data.StatusSummary.Unschedulable)
 	}
@@ -84,6 +88,54 @@ func TestAccountHandlerDashboardSummaryUsesCurrentFiltersAndSingleAccountFlow(t 
 	}
 	if payload.Data.ActionItemCounts.Critical != 1 {
 		t.Fatalf("critical action count = %d, want 1", payload.Data.ActionItemCounts.Critical)
+	}
+}
+
+func TestAccountHandlerDashboardSummaryStatusSummaryIgnoresStatusFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	adminSvc := newStubAdminService()
+	adminSvc.accounts = []service.Account{
+		{ID: 1, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: false},
+		{ID: 2, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true},
+	}
+
+	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, &service.AccountUsageService{}, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.GET("/api/v1/admin/accounts/dashboard-summary", handler.GetDashboardSummary)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/dashboard-summary?platform=openai&type=oauth&status=unschedulable", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if adminSvc.lastListAccounts.calls != 2 {
+		t.Fatalf("ListAccounts calls = %d, want 2", adminSvc.lastListAccounts.calls)
+	}
+	if adminSvc.lastListAccounts.status != "" {
+		t.Fatalf("last status filter = %q, want empty for status summary query", adminSvc.lastListAccounts.status)
+	}
+
+	var payload struct {
+		Data struct {
+			StatusSummary struct {
+				Total         int `json:"total"`
+				Active        int `json:"active"`
+				Unschedulable int `json:"unschedulable"`
+			} `json:"status_summary"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Data.StatusSummary.Total != 2 {
+		t.Fatalf("total = %d, want unfiltered account count 2", payload.Data.StatusSummary.Total)
+	}
+	if payload.Data.StatusSummary.Active != 2 || payload.Data.StatusSummary.Unschedulable != 1 {
+		t.Fatalf("status summary = %#v", payload.Data.StatusSummary)
 	}
 }
 

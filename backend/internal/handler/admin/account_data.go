@@ -547,9 +547,16 @@ func (h *AccountHandler) listAccountsFiltered(ctx context.Context, platform, acc
 }
 
 func (h *AccountHandler) listAccountsForCurrentFilters(c *gin.Context) ([]service.Account, error) {
+	return h.listAccountsForCurrentFiltersWithStatus(c, c.Query("status"))
+}
+
+func (h *AccountHandler) listAccountsForCurrentFiltersWithoutStatus(c *gin.Context) ([]service.Account, error) {
+	return h.listAccountsForCurrentFiltersWithStatus(c, "")
+}
+
+func (h *AccountHandler) listAccountsForCurrentFiltersWithStatus(c *gin.Context, status string) ([]service.Account, error) {
 	platform := c.Query("platform")
 	accountType := c.Query("type")
-	status := c.Query("status")
 	privacyMode := strings.TrimSpace(c.Query("privacy_mode"))
 	planType := strings.ToLower(strings.TrimSpace(c.Query("plan_type")))
 	search := strings.TrimSpace(c.Query("search"))

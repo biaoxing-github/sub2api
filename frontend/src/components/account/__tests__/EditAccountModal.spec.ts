@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { defineComponent } from 'vue'
+import { defineComponent, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 
 const { updateAccountMock, checkMixedChannelRiskMock } = vi.hoisted(() => ({
@@ -351,6 +351,39 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     // 用户未输入新 key 时，payload 不应带 api_key，由后端合并保留旧值
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty('api_key')
+  })
+
+  it('applies readonly load factor suggestion only after clicking apply', async () => {
+    const account = buildAccount()
+    account.load_factor = 3
+    account.load_factor_advice = {
+      suggested_load_factor: 12,
+      reasons: ['成功率 90%'],
+      availability_radar: {
+        status: 'fast_stable',
+        label: '快且稳'
+      },
+      path_health_samples: 8
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const loadFactorInput = wrapper.get<HTMLInputElement>('[data-testid="load-factor-input"]')
+
+    expect(loadFactorInput.element.value).toBe('3')
+    expect(wrapper.text()).toContain('admin.accounts.applyLoadFactorSuggestion')
+
+    await wrapper.get('button[title="成功率 90%"]').trigger('click')
+    await nextTick()
+    expect(loadFactorInput.element.value).toBe('12')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.load_factor).toBe(12)
   })
 
   it('allows saving apikey account against legacy backend without credentials_status', async () => {

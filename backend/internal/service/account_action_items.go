@@ -42,6 +42,7 @@ type AccountActionItemsResult struct {
 }
 
 type AccountStatusSummary struct {
+	Total             int `json:"total"`
 	Active            int `json:"active"`
 	RateLimited       int `json:"rate_limited"`
 	Error             int `json:"error"`
@@ -141,6 +142,7 @@ func BuildAccountDashboardSummary(accounts []Account, usageSummary *AccountUsage
 		UsageSummary:     usageSummary,
 		ActionItemCounts: actionItems.Counts,
 	}
+	summary.StatusSummary.Total = len(accounts)
 
 	for i := range accounts {
 		account := &accounts[i]

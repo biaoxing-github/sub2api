@@ -86,6 +86,7 @@ describe('admin accounts api usage summary', () => {
   })
 
   it('loads status summary totals without carrying the active status filter', async () => {
+    get.mockResolvedValueOnce({ data: { total: 12 } })
     get.mockResolvedValueOnce({ data: { total: 8 } })
     get.mockResolvedValueOnce({ data: { total: 2 } })
     get.mockResolvedValueOnce({ data: { total: 3 } })
@@ -105,7 +106,7 @@ describe('admin accounts api usage summary', () => {
       sort_order: 'asc',
     })
 
-    expect(get).toHaveBeenCalledTimes(6)
+    expect(get).toHaveBeenCalledTimes(7)
     expect(get).toHaveBeenNthCalledWith(1, '/admin/accounts', expect.objectContaining({
       params: expect.objectContaining({
         page: 1,
@@ -116,11 +117,12 @@ describe('admin accounts api usage summary', () => {
         search: 'free',
         plan_type: 'plus',
         privacy_mode: 'training_off',
-        status: 'active',
         lite: '1',
       })
     }))
+    expect(get.mock.calls[0][1]?.params?.status).toBeUndefined()
     expect(get.mock.calls.map((call) => call[1]?.params?.status)).toEqual([
+      undefined,
       'active',
       'rate_limited',
       'error',
@@ -129,6 +131,7 @@ describe('admin accounts api usage summary', () => {
       'unschedulable',
     ])
     expect(result).toEqual({
+      total: 12,
       active: 8,
       rate_limited: 2,
       error: 3,
@@ -142,6 +145,7 @@ describe('admin accounts api usage summary', () => {
     const response = {
       generated_at: '2026-05-24T10:00:00Z',
       status_summary: {
+        total: 10,
         active: 10,
         rate_limited: 2,
         error: 1,

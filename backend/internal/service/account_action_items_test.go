@@ -70,6 +70,9 @@ func TestBuildAccountDashboardSummaryCountsUnschedulableByRawSchedulableFlag(t *
 
 	summary := BuildAccountDashboardSummary(accounts, nil, now)
 
+	if summary.StatusSummary.Total != len(accounts) {
+		t.Fatalf("total = %d, want unique account count %d", summary.StatusSummary.Total, len(accounts))
+	}
 	if summary.StatusSummary.Unschedulable != 2 {
 		t.Fatalf("unschedulable = %d, want raw schedulable=false count 2", summary.StatusSummary.Unschedulable)
 	}

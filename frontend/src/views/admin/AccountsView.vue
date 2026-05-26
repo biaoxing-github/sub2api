@@ -295,8 +295,11 @@
             <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
           </template>
           <template #cell-name="{ row, value }">
-            <div class="flex flex-col">
-              <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+            <div class="flex min-w-0 flex-col gap-1">
+              <div class="flex min-w-0 flex-wrap items-center gap-1.5">
+                <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+                <AccountAvailabilityRadarBadge :advice="row.load_factor_advice" />
+              </div>
               <span
                 v-if="row.extra?.email_address || row.extra?.email || row.credentials?.email"
                 class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]"
@@ -676,6 +679,7 @@ import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
+import AccountAvailabilityRadarBadge from '@/components/account/AccountAvailabilityRadarBadge.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
@@ -1192,7 +1196,13 @@ const accountStatusSummaryItems = computed(() => {
   return items
 })
 
-const statusSummaryTotal = computed(() => accountStatusSummaryItems.value.reduce((sum, item) => sum + item.value, 0))
+const statusSummaryTotal = computed(() => {
+  const total = statusSummary.value?.total
+  if (typeof total === 'number') {
+    return total
+  }
+  return accountStatusSummaryItems.value.reduce((sum, item) => sum + item.value, 0)
+})
 
 const actionItemCounts = computed<AccountActionItemCounts>(() => {
   return actionItems.value.reduce<AccountActionItemCounts>((counts, item) => {

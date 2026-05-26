@@ -562,6 +562,58 @@ func TestUpstreamBalanceSnapshotFromExtra(t *testing.T) {
 	}
 }
 
+func TestUpstreamBalanceHighRiskDecision(t *testing.T) {
+	now := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		opts RealtimeBalanceCheckOptions
+		snap *UpstreamBalanceSnapshot
+		want bool
+	}{
+		{
+			name: "fresh healthy snapshot is low risk",
+			snap: &UpstreamBalanceSnapshot{Available: 5, OKCount: 1, UpdatedAt: &now},
+			want: false,
+		},
+		{
+			name: "low available balance is high risk",
+			snap: &UpstreamBalanceSnapshot{Available: 0.25, OKCount: 1, UpdatedAt: &now},
+			want: true,
+		},
+		{
+			name: "stale snapshot is high risk",
+			snap: &UpstreamBalanceSnapshot{Available: 5, OKCount: 1, UpdatedAt: upstreamBalanceTimePtr(now.Add(-2 * time.Hour))},
+			want: true,
+		},
+		{
+			name: "last failure is high risk",
+			snap: &UpstreamBalanceSnapshot{Available: 5, OKCount: 1, FailedCount: 1, Error: "last refresh failed", UpdatedAt: &now},
+			want: true,
+		},
+		{
+			name: "codex long session start is high risk",
+			opts: RealtimeBalanceCheckOptions{CodexLongSessionStart: true},
+			snap: &UpstreamBalanceSnapshot{Available: 5, OKCount: 1, UpdatedAt: &now},
+			want: true,
+		},
+		{
+			name: "missing snapshot is high risk",
+			snap: nil,
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := tt.opts
+			opts.Now = now
+			if got := isHighRiskRealtimeBalanceSnapshot(tt.snap, opts, 2); got != tt.want {
+				t.Fatalf("isHighRiskRealtimeBalanceSnapshot() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func assertFloatPtr(t *testing.T, got *float64, want float64) {
 	t.Helper()
 	if got == nil || *got != want {
@@ -569,4 +621,5 @@ func assertFloatPtr(t *testing.T, got *float64, want float64) {
 	}
 }
 
-func floatPtr(v float64) *float64 { return &v }
+func floatPtr(v float64) *float64                   { return &v }
+func upstreamBalanceTimePtr(v time.Time) *time.Time { return &v }

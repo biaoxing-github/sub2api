@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -276,6 +277,163 @@ func TestRealtimeBalanceCheckerTimeoutReturnsUnknownDecision(t *testing.T) {
 	}
 	if !errors.Is(context.DeadlineExceeded, context.DeadlineExceeded) || decision.Error == "" {
 		t.Fatalf("Error = %q, want timeout text", decision.Error)
+	}
+}
+
+func TestRealtimeBalanceCheckerSnapshotFirstUsesFreshSnapshotWithoutBlocking(t *testing.T) {
+	wait := make(chan struct{})
+	refresher := &fakeRealtimeBalanceRefresher{wait: wait, snapshot: &UpstreamBalanceSnapshot{Available: 5, OKCount: 1}}
+	checker := NewRealtimeBalanceChecker(refresher, RealtimeBalanceCheckerOptions{
+		Enabled:           true,
+		DrainThresholdUSD: 2,
+		StickyReserveUSD:  0.5,
+		Timeout:           time.Second,
+	})
+	now := time.Now().UTC()
+	account := &Account{
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra: map[string]any{
+			UpstreamBalanceAvailableKey:   4.0,
+			UpstreamBalanceOKCountKey:     1,
+			UpstreamBalanceUpdatedAtKey:   now.Format(time.RFC3339),
+			UpstreamBalanceKeyCountKey:    1,
+			UpstreamBalanceFailedCountKey: 0,
+		},
+	}
+
+	start := time.Now()
+	decision, err := checker.CheckAccountSnapshotFirst(context.Background(), account, RealtimeBalanceCheckOptions{
+		Now: now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("CheckAccountSnapshotFirst() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("CheckAccountSnapshotFirst() blocked for %v", elapsed)
+	}
+	if decision.State != RealtimeBalanceStateHealthy || decision.Available != 4 {
+		t.Fatalf("decision = %+v", decision)
+	}
+	if refresher.callCount() != 0 {
+		t.Fatalf("refresh calls = %d, want 0", refresher.callCount())
+	}
+	close(wait)
+}
+
+func TestRealtimeBalanceCheckerSnapshotFirstSchedulesAsyncRefreshForAgingSnapshot(t *testing.T) {
+	wait := make(chan struct{})
+	refresher := &fakeRealtimeBalanceRefresher{wait: wait, snapshot: &UpstreamBalanceSnapshot{Available: 5, OKCount: 1}}
+	checker := NewRealtimeBalanceChecker(refresher, RealtimeBalanceCheckerOptions{
+		Enabled:           true,
+		DrainThresholdUSD: 2,
+		StickyReserveUSD:  0.5,
+		Timeout:           time.Second,
+	})
+	now := time.Now().UTC()
+	account := &Account{
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra: map[string]any{
+			UpstreamBalanceAvailableKey: 5.0,
+			UpstreamBalanceOKCountKey:   1,
+			UpstreamBalanceUpdatedAtKey: now.Add(-10 * time.Minute).Format(time.RFC3339),
+		},
+	}
+
+	start := time.Now()
+	decision, err := checker.CheckAccountSnapshotFirst(context.Background(), account, RealtimeBalanceCheckOptions{
+		Now:               now,
+		AllowAsyncRefresh: true,
+	})
+	if err != nil {
+		t.Fatalf("CheckAccountSnapshotFirst() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("CheckAccountSnapshotFirst() blocked for %v", elapsed)
+	}
+	if decision.State != RealtimeBalanceStateHealthy || decision.Available != 5 {
+		t.Fatalf("decision = %+v", decision)
+	}
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		if refresher.callCount() == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if refresher.callCount() != 1 {
+		t.Fatalf("async refresh calls = %d, want 1", refresher.callCount())
+	}
+	close(wait)
+}
+
+func TestRealtimeBalanceCheckerSnapshotFirstPreflightsHighRisk(t *testing.T) {
+	refresher := &fakeRealtimeBalanceRefresher{snapshot: &UpstreamBalanceSnapshot{Available: 3, OKCount: 1}}
+	checker := NewRealtimeBalanceChecker(refresher, RealtimeBalanceCheckerOptions{
+		Enabled:           true,
+		DrainThresholdUSD: 2,
+		StickyReserveUSD:  0.5,
+		Timeout:           time.Second,
+	})
+	now := time.Now().UTC()
+	account := &Account{
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra: map[string]any{
+			UpstreamBalanceAvailableKey: 0.25,
+			UpstreamBalanceOKCountKey:   1,
+			UpstreamBalanceUpdatedAtKey: now.Format(time.RFC3339),
+		},
+	}
+
+	decision, err := checker.CheckAccountSnapshotFirst(context.Background(), account, RealtimeBalanceCheckOptions{
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("CheckAccountSnapshotFirst() error = %v", err)
+	}
+	if refresher.callCount() != 1 {
+		t.Fatalf("refresh calls = %d, want 1", refresher.callCount())
+	}
+	if decision.State != RealtimeBalanceStateHealthy || decision.Available != 3 {
+		t.Fatalf("decision = %+v", decision)
+	}
+}
+
+func TestRealtimeBalanceCheckerSnapshotFirstReturnsRiskOnPreflightFailure(t *testing.T) {
+	refresher := &fakeRealtimeBalanceRefresher{err: errors.New("upstream balance unreachable")}
+	checker := NewRealtimeBalanceChecker(refresher, RealtimeBalanceCheckerOptions{
+		Enabled:           true,
+		DrainThresholdUSD: 2,
+		StickyReserveUSD:  0.5,
+		Timeout:           time.Second,
+	})
+	now := time.Now().UTC()
+	account := &Account{
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra: map[string]any{
+			UpstreamBalanceAvailableKey: 0.25,
+			UpstreamBalanceOKCountKey:   1,
+			UpstreamBalanceUpdatedAtKey: now.Format(time.RFC3339),
+		},
+	}
+
+	decision, err := checker.CheckAccountSnapshotFirst(context.Background(), account, RealtimeBalanceCheckOptions{
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("CheckAccountSnapshotFirst() error = %v", err)
+	}
+	if decision.State != RealtimeBalanceStateUnknown {
+		t.Fatalf("State = %q, want %q", decision.State, RealtimeBalanceStateUnknown)
+	}
+	if !strings.Contains(decision.Error, "preflight") || !strings.Contains(decision.Error, "upstream balance unreachable") {
+		t.Fatalf("Error = %q, want explicit preflight risk", decision.Error)
 	}
 }
 

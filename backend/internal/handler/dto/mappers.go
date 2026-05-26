@@ -551,6 +551,19 @@ func AccountFromService(a *service.Account) *Account {
 	return out
 }
 
+func AccountLoadFactorAdviceFromService(advice service.AccountLoadFactorAdvice) *AccountLoadFactorAdvice {
+	return &AccountLoadFactorAdvice{
+		SuggestedLoadFactor: advice.SuggestedLoadFactor,
+		Reasons:             advice.Reasons,
+		AvailabilityRadar: AccountAvailabilityRadar{
+			Status:  advice.AvailabilityRadar.Status,
+			Label:   advice.AvailabilityRadar.Label,
+			Reasons: advice.AvailabilityRadar.Reasons,
+		},
+		PathHealthSamples: advice.PathHealthSamples,
+	}
+}
+
 func timeToUnixSeconds(value *time.Time) *int64 {
 	if value == nil {
 		return nil

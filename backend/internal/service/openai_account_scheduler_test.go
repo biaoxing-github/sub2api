@@ -1819,6 +1819,127 @@ func TestCalcLoadSkewByMoments_Branches(t *testing.T) {
 	require.GreaterOrEqual(t, calcLoadSkewByMoments(6, 20, 3), 0.0)
 }
 
+func TestOpenAIAccountScheduleProfileFromRequest(t *testing.T) {
+	require.Equal(t, openAIAccountScheduleProfileFastShort, openAIAccountScheduleProfileFromRequest(OpenAIAccountScheduleRequest{}))
+	require.Equal(t, openAIAccountScheduleProfileCompact, openAIAccountScheduleProfileFromRequest(OpenAIAccountScheduleRequest{RequireCompact: true}))
+	require.Equal(t, openAIAccountScheduleProfileCodexStable, openAIAccountScheduleProfileFromRequest(OpenAIAccountScheduleRequest{PreviousResponseID: "resp_123"}))
+	require.Equal(t, openAIAccountScheduleProfileCodexStable, openAIAccountScheduleProfileFromRequest(OpenAIAccountScheduleRequest{SessionHash: "session_123"}))
+	require.Equal(t, openAIAccountScheduleProfileProbe, openAIAccountScheduleProfileFromRequest(OpenAIAccountScheduleRequest{Profile: openAIAccountScheduleProfileProbe}))
+}
+
+func TestOpenAIAccountScheduleProfileWeightsPreferFastPathForShortRequests(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Queue = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT = 1
+	cfg.Gateway.OpenAIFastLane.TTFTWeight = 0.8
+	cfg.Gateway.OpenAIFastLane.HeaderWaitWeight = 0.2
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	fastWeights := svc.openAIProfileSchedulerWeights(OpenAIAccountScheduleRequest{})
+	stableWeights := svc.openAIProfileSchedulerWeights(OpenAIAccountScheduleRequest{PreviousResponseID: "resp_123"})
+
+	require.Greater(t, fastWeights.TTFT, stableWeights.TTFT)
+	require.Greater(t, stableWeights.ErrorRate, fastWeights.ErrorRate)
+	require.GreaterOrEqual(t, stableWeights.Queue, fastWeights.Queue)
+}
+
+func TestBuildOpenAIAccountLoadPlanHalfOpenOnlyForProbe(t *testing.T) {
+	groupID := int64(42)
+	accounts := []*Account{
+		{ID: 6101, Name: "half-open", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+		{ID: 6102, Name: "healthy", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIPathHealth.Enabled = true
+	cfg.Gateway.OpenAIPathHealth.CircuitBreakerEnabled = true
+	cfg.Gateway.OpenAIWS.LBTopK = 2
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Queue = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT = 0
+	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true, CircuitBreakerEnabled: true, Cooldown: time.Minute})
+	halfOpenKey := OpenAIPathHealthKeyForAccount(accounts[0], string(OpenAIUpstreamTransportHTTPSSE))
+	pathHealth.records[halfOpenKey] = &OpenAIPathHealthRecord{Key: halfOpenKey, State: OpenAIPathHealthStateHalfOpen, Samples: 3}
+
+	scheduler := &defaultOpenAIAccountScheduler{
+		service: &OpenAIGatewayService{
+			cfg:              cfg,
+			openaiPathHealth: pathHealth,
+		},
+		stats: newOpenAIAccountRuntimeStats(),
+	}
+	loadMap := map[int64]*AccountLoadInfo{
+		6101: {AccountID: 6101, LoadRate: 0},
+		6102: {AccountID: 6102, LoadRate: 0},
+	}
+
+	mainPlan := scheduler.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{GroupID: &groupID, RequiredTransport: OpenAIUpstreamTransportHTTPSSE}, accounts, loadMap)
+	require.Len(t, mainPlan.candidates, 1)
+	require.Equal(t, int64(6102), mainPlan.candidates[0].account.ID)
+
+	probePlan := scheduler.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{GroupID: &groupID, RequiredTransport: OpenAIUpstreamTransportHTTPSSE, Profile: openAIAccountScheduleProfileProbe}, accounts, loadMap)
+	require.Len(t, probePlan.candidates, 2)
+}
+
+func TestBuildOpenAIAccountLoadPlanProfilesScoreSpeedVsStability(t *testing.T) {
+	groupID := int64(42)
+	accounts := []*Account{
+		{ID: 6201, Name: "fast-flaky", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+		{ID: 6202, Name: "slow-stable", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.LBTopK = 2
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Queue = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT = 1
+	cfg.Gateway.OpenAIFastLane.Enabled = true
+	cfg.Gateway.OpenAIFastLane.TTFTWeight = 1
+	cfg.Gateway.OpenAIFastLane.HeaderWaitWeight = 0
+	scheduler := &defaultOpenAIAccountScheduler{
+		service: &OpenAIGatewayService{cfg: cfg},
+		stats:   newOpenAIAccountRuntimeStats(),
+	}
+	fastTTFT := 100
+	slowTTFT := 1200
+	for i := 0; i < 5; i++ {
+		scheduler.stats.report(6201, i%2 == 0, &fastTTFT)
+		scheduler.stats.report(6202, true, &slowTTFT)
+	}
+	loadMap := map[int64]*AccountLoadInfo{
+		6201: {AccountID: 6201, LoadRate: 0},
+		6202: {AccountID: 6202, LoadRate: 0},
+	}
+
+	fastPlan := scheduler.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{GroupID: &groupID, RequiredTransport: OpenAIUpstreamTransportHTTPSSE}, accounts, loadMap)
+	require.Len(t, fastPlan.candidates, 2)
+	fastPlanFastScore := findOpenAIAccountCandidateScore(t, fastPlan.candidates, 6201)
+	fastPlanStableScore := findOpenAIAccountCandidateScore(t, fastPlan.candidates, 6202)
+	require.Greater(t, fastPlanFastScore.score, fastPlanStableScore.score)
+
+	stablePlan := scheduler.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{GroupID: &groupID, PreviousResponseID: "resp_123", RequiredTransport: OpenAIUpstreamTransportHTTPSSE}, accounts, loadMap)
+	require.Len(t, stablePlan.candidates, 2)
+	stablePlanFastScore := findOpenAIAccountCandidateScore(t, stablePlan.candidates, 6201)
+	stablePlanStableScore := findOpenAIAccountCandidateScore(t, stablePlan.candidates, 6202)
+	require.Greater(t, stablePlanStableScore.score, stablePlanFastScore.score)
+}
+
+func findOpenAIAccountCandidateScore(t *testing.T, candidates []openAIAccountCandidateScore, accountID int64) openAIAccountCandidateScore {
+	t.Helper()
+	for _, candidate := range candidates {
+		if candidate.account != nil && candidate.account.ID == accountID {
+			return candidate
+		}
+	}
+	t.Fatalf("candidate %d not found", accountID)
+	return openAIAccountCandidateScore{}
+}
+
 func TestDefaultOpenAIAccountScheduler_ReportSwitchAndSnapshot(t *testing.T) {
 	schedulerAny := newDefaultOpenAIAccountScheduler(&OpenAIGatewayService{}, nil)
 	scheduler, ok := schedulerAny.(*defaultOpenAIAccountScheduler)

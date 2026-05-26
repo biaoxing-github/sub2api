@@ -928,6 +928,27 @@ export interface TempUnschedulableStatus {
   state?: TempUnschedulableState
 }
 
+export type AccountAvailabilityRadarStatus =
+  | 'fast_stable'
+  | 'slow_usable'
+  | 'unstable'
+  | 'balance_risk'
+  | 'cooldown'
+  | 'needs_probe'
+
+export interface AccountAvailabilityRadar {
+  status: AccountAvailabilityRadarStatus
+  label: string
+  reasons?: string[]
+}
+
+export interface AccountLoadFactorAdvice {
+  suggested_load_factor?: number | null
+  reasons?: string[]
+  availability_radar: AccountAvailabilityRadar
+  path_health_samples?: number
+}
+
 export interface Account {
   id: number
   name: string
@@ -956,6 +977,7 @@ export interface Account {
   proxy_id: number | null
   concurrency: number
   load_factor?: number | null
+  load_factor_advice?: AccountLoadFactorAdvice | null
   current_concurrency?: number // Real-time concurrency count from Redis
   priority: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
@@ -1201,6 +1223,7 @@ export interface AccountPoolUsageSummary {
 }
 
 export interface AccountStatusSummary {
+  total: number
   active: number
   rate_limited: number
   error: number

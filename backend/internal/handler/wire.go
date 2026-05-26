@@ -90,6 +90,7 @@ func ProvideAdminAccountHandler(
 	accountTestService *service.AccountTestService,
 	accountProbeService *service.AccountProbeService,
 	upstreamBalanceService *service.UpstreamBalanceService,
+	openAIGatewayService *service.OpenAIGatewayService,
 	concurrencyService *service.ConcurrencyService,
 	crsSyncService *service.CRSSyncService,
 	sessionLimitCache service.SessionLimitCache,
@@ -98,6 +99,7 @@ func ProvideAdminAccountHandler(
 ) *admin.AccountHandler {
 	h := admin.NewAccountHandler(adminService, oauthService, openaiOAuthService, geminiOAuthService, antigravityOAuthService, rateLimitService, accountUsageService, accountTestService, upstreamBalanceService, concurrencyService, crsSyncService, sessionLimitCache, rpmCache, tokenCacheInvalidator)
 	h.SetAccountProbeService(accountProbeService)
+	h.SetOpenAIPathHealthReader(openAIGatewayService)
 	return h
 }
 

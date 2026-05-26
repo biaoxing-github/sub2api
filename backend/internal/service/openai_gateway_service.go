@@ -1629,7 +1629,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if err != nil {
 			return nil, err
 		}
-		if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, account) {
+		if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, account, RealtimeBalanceCheckOptions{AllowAsyncRefresh: true}) {
 			return nil, ErrNoVerifiedRealtimeBalanceCandidate
 		}
 		result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
@@ -1689,7 +1689,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, requestedModel, requireCompact) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-					} else if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, account) {
+					} else if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, account, RealtimeBalanceCheckOptions{AllowAsyncRefresh: true}) {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else {
 						result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
@@ -1827,7 +1827,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel, requireCompact) {
 				continue
 			}
-			if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, fresh) {
+			if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, fresh, RealtimeBalanceCheckOptions{AllowAsyncRefresh: true}) {
 				continue
 			}
 			result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
@@ -1864,7 +1864,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel, requireCompact) {
 				continue
 			}
-			if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, fresh) {
+			if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, fresh, RealtimeBalanceCheckOptions{AllowAsyncRefresh: true}) {
 				continue
 			}
 			result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
@@ -1912,7 +1912,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel, requireCompact) {
 			continue
 		}
-		if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, fresh) {
+		if !s.hasVerifiedRealtimeBalanceForCandidate(ctx, fresh, RealtimeBalanceCheckOptions{AllowAsyncRefresh: true}) {
 			continue
 		}
 		return s.newSelectionResult(ctx, fresh, false, nil, &AccountWaitPlan{
@@ -1956,14 +1956,14 @@ func (s *OpenAIGatewayService) tryAcquireAccountSlot(ctx context.Context, accoun
 	return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
 }
 
-func (s *OpenAIGatewayService) hasVerifiedRealtimeBalanceForCandidate(ctx context.Context, account *Account) bool {
+func (s *OpenAIGatewayService) hasVerifiedRealtimeBalanceForCandidate(ctx context.Context, account *Account, options RealtimeBalanceCheckOptions) bool {
 	if s == nil || s.realtimeBalanceChecker == nil || account == nil {
 		return true
 	}
 	if account.Type != AccountTypeAPIKey || !account.IsOpenAI() {
 		return true
 	}
-	snapshot, err := s.realtimeBalanceChecker.CheckAccount(ctx, account)
+	snapshot, err := s.realtimeBalanceChecker.CheckAccountSnapshotFirst(ctx, account, options)
 	if err != nil {
 		return false
 	}

@@ -1446,11 +1446,25 @@
             @input="form.concurrency = Math.max(1, form.concurrency || 1)" />
         </div>
         <div>
-          <label class="input-label">{{ t('admin.accounts.loadFactor') }}</label>
+          <div class="mb-1 flex items-center justify-between gap-2">
+            <label class="input-label mb-0">{{ t('admin.accounts.loadFactor') }}</label>
+            <button
+              v-if="loadFactorSuggestion != null"
+              type="button"
+              class="rounded-md border border-primary-200 bg-primary-50 px-2 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100 dark:border-primary-800 dark:bg-primary-900/20 dark:text-primary-300 dark:hover:bg-primary-900/30"
+              :title="loadFactorSuggestionTitle"
+              @click="applyLoadFactorSuggestion"
+            >
+              {{ t('admin.accounts.applyLoadFactorSuggestion', { value: loadFactorSuggestion }) }}
+            </button>
+          </div>
           <input v-model.number="form.load_factor" type="number" min="1"
             class="input" :placeholder="String(form.concurrency || 1)"
+            data-testid="load-factor-input"
             @input="form.load_factor = (form.load_factor &amp;&amp; form.load_factor >= 1) ? form.load_factor : null" />
-          <p class="input-hint">{{ t('admin.accounts.loadFactorHint') }}</p>
+          <p class="input-hint">
+            {{ loadFactorSuggestionHint || t('admin.accounts.loadFactorHint') }}
+          </p>
         </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.priority') }}</label>
@@ -2780,6 +2794,23 @@ const openAICompactStatusKey = computed(() => {
   }
   return 'admin.accounts.openai.compactAuto'
 })
+const loadFactorSuggestion = computed(() => props.account?.load_factor_advice?.suggested_load_factor ?? null)
+const loadFactorSuggestionReasons = computed(() => props.account?.load_factor_advice?.reasons ?? [])
+const loadFactorSuggestionTitle = computed(() => loadFactorSuggestionReasons.value.join('\n'))
+const loadFactorSuggestionHint = computed(() => {
+  if (loadFactorSuggestion.value != null) {
+    return t('admin.accounts.loadFactorSuggestionHint', { value: loadFactorSuggestion.value })
+  }
+  const radar = props.account?.load_factor_advice?.availability_radar
+  if (radar?.status === 'needs_probe') {
+    return radar.label || t('admin.accounts.loadFactorInsufficientSamples')
+  }
+  return ''
+})
+const applyLoadFactorSuggestion = () => {
+  if (loadFactorSuggestion.value == null) return
+  form.load_factor = loadFactorSuggestion.value
+}
 
 // Computed: current preset mappings based on platform
 const presetMappings = computed(() => getPresetMappingsByPlatform(props.account?.platform || 'anthropic'))

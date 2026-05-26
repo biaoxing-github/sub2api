@@ -12,7 +12,10 @@ import (
 )
 
 const (
-	defaultRealtimeBalanceTimeout = 1200 * time.Millisecond
+	defaultRealtimeBalanceTimeout         = 1200 * time.Millisecond
+	defaultRealtimeBalanceSnapshotMaxAge  = 30 * time.Minute
+	defaultRealtimeBalanceAsyncRefreshAge = 5 * time.Minute
+	defaultRealtimeBalanceDrainUSD        = 1.0
 
 	RealtimeBalanceStateHealthy   = "healthy"
 	RealtimeBalanceStateDraining  = "draining"
@@ -40,6 +43,12 @@ type RealtimeBalanceDecision struct {
 	Error     string
 }
 
+type RealtimeBalanceCheckOptions struct {
+	Now                   time.Time
+	CodexLongSessionStart bool
+	AllowAsyncRefresh     bool
+}
+
 type RealtimeBalanceRefresher interface {
 	RefreshAccount(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error)
 }
@@ -62,6 +71,7 @@ type RealtimeBalanceChecker struct {
 	timeout           time.Duration
 	candidateTopN     int
 	group             singleflight.Group
+	asyncGroup        singleflight.Group
 }
 
 type realtimeBalanceRefresherFunc func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error)
@@ -75,11 +85,15 @@ func NewRealtimeBalanceChecker(refresher RealtimeBalanceRefresher, options Realt
 	if timeout <= 0 {
 		timeout = defaultRealtimeBalanceTimeout
 	}
+	drainThresholdUSD := options.DrainThresholdUSD
+	if drainThresholdUSD <= 0 {
+		drainThresholdUSD = defaultRealtimeBalanceDrainUSD
+	}
 	return &RealtimeBalanceChecker{
 		refresher:         refresher,
 		enabled:           options.Enabled,
 		enabledSet:        options.EnabledSet,
-		drainThresholdUSD: options.DrainThresholdUSD,
+		drainThresholdUSD: drainThresholdUSD,
 		stickyReserveUSD:  options.StickyReserveUSD,
 		timeout:           timeout,
 		candidateTopN:     options.CandidateTopN,
@@ -112,7 +126,35 @@ func (c *RealtimeBalanceChecker) CheckAccount(ctx context.Context, account *Acco
 	return decision, nil
 }
 
+func (c *RealtimeBalanceChecker) CheckAccountSnapshotFirst(ctx context.Context, account *Account, options RealtimeBalanceCheckOptions) (*RealtimeBalanceDecision, error) {
+	if c == nil || c.refresher == nil {
+		return nil, errors.New("realtime balance checker is not configured")
+	}
+	if account == nil || account.ID <= 0 {
+		return nil, errors.New("account is required")
+	}
+	if c.enabledSet && !c.enabled {
+		return c.unknownDecision(account.ID, "realtime balance checker disabled"), nil
+	}
+	now := options.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	snapshot := UpstreamBalanceSnapshotFromExtra(account.Extra)
+	if isHighRiskRealtimeBalanceSnapshot(snapshot, options, c.drainThresholdUSD) {
+		return c.preflightAccount(ctx, account)
+	}
+	if options.AllowAsyncRefresh && shouldRefreshRealtimeBalanceSnapshotAsync(snapshot, now) {
+		c.refreshAccountAsync(account)
+	}
+	return c.decisionFromSnapshot(account.ID, snapshot, nil), nil
+}
+
 func (c *RealtimeBalanceChecker) SelectFirstVerifiedCandidate(ctx context.Context, accounts []*Account, minAvailable float64) (*Account, *UpstreamBalanceSnapshot, error) {
+	return c.SelectFirstVerifiedCandidateWithOptions(ctx, accounts, minAvailable, RealtimeBalanceCheckOptions{AllowAsyncRefresh: true})
+}
+
+func (c *RealtimeBalanceChecker) SelectFirstVerifiedCandidateWithOptions(ctx context.Context, accounts []*Account, minAvailable float64, options RealtimeBalanceCheckOptions) (*Account, *UpstreamBalanceSnapshot, error) {
 	if c == nil {
 		return nil, nil, errors.New("realtime balance checker is not configured")
 	}
@@ -138,7 +180,7 @@ func (c *RealtimeBalanceChecker) SelectFirstVerifiedCandidate(ctx context.Contex
 		wg.Add(1)
 		go func(index int, candidate *Account) {
 			defer wg.Done()
-			decision, err := c.CheckAccount(ctx, candidate)
+			decision, err := c.CheckAccountSnapshotFirst(ctx, candidate, options)
 			if err != nil || decision == nil {
 				return
 			}
@@ -163,6 +205,33 @@ func (c *RealtimeBalanceChecker) SelectFirstVerifiedCandidate(ctx context.Contex
 		}
 	}
 	return nil, nil, ErrNoVerifiedRealtimeBalanceCandidate
+}
+
+func (c *RealtimeBalanceChecker) preflightAccount(ctx context.Context, account *Account) (*RealtimeBalanceDecision, error) {
+	decision, err := c.CheckAccount(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	if decision != nil && decision.State == RealtimeBalanceStateUnknown && decision.Error != "" {
+		decision.Error = "preflight balance refresh failed: " + decision.Error
+	}
+	return decision, nil
+}
+
+func (c *RealtimeBalanceChecker) refreshAccountAsync(account *Account) {
+	if c == nil || c.refresher == nil || account == nil || account.ID <= 0 {
+		return
+	}
+	accountCopy := *account
+	key := fmt.Sprintf("async:%d", account.ID)
+	go func() {
+		_, _, _ = c.asyncGroup.Do(key, func() (any, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+			defer cancel()
+			_, err := c.refresher.RefreshAccount(ctx, &accountCopy)
+			return nil, err
+		})
+	}()
 }
 
 func (c *RealtimeBalanceChecker) decisionFromSnapshot(accountID int64, snapshot *UpstreamBalanceSnapshot, err error) *RealtimeBalanceDecision {
@@ -222,4 +291,38 @@ func realtimeBalanceSourceFromSnapshot(snapshot *UpstreamBalanceSnapshot) string
 
 func IsVerifiedRealtimeBalanceSnapshot(snapshot *UpstreamBalanceSnapshot) bool {
 	return snapshot != nil && snapshot.OKCount > 0
+}
+
+func isHighRiskRealtimeBalanceSnapshot(snapshot *UpstreamBalanceSnapshot, options RealtimeBalanceCheckOptions, drainThresholdUSD float64) bool {
+	if options.CodexLongSessionStart {
+		return true
+	}
+	if !IsVerifiedRealtimeBalanceSnapshot(snapshot) {
+		return true
+	}
+	if snapshot.Error != "" || snapshot.FailedCount > 0 {
+		return true
+	}
+	if snapshot.Available < drainThresholdUSD {
+		return true
+	}
+	now := options.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if snapshot.UpdatedAt == nil || now.Sub(snapshot.UpdatedAt.UTC()) > defaultRealtimeBalanceSnapshotMaxAge {
+		return true
+	}
+	return false
+}
+
+func shouldRefreshRealtimeBalanceSnapshotAsync(snapshot *UpstreamBalanceSnapshot, now time.Time) bool {
+	if snapshot == nil || snapshot.UpdatedAt == nil {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	age := now.Sub(snapshot.UpdatedAt.UTC())
+	return age > defaultRealtimeBalanceAsyncRefreshAge && age <= defaultRealtimeBalanceSnapshotMaxAge
 }

@@ -325,8 +325,14 @@ export async function getStatusSummary(
   }
 ): Promise<AccountStatusSummary> {
   const { status: _status, sort_by: _sortBy, sort_order: _sortOrder, ...baseFilters } = filters ?? {}
-  const entries = await Promise.all(
-    accountStatusSummaryStatuses.map(async (status) => {
+  const [totalResult, entries] = await Promise.all([
+    list(1, 1, {
+      ...baseFilters,
+      lite: '1',
+    }, {
+      signal: options?.signal
+    }),
+    Promise.all(accountStatusSummaryStatuses.map(async (status) => {
       const result = await list(1, 1, {
         ...baseFilters,
         status,
@@ -335,9 +341,12 @@ export async function getStatusSummary(
         signal: options?.signal
       })
       return [status, result.total || 0] as const
-    })
-  )
-  return Object.fromEntries(entries) as unknown as AccountStatusSummary
+    }))
+  ])
+  return {
+    total: totalResult.total || 0,
+    ...Object.fromEntries(entries),
+  } as unknown as AccountStatusSummary
 }
 
 /**

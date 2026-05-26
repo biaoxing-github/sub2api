@@ -43,10 +43,12 @@ type OpenAIAccountScheduleRequest struct {
 	SessionHash             string
 	StickyAccountID         int64
 	PreviousResponseID      string
+	Profile                 string
 	RequestedModel          string
 	RequiredTransport       OpenAIUpstreamTransport
 	RequiredImageCapability OpenAIImagesCapability
 	RequireCompact          bool
+	CodexLongSessionStart   bool
 	ExcludedIDs             map[int64]struct{}
 }
 
@@ -695,9 +697,13 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		}
 	}
 	if s.service != nil && s.service.openAIPathHealthCircuitBreakerEnabled() {
+		profile := openAIAccountScheduleProfileFromRequest(req)
 		filteredByHealth := make([]openAIAccountCandidateScore, 0, len(candidates))
 		for _, candidate := range candidates {
 			if candidate.pathState == OpenAIPathHealthStateOpenCircuit {
+				continue
+			}
+			if candidate.pathState == OpenAIPathHealthStateHalfOpen && profile != openAIAccountScheduleProfileProbe {
 				continue
 			}
 			filteredByHealth = append(filteredByHealth, candidate)
@@ -753,7 +759,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 	}
 	plan.loadSkew = calcLoadSkewByMoments(loadRateSum, loadRateSumSquares, len(candidates))
 
-	weights := s.service.openAIWSSchedulerWeights()
+	weights := s.service.openAIProfileSchedulerWeights(req)
 	for i := range candidates {
 		item := &candidates[i]
 		priorityFactor := 1.0
@@ -782,6 +788,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 				item.score += s.service.openAIFastLaneExploreRatio()
 			}
 		}
+		item.score *= openAIPathHealthScoreMultiplier(item.pathState)
 	}
 	plan.candidates = candidates
 
@@ -884,7 +891,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 			compactBlocked = true
 			continue
 		}
-		if !s.hasVerifiedRealtimeBalance(ctx, fresh) {
+		if !s.hasVerifiedRealtimeBalance(ctx, fresh, req) {
 			continue
 		}
 		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
@@ -938,7 +945,10 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireVerifiedOpenAISelectionTopN(
 	if len(candidates) == 0 {
 		return nil, compactBlocked, false, nil
 	}
-	selected, _, err := s.service.realtimeBalanceChecker.SelectFirstVerifiedCandidate(ctx, candidates, 1)
+	selected, _, err := s.service.realtimeBalanceChecker.SelectFirstVerifiedCandidateWithOptions(ctx, candidates, 1, RealtimeBalanceCheckOptions{
+		CodexLongSessionStart: req.CodexLongSessionStart,
+		AllowAsyncRefresh:     true,
+	})
 	if err != nil {
 		if errors.Is(err, ErrNoVerifiedRealtimeBalanceCandidate) {
 			return nil, compactBlocked, true, nil
@@ -1086,7 +1096,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			compactBlocked = true
 			continue
 		}
-		if !s.hasVerifiedRealtimeBalance(ctx, fresh) {
+		if !s.hasVerifiedRealtimeBalance(ctx, fresh, req) {
 			continue
 		}
 		return &AccountSelectionResult{
@@ -1131,11 +1141,14 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 	return account.SupportsOpenAIImageCapability(req.RequiredImageCapability)
 }
 
-func (s *defaultOpenAIAccountScheduler) hasVerifiedRealtimeBalance(ctx context.Context, account *Account) bool {
+func (s *defaultOpenAIAccountScheduler) hasVerifiedRealtimeBalance(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest) bool {
 	if s == nil || s.service == nil {
 		return true
 	}
-	return s.service.hasVerifiedRealtimeBalanceForCandidate(ctx, account)
+	return s.service.hasVerifiedRealtimeBalanceForCandidate(ctx, account, RealtimeBalanceCheckOptions{
+		CodexLongSessionStart: req.CodexLongSessionStart,
+		AllowAsyncRefresh:     true,
+	})
 }
 
 func (s *OpenAIGatewayService) openAIPathHealthCircuitBreakerEnabled() bool {
@@ -1414,8 +1427,15 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		RequiredTransport:       requiredTransport,
 		RequiredImageCapability: requiredImageCapability,
 		RequireCompact:          requireCompact,
+		CodexLongSessionStart:   isOpenAICodexLongSessionStart(previousResponseID, sessionHash, stickyAccountID),
 		ExcludedIDs:             excludedIDs,
 	})
+}
+
+func isOpenAICodexLongSessionStart(previousResponseID string, sessionHash string, stickyAccountID int64) bool {
+	return strings.TrimSpace(sessionHash) != "" &&
+		strings.TrimSpace(previousResponseID) == "" &&
+		stickyAccountID <= 0
 }
 
 func cloneExcludedAccountIDs(excludedIDs map[int64]struct{}) map[int64]struct{} {
