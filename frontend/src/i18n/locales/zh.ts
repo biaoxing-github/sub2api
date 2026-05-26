@@ -3273,16 +3273,28 @@ export default {
       testConnection: '测试连接',
       batchTestNonApiKey: '批量测试非 API Key 账号',
       batchTest: {
+        records: '批量测试记录',
         total: '测试账号',
         success: '成功',
         failed: '失败',
         unauthorized: '401 / 掉线',
         running: '正在批量测试非 API Key 账号，默认并发 2，可能需要几十秒。',
+        submitted: '批量测试任务 #{id} 已提交，后台会继续运行。',
         empty: '暂无测试结果',
+        noRecords: '暂无批量测试记录',
+        createdAt: '创建时间',
         category: '分类',
         latency: '耗时',
         message: '信息',
         failedToRun: '批量测试连接失败',
+        failedToLoadRecords: '加载批量测试记录失败',
+        statuses: {
+          pending: '等待中',
+          running: '运行中',
+          success: '成功',
+          partial: '部分失败',
+          failed: '失败'
+        },
         categories: {
           ok: '正常',
           unauthorized: '401 / 授权失效',

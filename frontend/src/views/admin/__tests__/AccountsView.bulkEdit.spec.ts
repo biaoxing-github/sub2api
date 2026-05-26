@@ -9,6 +9,8 @@ const {
   getBatchTodayStats,
   batchRefresh,
   batchTestNonAPIKeyAccounts,
+  listBatchTestNonAPIKeyRuns,
+  getBatchTestNonAPIKeyRun,
   getUsageSummary,
   getStatusSummary,
   getDashboardSummary,
@@ -21,6 +23,8 @@ const {
   getBatchTodayStats: vi.fn(),
   batchRefresh: vi.fn(),
   batchTestNonAPIKeyAccounts: vi.fn(),
+  listBatchTestNonAPIKeyRuns: vi.fn(),
+  getBatchTestNonAPIKeyRun: vi.fn(),
   getUsageSummary: vi.fn(),
   getStatusSummary: vi.fn(),
   getDashboardSummary: vi.fn(),
@@ -39,6 +43,8 @@ vi.mock('@/api/admin', () => ({
       batchClearError: vi.fn(),
       batchRefresh,
       batchTestNonAPIKeyAccounts,
+      listBatchTestNonAPIKeyRuns,
+      getBatchTestNonAPIKeyRun,
       getUsageSummary,
       getStatusSummary,
       getDashboardSummary,
@@ -121,6 +127,8 @@ describe('admin AccountsView bulk edit scope', () => {
     getBatchTodayStats.mockReset()
     batchRefresh.mockReset()
     batchTestNonAPIKeyAccounts.mockReset()
+    listBatchTestNonAPIKeyRuns.mockReset()
+    getBatchTestNonAPIKeyRun.mockReset()
     getUsageSummary.mockReset()
     getStatusSummary.mockReset()
     getDashboardSummary.mockReset()
@@ -142,7 +150,9 @@ describe('admin AccountsView bulk edit scope', () => {
     })
     getBatchTodayStats.mockResolvedValue({ stats: {} })
     batchRefresh.mockResolvedValue({ total: 0, success: 0, failed: 0, errors: [] })
-    batchTestNonAPIKeyAccounts.mockResolvedValue({ total: 0, success_count: 0, failed_count: 0, unauthorized_count: 0, items: [] })
+    batchTestNonAPIKeyAccounts.mockResolvedValue({ id: 1, status: 'running', model_id: 'gpt-5.4', concurrency: 2, limit: 500, total: 0, success_count: 0, failed_count: 0, unauthorized_count: 0, created_at: '2026-05-26T10:00:00Z' })
+    listBatchTestNonAPIKeyRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
+    getBatchTestNonAPIKeyRun.mockResolvedValue({ id: 1, status: 'running', model_id: 'gpt-5.4', concurrency: 2, limit: 500, total: 0, success_count: 0, failed_count: 0, unauthorized_count: 0, created_at: '2026-05-26T10:00:00Z', items: [] })
     getUsageSummary.mockResolvedValue(null)
     getStatusSummary.mockResolvedValue({})
     getDashboardSummary.mockResolvedValue({
@@ -365,10 +375,28 @@ describe('admin AccountsView bulk edit scope', () => {
 
   it('runs batch connectivity tests for non-api-key accounts from tools menu', async () => {
     batchTestNonAPIKeyAccounts.mockResolvedValue({
+      id: 88,
+      status: 'running',
+      model_id: 'gpt-5.4',
+      concurrency: 2,
+      limit: 500,
+      total: 1,
+      success_count: 0,
+      failed_count: 0,
+      unauthorized_count: 0,
+      created_at: '2026-05-26T10:00:00Z',
+    })
+    getBatchTestNonAPIKeyRun.mockResolvedValue({
+      id: 88,
+      status: 'partial',
+      model_id: 'gpt-5.4',
+      concurrency: 2,
+      limit: 500,
       total: 1,
       success_count: 0,
       failed_count: 1,
       unauthorized_count: 1,
+      created_at: '2026-05-26T10:00:00Z',
       items: [{
         account_id: 7,
         account_name: 'dropped-oauth@example.com',
@@ -429,6 +457,95 @@ describe('admin AccountsView bulk edit scope', () => {
       concurrency: 2,
       limit: 500,
     }))
+    expect(wrapper.text()).toContain('admin.accounts.batchTest.submitted')
+  })
+
+  it('opens non-api-key batch test records from tools menu', async () => {
+    listBatchTestNonAPIKeyRuns.mockResolvedValue({
+      items: [{
+        id: 88,
+        status: 'partial',
+        model_id: 'gpt-5.4',
+        concurrency: 2,
+        limit: 500,
+        total: 1,
+        success_count: 0,
+        failed_count: 1,
+        unauthorized_count: 1,
+        created_at: '2026-05-26T10:00:00Z',
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    getBatchTestNonAPIKeyRun.mockResolvedValue({
+      id: 88,
+      status: 'partial',
+      model_id: 'gpt-5.4',
+      concurrency: 2,
+      limit: 500,
+      total: 1,
+      success_count: 0,
+      failed_count: 1,
+      unauthorized_count: 1,
+      created_at: '2026-05-26T10:00:00Z',
+      items: [{
+        account_id: 7,
+        account_name: 'dropped-oauth@example.com',
+        platform: 'openai',
+        type: 'oauth',
+        status: 'failed',
+        category: 'unauthorized',
+        error_message: 'Authentication failed (401)',
+        latency_ms: 42,
+      }],
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          BaseDialog: { template: '<section data-test="base-dialog"><slot /><slot name="footer" /></section>' },
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.get('button[title="admin.accounts.moreActions"]').trigger('click')
+    await wrapper.get('[data-test="batch-test-records"]').trigger('click')
+    await flushPromises()
+
+    expect(listBatchTestNonAPIKeyRuns).toHaveBeenCalledWith(1, 20)
+    expect(getBatchTestNonAPIKeyRun).toHaveBeenCalledWith(88)
     expect(wrapper.text()).toContain('dropped-oauth@example.com')
     expect(wrapper.text()).toContain('Authentication failed (401)')
   })

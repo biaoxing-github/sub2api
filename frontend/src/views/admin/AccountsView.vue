@@ -143,6 +143,12 @@
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.accounts.batchTestNonApiKey') }}</span>
                     </button>
+                    <button data-test="batch-test-records" class="account-tools-menu-item" @click="openBatchTestRecords">
+                      <span class="account-tools-menu-icon bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-300">
+                        <Icon name="clock" size="sm" />
+                      </span>
+                      <span class="flex-1 text-left">{{ t('admin.accounts.batchTest.records') }}</span>
+                    </button>
 
                     <div class="my-2 border-t border-gray-100 dark:border-gray-700"></div>
                     <div class="px-2 py-2">
@@ -654,34 +660,37 @@
       @close="showBatchNonAPIKeyDialog = false"
     >
       <div class="space-y-4">
+        <div v-if="batchNonAPIKeySubmittedRun" class="border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-700/40 dark:bg-emerald-900/20 dark:text-emerald-200">
+          {{ t('admin.accounts.batchTest.submitted', { id: batchNonAPIKeySubmittedRun.id }) }}
+        </div>
         <div class="grid gap-3 sm:grid-cols-4">
-          <div class="rounded-lg bg-emerald-50 px-3 py-2 dark:bg-emerald-900/20">
+          <div class="bg-emerald-50 px-3 py-2 dark:bg-emerald-900/20">
             <div class="text-xs text-emerald-700 dark:text-emerald-300">{{ t('admin.accounts.batchTest.total') }}</div>
-            <div class="text-xl font-semibold text-emerald-900 dark:text-emerald-100">{{ batchNonAPIKeyResult?.total ?? 0 }}</div>
+            <div class="text-xl font-semibold text-emerald-900 dark:text-emerald-100">{{ selectedBatchRun?.total ?? batchNonAPIKeySubmittedRun?.total ?? 0 }}</div>
           </div>
-          <div class="rounded-lg bg-green-50 px-3 py-2 dark:bg-green-900/20">
+          <div class="bg-green-50 px-3 py-2 dark:bg-green-900/20">
             <div class="text-xs text-green-700 dark:text-green-300">{{ t('admin.accounts.batchTest.success') }}</div>
-            <div class="text-xl font-semibold text-green-900 dark:text-green-100">{{ batchNonAPIKeyResult?.success_count ?? 0 }}</div>
+            <div class="text-xl font-semibold text-green-900 dark:text-green-100">{{ selectedBatchRun?.success_count ?? batchNonAPIKeySubmittedRun?.success_count ?? 0 }}</div>
           </div>
-          <div class="rounded-lg bg-red-50 px-3 py-2 dark:bg-red-900/20">
+          <div class="bg-red-50 px-3 py-2 dark:bg-red-900/20">
             <div class="text-xs text-red-700 dark:text-red-300">{{ t('admin.accounts.batchTest.failed') }}</div>
-            <div class="text-xl font-semibold text-red-900 dark:text-red-100">{{ batchNonAPIKeyResult?.failed_count ?? 0 }}</div>
+            <div class="text-xl font-semibold text-red-900 dark:text-red-100">{{ selectedBatchRun?.failed_count ?? batchNonAPIKeySubmittedRun?.failed_count ?? 0 }}</div>
           </div>
-          <div class="rounded-lg bg-amber-50 px-3 py-2 dark:bg-amber-900/20">
+          <div class="bg-amber-50 px-3 py-2 dark:bg-amber-900/20">
             <div class="text-xs text-amber-700 dark:text-amber-300">{{ t('admin.accounts.batchTest.unauthorized') }}</div>
-            <div class="text-xl font-semibold text-amber-900 dark:text-amber-100">{{ batchNonAPIKeyResult?.unauthorized_count ?? 0 }}</div>
+            <div class="text-xl font-semibold text-amber-900 dark:text-amber-100">{{ selectedBatchRun?.unauthorized_count ?? batchNonAPIKeySubmittedRun?.unauthorized_count ?? 0 }}</div>
           </div>
         </div>
 
-        <div v-if="batchNonAPIKeyTesting" class="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200">
+        <div v-if="batchNonAPIKeyTesting" class="flex items-center gap-2 border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200">
           <Icon name="refresh" size="sm" class="animate-spin" />
           <span>{{ t('admin.accounts.batchTest.running') }}</span>
         </div>
-        <div v-else-if="batchNonAPIKeyError" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-700/40 dark:bg-red-900/20 dark:text-red-200">
+        <div v-else-if="batchNonAPIKeyError" class="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-700/40 dark:bg-red-900/20 dark:text-red-200">
           {{ batchNonAPIKeyError }}
         </div>
 
-        <div class="max-h-[56vh] overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
+        <div class="max-h-[56vh] overflow-auto border border-gray-200 dark:border-gray-700">
           <table class="w-full min-w-[760px] text-sm">
             <thead class="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">
               <tr>
@@ -694,19 +703,19 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-if="!batchNonAPIKeyTesting && !batchNonAPIKeyResult?.items.length">
+              <tr v-if="!batchNonAPIKeyTesting && !selectedBatchRun?.items.length">
                 <td colspan="6" class="px-3 py-8 text-center text-gray-500 dark:text-gray-400">
                   {{ t('admin.accounts.batchTest.empty') }}
                 </td>
               </tr>
-              <tr v-for="item in batchNonAPIKeyResult?.items || []" :key="item.account_id" class="border-t border-gray-100 dark:border-gray-700">
+              <tr v-for="item in selectedBatchRun?.items || []" :key="item.account_id" class="border-t border-gray-100 dark:border-gray-700">
                 <td class="px-3 py-2">
                   <div class="font-medium text-gray-900 dark:text-gray-100">{{ item.account_name }}</div>
                   <div class="text-xs text-gray-500">#{{ item.account_id }}</div>
                 </td>
                 <td class="px-3 py-2 text-gray-600 dark:text-gray-300">{{ item.platform }} / {{ item.type }}</td>
                 <td class="px-3 py-2">
-                  <span :class="batchTestStatusClass(item.status)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium">
+                  <span :class="batchTestStatusClass(item.status)" class="inline-flex px-2 py-0.5 text-xs font-medium">
                     {{ batchTestStatusLabel(item.status) }}
                   </span>
                 </td>
@@ -722,7 +731,104 @@
       </div>
       <template #footer>
         <div class="flex justify-end">
+          <button class="btn btn-secondary mr-2" type="button" @click="openBatchTestRecords">
+            {{ t('admin.accounts.batchTest.records') }}
+          </button>
           <button class="btn btn-primary" type="button" @click="showBatchNonAPIKeyDialog = false">
+            {{ t('common.close') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+    <BaseDialog
+      :show="showBatchTestRecordsDialog"
+      :title="t('admin.accounts.batchTest.records')"
+      width="extra-wide"
+      @close="showBatchTestRecordsDialog = false"
+    >
+      <div class="grid gap-4 lg:grid-cols-[minmax(300px,0.95fr)_minmax(0,1.4fr)]">
+        <div class="max-h-[62vh] overflow-auto border border-gray-200 dark:border-gray-700">
+          <table class="w-full min-w-[560px] text-sm">
+            <thead class="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+              <tr>
+                <th class="px-3 py-2">ID</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.columns.status') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.batchTest.total') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.batchTest.createdAt') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="batchTestRecordsLoading">
+                <td colspan="4" class="px-3 py-8 text-center text-gray-500">{{ t('common.loading') }}</td>
+              </tr>
+              <tr v-else-if="!batchTestRecords.length">
+                <td colspan="4" class="px-3 py-8 text-center text-gray-500">{{ t('admin.accounts.batchTest.noRecords') }}</td>
+              </tr>
+              <tr
+                v-for="run in batchTestRecords"
+                :key="run.id"
+                class="cursor-pointer border-t border-gray-100 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/60"
+                :class="{ 'bg-emerald-50 dark:bg-emerald-900/20': selectedBatchRun?.id === run.id }"
+                @click="selectBatchTestRun(run.id)"
+              >
+                <td class="px-3 py-2 font-medium">#{{ run.id }}</td>
+                <td class="px-3 py-2">
+                  <span :class="batchRunStatusClass(run.status)" class="inline-flex px-2 py-0.5 text-xs font-medium">
+                    {{ batchRunStatusLabel(run.status) }}
+                  </span>
+                </td>
+                <td class="px-3 py-2">{{ run.success_count }}/{{ run.total }}</td>
+                <td class="px-3 py-2 text-gray-600 dark:text-gray-300">{{ formatDateTime(new Date(run.created_at)) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="max-h-[62vh] overflow-auto border border-gray-200 dark:border-gray-700">
+          <table class="w-full min-w-[760px] text-sm">
+            <thead class="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+              <tr>
+                <th class="px-3 py-2">{{ t('admin.accounts.account') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.columns.platformType') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.columns.status') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.batchTest.category') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.batchTest.latency') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.batchTest.message') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="batchTestDetailLoading">
+                <td colspan="6" class="px-3 py-8 text-center text-gray-500">{{ t('common.loading') }}</td>
+              </tr>
+              <tr v-else-if="!selectedBatchRun?.items.length">
+                <td colspan="6" class="px-3 py-8 text-center text-gray-500">{{ t('admin.accounts.batchTest.empty') }}</td>
+              </tr>
+              <tr v-for="item in selectedBatchRun?.items || []" :key="item.account_id" class="border-t border-gray-100 dark:border-gray-700">
+                <td class="px-3 py-2">
+                  <div class="font-medium text-gray-900 dark:text-gray-100">{{ item.account_name }}</div>
+                  <div class="text-xs text-gray-500">#{{ item.account_id }}</div>
+                </td>
+                <td class="px-3 py-2 text-gray-600 dark:text-gray-300">{{ item.platform }} / {{ item.type }}</td>
+                <td class="px-3 py-2">
+                  <span :class="batchTestStatusClass(item.status)" class="inline-flex px-2 py-0.5 text-xs font-medium">
+                    {{ batchTestStatusLabel(item.status) }}
+                  </span>
+                </td>
+                <td class="px-3 py-2">{{ batchTestCategoryLabel(item.category) }}</td>
+                <td class="px-3 py-2">{{ item.latency_ms ? `${item.latency_ms}ms` : '-' }}</td>
+                <td class="max-w-md px-3 py-2 text-gray-600 dark:text-gray-300">
+                  <span class="line-clamp-2" :title="item.error_message || item.message || ''">{{ item.error_message || item.message || '-' }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <button class="btn btn-secondary" type="button" @click="loadBatchTestRecords">
+            {{ t('common.refresh') }}
+          </button>
+          <button class="btn btn-primary" type="button" @click="showBatchTestRecordsDialog = false">
             {{ t('common.close') }}
           </button>
         </div>
@@ -740,7 +846,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
-import type { BatchTestNonAPIKeyAccountsResponse } from '@/api/admin/accounts'
+import type { BatchTestNonAPIKeyRun, BatchTestNonAPIKeyRunDetail } from '@/api/admin/accounts'
 import { useTableLoader } from '@/composables/useTableLoader'
 import { useSwipeSelect, type SwipeSelectVirtualContext } from '@/composables/useSwipeSelect'
 import { useTableSelection } from '@/composables/useTableSelection'
@@ -922,9 +1028,14 @@ const showTLSFingerprintProfiles = ref(false)
 const showActionItemsDialog = ref(false)
 const showBulkRefreshErrors = ref(false)
 const showBatchNonAPIKeyDialog = ref(false)
+const showBatchTestRecordsDialog = ref(false)
 const batchNonAPIKeyTesting = ref(false)
 const batchNonAPIKeyError = ref('')
-const batchNonAPIKeyResult = ref<BatchTestNonAPIKeyAccountsResponse | null>(null)
+const batchNonAPIKeySubmittedRun = ref<BatchTestNonAPIKeyRun | null>(null)
+const batchTestRecords = ref<BatchTestNonAPIKeyRun[]>([])
+const selectedBatchRun = ref<BatchTestNonAPIKeyRunDetail | null>(null)
+const batchTestRecordsLoading = ref(false)
+const batchTestDetailLoading = ref(false)
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -1634,7 +1745,9 @@ const isAnyModalOpen = computed(() => {
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
     showActionItemsDialog.value ||
-    showTLSFingerprintProfiles.value
+    showTLSFingerprintProfiles.value ||
+    showBatchNonAPIKeyDialog.value ||
+    showBatchTestRecordsDialog.value
   )
 })
 
@@ -2127,9 +2240,10 @@ const handleBatchTestNonAPIKey = async () => {
   showBatchNonAPIKeyDialog.value = true
   batchNonAPIKeyTesting.value = true
   batchNonAPIKeyError.value = ''
-  batchNonAPIKeyResult.value = null
+  batchNonAPIKeySubmittedRun.value = null
+  selectedBatchRun.value = null
   try {
-    batchNonAPIKeyResult.value = await adminAPI.accounts.batchTestNonAPIKeyAccounts({
+    const run = await adminAPI.accounts.batchTestNonAPIKeyAccounts({
       model_id: 'gpt-5.4',
       platform: params.platform || undefined,
       status: params.status || undefined,
@@ -2137,6 +2251,13 @@ const handleBatchTestNonAPIKey = async () => {
       concurrency: 2,
       limit: 500,
     })
+    batchNonAPIKeySubmittedRun.value = run
+    appStore.showSuccess(t('admin.accounts.batchTest.submitted', { id: run.id }))
+    window.setTimeout(() => {
+      selectBatchTestRun(run.id).catch((error) => {
+        console.error('Failed to load submitted batch test run:', error)
+      })
+    }, 1200)
   } catch (error: any) {
     console.error('Failed to batch test non-api-key accounts:', error)
     batchNonAPIKeyError.value = error?.response?.data?.message || error?.message || t('admin.accounts.batchTest.failedToRun')
@@ -2146,14 +2267,66 @@ const handleBatchTestNonAPIKey = async () => {
   }
 }
 
+const openBatchTestRecords = async () => {
+  showAccountToolsDropdown.value = false
+  showBatchNonAPIKeyDialog.value = false
+  showBatchTestRecordsDialog.value = true
+  await loadBatchTestRecords()
+}
+
+const loadBatchTestRecords = async () => {
+  batchTestRecordsLoading.value = true
+  batchNonAPIKeyError.value = ''
+  try {
+    const data = await adminAPI.accounts.listBatchTestNonAPIKeyRuns(1, 20)
+    batchTestRecords.value = data.items || []
+    if (!selectedBatchRun.value && batchTestRecords.value.length > 0) {
+      await selectBatchTestRun(batchTestRecords.value[0].id)
+    }
+  } catch (error: any) {
+    console.error('Failed to load non-api-key batch test records:', error)
+    batchNonAPIKeyError.value = error?.response?.data?.message || error?.message || t('admin.accounts.batchTest.failedToLoadRecords')
+    appStore.showError(batchNonAPIKeyError.value)
+  } finally {
+    batchTestRecordsLoading.value = false
+  }
+}
+
+const selectBatchTestRun = async (runId: number) => {
+  batchTestDetailLoading.value = true
+  try {
+    selectedBatchRun.value = await adminAPI.accounts.getBatchTestNonAPIKeyRun(runId)
+  } catch (error: any) {
+    console.error('Failed to load non-api-key batch test detail:', error)
+    appStore.showError(error?.response?.data?.message || error?.message || t('admin.accounts.batchTest.failedToLoadRecords'))
+  } finally {
+    batchTestDetailLoading.value = false
+  }
+}
+
 const batchTestStatusClass = (status: string) => {
-  return status === 'success'
-    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-200'
-    : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200'
+  if (status === 'success') return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-200'
+  if (status === 'running' || status === 'pending') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200'
+  return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200'
 }
 
 const batchTestStatusLabel = (status: string) => {
-  return status === 'success' ? t('admin.accounts.batchTest.success') : t('admin.accounts.batchTest.failed')
+  const key = `admin.accounts.batchTest.statuses.${status}`
+  const label = t(key)
+  return label === key ? status : label
+}
+
+const batchRunStatusClass = (status: string) => {
+  if (status === 'success') return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-200'
+  if (status === 'running') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200'
+  if (status === 'partial') return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
+  return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200'
+}
+
+const batchRunStatusLabel = (status: string) => {
+  const key = `admin.accounts.batchTest.statuses.${status}`
+  const label = t(key)
+  return label === key ? status : label
 }
 
 const batchTestCategoryLabel = (category: string) => {

@@ -18,6 +18,7 @@ vi.mock('@/api/client', () => ({
 
 import {
   batchAccountProbeRuns,
+  getBatchTestNonAPIKeyRun,
   batchTestNonAPIKeyAccounts,
   getAccountProbeRun,
   listAccountProbeRuns,
@@ -25,7 +26,8 @@ import {
   getDashboardSummary,
   getStatusSummary,
   getUsageSummary,
-  list
+  list,
+  listBatchTestNonAPIKeyRuns
 } from '@/api/admin/accounts'
 
 describe('admin accounts api usage summary', () => {
@@ -373,21 +375,16 @@ describe('admin accounts api usage summary', () => {
 
   it('starts batch non-api-key account connectivity tests', async () => {
     const response = {
+      id: 12,
+      status: 'running',
+      model_id: 'gpt-5.4',
+      concurrency: 2,
+      limit: 500,
       total: 2,
-      success_count: 1,
-      failed_count: 1,
-      unauthorized_count: 1,
-      items: [
-        {
-          account_id: 12,
-          account_name: 'openai-oauth',
-          platform: 'openai',
-          type: 'oauth',
-          status: 'failed',
-          category: 'unauthorized',
-          error_message: 'Authentication failed (401)',
-        },
-      ],
+      success_count: 0,
+      failed_count: 0,
+      unauthorized_count: 0,
+      created_at: '2026-05-26T10:00:00Z',
     }
     post.mockResolvedValue({ data: response })
 
@@ -402,9 +399,34 @@ describe('admin accounts api usage summary', () => {
       concurrency: 2,
       platform: 'openai',
     }, {
-      timeout: 300000,
+      timeout: 30000,
       signal: undefined,
     })
     expect(result).toEqual(response)
+  })
+
+  it('lists and loads non-api-key batch test history', async () => {
+    const listResponse = {
+      items: [{ id: 12, status: 'running', model_id: 'gpt-5.4', concurrency: 2, limit: 500, total: 3, success_count: 1, failed_count: 0, unauthorized_count: 0, created_at: '2026-05-26T10:00:00Z' }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    }
+    const detailResponse = {
+      ...listResponse.items[0],
+      items: [{ account_id: 7, account_name: 'oauth-a', platform: 'openai', type: 'oauth', status: 'success', category: 'ok', latency_ms: 42 }],
+    }
+    get.mockResolvedValueOnce({ data: listResponse }).mockResolvedValueOnce({ data: detailResponse })
+
+    await expect(listBatchTestNonAPIKeyRuns(1, 20, { status: 'running', keyword: 'openai' })).resolves.toEqual(listResponse)
+    await expect(getBatchTestNonAPIKeyRun(12)).resolves.toEqual(detailResponse)
+
+    expect(get).toHaveBeenNthCalledWith(1, '/admin/accounts/batch-test-runs', {
+      params: { page: 1, page_size: 20, status: 'running', keyword: 'openai' },
+      signal: undefined,
+    })
+    expect(get).toHaveBeenNthCalledWith(2, '/admin/accounts/batch-test-runs/12', {
+      signal: undefined,
+    })
   })
 })

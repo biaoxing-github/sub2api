@@ -54,6 +54,7 @@ type AccountHandler struct {
 	accountUsageService     *service.AccountUsageService
 	accountTestService      *service.AccountTestService
 	batchAccountTester      batchAccountTester
+	accountBatchTestRepo    service.AccountBatchTestRepository
 	accountProbeService     accountProbeRunner
 	upstreamBalanceService  *service.UpstreamBalanceService
 	concurrencyService      *service.ConcurrencyService
@@ -119,6 +120,10 @@ func NewAccountHandler(
 
 func (h *AccountHandler) SetAccountProbeService(accountProbeService accountProbeRunner) {
 	h.accountProbeService = accountProbeService
+}
+
+func (h *AccountHandler) SetAccountBatchTestRepository(repo service.AccountBatchTestRepository) {
+	h.accountBatchTestRepo = repo
 }
 
 func (h *AccountHandler) SetOpenAIPathHealthReader(reader accountPathHealthReader) {
@@ -913,26 +918,6 @@ type BatchTestNonAPIKeyAccountsRequest struct {
 	Limit       int    `json:"limit"`
 }
 
-type BatchTestNonAPIKeyAccountItem struct {
-	AccountID    int64  `json:"account_id"`
-	AccountName  string `json:"account_name"`
-	Platform     string `json:"platform"`
-	Type         string `json:"type"`
-	Status       string `json:"status"`
-	Category     string `json:"category"`
-	Message      string `json:"message,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	LatencyMs    int64  `json:"latency_ms"`
-}
-
-type BatchTestNonAPIKeyAccountsResponse struct {
-	Total             int                             `json:"total"`
-	SuccessCount      int                             `json:"success_count"`
-	FailedCount       int                             `json:"failed_count"`
-	UnauthorizedCount int                             `json:"unauthorized_count"`
-	Items             []BatchTestNonAPIKeyAccountItem `json:"items"`
-}
-
 type CreateAccountProbeRunRequest struct {
 	Mode                  string `json:"mode"`
 	Model                 string `json:"model"`
@@ -1001,6 +986,10 @@ func (h *AccountHandler) BatchTestNonAPIKey(c *gin.Context) {
 		response.InternalError(c, "Account test service is not configured")
 		return
 	}
+	if h.accountBatchTestRepo == nil {
+		response.InternalError(c, "Account batch test repository is not configured")
+		return
+	}
 	var req BatchTestNonAPIKeyAccountsRequest
 	_ = c.ShouldBindJSON(&req)
 	platform := strings.TrimSpace(req.Platform)
@@ -1031,62 +1020,171 @@ func (h *AccountHandler) BatchTestNonAPIKey(c *gin.Context) {
 		targets = append(targets, account)
 	}
 
-	items := make([]BatchTestNonAPIKeyAccountItem, len(targets))
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	for i := range targets {
-		i := i
-		account := targets[i]
-		items[i] = BatchTestNonAPIKeyAccountItem{
+	now := time.Now()
+	run := service.AccountBatchTestRun{
+		Status:       service.AccountBatchTestStatusRunning,
+		ModelID:      strings.TrimSpace(req.ModelID),
+		Platform:     platform,
+		StatusFilter: status,
+		Search:       search,
+		Concurrency:  concurrency,
+		Limit:        limit,
+		Total:        len(targets),
+		CreatedAt:    now,
+		StartedAt:    &now,
+	}
+	if err := h.accountBatchTestRepo.CreateAccountBatchTestRun(c.Request.Context(), &run); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	items := make([]service.AccountBatchTestItem, len(targets))
+	for i, account := range targets {
+		items[i] = service.AccountBatchTestItem{
+			RunID:       run.ID,
 			AccountID:   account.ID,
 			AccountName: account.Name,
 			Platform:    account.Platform,
 			Type:        account.Type,
+			Status:      service.AccountBatchTestItemStatusPending,
+			CreatedAt:   now,
 		}
+	}
+	if err := h.accountBatchTestRepo.CreateAccountBatchTestItems(c.Request.Context(), run.ID, items); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	go h.runBatchTestNonAPIKeyBackground(run, items)
+	response.Accepted(c, run)
+}
+
+func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatchTestRun, items []service.AccountBatchTestItem) {
+	if h.batchAccountTester == nil || h.accountBatchTestRepo == nil {
+		return
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			finishedAt := time.Now()
+			run.Status = service.AccountBatchTestStatusFailed
+			run.ErrorMessage = fmt.Sprint(recovered)
+			run.FinishedAt = &finishedAt
+			_ = h.accountBatchTestRepo.UpdateAccountBatchTestRun(context.Background(), &run)
+			slog.Error("account_batch_test_background_panic", "run_id", run.ID, "recover", recovered)
+		}
+	}()
+	concurrency := run.Concurrency
+	if concurrency <= 0 {
+		concurrency = 2
+	}
+	if concurrency > 5 {
+		concurrency = 5
+	}
+	modelID := strings.TrimSpace(run.ModelID)
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i := range items {
+		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			result, runErr := h.batchAccountTester.RunTestBackground(c.Request.Context(), account.ID, strings.TrimSpace(req.ModelID))
+			startedAt := time.Now()
+			items[i].Status = service.AccountBatchTestItemStatusRunning
+			items[i].StartedAt = &startedAt
+			_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
+
+			result, runErr := h.batchAccountTester.RunTestBackground(context.Background(), items[i].AccountID, modelID)
+			finishedAt := time.Now()
+			items[i].FinishedAt = &finishedAt
 			if runErr != nil {
-				items[i].Status = "failed"
+				items[i].Status = service.AccountBatchTestItemStatusFailed
 				items[i].Category = classifyAccountTestError(runErr.Error())
 				items[i].ErrorMessage = runErr.Error()
+				_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
 				return
 			}
 			if result == nil {
-				items[i].Status = "failed"
+				items[i].Status = service.AccountBatchTestItemStatusFailed
 				items[i].Category = "error"
 				items[i].ErrorMessage = "empty test result"
+				_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
 				return
 			}
-			items[i].LatencyMs = result.LatencyMs
-			if result.Status == "success" {
-				items[i].Status = "success"
+			items[i].LatencyMs = int(result.LatencyMs)
+			if result.Status == service.AccountBatchTestItemStatusSuccess {
+				items[i].Status = service.AccountBatchTestItemStatusSuccess
 				items[i].Category = "ok"
 				items[i].Message = result.ResponseText
+				_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
 				return
 			}
-			items[i].Status = "failed"
+			items[i].Status = service.AccountBatchTestItemStatusFailed
 			items[i].Category = classifyAccountTestError(result.ErrorMessage)
 			items[i].ErrorMessage = result.ErrorMessage
+			_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
 		}()
 	}
 	wg.Wait()
 
-	out := BatchTestNonAPIKeyAccountsResponse{Total: len(items), Items: items}
+	run.Total = len(items)
 	for _, item := range items {
-		if item.Status == "success" {
-			out.SuccessCount++
+		if item.Status == service.AccountBatchTestItemStatusSuccess {
+			run.SuccessCount++
 			continue
 		}
-		out.FailedCount++
+		run.FailedCount++
 		if item.Category == "unauthorized" {
-			out.UnauthorizedCount++
+			run.UnauthorizedCount++
 		}
 	}
-	response.Success(c, out)
+	if run.FailedCount == 0 {
+		run.Status = service.AccountBatchTestStatusSuccess
+	} else if run.SuccessCount == 0 {
+		run.Status = service.AccountBatchTestStatusFailed
+	} else {
+		run.Status = service.AccountBatchTestStatusPartial
+	}
+	finishedAt := time.Now()
+	run.FinishedAt = &finishedAt
+	_ = h.accountBatchTestRepo.UpdateAccountBatchTestRun(context.Background(), &run)
+}
+
+func (h *AccountHandler) ListBatchTestRuns(c *gin.Context) {
+	if h.accountBatchTestRepo == nil {
+		response.InternalError(c, "Account batch test repository is not configured")
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	items, total, err := h.accountBatchTestRepo.ListAccountBatchTestRuns(c.Request.Context(), service.AccountBatchTestRunFilter{
+		Page:     page,
+		PageSize: pageSize,
+		Status:   c.Query("status"),
+		Keyword:  c.Query("keyword"),
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, service.AccountBatchTestRunPage{Items: items, Total: total, Page: page, PageSize: pageSize})
+}
+
+func (h *AccountHandler) GetBatchTestRun(c *gin.Context) {
+	if h.accountBatchTestRepo == nil {
+		response.InternalError(c, "Account batch test repository is not configured")
+		return
+	}
+	runID, err := strconv.ParseInt(c.Param("run_id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid run ID")
+		return
+	}
+	run, items, err := h.accountBatchTestRepo.GetAccountBatchTestRun(c.Request.Context(), runID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, service.AccountBatchTestRunDetail{AccountBatchTestRun: *run, Items: items})
 }
 
 func classifyAccountTestError(message string) string {

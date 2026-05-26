@@ -44,23 +44,50 @@ export interface BatchTestNonAPIKeyAccountsRequest {
 }
 
 export interface BatchTestNonAPIKeyAccountItem {
+  id?: number
+  run_id?: number
   account_id: number
   account_name: string
   platform: string
   type: string
-  status: 'success' | 'failed' | string
+  status: 'pending' | 'running' | 'success' | 'failed' | string
   category: 'ok' | 'unauthorized' | 'timeout' | 'reauth_required' | 'error' | string
   message?: string
   error_message?: string
   latency_ms?: number
+  created_at?: string
+  started_at?: string
+  finished_at?: string
 }
 
-export interface BatchTestNonAPIKeyAccountsResponse {
+export interface BatchTestNonAPIKeyRun {
+  id: number
+  status: 'running' | 'success' | 'partial' | 'failed' | string
+  model_id: string
+  platform?: string
+  status_filter?: string
+  search?: string
+  concurrency: number
+  limit: number
   total: number
   success_count: number
   failed_count: number
   unauthorized_count: number
+  error_message?: string
+  created_at: string
+  started_at?: string
+  finished_at?: string
+}
+
+export interface BatchTestNonAPIKeyRunDetail extends BatchTestNonAPIKeyRun {
   items: BatchTestNonAPIKeyAccountItem[]
+}
+
+export interface BatchTestNonAPIKeyRunsResponse {
+  items: BatchTestNonAPIKeyRun[]
+  total: number
+  page: number
+  page_size: number
 }
 
 export interface AccountUsageSummaryFilters {
@@ -268,15 +295,43 @@ export async function testAccount(id: number): Promise<{
 export async function batchTestNonAPIKeyAccounts(
   request: BatchTestNonAPIKeyAccountsRequest,
   options?: FetchOptions
-): Promise<BatchTestNonAPIKeyAccountsResponse> {
-  const { data } = await apiClient.post<BatchTestNonAPIKeyAccountsResponse>(
+): Promise<BatchTestNonAPIKeyRun> {
+  const { data } = await apiClient.post<BatchTestNonAPIKeyRun>(
     '/admin/accounts/batch-test-non-apikey',
     request,
     {
-      timeout: 300000,
+      timeout: 30000,
       signal: options?.signal,
     }
   )
+  return data
+}
+
+export async function listBatchTestNonAPIKeyRuns(
+  page: number = 1,
+  pageSize: number = 20,
+  filters?: { status?: string; keyword?: string },
+  options?: FetchOptions
+): Promise<BatchTestNonAPIKeyRunsResponse> {
+  const { data } = await apiClient.get<BatchTestNonAPIKeyRunsResponse>('/admin/accounts/batch-test-runs', {
+    params: {
+      page,
+      page_size: pageSize,
+      status: filters?.status || undefined,
+      keyword: filters?.keyword || undefined,
+    },
+    signal: options?.signal,
+  })
+  return data
+}
+
+export async function getBatchTestNonAPIKeyRun(
+  runId: number,
+  options?: FetchOptions
+): Promise<BatchTestNonAPIKeyRunDetail> {
+  const { data } = await apiClient.get<BatchTestNonAPIKeyRunDetail>(`/admin/accounts/batch-test-runs/${runId}`, {
+    signal: options?.signal,
+  })
   return data
 }
 
@@ -909,6 +964,8 @@ export const accountsAPI = {
   toggleStatus,
   testAccount,
   batchTestNonAPIKeyAccounts,
+  listBatchTestNonAPIKeyRuns,
+  getBatchTestNonAPIKeyRun,
   createProbeRun,
   listProbeRuns,
   getProbeRun,

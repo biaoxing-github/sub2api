@@ -3278,16 +3278,28 @@ export default {
       testConnection: 'Test Connection',
       batchTestNonApiKey: 'Batch Test Non-API-Key Accounts',
       batchTest: {
+        records: 'Batch Test Records',
         total: 'Tested Accounts',
         success: 'Success',
         failed: 'Failed',
         unauthorized: '401 / Dropped',
         running: 'Batch testing non-API-key accounts with concurrency 2. This may take a little while.',
+        submitted: 'Batch test task #{id} was submitted and will continue in the background.',
         empty: 'No test results yet',
+        noRecords: 'No batch test records yet',
+        createdAt: 'Created At',
         category: 'Category',
         latency: 'Latency',
         message: 'Message',
         failedToRun: 'Failed to run batch connection test',
+        failedToLoadRecords: 'Failed to load batch test records',
+        statuses: {
+          pending: 'Pending',
+          running: 'Running',
+          success: 'Success',
+          partial: 'Partial',
+          failed: 'Failed'
+        },
         categories: {
           ok: 'OK',
           unauthorized: '401 / Auth invalid',
