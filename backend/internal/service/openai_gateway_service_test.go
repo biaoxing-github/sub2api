@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -539,7 +538,7 @@ func TestOpenAISelectAccountWithLoadAwareness_StickyUnschedulableClearsSession(t
 	}
 }
 
-func TestOpenAISelectAccountWithLoadAwareness_RequiresVerifiedRealtimeBalance(t *testing.T) {
+func TestOpenAISelectAccountWithLoadAwareness_DoesNotPrecheckRealtimeBalance(t *testing.T) {
 	groupID := int64(1)
 	repo := stubOpenAIAccountRepo{
 		accounts: []Account{
@@ -551,10 +550,7 @@ func TestOpenAISelectAccountWithLoadAwareness_RequiresVerifiedRealtimeBalance(t 
 	checks := make([]int64, 0, 2)
 	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
 		checks = append(checks, account.ID)
-		if account.ID == 1 {
-			return &UpstreamBalanceSnapshot{Available: 10, OKCount: 0, Error: "unverified"}, nil
-		}
-		return &UpstreamBalanceSnapshot{Available: 1.5, OKCount: 1}, nil
+		return &UpstreamBalanceSnapshot{Available: 0, OKCount: 1}, nil
 	}), RealtimeBalanceCheckerOptions{Timeout: time.Second})
 
 	svc := &OpenAIGatewayService{
@@ -568,12 +564,40 @@ func TestOpenAISelectAccountWithLoadAwareness_RequiresVerifiedRealtimeBalance(t 
 	if err != nil {
 		t.Fatalf("SelectAccountWithLoadAwareness error: %v", err)
 	}
-	if selection == nil || selection.Account == nil || selection.Account.ID != 2 {
-		t.Fatalf("expected account 2, got %+v", selection)
+	if selection == nil || selection.Account == nil || selection.Account.ID != 1 {
+		t.Fatalf("expected account 1, got %+v", selection)
 	}
-	if !reflect.DeepEqual(checks, []int64{1, 2}) {
+	if len(checks) != 0 {
 		t.Fatalf("checks = %+v", checks)
 	}
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+func TestOpenAISelectAccountWithLoadAwareness_AllowsOnlyAPIKeyWhenRealtimeBalanceUnknown(t *testing.T) {
+	groupID := int64(1)
+	repo := stubOpenAIAccountRepo{
+		accounts: []Account{
+			{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+		},
+	}
+	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
+		return &UpstreamBalanceSnapshot{Available: 10, OKCount: 0, Error: "huanmin balance endpoint did not return a verified amount"}, nil
+	}), RealtimeBalanceCheckerOptions{Timeout: time.Second})
+
+	svc := &OpenAIGatewayService{
+		accountRepo:            repo,
+		cache:                  &stubGatewayCache{},
+		concurrencyService:     NewConcurrencyService(stubConcurrencyCache{}),
+		realtimeBalanceChecker: checker,
+	}
+
+	selection, err := svc.SelectAccountWithLoadAwareness(context.Background(), &groupID, "", "gpt-4", nil)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(1), selection.Account.ID)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}

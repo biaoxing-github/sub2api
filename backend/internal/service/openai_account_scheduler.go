@@ -3,7 +3,6 @@ package service
 import (
 	"container/heap"
 	"context"
-	"errors"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
@@ -881,9 +880,6 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 	req OpenAIAccountScheduleRequest,
 	selectionOrder []openAIAccountCandidateScore,
 ) (*AccountSelectionResult, bool, error) {
-	if result, compactBlocked, attempted, err := s.tryAcquireVerifiedOpenAISelectionTopN(ctx, req, selectionOrder); attempted {
-		return result, compactBlocked, err
-	}
 	compactBlocked := false
 	for i := 0; i < len(selectionOrder); i++ {
 		candidate := selectionOrder[i]
@@ -897,9 +893,6 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 		}
 		if req.RequireCompact && openAICompactSupportTier(fresh) == 0 {
 			compactBlocked = true
-			continue
-		}
-		if !s.hasVerifiedRealtimeBalance(ctx, fresh, req) {
 			continue
 		}
 		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
@@ -918,70 +911,6 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 		}
 	}
 	return nil, compactBlocked, nil
-}
-
-func (s *defaultOpenAIAccountScheduler) tryAcquireVerifiedOpenAISelectionTopN(
-	ctx context.Context,
-	req OpenAIAccountScheduleRequest,
-	selectionOrder []openAIAccountCandidateScore,
-) (*AccountSelectionResult, bool, bool, error) {
-	if s == nil || s.service == nil || s.service.realtimeBalanceChecker == nil || len(selectionOrder) == 0 {
-		return nil, false, false, nil
-	}
-	topN := s.service.realtimeBalanceChecker.candidateTopN
-	if topN <= 1 {
-		return nil, false, false, nil
-	}
-	candidates := make([]*Account, 0, topN)
-	compactBlocked := false
-	for i := 0; i < len(selectionOrder) && len(candidates) < topN; i++ {
-		candidate := selectionOrder[i]
-		fresh := s.service.resolveFreshSchedulableOpenAIAccount(ctx, candidate.account, req.RequestedModel, false)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
-			continue
-		}
-		fresh = s.service.recheckSelectedOpenAIAccountFromDB(ctx, fresh, req.RequestedModel, false)
-		if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
-			continue
-		}
-		if req.RequireCompact && openAICompactSupportTier(fresh) == 0 {
-			compactBlocked = true
-			continue
-		}
-		candidates = append(candidates, fresh)
-	}
-	if len(candidates) == 0 {
-		return nil, compactBlocked, false, nil
-	}
-	selected, _, diagnostic, err := s.service.realtimeBalanceChecker.SelectFirstVerifiedCandidateWithDiagnostics(ctx, candidates, 1, RealtimeBalanceCheckOptions{
-		CodexLongSessionStart: req.CodexLongSessionStart,
-		AllowAsyncRefresh:     true,
-	})
-	s.applyRealtimeBalanceConfirmDiagnostic(ctx, diagnostic)
-	if err != nil {
-		if errors.Is(err, ErrNoVerifiedRealtimeBalanceCandidate) {
-			return nil, compactBlocked, true, nil
-		}
-		return nil, compactBlocked, true, err
-	}
-	if selected == nil {
-		return nil, compactBlocked, true, nil
-	}
-	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, selected.ID, selected.Concurrency)
-	if acquireErr != nil {
-		return nil, compactBlocked, true, acquireErr
-	}
-	if result == nil || !result.Acquired {
-		return nil, compactBlocked, true, nil
-	}
-	if req.SessionHash != "" {
-		_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, selected.ID)
-	}
-	return &AccountSelectionResult{
-		Account:     selected,
-		Acquired:    true,
-		ReleaseFunc: result.ReleaseFunc,
-	}, compactBlocked, true, nil
 }
 
 func (s *defaultOpenAIAccountScheduler) applyRealtimeBalanceConfirmDiagnostic(ctx context.Context, diagnostic *RealtimeBalanceConfirmDiagnostic) {
@@ -1117,9 +1046,6 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			compactBlocked = true
 			continue
 		}
-		if !s.hasVerifiedRealtimeBalance(ctx, fresh, req) {
-			continue
-		}
 		return &AccountSelectionResult{
 			Account: fresh,
 			WaitPlan: &AccountWaitPlan{
@@ -1160,16 +1086,6 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 		return false
 	}
 	return account.SupportsOpenAIImageCapability(req.RequiredImageCapability)
-}
-
-func (s *defaultOpenAIAccountScheduler) hasVerifiedRealtimeBalance(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest) bool {
-	if s == nil || s.service == nil {
-		return true
-	}
-	return s.service.hasVerifiedRealtimeBalanceForCandidate(ctx, account, RealtimeBalanceCheckOptions{
-		CodexLongSessionStart: req.CodexLongSessionStart,
-		AllowAsyncRefresh:     true,
-	})
 }
 
 func (s *OpenAIGatewayService) openAIPathHealthCircuitBreakerEnabled() bool {

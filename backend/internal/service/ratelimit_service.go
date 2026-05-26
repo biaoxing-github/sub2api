@@ -285,11 +285,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			shouldDisable = true
 		}
 	case 402:
-		if account.Type == AccountTypeAPIKey && disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody)) {
-			shouldDisable = len(account.GetAPIKeys()) == 0
-			if !shouldDisable {
-				break
-			}
+		if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
+			s.apply429FallbackRateLimit(ctx, account, "payment_required")
+			shouldDisable = false
+			break
 		}
 		// OpenAI: deactivated_workspace 表示工作区已停用，直接标记 error
 		if account.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace" {
@@ -306,12 +305,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		s.handleAuthError(ctx, account, msg)
 		shouldDisable = true
 	case 403:
-		if account.Type == AccountTypeAPIKey && isInsufficientBalanceBody(responseBody) &&
-			disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody)) {
-			shouldDisable = len(account.GetAPIKeys()) == 0
-			if !shouldDisable {
-				break
-			}
+		if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey && isInsufficientBalanceBody(responseBody) {
+			s.apply429FallbackRateLimit(ctx, account, "insufficient_balance")
+			shouldDisable = false
+			break
 		}
 		logger.LegacyPrintf(
 			"service.ratelimit",

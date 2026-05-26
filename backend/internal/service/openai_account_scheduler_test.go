@@ -585,7 +585,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_PrefersLowerUpstreamBal
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }
 
-func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceRequiresVerifiedRealtimeBalance(t *testing.T) {
+func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceDoesNotPrecheckRealtimeBalance(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
 	ctx := context.Background()
@@ -615,14 +615,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceRequiresVeri
 	checks := make([]int64, 0, 2)
 	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
 		checks = append(checks, account.ID)
-		switch account.ID {
-		case 38201:
-			return &UpstreamBalanceSnapshot{Available: 10, OKCount: 0, Error: "unverified"}, nil
-		case 38202:
-			return &UpstreamBalanceSnapshot{Available: 3, OKCount: 1}, nil
-		default:
-			return nil, errors.New("unexpected account")
-		}
+		return &UpstreamBalanceSnapshot{Available: 0, OKCount: 1}, nil
 	}), RealtimeBalanceCheckerOptions{Timeout: time.Second})
 	svc := &OpenAIGatewayService{
 		accountRepo:            schedulerTestOpenAIAccountRepo{accounts: accounts},
@@ -646,12 +639,57 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceRequiresVeri
 	require.NoError(t, err)
 	require.NotNil(t, selection)
 	require.NotNil(t, selection.Account)
-	require.Equal(t, int64(38202), selection.Account.ID)
-	require.Equal(t, []int64{38201, 38202}, checks)
+	require.Equal(t, int64(38201), selection.Account.ID)
+	require.Empty(t, checks)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 }
 
-func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceChecksTopNRealtimeBalance(t *testing.T) {
+func TestOpenAIGatewayService_SelectAccountWithScheduler_AllowsOnlyAPIKeyWhenRealtimeBalanceUnknown(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(101141)
+	account := Account{
+		ID:          38203,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = true
+	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
+		return &UpstreamBalanceSnapshot{Available: 10, OKCount: 0, Error: "huanmin balance endpoint did not return a verified amount"}, nil
+	}), RealtimeBalanceCheckerOptions{Timeout: time.Second, CandidateTopN: 3})
+	svc := &OpenAIGatewayService{
+		accountRepo:            schedulerTestOpenAIAccountRepo{accounts: []Account{account}},
+		cache:                  &schedulerTestGatewayCache{},
+		cfg:                    cfg,
+		rateLimitService:       newOpenAIAdvancedSchedulerRateLimitService("true"),
+		realtimeBalanceChecker: checker,
+		concurrencyService:     NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"",
+		"gpt-5.5",
+		nil,
+		OpenAIUpstreamTransportAny,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(38203), selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceSkipsTopNRealtimeBalance(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
 	ctx := context.Background()
@@ -664,13 +702,8 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceChecksTopNRe
 	cfg := &config.Config{}
 	cfg.Gateway.Scheduling.LoadBatchEnabled = true
 	checks := make(chan int64, 3)
-	release := make(chan struct{})
 	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
 		checks <- account.ID
-		<-release
-		if account.ID == 38212 {
-			return &UpstreamBalanceSnapshot{Available: 3, OKCount: 1}, nil
-		}
 		return &UpstreamBalanceSnapshot{Available: 0, OKCount: 1}, nil
 	}), RealtimeBalanceCheckerOptions{Timeout: time.Second, CandidateTopN: 3})
 	svc := &OpenAIGatewayService{
@@ -682,39 +715,16 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceChecksTopNRe
 		concurrencyService:     NewConcurrencyService(schedulerTestConcurrencyCache{}),
 	}
 
-	done := make(chan *AccountSelectionResult, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-5.5", nil, OpenAIUpstreamTransportAny, false)
-		if err != nil {
-			errCh <- err
-			return
-		}
-		done <- selection
-	}()
-	seen := map[int64]bool{}
-	for len(seen) < 3 {
-		select {
-		case id := <-checks:
-			seen[id] = true
-		case err := <-errCh:
-			t.Fatalf("SelectAccountWithScheduler returned early error: %v", err)
-		case <-done:
-			t.Fatal("SelectAccountWithScheduler returned before all top N checks started")
-		case <-time.After(time.Second):
-			t.Fatalf("timed out waiting for top N balance checks, seen=%v", seen)
-		}
-	}
-	close(release)
+	selection, _, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "", "gpt-5.5", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(38211), selection.Account.ID)
+
 	select {
-	case err := <-errCh:
-		require.NoError(t, err)
-	case selection := <-done:
-		require.NotNil(t, selection)
-		require.NotNil(t, selection.Account)
-		require.Equal(t, int64(38212), selection.Account.ID)
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for scheduler result")
+	case id := <-checks:
+		t.Fatalf("unexpected realtime balance check for account %d", id)
+	default:
 	}
 }
 
@@ -789,7 +799,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_StickyExhaustedSafeRepl
 	require.Equal(t, OpenAIContinuityActionReplay, decision.ContinuityAction)
 	require.Equal(t, OpenAIContinuityReasonBalanceExhausted, decision.ContinuityReason)
 	require.Equal(t, int64(38301), decision.ContinuityFromAccountID)
-	require.Equal(t, []int64{38301, 38302}, checks)
+	require.Equal(t, []int64{38301}, checks)
 	require.Equal(t, int64(38302), cache.sessionBindings["openai:"+sessionHash])
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()

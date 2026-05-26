@@ -336,6 +336,56 @@ func TestRateLimitService_HandleUpstreamError_403FallsBackToRawBody(t *testing.T
 	require.NotContains(t, repo.lastErrorMsg, "account may be suspended or lack permissions")
 }
 
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyPaymentRequiredSetsRateLimit(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:          203,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-huanmin"},
+	}
+
+	shouldDisable := service.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusPaymentRequired,
+		http.Header{},
+		[]byte(`{"error":{"code":"insufficient_quota","message":"insufficient balance"}}`),
+	)
+
+	require.False(t, shouldDisable)
+	require.Equal(t, 1, repo.rateLimitedCalls)
+	require.NotNil(t, repo.lastRateLimitedUntil)
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 0, repo.updateCredentialsCalls)
+}
+
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyInsufficientBalance403SetsRateLimit(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:          204,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-huanmin"},
+	}
+
+	shouldDisable := service.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusForbidden,
+		http.Header{},
+		[]byte(`{"error":{"code":"insufficient_balance","message":"Insufficient account balance"}}`),
+	)
+
+	require.False(t, shouldDisable)
+	require.Equal(t, 1, repo.rateLimitedCalls)
+	require.NotNil(t, repo.lastRateLimitedUntil)
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 0, repo.updateCredentialsCalls)
+}
+
 func TestNormalizedCodexLimits_OnlySecondaryData(t *testing.T) {
 	// Test when only secondary has data, no window_minutes
 	sUsed := 60.0
