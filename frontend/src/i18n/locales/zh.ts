@@ -3271,6 +3271,26 @@ export default {
         thresholdPlaceholder: '输入百分比',
       },
       testConnection: '测试连接',
+      batchTestNonApiKey: '批量测试非 API Key 账号',
+      batchTest: {
+        total: '测试账号',
+        success: '成功',
+        failed: '失败',
+        unauthorized: '401 / 掉线',
+        running: '正在批量测试非 API Key 账号，默认并发 2，可能需要几十秒。',
+        empty: '暂无测试结果',
+        category: '分类',
+        latency: '耗时',
+        message: '信息',
+        failedToRun: '批量测试连接失败',
+        categories: {
+          ok: '正常',
+          unauthorized: '401 / 授权失效',
+          timeout: '超时',
+          reauth_required: '需要重新授权',
+          error: '错误'
+        }
+      },
       reAuthorize: '重新授权',
       refreshToken: '刷新令牌',
       noAccountsYet: '暂无账号',

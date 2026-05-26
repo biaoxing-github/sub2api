@@ -3276,6 +3276,26 @@ export default {
         thresholdPlaceholder: 'Enter percentage',
       },
       testConnection: 'Test Connection',
+      batchTestNonApiKey: 'Batch Test Non-API-Key Accounts',
+      batchTest: {
+        total: 'Tested Accounts',
+        success: 'Success',
+        failed: 'Failed',
+        unauthorized: '401 / Dropped',
+        running: 'Batch testing non-API-key accounts with concurrency 2. This may take a little while.',
+        empty: 'No test results yet',
+        category: 'Category',
+        latency: 'Latency',
+        message: 'Message',
+        failedToRun: 'Failed to run batch connection test',
+        categories: {
+          ok: 'OK',
+          unauthorized: '401 / Auth invalid',
+          timeout: 'Timeout',
+          reauth_required: 'Re-auth required',
+          error: 'Error'
+        }
+      },
       reAuthorize: 'Re-Authorize',
       refreshToken: 'Refresh Token',
       noAccountsYet: 'No accounts yet',

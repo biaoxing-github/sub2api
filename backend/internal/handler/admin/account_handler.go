@@ -53,6 +53,7 @@ type AccountHandler struct {
 	rateLimitService        *service.RateLimitService
 	accountUsageService     *service.AccountUsageService
 	accountTestService      *service.AccountTestService
+	batchAccountTester      batchAccountTester
 	accountProbeService     accountProbeRunner
 	upstreamBalanceService  *service.UpstreamBalanceService
 	concurrencyService      *service.ConcurrencyService
@@ -74,6 +75,10 @@ type accountProbeRunner interface {
 
 type accountPathHealthReader interface {
 	SnapshotOpenAIPathHealthForAccount(account *service.Account, transport service.OpenAIUpstreamTransport) (service.OpenAIPathHealthRecord, bool)
+}
+
+type batchAccountTester interface {
+	RunTestBackground(ctx context.Context, accountID int64, modelID string) (*service.ScheduledTestResult, error)
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -102,6 +107,7 @@ func NewAccountHandler(
 		rateLimitService:        rateLimitService,
 		accountUsageService:     accountUsageService,
 		accountTestService:      accountTestService,
+		batchAccountTester:      accountTestService,
 		upstreamBalanceService:  upstreamBalanceService,
 		concurrencyService:      concurrencyService,
 		crsSyncService:          crsSyncService,
@@ -898,6 +904,35 @@ type TestAccountRequest struct {
 	Mode    string `json:"mode"`
 }
 
+type BatchTestNonAPIKeyAccountsRequest struct {
+	ModelID     string `json:"model_id"`
+	Platform    string `json:"platform"`
+	Status      string `json:"status"`
+	Search      string `json:"search"`
+	Concurrency int    `json:"concurrency"`
+	Limit       int    `json:"limit"`
+}
+
+type BatchTestNonAPIKeyAccountItem struct {
+	AccountID    int64  `json:"account_id"`
+	AccountName  string `json:"account_name"`
+	Platform     string `json:"platform"`
+	Type         string `json:"type"`
+	Status       string `json:"status"`
+	Category     string `json:"category"`
+	Message      string `json:"message,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	LatencyMs    int64  `json:"latency_ms"`
+}
+
+type BatchTestNonAPIKeyAccountsResponse struct {
+	Total             int                             `json:"total"`
+	SuccessCount      int                             `json:"success_count"`
+	FailedCount       int                             `json:"failed_count"`
+	UnauthorizedCount int                             `json:"unauthorized_count"`
+	Items             []BatchTestNonAPIKeyAccountItem `json:"items"`
+}
+
 type CreateAccountProbeRunRequest struct {
 	Mode                  string `json:"mode"`
 	Model                 string `json:"model"`
@@ -957,6 +992,115 @@ func (h *AccountHandler) Test(c *gin.Context) {
 			_ = c.Error(err)
 		}
 	}
+}
+
+// BatchTestNonAPIKey tests all non-api-key accounts matching optional filters.
+// POST /api/v1/admin/accounts/batch-test-non-apikey
+func (h *AccountHandler) BatchTestNonAPIKey(c *gin.Context) {
+	if h.batchAccountTester == nil {
+		response.InternalError(c, "Account test service is not configured")
+		return
+	}
+	var req BatchTestNonAPIKeyAccountsRequest
+	_ = c.ShouldBindJSON(&req)
+	platform := strings.TrimSpace(req.Platform)
+	status := strings.TrimSpace(req.Status)
+	search := strings.TrimSpace(req.Search)
+	limit := req.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	concurrency := req.Concurrency
+	if concurrency <= 0 {
+		concurrency = 2
+	}
+	if concurrency > 5 {
+		concurrency = 5
+	}
+
+	accounts, _, err := h.adminService.ListAccounts(c.Request.Context(), 1, limit, platform, "", status, search, 0, "", "", "name", "asc")
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	targets := make([]service.Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.Type == service.AccountTypeAPIKey {
+			continue
+		}
+		targets = append(targets, account)
+	}
+
+	items := make([]BatchTestNonAPIKeyAccountItem, len(targets))
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i := range targets {
+		i := i
+		account := targets[i]
+		items[i] = BatchTestNonAPIKeyAccountItem{
+			AccountID:   account.ID,
+			AccountName: account.Name,
+			Platform:    account.Platform,
+			Type:        account.Type,
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			result, runErr := h.batchAccountTester.RunTestBackground(c.Request.Context(), account.ID, strings.TrimSpace(req.ModelID))
+			if runErr != nil {
+				items[i].Status = "failed"
+				items[i].Category = classifyAccountTestError(runErr.Error())
+				items[i].ErrorMessage = runErr.Error()
+				return
+			}
+			if result == nil {
+				items[i].Status = "failed"
+				items[i].Category = "error"
+				items[i].ErrorMessage = "empty test result"
+				return
+			}
+			items[i].LatencyMs = result.LatencyMs
+			if result.Status == "success" {
+				items[i].Status = "success"
+				items[i].Category = "ok"
+				items[i].Message = result.ResponseText
+				return
+			}
+			items[i].Status = "failed"
+			items[i].Category = classifyAccountTestError(result.ErrorMessage)
+			items[i].ErrorMessage = result.ErrorMessage
+		}()
+	}
+	wg.Wait()
+
+	out := BatchTestNonAPIKeyAccountsResponse{Total: len(items), Items: items}
+	for _, item := range items {
+		if item.Status == "success" {
+			out.SuccessCount++
+			continue
+		}
+		out.FailedCount++
+		if item.Category == "unauthorized" {
+			out.UnauthorizedCount++
+		}
+	}
+	response.Success(c, out)
+}
+
+func classifyAccountTestError(message string) string {
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "401") || strings.Contains(lower, "unauthorized") || strings.Contains(lower, "authentication failed") || strings.Contains(lower, "token invalid") {
+		return "unauthorized"
+	}
+	if strings.Contains(lower, "context deadline exceeded") || strings.Contains(lower, "timeout") {
+		return "timeout"
+	}
+	if strings.Contains(lower, "no access token") || strings.Contains(lower, "no refresh token") || strings.Contains(lower, "token") {
+		return "reauth_required"
+	}
+	return "error"
 }
 
 // CreateProbeRun runs and persists an upstream account probe.

@@ -34,6 +34,35 @@ import type {
   FetchOptions
 } from '@/types'
 
+export interface BatchTestNonAPIKeyAccountsRequest {
+  model_id?: string
+  platform?: string
+  status?: string
+  search?: string
+  concurrency?: number
+  limit?: number
+}
+
+export interface BatchTestNonAPIKeyAccountItem {
+  account_id: number
+  account_name: string
+  platform: string
+  type: string
+  status: 'success' | 'failed' | string
+  category: 'ok' | 'unauthorized' | 'timeout' | 'reauth_required' | 'error' | string
+  message?: string
+  error_message?: string
+  latency_ms?: number
+}
+
+export interface BatchTestNonAPIKeyAccountsResponse {
+  total: number
+  success_count: number
+  failed_count: number
+  unauthorized_count: number
+  items: BatchTestNonAPIKeyAccountItem[]
+}
+
 export interface AccountUsageSummaryFilters {
   platform?: string
   type?: string
@@ -233,6 +262,21 @@ export async function testAccount(id: number): Promise<{
     message: string
     latency_ms?: number
   }>(`/admin/accounts/${id}/test`)
+  return data
+}
+
+export async function batchTestNonAPIKeyAccounts(
+  request: BatchTestNonAPIKeyAccountsRequest,
+  options?: FetchOptions
+): Promise<BatchTestNonAPIKeyAccountsResponse> {
+  const { data } = await apiClient.post<BatchTestNonAPIKeyAccountsResponse>(
+    '/admin/accounts/batch-test-non-apikey',
+    request,
+    {
+      timeout: 300000,
+      signal: options?.signal,
+    }
+  )
   return data
 }
 
@@ -864,6 +908,7 @@ export const accountsAPI = {
   delete: deleteAccount,
   toggleStatus,
   testAccount,
+  batchTestNonAPIKeyAccounts,
   createProbeRun,
   listProbeRuns,
   getProbeRun,

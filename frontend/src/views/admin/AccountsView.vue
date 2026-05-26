@@ -137,6 +137,12 @@
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
                     </button>
+                    <button data-test="batch-test-non-apikey" class="account-tools-menu-item" :disabled="batchNonAPIKeyTesting" @click="handleBatchTestNonAPIKey">
+                      <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
+                        <Icon name="play" size="sm" :class="{ 'animate-pulse': batchNonAPIKeyTesting }" />
+                      </span>
+                      <span class="flex-1 text-left">{{ t('admin.accounts.batchTestNonApiKey') }}</span>
+                    </button>
 
                     <div class="my-2 border-t border-gray-100 dark:border-gray-700"></div>
                     <div class="px-2 py-2">
@@ -641,6 +647,87 @@
         </div>
       </template>
     </BaseDialog>
+    <BaseDialog
+      :show="showBatchNonAPIKeyDialog"
+      :title="t('admin.accounts.batchTestNonApiKey')"
+      width="extra-wide"
+      @close="showBatchNonAPIKeyDialog = false"
+    >
+      <div class="space-y-4">
+        <div class="grid gap-3 sm:grid-cols-4">
+          <div class="rounded-lg bg-emerald-50 px-3 py-2 dark:bg-emerald-900/20">
+            <div class="text-xs text-emerald-700 dark:text-emerald-300">{{ t('admin.accounts.batchTest.total') }}</div>
+            <div class="text-xl font-semibold text-emerald-900 dark:text-emerald-100">{{ batchNonAPIKeyResult?.total ?? 0 }}</div>
+          </div>
+          <div class="rounded-lg bg-green-50 px-3 py-2 dark:bg-green-900/20">
+            <div class="text-xs text-green-700 dark:text-green-300">{{ t('admin.accounts.batchTest.success') }}</div>
+            <div class="text-xl font-semibold text-green-900 dark:text-green-100">{{ batchNonAPIKeyResult?.success_count ?? 0 }}</div>
+          </div>
+          <div class="rounded-lg bg-red-50 px-3 py-2 dark:bg-red-900/20">
+            <div class="text-xs text-red-700 dark:text-red-300">{{ t('admin.accounts.batchTest.failed') }}</div>
+            <div class="text-xl font-semibold text-red-900 dark:text-red-100">{{ batchNonAPIKeyResult?.failed_count ?? 0 }}</div>
+          </div>
+          <div class="rounded-lg bg-amber-50 px-3 py-2 dark:bg-amber-900/20">
+            <div class="text-xs text-amber-700 dark:text-amber-300">{{ t('admin.accounts.batchTest.unauthorized') }}</div>
+            <div class="text-xl font-semibold text-amber-900 dark:text-amber-100">{{ batchNonAPIKeyResult?.unauthorized_count ?? 0 }}</div>
+          </div>
+        </div>
+
+        <div v-if="batchNonAPIKeyTesting" class="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200">
+          <Icon name="refresh" size="sm" class="animate-spin" />
+          <span>{{ t('admin.accounts.batchTest.running') }}</span>
+        </div>
+        <div v-else-if="batchNonAPIKeyError" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-700/40 dark:bg-red-900/20 dark:text-red-200">
+          {{ batchNonAPIKeyError }}
+        </div>
+
+        <div class="max-h-[56vh] overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
+          <table class="w-full min-w-[760px] text-sm">
+            <thead class="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+              <tr>
+                <th class="px-3 py-2">{{ t('admin.accounts.account') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.columns.platformType') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.columns.status') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.batchTest.category') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.batchTest.latency') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.batchTest.message') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!batchNonAPIKeyTesting && !batchNonAPIKeyResult?.items.length">
+                <td colspan="6" class="px-3 py-8 text-center text-gray-500 dark:text-gray-400">
+                  {{ t('admin.accounts.batchTest.empty') }}
+                </td>
+              </tr>
+              <tr v-for="item in batchNonAPIKeyResult?.items || []" :key="item.account_id" class="border-t border-gray-100 dark:border-gray-700">
+                <td class="px-3 py-2">
+                  <div class="font-medium text-gray-900 dark:text-gray-100">{{ item.account_name }}</div>
+                  <div class="text-xs text-gray-500">#{{ item.account_id }}</div>
+                </td>
+                <td class="px-3 py-2 text-gray-600 dark:text-gray-300">{{ item.platform }} / {{ item.type }}</td>
+                <td class="px-3 py-2">
+                  <span :class="batchTestStatusClass(item.status)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium">
+                    {{ batchTestStatusLabel(item.status) }}
+                  </span>
+                </td>
+                <td class="px-3 py-2">{{ batchTestCategoryLabel(item.category) }}</td>
+                <td class="px-3 py-2">{{ item.latency_ms ? `${item.latency_ms}ms` : '-' }}</td>
+                <td class="max-w-md px-3 py-2 text-gray-600 dark:text-gray-300">
+                  <span class="line-clamp-2" :title="item.error_message || item.message || ''">{{ item.error_message || item.message || '-' }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end">
+          <button class="btn btn-primary" type="button" @click="showBatchNonAPIKeyDialog = false">
+            {{ t('common.close') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
     <ErrorPassthroughRulesModal :show="showErrorPassthrough" @close="showErrorPassthrough = false" />
     <TLSFingerprintProfilesModal :show="showTLSFingerprintProfiles" @close="showTLSFingerprintProfiles = false" />
   </AppLayout>
@@ -653,6 +740,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
+import type { BatchTestNonAPIKeyAccountsResponse } from '@/api/admin/accounts'
 import { useTableLoader } from '@/composables/useTableLoader'
 import { useSwipeSelect, type SwipeSelectVirtualContext } from '@/composables/useSwipeSelect'
 import { useTableSelection } from '@/composables/useTableSelection'
@@ -833,6 +921,10 @@ const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
 const showActionItemsDialog = ref(false)
 const showBulkRefreshErrors = ref(false)
+const showBatchNonAPIKeyDialog = ref(false)
+const batchNonAPIKeyTesting = ref(false)
+const batchNonAPIKeyError = ref('')
+const batchNonAPIKeyResult = ref<BatchTestNonAPIKeyAccountsResponse | null>(null)
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -2029,6 +2121,47 @@ const handleBulkRefreshToken = async () => {
     appStore.showError(String(error))
   }
 }
+
+const handleBatchTestNonAPIKey = async () => {
+  showAccountToolsDropdown.value = false
+  showBatchNonAPIKeyDialog.value = true
+  batchNonAPIKeyTesting.value = true
+  batchNonAPIKeyError.value = ''
+  batchNonAPIKeyResult.value = null
+  try {
+    batchNonAPIKeyResult.value = await adminAPI.accounts.batchTestNonAPIKeyAccounts({
+      model_id: 'gpt-5.4',
+      platform: params.platform || undefined,
+      status: params.status || undefined,
+      search: params.search || undefined,
+      concurrency: 2,
+      limit: 500,
+    })
+  } catch (error: any) {
+    console.error('Failed to batch test non-api-key accounts:', error)
+    batchNonAPIKeyError.value = error?.response?.data?.message || error?.message || t('admin.accounts.batchTest.failedToRun')
+    appStore.showError(batchNonAPIKeyError.value)
+  } finally {
+    batchNonAPIKeyTesting.value = false
+  }
+}
+
+const batchTestStatusClass = (status: string) => {
+  return status === 'success'
+    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-200'
+    : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200'
+}
+
+const batchTestStatusLabel = (status: string) => {
+  return status === 'success' ? t('admin.accounts.batchTest.success') : t('admin.accounts.batchTest.failed')
+}
+
+const batchTestCategoryLabel = (category: string) => {
+  const key = `admin.accounts.batchTest.categories.${category}`
+  const label = t(key)
+  return label === key ? category : label
+}
+
 const updateSchedulableInList = (accountIds: number[], schedulable: boolean) => {
   if (accountIds.length === 0) return
   const idSet = new Set(accountIds)

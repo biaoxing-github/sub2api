@@ -8,8 +8,11 @@ const {
   listWithEtag,
   getBatchTodayStats,
   batchRefresh,
+  batchTestNonAPIKeyAccounts,
   getUsageSummary,
   getStatusSummary,
+  getDashboardSummary,
+  getActionItems,
   getAllProxies,
   getAllGroups
 } = vi.hoisted(() => ({
@@ -17,8 +20,11 @@ const {
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
   batchRefresh: vi.fn(),
+  batchTestNonAPIKeyAccounts: vi.fn(),
   getUsageSummary: vi.fn(),
   getStatusSummary: vi.fn(),
+  getDashboardSummary: vi.fn(),
+  getActionItems: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn()
 }))
@@ -32,8 +38,11 @@ vi.mock('@/api/admin', () => ({
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh,
+      batchTestNonAPIKeyAccounts,
       getUsageSummary,
       getStatusSummary,
+      getDashboardSummary,
+      getActionItems,
       toggleSchedulable: vi.fn()
     },
     proxies: {
@@ -111,8 +120,11 @@ describe('admin AccountsView bulk edit scope', () => {
     listWithEtag.mockReset()
     getBatchTodayStats.mockReset()
     batchRefresh.mockReset()
+    batchTestNonAPIKeyAccounts.mockReset()
     getUsageSummary.mockReset()
     getStatusSummary.mockReset()
+    getDashboardSummary.mockReset()
+    getActionItems.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
 
@@ -130,8 +142,15 @@ describe('admin AccountsView bulk edit scope', () => {
     })
     getBatchTodayStats.mockResolvedValue({ stats: {} })
     batchRefresh.mockResolvedValue({ total: 0, success: 0, failed: 0, errors: [] })
+    batchTestNonAPIKeyAccounts.mockResolvedValue({ total: 0, success_count: 0, failed_count: 0, unauthorized_count: 0, items: [] })
     getUsageSummary.mockResolvedValue(null)
     getStatusSummary.mockResolvedValue({})
+    getDashboardSummary.mockResolvedValue({
+      status_summary: {},
+      usage_summary: null,
+      action_item_counts: { critical: 0, warning: 0, info: 0 },
+    })
+    getActionItems.mockResolvedValue({ items: [] })
     getAllProxies.mockResolvedValue([])
     getAllGroups.mockResolvedValue([])
   })
@@ -342,6 +361,76 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="data-table"]').text()).toContain('free-one@example.com:error:invalid_grant')
+  })
+
+  it('runs batch connectivity tests for non-api-key accounts from tools menu', async () => {
+    batchTestNonAPIKeyAccounts.mockResolvedValue({
+      total: 1,
+      success_count: 0,
+      failed_count: 1,
+      unauthorized_count: 1,
+      items: [{
+        account_id: 7,
+        account_name: 'dropped-oauth@example.com',
+        platform: 'openai',
+        type: 'oauth',
+        status: 'failed',
+        category: 'unauthorized',
+        error_message: 'Authentication failed (401)',
+        latency_ms: 42,
+      }],
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          BaseDialog: { template: '<section data-test="base-dialog"><slot /><slot name="footer" /></section>' },
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.get('button[title="admin.accounts.moreActions"]').trigger('click')
+    await wrapper.get('[data-test="batch-test-non-apikey"]').trigger('click')
+    await flushPromises()
+
+    expect(batchTestNonAPIKeyAccounts).toHaveBeenCalledWith(expect.objectContaining({
+      model_id: 'gpt-5.4',
+      concurrency: 2,
+      limit: 500,
+    }))
+    expect(wrapper.text()).toContain('dropped-oauth@example.com')
+    expect(wrapper.text()).toContain('Authentication failed (401)')
   })
 
   it('passes total account cost sorting to the server and displays usage totals', async () => {

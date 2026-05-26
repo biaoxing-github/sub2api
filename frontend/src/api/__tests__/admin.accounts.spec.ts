@@ -18,6 +18,7 @@ vi.mock('@/api/client', () => ({
 
 import {
   batchAccountProbeRuns,
+  batchTestNonAPIKeyAccounts,
   getAccountProbeRun,
   listAccountProbeRuns,
   getActionItems,
@@ -365,6 +366,43 @@ describe('admin accounts api usage summary', () => {
       codex_stability: true,
       long_context: false,
     }, {
+      signal: undefined,
+    })
+    expect(result).toEqual(response)
+  })
+
+  it('starts batch non-api-key account connectivity tests', async () => {
+    const response = {
+      total: 2,
+      success_count: 1,
+      failed_count: 1,
+      unauthorized_count: 1,
+      items: [
+        {
+          account_id: 12,
+          account_name: 'openai-oauth',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'failed',
+          category: 'unauthorized',
+          error_message: 'Authentication failed (401)',
+        },
+      ],
+    }
+    post.mockResolvedValue({ data: response })
+
+    const result = await batchTestNonAPIKeyAccounts({
+      model_id: 'gpt-5.4',
+      concurrency: 2,
+      platform: 'openai',
+    })
+
+    expect(post).toHaveBeenCalledWith('/admin/accounts/batch-test-non-apikey', {
+      model_id: 'gpt-5.4',
+      concurrency: 2,
+      platform: 'openai',
+    }, {
+      timeout: 300000,
       signal: undefined,
     })
     expect(result).toEqual(response)
