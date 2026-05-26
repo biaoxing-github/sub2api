@@ -3,7 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountProbeReportsView from '../AccountProbeReportsView.vue'
 
-const { listAccountProbeRuns, getAccountProbeRun, batchAccountProbeRuns } = vi.hoisted(() => ({
+const { listAccounts, listAccountProbeRuns, getAccountProbeRun, batchAccountProbeRuns } = vi.hoisted(() => ({
+  listAccounts: vi.fn(),
   listAccountProbeRuns: vi.fn(),
   getAccountProbeRun: vi.fn(),
   batchAccountProbeRuns: vi.fn(),
@@ -11,10 +12,12 @@ const { listAccountProbeRuns, getAccountProbeRun, batchAccountProbeRuns } = vi.h
 
 vi.mock('@/api/admin/accounts', () => ({
   default: {
+    list: listAccounts,
     listAccountProbeRuns,
     getAccountProbeRun,
     batchAccountProbeRuns,
   },
+  list: listAccounts,
   listAccountProbeRuns,
   getAccountProbeRun,
   batchAccountProbeRuns,
@@ -54,9 +57,15 @@ const PaginationStub = {
   emits: ['update:page', 'update:pageSize'],
   template: '<div data-test="pager">{{ total }}</div>',
 }
+const BaseDialogStub = {
+  props: ['show', 'title'],
+  emits: ['close'],
+  template: '<section v-if="show" data-test="base-dialog"><h2>{{ title }}</h2><slot /><footer><slot name="footer" /></footer></section>',
+}
 
 describe('AccountProbeReportsView', () => {
   beforeEach(() => {
+    listAccounts.mockReset()
     listAccountProbeRuns.mockReset()
     getAccountProbeRun.mockReset()
     batchAccountProbeRuns.mockReset()
@@ -202,6 +211,32 @@ describe('AccountProbeReportsView', () => {
       page_size: 20,
       summary: {},
     })
+    listAccounts.mockResolvedValue({
+      items: [
+        {
+          id: 12,
+          name: 'rayapi-free',
+          platform: 'openai',
+          type: 'apikey',
+          status: 'active',
+          schedulable: true,
+          api_key_items: [{ fingerprint: 'k1', masked: 'sk-...free' }],
+        },
+        {
+          id: 99,
+          name: 'new-api-key-not-yet-probed',
+          platform: 'openai',
+          type: 'apikey',
+          status: 'active',
+          schedulable: true,
+          api_key_items: [{ fingerprint: 'k2', masked: 'sk-...new' }],
+        },
+      ],
+      total: 2,
+      page: 1,
+      page_size: 100,
+      pages: 1,
+    })
     batchAccountProbeRuns.mockResolvedValue({
       runs: [],
       accepted_count: 2,
@@ -214,13 +249,25 @@ describe('AccountProbeReportsView', () => {
           TablePageLayout: TablePageLayoutStub,
           Select: SelectStub,
           Pagination: PaginationStub,
+          BaseDialog: BaseDialogStub,
           Icon: true,
         },
       },
     })
     await flushPromises()
 
-    const checkboxes = wrapper.findAll('input[type="checkbox"][data-test="probe-row-select"]')
+    await wrapper.find('[data-test="open-batch-probe-dialog"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenCalledWith(1, 100, expect.objectContaining({
+      platform: 'openai',
+      type: 'apikey',
+      sort_by: 'name',
+      sort_order: 'asc',
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(wrapper.text()).toContain('new-api-key-not-yet-probed')
+
+    const checkboxes = wrapper.findAll('input[type="checkbox"][data-test="batch-account-select"]')
     await checkboxes[0].setValue(true)
     await checkboxes[1].setValue(true)
     await wrapper.find('[data-test="batch-probe-model"]').setValue('gpt-4.1-mini')
@@ -228,7 +275,7 @@ describe('AccountProbeReportsView', () => {
     await flushPromises()
 
     expect(batchAccountProbeRuns).toHaveBeenCalledWith({
-      account_ids: [12, 13],
+      account_ids: [12, 99],
       mode: 'standard',
       model: 'gpt-4.1-mini',
       request_mode: 'stream',

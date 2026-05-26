@@ -59,48 +59,15 @@
             <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
             <span class="ml-1.5 hidden sm:inline">{{ t('common.refresh') }}</span>
           </button>
+          <button type="button" data-test="open-batch-probe-dialog" class="btn btn-primary px-3" @click="openBatchDialog">
+            <Icon name="beaker" size="sm" />
+            <span class="ml-1.5">{{ t('admin.accountProbeReports.batchProbe') }}</span>
+          </button>
           <button type="button" class="btn btn-ghost px-3" @click="resetFilters">
             {{ t('common.reset') }}
           </button>
         </div>
-        <div class="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-3 dark:border-dark-700 dark:bg-dark-800">
-          <span class="text-sm text-gray-600 dark:text-gray-300">
-            {{ t('admin.accountProbeReports.selectedAccounts', { count: selectedAccountIds.length }) }}
-          </span>
-          <div class="w-full sm:w-36">
-            <Select v-model="batchForm.mode" :options="batchModeOptions" />
-          </div>
-          <div class="w-full sm:w-36">
-            <Select v-model="batchForm.request_mode" :options="batchRequestModeOptions" />
-          </div>
-          <input
-            v-model="batchForm.model"
-            data-test="batch-probe-model"
-            type="text"
-            class="input w-full sm:w-44"
-            :placeholder="t('admin.accountProbeReports.batchModelPlaceholder')"
-          />
-          <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-            <input v-model="batchForm.codex_stability" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
-            <span>{{ t('admin.accountProbeReports.codexStability') }}</span>
-          </label>
-          <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-            <input v-model="batchForm.long_context" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
-            <span>{{ t('admin.accountProbeReports.longContext') }}</span>
-          </label>
-          <button
-            type="button"
-            data-test="batch-probe-submit"
-            class="btn btn-primary px-3"
-            :disabled="selectedAccountIds.length === 0 || batchSubmitting"
-            @click="submitBatchProbe"
-          >
-            <Icon name="refresh" size="sm" :class="batchSubmitting ? 'animate-spin' : ''" />
-            <span class="ml-1.5">{{ t('admin.accountProbeReports.batchProbe') }}</span>
-          </button>
-          <span v-if="batchMessage" class="text-sm text-emerald-600 dark:text-emerald-300">{{ batchMessage }}</span>
-          <span v-if="batchError" class="text-sm text-rose-600 dark:text-rose-300">{{ batchError }}</span>
-        </div>
+        <div v-if="batchMessage" class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-200">{{ batchMessage }}</div>
         <div
           v-if="error"
           class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200"
@@ -114,16 +81,6 @@
           <table>
             <thead>
               <tr>
-                <th class="w-12">
-                  <input
-                    type="checkbox"
-                    class="h-4 w-4 rounded border-gray-300 text-primary-600"
-                    :checked="allVisibleSelected"
-                    :disabled="runs.length === 0"
-                    :aria-label="t('admin.accountProbeReports.selectAll')"
-                    @change="toggleAllVisible(($event.target as HTMLInputElement).checked)"
-                  />
-                </th>
                 <th>{{ t('admin.accountProbeReports.score') }}</th>
                 <th>{{ t('admin.accountProbeReports.grade') }}</th>
                 <th>{{ t('admin.accountProbeReports.account') }}</th>
@@ -141,26 +98,16 @@
             </thead>
             <tbody>
               <tr v-if="loading && runs.length === 0">
-                <td colspan="14" class="py-12 text-center text-gray-500 dark:text-gray-400">
+                <td colspan="13" class="py-12 text-center text-gray-500 dark:text-gray-400">
                   {{ t('common.loading') }}
                 </td>
               </tr>
               <tr v-else-if="!loading && runs.length === 0">
-                <td colspan="14" class="py-12 text-center text-gray-500 dark:text-gray-400">
+                <td colspan="13" class="py-12 text-center text-gray-500 dark:text-gray-400">
                   {{ t('admin.accountProbeReports.empty') }}
                 </td>
               </tr>
               <tr v-for="run in runs" :key="run.id" class="hover:bg-gray-50 dark:hover:bg-dark-700/40">
-                <td>
-                  <input
-                    type="checkbox"
-                    data-test="probe-row-select"
-                    class="h-4 w-4 rounded border-gray-300 text-primary-600"
-                    :checked="selectedAccountIdSet.has(run.account_id)"
-                    :aria-label="t('admin.accountProbeReports.selectAccount', { id: run.account_id })"
-                    @change="toggleAccount(run.account_id, ($event.target as HTMLInputElement).checked)"
-                  />
-                </td>
                 <td>
                   <span class="font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(run.score) }}</span>
                 </td>
@@ -328,6 +275,106 @@
       </aside>
     </transition>
   </Teleport>
+
+  <BaseDialog
+    :show="batchDialogOpen"
+    :title="t('admin.accountProbeReports.batchDialogTitle')"
+    width="extra-wide"
+    @close="closeBatchDialog"
+  >
+    <div class="space-y-4">
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="relative w-full sm:w-72">
+          <Icon name="search" size="sm" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            v-model="batchAccountSearch"
+            data-test="batch-account-search"
+            class="input pl-10"
+            :placeholder="t('admin.accountProbeReports.batchAccountSearchPlaceholder')"
+            @keyup.enter="loadBatchAccounts"
+          />
+        </div>
+        <button type="button" class="btn btn-secondary px-3" :disabled="batchAccountsLoading" @click="loadBatchAccounts">
+          <Icon name="refresh" size="sm" :class="batchAccountsLoading ? 'animate-spin' : ''" />
+          <span class="ml-1.5">{{ t('common.refresh') }}</span>
+        </button>
+        <span class="text-sm text-gray-500 dark:text-gray-400">
+          {{ t('admin.accountProbeReports.selectedAccounts', { count: selectedAccountIds.length }) }}
+        </span>
+      </div>
+
+      <div class="grid gap-3 md:grid-cols-5">
+        <Select v-model="batchForm.mode" :options="batchModeOptions" />
+        <Select v-model="batchForm.request_mode" :options="batchRequestModeOptions" />
+        <input v-model="batchForm.model" data-test="batch-probe-model" type="text" class="input" :placeholder="t('admin.accountProbeReports.batchModelPlaceholder')" />
+        <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          <input v-model="batchForm.codex_stability" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
+          <span>{{ t('admin.accountProbeReports.codexStability') }}</span>
+        </label>
+        <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          <input v-model="batchForm.long_context" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
+          <span>{{ t('admin.accountProbeReports.longContext') }}</span>
+        </label>
+      </div>
+
+      <div v-if="batchError" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200">{{ batchError }}</div>
+
+      <div class="max-h-[420px] overflow-y-auto rounded-lg border border-gray-200 dark:border-dark-700">
+        <table class="w-full min-w-[720px]">
+          <thead class="bg-gray-50 dark:bg-dark-800">
+            <tr>
+              <th class="w-12 px-3 py-2 text-left">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600"
+                  :checked="allBatchAccountsSelected"
+                  :disabled="batchAccounts.length === 0"
+                  :aria-label="t('admin.accountProbeReports.selectAll')"
+                  @change="toggleAllBatchAccounts(($event.target as HTMLInputElement).checked)"
+                />
+              </th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.account') }}</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.status') }}</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.tokens') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="batchAccountsLoading">
+              <td colspan="4" class="px-3 py-8 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</td>
+            </tr>
+            <tr v-else-if="batchAccounts.length === 0">
+              <td colspan="4" class="px-3 py-8 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.noApiKeyAccounts') }}</td>
+            </tr>
+            <tr v-for="account in batchAccounts" :key="account.id" class="border-t border-gray-100 dark:border-dark-700">
+              <td class="px-3 py-2">
+                <input
+                  type="checkbox"
+                  data-test="batch-account-select"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600"
+                  :checked="selectedAccountIdSet.has(account.id)"
+                  @change="toggleAccount(account.id, ($event.target as HTMLInputElement).checked)"
+                />
+              </td>
+              <td class="px-3 py-2">
+                <div class="font-medium text-gray-900 dark:text-gray-100">{{ account.name }}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">#{{ account.id }} · {{ account.platform }} / {{ account.type }}</div>
+              </td>
+              <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ account.schedulable === false ? t('admin.accountProbeReports.unschedulable') : account.status }}</td>
+              <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ account.api_key_items?.length || 1 }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <template #footer>
+      <button type="button" class="btn btn-secondary" @click="closeBatchDialog">{{ t('common.cancel') }}</button>
+      <button type="button" data-test="batch-probe-submit" class="btn btn-primary" :disabled="selectedAccountIds.length === 0 || batchSubmitting" @click="submitBatchProbe">
+        <Icon name="beaker" size="sm" :class="batchSubmitting ? 'animate-pulse' : ''" />
+        <span class="ml-1.5">{{ t('admin.accountProbeReports.batchProbe') }}</span>
+      </button>
+    </template>
+  </BaseDialog>
 </template>
 
 <script setup lang="ts">
@@ -338,9 +385,10 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import Select from '@/components/common/Select.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import { getConfiguredTablePageSizeOptions, normalizeTablePageSize } from '@/utils/tablePreferences'
-import { batchAccountProbeRuns, listAccountProbeRuns, getAccountProbeRun } from '@/api/admin/accounts'
-import type { AccountProbeRun, AccountProbeRunListFilters, AccountProbeRunSortBy, AccountProbeScoreBreakdownItem, SelectOption } from '@/types'
+import { batchAccountProbeRuns, list as listAccounts, listAccountProbeRuns, getAccountProbeRun } from '@/api/admin/accounts'
+import type { Account, AccountProbeRun, AccountProbeRunListFilters, AccountProbeRunSortBy, AccountProbeScoreBreakdownItem, SelectOption } from '@/types'
 
 const { t } = useI18n()
 
@@ -355,6 +403,10 @@ const selectedAccountIds = ref<number[]>([])
 const batchSubmitting = ref(false)
 const batchMessage = ref('')
 const batchError = ref('')
+const batchDialogOpen = ref(false)
+const batchAccounts = ref<Account[]>([])
+const batchAccountsLoading = ref(false)
+const batchAccountSearch = ref('')
 
 const filters = reactive({
   account_id: '',
@@ -389,12 +441,12 @@ const pagination = reactive({
 const scoreItems = computed<AccountProbeScoreBreakdownItem[]>(() => detailRun.value?.score_items || [])
 const penaltyItems = computed<AccountProbeScoreBreakdownItem[]>(() => detailRun.value?.penalty_items || [])
 const selectedAccountIdSet = computed(() => new Set(selectedAccountIds.value))
-const visibleAccountIds = computed(() => Array.from(new Set(runs.value.map(run => run.account_id))))
-const allVisibleSelected = computed(() => visibleAccountIds.value.length > 0 && visibleAccountIds.value.every(id => selectedAccountIdSet.value.has(id)))
+const allBatchAccountsSelected = computed(() => batchAccounts.value.length > 0 && batchAccounts.value.every(account => selectedAccountIdSet.value.has(account.id)))
 
 let listAbortController: AbortController | null = null
 let detailAbortController: AbortController | null = null
 let batchAbortController: AbortController | null = null
+let batchAccountsAbortController: AbortController | null = null
 let keywordTimer: number | null = null
 
 const statusOptions = computed<SelectOption[]>(() => [
@@ -522,6 +574,7 @@ async function submitBatchProbe() {
     if (controller.signal.aborted) return
     batchMessage.value = t('admin.accountProbeReports.batchAccepted', { count: response.accepted_count })
     selectedAccountIds.value = []
+    batchDialogOpen.value = false
     await loadRuns()
   } catch (err: any) {
     if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
@@ -540,6 +593,50 @@ function closeDetail() {
   detailLoading.value = false
 }
 
+function openBatchDialog() {
+  batchDialogOpen.value = true
+  batchError.value = ''
+  if (batchAccounts.value.length === 0) {
+    loadBatchAccounts()
+  }
+}
+
+function closeBatchDialog() {
+  batchDialogOpen.value = false
+  batchAccountsAbortController?.abort()
+  batchAccountsLoading.value = false
+}
+
+async function loadBatchAccounts() {
+  batchAccountsAbortController?.abort()
+  const controller = new AbortController()
+  batchAccountsAbortController = controller
+  batchAccountsLoading.value = true
+  batchError.value = ''
+  try {
+    const response = await listAccounts(1, 100, {
+      platform: 'openai',
+      type: 'apikey',
+      search: batchAccountSearch.value.trim() || undefined,
+      sort_by: 'name',
+      sort_order: 'asc',
+    }, {
+      signal: controller.signal,
+    })
+    if (controller.signal.aborted) return
+    batchAccounts.value = response.items || []
+  } catch (err: any) {
+    if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
+    batchError.value = err?.response?.data?.error || err?.message || t('admin.accountProbeReports.failedToLoadAccounts')
+    batchAccounts.value = []
+  } finally {
+    if (batchAccountsAbortController === controller) {
+      batchAccountsLoading.value = false
+      batchAccountsAbortController = null
+    }
+  }
+}
+
 function toggleAccount(accountId: number, checked: boolean) {
   batchMessage.value = ''
   batchError.value = ''
@@ -552,15 +649,15 @@ function toggleAccount(accountId: number, checked: boolean) {
   selectedAccountIds.value = Array.from(ids)
 }
 
-function toggleAllVisible(checked: boolean) {
+function toggleAllBatchAccounts(checked: boolean) {
   batchMessage.value = ''
   batchError.value = ''
   const ids = new Set(selectedAccountIds.value)
-  for (const accountId of visibleAccountIds.value) {
+  for (const account of batchAccounts.value) {
     if (checked) {
-      ids.add(accountId)
+      ids.add(account.id)
     } else {
-      ids.delete(accountId)
+      ids.delete(account.id)
     }
   }
   selectedAccountIds.value = Array.from(ids)
@@ -694,6 +791,7 @@ onUnmounted(() => {
   listAbortController?.abort()
   detailAbortController?.abort()
   batchAbortController?.abort()
+  batchAccountsAbortController?.abort()
   if (keywordTimer) window.clearTimeout(keywordTimer)
 })
 </script>
