@@ -2,8 +2,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AccountProbeDialog from '../AccountProbeDialog.vue'
 
-const { createProbeRun, listProbeRuns } = vi.hoisted(() => ({
+const { createProbeRun, getProbeRun, listProbeRuns } = vi.hoisted(() => ({
   createProbeRun: vi.fn(),
+  getProbeRun: vi.fn(),
   listProbeRuns: vi.fn()
 }))
 
@@ -12,7 +13,7 @@ vi.mock('@/api/admin', () => ({
     accounts: {
       listProbeRuns,
       createProbeRun,
-      getProbeRun: vi.fn()
+      getProbeRun
     }
   }
 }))
@@ -30,6 +31,7 @@ vi.mock('vue-i18n', async () => {
 describe('AccountProbeDialog', () => {
   beforeEach(() => {
     createProbeRun.mockReset()
+    getProbeRun.mockReset()
     listProbeRuns.mockReset()
   })
 
@@ -80,7 +82,7 @@ describe('AccountProbeDialog', () => {
 
     const wrapper = mount(AccountProbeDialog, {
       props: {
-        show: true,
+        show: false,
         modelId: 'gpt-5.4',
         account: {
           id: 181,
@@ -98,6 +100,7 @@ describe('AccountProbeDialog', () => {
       }
     })
 
+    await wrapper.setProps({ show: true })
     await flushPromises()
     const runButton = wrapper.findAll('button').find((button) => button.text().includes('admin.accounts.probe.run'))
     expect(runButton).toBeTruthy()
@@ -132,7 +135,7 @@ describe('AccountProbeDialog', () => {
 
     const wrapper = mount(AccountProbeDialog, {
       props: {
-        show: true,
+        show: false,
         modelId: 'gpt-5.4',
         account: {
           id: 181,
@@ -150,6 +153,7 @@ describe('AccountProbeDialog', () => {
       }
     })
 
+    await wrapper.setProps({ show: true })
     await flushPromises()
     const streamButton = wrapper.findAll('button').find((button) => button.text().includes('admin.accounts.probe.requestModes.stream'))
     expect(streamButton).toBeTruthy()
@@ -162,5 +166,69 @@ describe('AccountProbeDialog', () => {
       request_mode: 'stream'
     }))
     expect(wrapper.text()).toContain('admin.accounts.probe.requestModes.stream')
+  })
+
+  it('历史列表和详情展示每次测速自己的模型', async () => {
+    listProbeRuns.mockResolvedValueOnce([
+      {
+        id: 201,
+        account_id: 181,
+        mode: 'quick',
+        request_mode: 'non_stream',
+        status: 'success',
+        model: 'gpt-4.1-mini',
+        success_count: 1,
+        failure_count: 0,
+        avg_latency_ms: 123,
+        created_at: '2026-05-25T10:00:00Z'
+      }
+    ])
+    getProbeRun.mockResolvedValueOnce({
+      id: 201,
+      account_id: 181,
+      mode: 'quick',
+      request_mode: 'non_stream',
+      status: 'success',
+      model: 'gpt-4.1-mini',
+      success_count: 1,
+      failure_count: 0,
+      avg_latency_ms: 123,
+      total_tokens: 16,
+      created_at: '2026-05-25T10:00:00Z'
+    })
+
+    const wrapper = mount(AccountProbeDialog, {
+      props: {
+        show: false,
+        modelId: 'gpt-5.4',
+        account: {
+          id: 181,
+          name: 'foyeapi',
+          platform: 'openai',
+          type: 'apikey',
+          status: 'active'
+        }
+      } as any,
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accounts.probe.model')
+    expect(wrapper.text()).toContain('gpt-4.1-mini')
+
+    const historyButton = wrapper.findAll('button').find((button) => button.text().includes('gpt-4.1-mini'))
+    expect(historyButton).toBeTruthy()
+    await historyButton!.trigger('click')
+    await flushPromises()
+
+    expect(getProbeRun).toHaveBeenCalledWith(181, 201)
+    expect(wrapper.text()).toContain('gpt-4.1-mini')
   })
 })

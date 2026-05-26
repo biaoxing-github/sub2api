@@ -102,12 +102,58 @@ type AccountProbeHistoryFilter struct {
 	Limit     int
 }
 
+type AccountProbeReportFilter struct {
+	AccountID   int64
+	Status      string
+	Profile     string
+	RequestMode string
+	Model       string
+	Keyword     string
+	From        *time.Time
+	To          *time.Time
+	Sort        string
+	Order       string
+	Page        int
+	PageSize    int
+}
+
+type AccountProbeReportItem struct {
+	AccountProbeResult
+	AccountName  string   `json:"account_name"`
+	Score        int      `json:"score"`
+	Grade        string   `json:"grade"`
+	GradeLabel   string   `json:"grade_label"`
+	Confidence   int      `json:"confidence"`
+	ScoreItems   []string `json:"score_items,omitempty"`
+	PenaltyItems []string `json:"penalty_items,omitempty"`
+	SuccessRate  float64  `json:"success_rate"`
+}
+
+type AccountProbeReportSummary struct {
+	Total             int     `json:"total"`
+	AverageScore      float64 `json:"average_score"`
+	ExcellentCount    int     `json:"excellent_count"`
+	UnstableCount     int     `json:"unstable_count"`
+	Recent24HourCount int     `json:"recent_24h_count"`
+	RunningCount      int     `json:"running_count"`
+}
+
+type AccountProbeReportPage struct {
+	Items    []AccountProbeReportItem  `json:"items"`
+	Total    int                       `json:"total"`
+	Page     int                       `json:"page"`
+	PageSize int                       `json:"page_size"`
+	Summary  AccountProbeReportSummary `json:"summary"`
+}
+
 type AccountProbeRepository interface {
 	CreateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error
 	UpdateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error
 	SaveAccountProbeSample(ctx context.Context, sample AccountProbeSample) error
 	ListAccountProbeRuns(ctx context.Context, filter AccountProbeHistoryFilter) ([]AccountProbeResult, error)
 	GetAccountProbeRun(ctx context.Context, accountID, runID int64) (*AccountProbeResult, error)
+	ListAccountProbeReportRuns(ctx context.Context, filter AccountProbeReportFilter) ([]AccountProbeReportItem, int, error)
+	GetAccountProbeReportRun(ctx context.Context, runID int64) (*AccountProbeReportItem, error)
 	ListAccountProbeSamples(ctx context.Context, runID int64) ([]AccountProbeSample, error)
 }
 
@@ -309,6 +355,52 @@ func (s *AccountProbeService) Get(ctx context.Context, accountID, runID int64) (
 	}
 	run.Samples = samples
 	return run, nil
+}
+
+func (s *AccountProbeService) ListReports(ctx context.Context, filter AccountProbeReportFilter) (AccountProbeReportPage, error) {
+	if s.repo == nil {
+		return AccountProbeReportPage{}, fmt.Errorf("account probe repository is nil")
+	}
+	filter = normalizeAccountProbeReportFilter(filter)
+	items, total, err := s.repo.ListAccountProbeReportRuns(ctx, filter)
+	if err != nil {
+		return AccountProbeReportPage{}, err
+	}
+	for i := range items {
+		decorateAccountProbeReportItem(&items[i])
+	}
+	if filter.Sort == "score" {
+		sort.SliceStable(items, func(i, j int) bool {
+			if strings.EqualFold(filter.Order, "asc") {
+				return items[i].Score < items[j].Score
+			}
+			return items[i].Score > items[j].Score
+		})
+	}
+	return AccountProbeReportPage{
+		Items:    items,
+		Total:    total,
+		Page:     filter.Page,
+		PageSize: filter.PageSize,
+		Summary:  buildAccountProbeReportSummary(items, total),
+	}, nil
+}
+
+func (s *AccountProbeService) GetReport(ctx context.Context, runID int64) (*AccountProbeReportItem, error) {
+	if s.repo == nil {
+		return nil, fmt.Errorf("account probe repository is nil")
+	}
+	item, err := s.repo.GetAccountProbeReportRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	samples, err := s.repo.ListAccountProbeSamples(ctx, item.ID)
+	if err != nil {
+		return nil, err
+	}
+	item.Samples = samples
+	decorateAccountProbeReportItem(item)
+	return item, nil
 }
 
 func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account *Account, baseURL, model, apiKey string, sample APIKeyProbePlannedSample, useResponses bool, requestMode string) AccountProbeSample {

@@ -17,6 +17,9 @@ vi.mock('@/api/client', () => ({
 }))
 
 import {
+  batchAccountProbeRuns,
+  getAccountProbeRun,
+  listAccountProbeRuns,
   getActionItems,
   getDashboardSummary,
   getStatusSummary,
@@ -258,5 +261,112 @@ describe('admin accounts api usage summary', () => {
         plan_type: 'free',
       })
     }))
+  })
+
+  it('lists account probe report runs with filters and sorting', async () => {
+    const response = {
+      items: [],
+      total: 0,
+      page: 2,
+      page_size: 50,
+      summary: {
+        total_runs: 0,
+        success_rate: 0,
+        avg_score: 0,
+      },
+    }
+    get.mockResolvedValue({ data: response })
+
+    const result = await listAccountProbeRuns(
+      2,
+      50,
+      {
+        account_id: 12,
+        status: 'success',
+        mode: 'standard',
+        request_mode: 'stream',
+        model: 'gpt-4.1',
+        keyword: 'rayapi',
+        start_time: '2026-05-25T00:00:00Z',
+        end_time: '2026-05-26T00:00:00Z',
+        sort_by: 'score',
+        sort_order: 'desc',
+      },
+      { signal: expect.any(AbortSignal) as AbortSignal }
+    )
+
+    expect(get).toHaveBeenCalledWith('/admin/account-probe-runs', {
+      params: {
+        page: 2,
+        page_size: 50,
+        account_id: 12,
+        status: 'success',
+        mode: 'standard',
+        request_mode: 'stream',
+        model: 'gpt-4.1',
+        keyword: 'rayapi',
+        start_time: '2026-05-25T00:00:00Z',
+        end_time: '2026-05-26T00:00:00Z',
+        sort_by: 'score',
+        sort_order: 'desc',
+      },
+      signal: expect.any(AbortSignal),
+    })
+    expect(result).toEqual(response)
+  })
+
+  it('loads one account probe report run detail', async () => {
+    const response = {
+      id: 99,
+      account_id: 12,
+      status: 'success',
+      mode: 'quick',
+      created_at: '2026-05-26T00:00:00Z',
+    }
+    get.mockResolvedValue({ data: response })
+
+    const result = await getAccountProbeRun(99)
+
+    expect(get).toHaveBeenCalledWith('/admin/account-probe-runs/99', {
+      signal: undefined,
+    })
+    expect(result).toEqual(response)
+  })
+
+  it('starts batch account probe runs', async () => {
+    const response = {
+      runs: [
+        {
+          id: 100,
+          account_id: 12,
+          status: 'pending',
+          mode: 'standard',
+          created_at: '2026-05-26T00:00:00Z',
+        },
+      ],
+      accepted_count: 1,
+    }
+    post.mockResolvedValue({ data: response })
+
+    const result = await batchAccountProbeRuns({
+      account_ids: [12, 13],
+      mode: 'standard',
+      model: 'gpt-4.1-mini',
+      request_mode: 'stream',
+      codex_stability: true,
+      long_context: false,
+    })
+
+    expect(post).toHaveBeenCalledWith('/admin/account-probe-runs/batch', {
+      account_ids: [12, 13],
+      mode: 'standard',
+      model: 'gpt-4.1-mini',
+      request_mode: 'stream',
+      codex_stability: true,
+      long_context: false,
+    }, {
+      signal: undefined,
+    })
+    expect(result).toEqual(response)
   })
 })

@@ -133,7 +133,7 @@
             {{ formatProbeStatus(latestProbeRun.status) }}
           </span>
           <span class="text-xs text-gray-500 dark:text-gray-400">
-            {{ formatRequestMode(latestProbeRun.request_mode) }} · {{ formatTime(latestProbeRun.created_at) }}
+            {{ t('admin.accounts.probe.model') }}: {{ formatProbeModel(latestProbeRun) }} · {{ formatRequestMode(latestProbeRun.request_mode) }} · {{ formatTime(latestProbeRun.created_at) }}
           </span>
         </div>
         <div class="mt-3 grid gap-3 text-sm sm:grid-cols-5">
@@ -210,7 +210,7 @@
           >
             <span class="flex items-center gap-2">
               <span :class="probeStatusBadgeClass(run.status)">{{ formatProbeStatus(run.status) }}</span>
-              <span class="text-gray-600 dark:text-gray-300">{{ formatRequestMode(run.request_mode) }} · {{ formatProbeSuccessRate(run) }} · {{ formatMs(run.avg_latency_ms) }}</span>
+              <span class="text-gray-600 dark:text-gray-300">{{ t('admin.accounts.probe.model') }}: {{ formatProbeModel(run) }} · {{ formatRequestMode(run.request_mode) }} · {{ formatProbeSuccessRate(run) }} · {{ formatMs(run.avg_latency_ms) }}</span>
             </span>
             <span class="shrink-0 text-gray-400">{{ formatTime(run.created_at) }}</span>
           </button>
@@ -366,6 +366,11 @@ const formatProbeStatus = (status: string) => {
 const formatRequestMode = (mode?: string | null) => {
   const normalized = mode === 'stream' ? 'stream' : 'non_stream'
   return t(`admin.accounts.probe.requestModes.${normalized}`)
+}
+
+const formatProbeModel = (run?: Pick<AccountProbeRun, 'model'> | null) => {
+  const model = run?.model?.trim()
+  return model || '-'
 }
 
 const probeStatusBadgeClass = (status: string) => [

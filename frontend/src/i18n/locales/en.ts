@@ -363,6 +363,7 @@ export default {
     availableChannels: 'Available Channels',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
+    accountProbeReports: 'Probe Reports',
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
@@ -4076,6 +4077,7 @@ export default {
         running: 'Running...',
         started: 'Probe task has started and will continue in the background. Refresh history or open the run later to view results.',
         avgLatency: 'Avg Latency',
+        model: 'Model',
         firstToken: 'First Token',
         successRate: 'Success Rate',
         tokensUsed: 'Tokens Used',
@@ -4658,6 +4660,79 @@ export default {
           failed: 'Failed',
           canceled: 'Canceled'
         }
+      }
+    },
+
+    accountProbeReports: {
+      title: 'Upstream Probe Reports',
+      description: 'Review speed test and health-check runs for all upstream accounts',
+      keywordPlaceholder: 'Search account, model, or error',
+      accountId: 'Account ID',
+      account: 'Account',
+      model: 'Model',
+      mode: 'Mode',
+      status: 'Status',
+      score: 'Score',
+      grade: 'Grade',
+      confidence: 'Confidence',
+      successRate: 'Success Rate',
+      avgLatency: 'Avg Latency',
+      p95: 'P95',
+      firstToken: 'First Token',
+      tokens: 'Tokens',
+      time: 'Time',
+      startTime: 'Start Time',
+      endTime: 'End Time',
+      empty: 'No upstream probe reports yet',
+      detailTitle: 'Probe Detail',
+      scoreItems: 'Score Items',
+      penaltyItems: 'Penalty Items',
+      samples: 'Samples',
+      error: 'Error',
+      failedToLoad: 'Failed to load upstream probe reports',
+      failedToLoadDetail: 'Failed to load probe detail',
+      selectedAccounts: '{count} selected',
+      batchProbe: 'Batch Probe',
+      batchModelPlaceholder: 'Probe model (optional)',
+      codexStability: 'Codex Stability',
+      longContext: 'Long Context',
+      selectAll: 'Select visible accounts',
+      selectAccount: 'Select account {id}',
+      batchAccepted: 'Submitted {count} probe runs',
+      batchFailed: 'Failed to submit batch probe',
+      allStatuses: 'All Statuses',
+      allModes: 'All Modes',
+      allRequestModes: 'All Requests',
+      statuses: {
+        success: 'Success',
+        partial: 'Partial',
+        failed: 'Failed',
+        running: 'Running',
+        pending: 'Pending'
+      },
+      modes: {
+        quick: 'Quick Speed Test',
+        standard: 'Standard Probe'
+      },
+      requestModes: {
+        non_stream: 'Non-stream',
+        stream: 'Stream'
+      },
+      grades: {
+        excellent: 'Excellent',
+        stable: 'Stable',
+        slow: 'Usable but slow',
+        unstable: 'Unstable',
+        poor: 'Not recommended'
+      },
+      sort: {
+        created_at: 'Sort by Time',
+        score: 'Sort by Score',
+        success_rate: 'Sort by Success Rate',
+        avg_latency_ms: 'Sort by Avg Latency',
+        p95_ms: 'Sort by P95',
+        first_token_ms: 'Sort by First Token',
+        total_tokens: 'Sort by Tokens'
       }
     },
 

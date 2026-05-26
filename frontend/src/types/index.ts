@@ -721,13 +721,42 @@ export interface AccountProbeSample {
   created_at: string
 }
 
+export interface AccountProbeScoreItem {
+  key?: string
+  label?: string
+  value?: number | string | null
+  max?: number | string | null
+  score?: number | null
+  description?: string | null
+  [key: string]: unknown
+}
+
+export interface AccountProbePenaltyItem {
+  key?: string
+  label?: string
+  value?: number | string | null
+  score?: number | null
+  reason?: string | null
+  description?: string | null
+  [key: string]: unknown
+}
+
+export type AccountProbeScoreBreakdownItem = AccountProbeScoreItem | AccountProbePenaltyItem | string
+
 export interface AccountProbeRun {
   id: number
   account_id: number
+  account_name?: string | null
+  account_platform?: string | null
   mode: AccountProbeMode | string
   request_mode?: AccountProbeRequestMode | string
   status: 'pending' | 'running' | 'success' | 'failed' | 'partial' | string
   model?: string
+  score?: number | null
+  grade?: string | null
+  grade_label?: string | null
+  confidence?: number | null
+  success_rate?: number | null
   request_count?: number
   estimate?: ApiKeyProbeEstimate
   latency?: ApiKeyProbeLatency
@@ -737,16 +766,73 @@ export interface AccountProbeRun {
   success_count?: number | null
   failure_count?: number | null
   avg_latency_ms?: number | null
+  p95_ms?: number | null
   max_latency_ms?: number | null
   first_token_ms?: number | null
   codex_stability?: boolean
   long_context?: boolean
+  score_items?: AccountProbeScoreBreakdownItem[]
+  penalty_items?: AccountProbeScoreBreakdownItem[]
   samples?: AccountProbeSample[]
   error_message?: string | null
   summary?: string | null
   created_at: string
   started_at?: string | null
   finished_at?: string | null
+}
+
+export type AccountProbeRunSortBy =
+  | 'score'
+  | 'created_at'
+  | 'success_rate'
+  | 'avg_latency_ms'
+  | 'p95_ms'
+  | 'first_token_ms'
+  | 'total_tokens'
+
+export interface AccountProbeRunListFilters {
+  account_id?: number | string
+  status?: string
+  mode?: string
+  request_mode?: string
+  model?: string
+  keyword?: string
+  start_time?: string
+  end_time?: string
+  sort_by?: AccountProbeRunSortBy
+  sort_order?: 'asc' | 'desc'
+}
+
+export interface AccountProbeRunSummary {
+  total_runs?: number
+  avg_score?: number | null
+  success_rate?: number | null
+  avg_latency_ms?: number | null
+  p95_ms?: number | null
+  [key: string]: unknown
+}
+
+export interface AccountProbeRunsResponse {
+  items: AccountProbeRun[]
+  total: number
+  page: number
+  page_size: number
+  pages?: number
+  summary?: AccountProbeRunSummary
+}
+
+export interface BatchAccountProbeRunsRequest {
+  account_ids: number[]
+  mode: AccountProbeMode | string
+  model?: string
+  request_mode?: AccountProbeRequestMode | string
+  codex_stability?: boolean
+  long_context?: boolean
+}
+
+export interface BatchAccountProbeRunsResponse {
+  runs: AccountProbeRun[]
+  accepted_count: number
 }
 
 export interface CreateGroupRequest {

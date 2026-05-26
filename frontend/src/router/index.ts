@@ -489,6 +489,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/account-probe-reports',
+    name: 'AdminAccountProbeReports',
+    component: () => import('@/views/admin/AccountProbeReportsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Account Probe Reports',
+      titleKey: 'admin.accountProbeReports.title',
+      descriptionKey: 'admin.accountProbeReports.description'
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),

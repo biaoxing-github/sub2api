@@ -26,7 +26,12 @@ import type {
   CheckMixedChannelRequest,
   CheckMixedChannelResponse,
   AccountProbeRun,
-  CreateAccountProbeRunRequest
+  CreateAccountProbeRunRequest,
+  AccountProbeRunListFilters,
+  AccountProbeRunsResponse,
+  BatchAccountProbeRunsRequest,
+  BatchAccountProbeRunsResponse,
+  FetchOptions
 } from '@/types'
 
 export interface AccountUsageSummaryFilters {
@@ -248,6 +253,47 @@ export async function listProbeRuns(id: number, limit = 20): Promise<AccountProb
 
 export async function getProbeRun(id: number, runId: number): Promise<AccountProbeRun> {
   const { data } = await apiClient.get<AccountProbeRun>(`/admin/accounts/${id}/probe-runs/${runId}`)
+  return data
+}
+
+export async function listAccountProbeRuns(
+  page: number = 1,
+  pageSize: number = 20,
+  filters?: AccountProbeRunListFilters,
+  options?: FetchOptions
+): Promise<AccountProbeRunsResponse> {
+  const { data } = await apiClient.get<AccountProbeRunsResponse>('/admin/account-probe-runs', {
+    params: {
+      page,
+      page_size: pageSize,
+      ...filters,
+    },
+    signal: options?.signal,
+  })
+  return data
+}
+
+export async function getAccountProbeRun(
+  runId: number,
+  options?: FetchOptions
+): Promise<AccountProbeRun> {
+  const { data } = await apiClient.get<AccountProbeRun>(`/admin/account-probe-runs/${runId}`, {
+    signal: options?.signal,
+  })
+  return data
+}
+
+export async function batchAccountProbeRuns(
+  payload: BatchAccountProbeRunsRequest,
+  options?: FetchOptions
+): Promise<BatchAccountProbeRunsResponse> {
+  const { data } = await apiClient.post<BatchAccountProbeRunsResponse>(
+    '/admin/account-probe-runs/batch',
+    payload,
+    {
+      signal: options?.signal,
+    }
+  )
   return data
 }
 
@@ -821,6 +867,9 @@ export const accountsAPI = {
   createProbeRun,
   listProbeRuns,
   getProbeRun,
+  listAccountProbeRuns,
+  getAccountProbeRun,
+  batchAccountProbeRuns,
   refreshCredentials,
   getStats,
   clearError,

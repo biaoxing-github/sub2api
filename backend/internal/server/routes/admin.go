@@ -273,6 +273,10 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 }
 
 func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	admin.GET("/account-probe-runs", h.Admin.Account.ListProbeReportRuns)
+	admin.POST("/account-probe-runs/batch", h.Admin.Account.BatchCreateProbeReportRuns)
+	admin.GET("/account-probe-runs/:run_id", h.Admin.Account.GetProbeReportRun)
+
 	accounts := admin.Group("/accounts")
 	{
 		accounts.GET("", h.Admin.Account.List)

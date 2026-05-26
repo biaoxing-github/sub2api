@@ -60,6 +60,14 @@ func (r *accountProbeRepoStub) GetAccountProbeRun(ctx context.Context, accountID
 	return nil, ErrAccountNotFound
 }
 
+func (r *accountProbeRepoStub) ListAccountProbeReportRuns(ctx context.Context, filter AccountProbeReportFilter) ([]AccountProbeReportItem, int, error) {
+	return nil, 0, nil
+}
+
+func (r *accountProbeRepoStub) GetAccountProbeReportRun(ctx context.Context, runID int64) (*AccountProbeReportItem, error) {
+	return nil, ErrAccountNotFound
+}
+
 func (r *accountProbeRepoStub) ListAccountProbeSamples(ctx context.Context, runID int64) ([]AccountProbeSample, error) {
 	return r.samples, nil
 }

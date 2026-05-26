@@ -363,6 +363,7 @@ export default {
     availableChannels: '可用渠道',
     subscriptions: '订阅管理',
     accounts: '账号管理',
+    accountProbeReports: '上游体检报告',
     proxies: 'IP管理',
     redeemCodes: '兑换码',
     ops: '运维监控',
@@ -4204,6 +4205,7 @@ export default {
         running: '测速中...',
         started: '测速任务已开始，后台会继续执行；稍后刷新历史或打开记录查看结果。',
         avgLatency: '平均延迟',
+        model: '模型',
         firstToken: '首 Token',
         successRate: '成功率',
         tokensUsed: '已用 Token',
@@ -4814,6 +4816,79 @@ export default {
           failed: '失败',
           canceled: '已取消'
         }
+      }
+    },
+
+    accountProbeReports: {
+      title: '上游体检报告',
+      description: '查看所有上游账号测速与体检记录',
+      keywordPlaceholder: '搜索账号、模型或错误',
+      accountId: '账号 ID',
+      account: '账号名',
+      model: '模型',
+      mode: '模式',
+      status: '状态',
+      score: '得分',
+      grade: '评级',
+      confidence: '可信度',
+      successRate: '成功率',
+      avgLatency: '平均耗时',
+      p95: 'P95',
+      firstToken: '首 Token',
+      tokens: 'Tokens',
+      time: '时间',
+      startTime: '开始时间',
+      endTime: '结束时间',
+      empty: '暂无上游体检报告',
+      detailTitle: '体检详情',
+      scoreItems: '得分项',
+      penaltyItems: '扣分项',
+      samples: '样本',
+      error: '错误',
+      failedToLoad: '加载上游体检报告失败',
+      failedToLoadDetail: '加载体检详情失败',
+      selectedAccounts: '已选 {count} 个账号',
+      batchProbe: '批量验证',
+      batchModelPlaceholder: '验证模型（可选）',
+      codexStability: 'Codex 稳定性',
+      longContext: '长上下文',
+      selectAll: '选择当前页账号',
+      selectAccount: '选择账号 {id}',
+      batchAccepted: '已提交 {count} 个体检任务',
+      batchFailed: '批量验证提交失败',
+      allStatuses: '全部状态',
+      allModes: '全部模式',
+      allRequestModes: '全部请求',
+      statuses: {
+        success: '成功',
+        partial: '部分成功',
+        failed: '失败',
+        running: '运行中',
+        pending: '等待中'
+      },
+      modes: {
+        quick: '快速测速',
+        standard: '标准体检'
+      },
+      requestModes: {
+        non_stream: '非流式',
+        stream: '流式'
+      },
+      grades: {
+        excellent: '优秀',
+        stable: '稳定可用',
+        slow: '可用偏慢',
+        unstable: '不稳定',
+        poor: '不建议调度'
+      },
+      sort: {
+        created_at: '按时间排序',
+        score: '按得分排序',
+        success_rate: '按成功率排序',
+        avg_latency_ms: '按平均耗时排序',
+        p95_ms: '按 P95 排序',
+        first_token_ms: '按首 Token 排序',
+        total_tokens: '按 Tokens 排序'
       }
     },
 

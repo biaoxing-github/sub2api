@@ -68,6 +68,8 @@ type accountProbeRunner interface {
 	RunExisting(ctx context.Context, run service.AccountProbeResult, req service.AccountProbeRunRequest) (service.AccountProbeResult, error)
 	List(ctx context.Context, filter service.AccountProbeHistoryFilter) ([]service.AccountProbeResult, error)
 	Get(ctx context.Context, accountID, runID int64) (*service.AccountProbeResult, error)
+	ListReports(ctx context.Context, filter service.AccountProbeReportFilter) (service.AccountProbeReportPage, error)
+	GetReport(ctx context.Context, runID int64) (*service.AccountProbeReportItem, error)
 }
 
 type accountPathHealthReader interface {
@@ -906,6 +908,17 @@ type CreateAccountProbeRunRequest struct {
 	RequestMode           string `json:"request_mode"`
 }
 
+type BatchCreateAccountProbeRunsRequest struct {
+	AccountIDs            []int64 `json:"account_ids"`
+	Mode                  string  `json:"mode"`
+	Model                 string  `json:"model"`
+	IncludeCodexStability bool    `json:"include_codex_stability"`
+	IncludeLongContext    bool    `json:"include_long_context"`
+	CodexStability        bool    `json:"codex_stability"`
+	LongContext           bool    `json:"long_context"`
+	RequestMode           string  `json:"request_mode"`
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -1060,6 +1073,152 @@ func (h *AccountHandler) GetProbeRun(c *gin.Context) {
 		return
 	}
 	response.Success(c, result)
+}
+
+// ListProbeReportRuns returns all upstream account probe runs for the report page.
+// GET /api/v1/admin/account-probe-runs
+func (h *AccountHandler) ListProbeReportRuns(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	filter, err := parseAccountProbeReportFilter(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	result, err := h.accountProbeService.ListReports(c.Request.Context(), filter)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// GetProbeReportRun returns one upstream account probe run for the report page.
+// GET /api/v1/admin/account-probe-runs/:run_id
+func (h *AccountHandler) GetProbeReportRun(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	runID, err := strconv.ParseInt(c.Param("run_id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid probe run ID")
+		return
+	}
+	result, err := h.accountProbeService.GetReport(c.Request.Context(), runID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// BatchCreateProbeReportRuns starts background probe runs for selected upstream accounts.
+// POST /api/v1/admin/account-probe-runs/batch
+func (h *AccountHandler) BatchCreateProbeReportRuns(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	var req BatchCreateAccountProbeRunsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	accountIDs := uniquePositiveInt64s(req.AccountIDs)
+	if len(accountIDs) == 0 {
+		response.BadRequest(c, "account_ids is required")
+		return
+	}
+	if len(accountIDs) > 50 {
+		response.BadRequest(c, "account_ids cannot exceed 50")
+		return
+	}
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = service.AccountProbeProfileQuick
+	}
+	runs := make([]service.AccountProbeResult, 0, len(accountIDs))
+	for _, accountID := range accountIDs {
+		probeReq := service.AccountProbeRunRequest{
+			AccountID:             accountID,
+			Profile:               mode,
+			Model:                 req.Model,
+			IncludeCodexStability: req.IncludeCodexStability || req.CodexStability,
+			IncludeLongContext:    req.IncludeLongContext || req.LongContext,
+			RequestMode:           req.RequestMode,
+		}
+		run, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		runs = append(runs, run)
+		go h.runAccountProbeBackground(run, probeReq)
+	}
+	response.Accepted(c, gin.H{
+		"accepted_count": len(runs),
+		"runs":           runs,
+	})
+}
+
+func parseAccountProbeReportFilter(c *gin.Context) (service.AccountProbeReportFilter, error) {
+	var filter service.AccountProbeReportFilter
+	if raw := strings.TrimSpace(c.Query("account_id")); raw != "" {
+		accountID, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return filter, fmt.Errorf("Invalid account ID")
+		}
+		filter.AccountID = accountID
+	}
+	filter.Status = c.Query("status")
+	filter.Profile = c.Query("mode")
+	filter.RequestMode = c.Query("request_mode")
+	filter.Model = c.Query("model")
+	filter.Keyword = c.Query("keyword")
+	filter.Sort = firstQueryValue(c, service.AccountProbeReportSortCreatedAt, "sort", "sort_by")
+	filter.Order = firstQueryValue(c, "desc", "order", "sort_order")
+	filter.Page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+	filter.PageSize, _ = strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if raw := strings.TrimSpace(firstQueryValue(c, "", "from", "start_time")); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return filter, fmt.Errorf("Invalid from time")
+		}
+		filter.From = &t
+	}
+	if raw := strings.TrimSpace(firstQueryValue(c, "", "to", "end_time")); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return filter, fmt.Errorf("Invalid to time")
+		}
+		filter.To = &t
+	}
+	return filter, nil
+}
+
+func uniquePositiveInt64s(values []int64) []int64 {
+	seen := make(map[int64]bool, len(values))
+	out := make([]int64, 0, len(values))
+	for _, value := range values {
+		if value <= 0 || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func firstQueryValue(c *gin.Context, fallback string, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(c.Query(key)); value != "" {
+			return value
+		}
+	}
+	return fallback
 }
 
 // RecoverState handles unified recovery of recoverable account runtime state.

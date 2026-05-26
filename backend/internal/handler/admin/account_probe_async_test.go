@@ -63,6 +63,14 @@ func (s *blockingAccountProbeService) Get(ctx context.Context, accountID, runID 
 	return nil, nil
 }
 
+func (s *blockingAccountProbeService) ListReports(ctx context.Context, filter service.AccountProbeReportFilter) (service.AccountProbeReportPage, error) {
+	return service.AccountProbeReportPage{}, nil
+}
+
+func (s *blockingAccountProbeService) GetReport(ctx context.Context, runID int64) (*service.AccountProbeReportItem, error) {
+	return nil, nil
+}
+
 func TestAccountProbeCreateReturnsAcceptedAndRunsInBackground(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	probeSvc := newBlockingAccountProbeService()
