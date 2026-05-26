@@ -1099,6 +1099,28 @@
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
+        <div v-if="form.platform === 'openai'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.openai.requestBaseUrls') }}</label>
+            <textarea
+              v-model="requestBaseUrlsText"
+              rows="3"
+              class="input font-mono text-xs"
+              :placeholder="t('admin.accounts.openai.requestBaseUrlsPlaceholder')"
+            ></textarea>
+            <p class="input-hint">{{ t('admin.accounts.openai.requestBaseUrlsHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.openai.balanceBaseUrl') }}</label>
+            <input
+              v-model="balanceBaseUrl"
+              type="text"
+              class="input font-mono text-xs"
+              placeholder="https://api.openai.com"
+            />
+            <p class="input-hint">{{ t('admin.accounts.openai.balanceBaseUrlHint') }}</p>
+          </div>
+        </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
           <input
@@ -3370,6 +3392,21 @@ function parseAPIKeysText(value: string): string[] {
   return keys
 }
 
+function parseBaseURLsText(value: string): string[] {
+  const seen = new Set<string>()
+  const urls: string[] = []
+  value
+    .split(/\r?\n|,/)
+    .map(item => item.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+    .forEach(url => {
+      if (seen.has(url)) return
+      seen.add(url)
+      urls.push(url)
+    })
+  return urls
+}
+
 function parseEndpointPathsText(value: string): string[] {
   const seen = new Set<string>()
   const paths: string[] = []
@@ -3459,6 +3496,8 @@ const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
+const requestBaseUrlsText = ref('')
+const balanceBaseUrl = ref('')
 const apiKeyValue = ref('')
 const apiKeysText = ref('')
 const editQuotaLimit = ref<number | null>(null)
@@ -3835,6 +3874,8 @@ watch(
         : newPlatform === 'gemini'
           ? 'https://generativelanguage.googleapis.com'
           : 'https://api.anthropic.com'
+    requestBaseUrlsText.value = ''
+    balanceBaseUrl.value = ''
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
@@ -4245,6 +4286,8 @@ const resetForm = () => {
   accountCategory.value = 'oauth-based'
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
+  requestBaseUrlsText.value = ''
+  balanceBaseUrl.value = ''
   apiKeyValue.value = ''
   apiKeysText.value = ''
   editQuotaLimit.value = null
@@ -4653,8 +4696,19 @@ const handleSubmit = async () => {
         : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
+  const requestBaseUrls = form.platform === 'openai'
+    ? parseBaseURLsText([apiKeyBaseUrl.value, requestBaseUrlsText.value].filter(Boolean).join('\n'))
+    : []
+  const primaryBaseUrl = requestBaseUrls[0] || apiKeyBaseUrl.value.trim() || defaultBaseUrl
   const credentials: Record<string, unknown> = {
-    base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl
+    base_url: primaryBaseUrl
+  }
+  if (form.platform === 'openai') {
+    credentials.request_base_urls = requestBaseUrls.length > 0 ? requestBaseUrls : [primaryBaseUrl]
+    const normalizedBalanceBaseURL = parseBaseURLsText(balanceBaseUrl.value)[0]
+    if (normalizedBalanceBaseURL) {
+      credentials.balance_base_url = normalizedBalanceBaseURL
+    }
   }
   if (apiKeys.length > 0) {
     credentials.api_keys = apiKeys

@@ -197,6 +197,12 @@ func classifyAccountProbeError(message string) (string, string, int) {
 	switch {
 	case lower == "":
 		return "", "", 0
+	case strings.Contains(lower, "cloudflare") ||
+		strings.Contains(lower, "cf-ray") ||
+		strings.Contains(lower, "error 522") ||
+		strings.Contains(lower, "error 524") ||
+		strings.Contains(lower, "just a moment"):
+		return "cloudflare_waf", "Cloudflare/WAF 拦截", 15
 	case strings.Contains(lower, "context deadline exceeded"):
 		return "context_deadline", "context deadline exceeded", 15
 	case strings.Contains(lower, "timeout"):

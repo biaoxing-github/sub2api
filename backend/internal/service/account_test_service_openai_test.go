@@ -24,6 +24,7 @@ import (
 
 type queuedHTTPUpstream struct {
 	responses []*http.Response
+	errs      []error
 	requests  []*http.Request
 	tlsFlags  []bool
 }
@@ -35,6 +36,13 @@ func (u *queuedHTTPUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*htt
 func (u *queuedHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int64, _ int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	u.requests = append(u.requests, req)
 	u.tlsFlags = append(u.tlsFlags, profile != nil)
+	if len(u.errs) > 0 {
+		err := u.errs[0]
+		u.errs = u.errs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if len(u.responses) == 0 {
 		return nil, fmt.Errorf("no mocked response")
 	}
@@ -384,6 +392,47 @@ func TestAccountTestService_OpenAIAPIKeyInsufficientBalanceDisablesCurrentKeyAnd
 	require.Len(t, upstream.requests, 2)
 	require.Equal(t, "Bearer key-empty", upstream.requests[0].Header.Get("Authorization"))
 	require.Equal(t, "Bearer key-ok", upstream.requests[1].Header.Get("Authorization"))
+}
+
+func TestAccountTestService_OpenAIAPIKeyTriesNextRequestBaseURLOnTransientError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+
+	resp := newJSONResponse(http.StatusOK, "")
+	resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
+
+`))
+	upstream := &queuedHTTPUpstream{
+		errs:      []error{fmt.Errorf("Post \"https://bad.example.com/v1/responses\": unexpected EOF"), nil},
+		responses: []*http.Response{resp},
+	}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg: &config.Config{
+			Security: config.SecurityConfig{
+				URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+			},
+		},
+	}
+	account := &Account{
+		ID:          91,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":           "key-ok",
+			"base_url":          "https://bad.example.com/v1",
+			"request_base_urls": []string{"https://bad.example.com/v1", "https://good.example.com/v1"},
+		},
+		Extra: map[string]any{"openai_responses_supported": true},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	require.NoError(t, err)
+	require.Contains(t, recorder.Body.String(), "test_complete")
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://bad.example.com/v1/responses", upstream.requests[0].URL.String())
+	require.Equal(t, "https://good.example.com/v1/responses", upstream.requests[1].URL.String())
 }
 
 func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsPath(t *testing.T) {

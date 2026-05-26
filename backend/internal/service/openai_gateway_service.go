@@ -2833,10 +2833,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	httpInvalidEncryptedContentRetryTried := false
-	for {
+	requestBaseURLs := openAIRequestBaseURLsForForward(account)
+	for urlIdx := 0; urlIdx < len(requestBaseURLs); urlIdx++ {
+		requestBaseURL := requestBaseURLs[urlIdx]
 		// Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
+		upstreamReq, err := s.buildUpstreamRequestWithBaseURL(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI, requestBaseURL)
 		releaseUpstreamCtx()
 		if err != nil {
 			return nil, err
@@ -2854,7 +2856,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
-			if stabilityPolicy.RequestPhaseFailoverEnabled && isOpenAIRequestPhaseTransientError(err) {
+			if shouldFailoverOpenAIRequestPhaseError(stabilityPolicy, err) {
+				if urlIdx+1 < len(requestBaseURLs) {
+					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						Platform:           account.Platform,
+						AccountID:          account.ID,
+						AccountName:        account.Name,
+						UpstreamStatusCode: 0,
+						Kind:               "base_url_failover",
+						Message:            safeErr,
+						Detail:             requestBaseURL,
+					})
+					continue
+				}
 				return nil, s.newOpenAIRequestFailoverError(c, account, false, "failover", safeErr)
 			}
 			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
@@ -2893,9 +2907,31 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					}
 					httpInvalidEncryptedContentRetryTried = true
 					logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying non-WSv2 request once after invalid_encrypted_content (account: %s)", account.Name)
+					urlIdx--
 					continue
 				}
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
+			}
+			if shouldFailoverOpenAIRequestBaseURLResponse(resp.StatusCode, upstreamMsg, respBody) && urlIdx+1 < len(requestBaseURLs) {
+				upstreamDetail := ""
+				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+					if maxBytes <= 0 {
+						maxBytes = 2048
+					}
+					upstreamDetail = truncateString(string(respBody), maxBytes)
+				}
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "base_url_failover",
+					Message:            upstreamMsg,
+					Detail:             firstNonEmptyString(upstreamDetail, requestBaseURL),
+				})
+				continue
 			}
 			if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 				upstreamDetail := ""
@@ -2988,6 +3024,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		return forwardResult, nil
 	}
+	return nil, errors.New("OpenAI request base URL failover exhausted")
 }
 
 func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
@@ -3144,13 +3181,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		return nil, err
 	}
 
-	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token, stabilityPolicy)
-	releaseUpstreamCtx()
-	if err != nil {
-		return nil, err
-	}
-
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
@@ -3160,31 +3190,80 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		c.Set("openai_passthrough", true)
 	}
 
-	upstreamStart := time.Now()
-	resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body, stabilityPolicy)
-	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
-	if err != nil {
-		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		if stabilityPolicy.RequestPhaseFailoverEnabled && isOpenAIRequestPhaseTransientError(err) {
-			return nil, s.newOpenAIRequestFailoverError(c, account, true, "failover", safeErr)
+	requestBaseURLs := openAIRequestBaseURLsForForward(account)
+	var resp *http.Response
+	for urlIdx := 0; urlIdx < len(requestBaseURLs); urlIdx++ {
+		requestBaseURL := requestBaseURLs[urlIdx]
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		upstreamReq, err := s.buildUpstreamRequestOpenAIPassthroughWithBaseURL(upstreamCtx, c, account, body, token, stabilityPolicy, requestBaseURL)
+		releaseUpstreamCtx()
+		if err != nil {
+			return nil, err
 		}
-		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			Passthrough:        true,
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error": gin.H{
-				"type":    "upstream_error",
-				"message": "Upstream request failed",
-			},
-		})
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+
+		upstreamStart := time.Now()
+		resp, err = s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body, stabilityPolicy)
+		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+		if err != nil {
+			safeErr := sanitizeUpstreamErrorMessage(err.Error())
+			if shouldFailoverOpenAIRequestPhaseError(stabilityPolicy, err) {
+				if urlIdx+1 < len(requestBaseURLs) {
+					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						Platform:           account.Platform,
+						AccountID:          account.ID,
+						AccountName:        account.Name,
+						UpstreamStatusCode: 0,
+						Passthrough:        true,
+						Kind:               "base_url_failover",
+						Message:            safeErr,
+						Detail:             requestBaseURL,
+					})
+					continue
+				}
+				return nil, s.newOpenAIRequestFailoverError(c, account, true, "failover", safeErr)
+			}
+			setOpsUpstreamError(c, 0, safeErr, "")
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: 0,
+				Passthrough:        true,
+				Kind:               "request_error",
+				Message:            safeErr,
+			})
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": gin.H{
+					"type":    "upstream_error",
+					"message": "Upstream request failed",
+				},
+			})
+			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		}
+		if resp != nil && resp.StatusCode >= 400 {
+			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+			if shouldFailoverOpenAIRequestBaseURLResponse(resp.StatusCode, upstreamMsg, respBody) && urlIdx+1 < len(requestBaseURLs) {
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Passthrough:        true,
+					Kind:               "base_url_failover",
+					Message:            upstreamMsg,
+					Detail:             requestBaseURL,
+				})
+				continue
+			}
+		}
+		break
+	}
+	if resp == nil {
+		return nil, errors.New("OpenAI passthrough request base URL failover exhausted")
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -3291,12 +3370,27 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	token string,
 	stabilityPolicy openAICodexStabilityPolicy,
 ) (*http.Request, error) {
+	return s.buildUpstreamRequestOpenAIPassthroughWithBaseURL(ctx, c, account, body, token, stabilityPolicy, "")
+}
+
+func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	token string,
+	stabilityPolicy openAICodexStabilityPolicy,
+	requestBaseURL string,
+) (*http.Request, error) {
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
 	case AccountTypeOAuth:
 		targetURL = chatgptCodexURL
 	case AccountTypeAPIKey:
-		baseURL := account.GetOpenAIBaseURL()
+		baseURL := strings.TrimSpace(requestBaseURL)
+		if baseURL == "" {
+			baseURL = account.GetOpenAIBaseURL()
+		}
 		if baseURL != "" {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 			if err != nil {
@@ -3644,6 +3738,31 @@ func isOpenAIRequestPhaseTransientError(err error) bool {
 		}
 	}
 	return false
+}
+
+func shouldFailoverOpenAIRequestPhaseError(policy openAICodexStabilityPolicy, err error) bool {
+	if !isOpenAIRequestPhaseTransientError(err) {
+		return false
+	}
+	return true
+}
+
+func openAIRequestBaseURLsForForward(account *Account) []string {
+	if account != nil && account.IsOpenAIApiKey() {
+		if urls := account.GetOpenAIRequestBaseURLs(); len(urls) > 0 {
+			return urls
+		}
+	}
+	return []string{""}
+}
+
+func shouldFailoverOpenAIRequestBaseURLResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	switch statusCode {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 520, 522, 523, 524, 529:
+		return true
+	default:
+		return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
+	}
 }
 
 type openAIUpstreamDoResult struct {
@@ -4322,6 +4441,10 @@ func writeOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, fil
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
+	return s.buildUpstreamRequestWithBaseURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, "")
+}
+
+func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, requestBaseURL string) (*http.Request, error) {
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
@@ -4330,7 +4453,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		targetURL = chatgptCodexURL
 	case AccountTypeAPIKey:
 		// API Key accounts use Platform API or custom base URL
-		baseURL := account.GetOpenAIBaseURL()
+		baseURL := strings.TrimSpace(requestBaseURL)
+		if baseURL == "" {
+			baseURL = account.GetOpenAIBaseURL()
+		}
 		if baseURL == "" {
 			targetURL = openaiPlatformAPIURL
 		} else {

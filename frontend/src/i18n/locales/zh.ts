@@ -3570,6 +3570,11 @@ export default {
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
         apiKeyHint: '您的 OpenAI API Key',
+        requestBaseUrls: '请求 Base URL 列表',
+        requestBaseUrlsPlaceholder: '每行一个请求地址\nhttps://api.openai.com\nhttps://api-accelerate.example.com',
+        requestBaseUrlsHint: '正式请求、测试连接和测速体检会按顺序使用这些地址；第一行会同步为 Base URL。',
+        balanceBaseUrl: '余额 Base URL',
+        balanceBaseUrlHint: '留空则跟随第一条请求 Base URL；刷新余额和 auth/me 只走这个地址。',
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:
           '开启后，该 OpenAI 账号将自动透传请求与响应，仅替换认证并保留计费/并发/审计及必要安全过滤；如遇兼容性问题可随时关闭回滚。',

@@ -1239,12 +1239,107 @@ func (a *Account) GetOpenAIBaseURL() string {
 		return ""
 	}
 	if a.Type == AccountTypeAPIKey {
-		baseURL := a.GetCredential("base_url")
-		if baseURL != "" {
+		if baseURL := a.GetOpenAIPrimaryRequestBaseURL(); baseURL != "" {
 			return baseURL
 		}
 	}
 	return "https://api.openai.com"
+}
+
+func (a *Account) GetOpenAIPrimaryRequestBaseURL() string {
+	urls := a.GetOpenAIRequestBaseURLs()
+	if len(urls) == 0 {
+		return ""
+	}
+	return urls[0]
+}
+
+func (a *Account) GetOpenAIRequestBaseURLs() []string {
+	if a == nil || !a.IsOpenAI() || a.Type != AccountTypeAPIKey {
+		return nil
+	}
+	raw := make([]string, 0, 4)
+	if baseURL := a.GetCredential("base_url"); baseURL != "" {
+		raw = append(raw, baseURL)
+	}
+	if a.Credentials != nil {
+		raw = append(raw, parseAccountStringList(a.Credentials["request_base_urls"])...)
+	}
+	urls := normalizeAccountBaseURLs(raw)
+	if len(urls) == 0 {
+		return []string{"https://api.openai.com"}
+	}
+	return urls
+}
+
+func (a *Account) GetOpenAIBalanceBaseURL() string {
+	if a == nil || !a.IsOpenAI() {
+		return ""
+	}
+	if a.Type == AccountTypeAPIKey {
+		if raw := strings.TrimSpace(a.GetCredential("balance_base_url")); raw != "" {
+			if urls := normalizeAccountBaseURLs([]string{raw}); len(urls) > 0 {
+				return urls[0]
+			}
+		}
+		if baseURL := a.GetOpenAIPrimaryRequestBaseURL(); baseURL != "" {
+			return baseURL
+		}
+	}
+	return "https://api.openai.com"
+}
+
+func parseAccountStringList(raw any) []string {
+	switch v := raw.(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return nil
+		}
+		var parsed []string
+		if err := json.Unmarshal([]byte(v), &parsed); err == nil {
+			return parsed
+		}
+		parts := strings.FieldsFunc(v, func(r rune) bool {
+			return r == '\n' || r == '\r' || r == ','
+		})
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func normalizeAccountBaseURLs(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimRight(strings.TrimSpace(value), "/")
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func (a *Account) GetOpenAIAccessToken() string {

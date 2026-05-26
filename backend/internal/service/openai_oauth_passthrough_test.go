@@ -32,6 +32,7 @@ type httpUpstreamRecorder struct {
 	resp      *http.Response
 	responses []*http.Response
 	err       error
+	errs      []error
 }
 
 func (u *httpUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
@@ -44,6 +45,13 @@ func (u *httpUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID 
 		req.Body = io.NopCloser(bytes.NewReader(b))
 	}
 	u.requests = append(u.requests, req)
+	if len(u.errs) > 0 {
+		err := u.errs[0]
+		u.errs = u.errs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if u.err != nil {
 		return nil, u.err
 	}

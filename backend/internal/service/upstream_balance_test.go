@@ -203,6 +203,25 @@ func TestUpstreamBalanceServiceRefreshOneRefreshesOnlyRequestedAccount(t *testin
 	}
 }
 
+func TestUpstreamBalanceBaseURLUsesDedicatedBalanceBaseURL(t *testing.T) {
+	account := &Account{
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url":          "https://request.example.com/v1",
+			"request_base_urls": []string{"https://request.example.com/v1", "https://fast.example.com/v1"},
+			"balance_base_url":  "https://balance.example.com/v1/",
+		},
+	}
+
+	got := upstreamBalanceBaseURL(account)
+
+	if got != "https://balance.example.com" {
+		t.Fatalf("upstreamBalanceBaseURL() = %q, want %q", got, "https://balance.example.com")
+	}
+}
+
 func TestUpstreamBalanceServiceRefreshOneUsesNewAPIUsageGroups(t *testing.T) {
 	repo := &upstreamBalanceRefreshOneRepo{
 		account: &Account{

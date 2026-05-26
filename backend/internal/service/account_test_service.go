@@ -525,6 +525,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Determine authentication method and API URL
 	var authToken string
 	var apiURL string
+	var apiURLs []string
 	var isOAuth bool
 	var chatgptAccountID string
 
@@ -538,6 +539,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 		// OAuth uses ChatGPT internal API
 		apiURL = chatgptCodexAPIURL
+		apiURLs = []string{apiURL}
 		chatgptAccountID = account.GetChatGPTAccountID()
 	} else if account.Type == "apikey" {
 		// API Key - use Platform API
@@ -545,22 +547,28 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			return s.sendErrorAndEnd(c, "No API key available")
 		}
 
-		baseURL := account.GetOpenAIBaseURL()
-		if baseURL == "" {
-			baseURL = "https://api.openai.com"
+		baseURLs := account.GetOpenAIRequestBaseURLs()
+		if len(baseURLs) == 0 {
+			baseURLs = []string{"https://api.openai.com"}
 		}
-		normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
-		if err != nil {
-			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
+		normalizedBaseURLs := make([]string, 0, len(baseURLs))
+		for _, baseURL := range baseURLs {
+			normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+			if err != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
+			}
+			normalizedBaseURLs = append(normalizedBaseURLs, normalizedBaseURL)
 		}
 		if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
 			authToken = account.GetOpenAIApiKey()
 			if authToken == "" {
 				return s.sendErrorAndEnd(c, "No API key available")
 			}
-			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
+			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURLs[0], authToken)
 		}
-		apiURL = buildOpenAIResponsesURL(normalizedBaseURL)
+		for _, normalizedBaseURL := range normalizedBaseURLs {
+			apiURLs = append(apiURLs, buildOpenAIResponsesURL(normalizedBaseURL))
+		}
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -592,6 +600,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 	}
 	for attempt := 0; attempt < attempts; attempt++ {
+		urlsForAttempt := apiURLs
+		if len(urlsForAttempt) == 0 {
+			urlsForAttempt = []string{apiURL}
+		}
 		if account.Type == AccountTypeAPIKey {
 			authToken = account.GetOpenAIApiKey()
 			if authToken == "" {
@@ -599,60 +611,68 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
-		if err != nil {
-			return s.sendErrorAndEnd(c, "Failed to create request")
-		}
-
-		// Set common headers
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+authToken)
-
-		// Set OAuth-specific headers for ChatGPT internal API
-		if isOAuth {
-			req.Host = "chatgpt.com"
-			req.Header.Set("accept", "text/event-stream")
-			if chatgptAccountID != "" {
-				req.Header.Set("chatgpt-account-id", chatgptAccountID)
+		for urlIdx, currentAPIURL := range urlsForAttempt {
+			req, err := http.NewRequestWithContext(ctx, "POST", currentAPIURL, bytes.NewReader(payloadBytes))
+			if err != nil {
+				return s.sendErrorAndEnd(c, "Failed to create request")
 			}
-		}
 
-		resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
-		if err != nil {
-			return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
-		}
+			// Set common headers
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+authToken)
 
-		if isOAuth && s.accountRepo != nil {
-			if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
-				_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
-				mergeAccountExtra(account, updates)
-				s.applyCodexSnapshotRateLimit(ctx, account, updates)
-			}
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusTooManyRequests {
-				s.reconcileOpenAI429State(ctx, account, resp.Header, body)
-			}
-			if account.Type == AccountTypeAPIKey && shouldDisableCurrentAPIKey(resp.StatusCode, body) {
-				if disabled := disableAccountAPIKey(ctx, s.accountRepo, account, authToken, disableAPIKeyReason(resp.StatusCode, body)); disabled {
-					if len(account.GetAPIKeys()) > 0 {
-						continue
-					}
+			// Set OAuth-specific headers for ChatGPT internal API
+			if isOAuth {
+				req.Host = "chatgpt.com"
+				req.Header.Set("accept", "text/event-stream")
+				if chatgptAccountID != "" {
+					req.Header.Set("chatgpt-account-id", chatgptAccountID)
 				}
 			}
-			// 401 Unauthorized: 标记账号为永久错误
-			if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-				errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
-				_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
-			}
-			return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
-		}
 
-		// Process SSE stream
-		return s.processOpenAIStream(c, resp.Body)
+			resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+			if err != nil {
+				if account.Type == AccountTypeAPIKey && isOpenAIRequestPhaseTransientError(err) && urlIdx+1 < len(urlsForAttempt) {
+					continue
+				}
+				return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+			}
+
+			if isOAuth && s.accountRepo != nil {
+				if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
+					_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
+					mergeAccountExtra(account, updates)
+					s.applyCodexSnapshotRateLimit(ctx, account, updates)
+				}
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				if account.Type == AccountTypeAPIKey && shouldFailoverOpenAIRequestBaseURLResponse(resp.StatusCode, extractUpstreamErrorMessage(body), body) && urlIdx+1 < len(urlsForAttempt) {
+					continue
+				}
+				if resp.StatusCode == http.StatusTooManyRequests {
+					s.reconcileOpenAI429State(ctx, account, resp.Header, body)
+				}
+				if account.Type == AccountTypeAPIKey && shouldDisableCurrentAPIKey(resp.StatusCode, body) {
+					if disabled := disableAccountAPIKey(ctx, s.accountRepo, account, authToken, disableAPIKeyReason(resp.StatusCode, body)); disabled {
+						if len(account.GetAPIKeys()) > 0 {
+							break
+						}
+					}
+				}
+				// 401 Unauthorized: 标记账号为永久错误
+				if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+					errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
+					_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+				}
+				return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+			}
+
+			// Process SSE stream
+			return s.processOpenAIStream(c, resp.Body)
+		}
 	}
 
 	return s.sendErrorAndEnd(c, "No API key available")

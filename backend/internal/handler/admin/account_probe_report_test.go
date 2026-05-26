@@ -22,6 +22,10 @@ type accountProbeReportHTTPServiceStub struct {
 	reportPage   service.AccountProbeReportPage
 	reportItem   *service.AccountProbeReportItem
 	startedRuns  []service.AccountProbeRunRequest
+	activeRuns   int
+	maxActive    int
+	runStarted   chan struct{}
+	releaseRun   chan struct{}
 	mu           sync.Mutex
 }
 
@@ -41,6 +45,26 @@ func (s *accountProbeReportHTTPServiceStub) Start(ctx context.Context, req servi
 }
 
 func (s *accountProbeReportHTTPServiceStub) RunExisting(ctx context.Context, run service.AccountProbeResult, req service.AccountProbeRunRequest) (service.AccountProbeResult, error) {
+	s.mu.Lock()
+	s.activeRuns++
+	if s.activeRuns > s.maxActive {
+		s.maxActive = s.activeRuns
+	}
+	started := s.runStarted
+	release := s.releaseRun
+	s.mu.Unlock()
+	if started != nil {
+		started <- struct{}{}
+	}
+	if release != nil {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+	}
+	s.mu.Lock()
+	s.activeRuns--
+	s.mu.Unlock()
 	run.Status = service.AccountProbeStatusSuccess
 	run.SuccessCount = max(run.RequestCount, 1)
 	return run, nil
@@ -147,4 +171,38 @@ func TestAccountProbeReportBatchCreateDeduplicatesAccounts(t *testing.T) {
 	require.Equal(t, int64(182), probeSvc.startedRuns[1].AccountID)
 	require.Equal(t, "stream", probeSvc.startedRuns[0].RequestMode)
 	require.True(t, probeSvc.startedRuns[0].IncludeCodexStability)
+}
+
+func TestAccountProbeReportBatchCreateLimitsBackgroundConcurrency(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	probeSvc := &accountProbeReportHTTPServiceStub{
+		runStarted: make(chan struct{}, 4),
+		releaseRun: make(chan struct{}),
+	}
+	h := &AccountHandler{accountProbeService: probeSvc}
+	router := gin.New()
+	router.POST("/api/v1/admin/account-probe-runs/batch", h.BatchCreateProbeReportRuns)
+
+	body := `{"account_ids":[181,182,183,184],"mode":"quick","model":"gpt-5.4","request_mode":"stream"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/account-probe-runs/batch", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	require.Eventually(t, func() bool {
+		probeSvc.mu.Lock()
+		defer probeSvc.mu.Unlock()
+		return probeSvc.activeRuns == 2
+	}, time.Second, 10*time.Millisecond)
+	probeSvc.mu.Lock()
+	require.Equal(t, 2, probeSvc.maxActive)
+	probeSvc.mu.Unlock()
+	close(probeSvc.releaseRun)
+	require.Eventually(t, func() bool {
+		probeSvc.mu.Lock()
+		defer probeSvc.mu.Unlock()
+		return probeSvc.maxActive == 2 && probeSvc.activeRuns == 0
+	}, time.Second, 10*time.Millisecond)
 }

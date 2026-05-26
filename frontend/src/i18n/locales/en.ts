@@ -3422,6 +3422,11 @@ export default {
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',
         apiKeyHint: 'Your OpenAI API Key',
+        requestBaseUrls: 'Request Base URLs',
+        requestBaseUrlsPlaceholder: 'One request URL per line\nhttps://api.openai.com\nhttps://api-accelerate.example.com',
+        requestBaseUrlsHint: 'Requests, connection tests, and probes use these URLs in order. The first URL is saved as Base URL.',
+        balanceBaseUrl: 'Balance Base URL',
+        balanceBaseUrlHint: 'Leave empty to follow the first request Base URL. Balance refresh and auth/me only use this URL.',
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:
           'When enabled, this OpenAI account uses automatic passthrough: the gateway forwards request/response as-is and only swaps auth, while keeping billing/concurrency/audit and necessary safety filtering.',

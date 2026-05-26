@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -33,7 +34,11 @@ const (
 	AccountProbeRequestModeStream    = "stream"
 )
 
-const accountProbePersistenceTimeout = 5 * time.Second
+const (
+	accountProbePersistenceTimeout = 5 * time.Second
+	accountProbeRetryDelay         = 2 * time.Second
+	accountProbeStaleRunAge        = 15 * time.Minute
+)
 
 type AccountProbeRunRequest struct {
 	AccountID             int64  `json:"-"`
@@ -149,6 +154,7 @@ type AccountProbeReportPage struct {
 type AccountProbeRepository interface {
 	CreateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error
 	UpdateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error
+	ExpireStaleAccountProbeRuns(ctx context.Context, olderThan time.Duration) error
 	SaveAccountProbeSample(ctx context.Context, sample AccountProbeSample) error
 	ListAccountProbeRuns(ctx context.Context, filter AccountProbeHistoryFilter) ([]AccountProbeResult, error)
 	GetAccountProbeRun(ctx context.Context, accountID, runID int64) (*AccountProbeResult, error)
@@ -171,6 +177,8 @@ type AccountProbeService struct {
 	client   AccountProbeHTTPClient
 	testSvc  *AccountTestService
 }
+
+var accountProbeBaseURLLocks sync.Map
 
 func NewAccountProbeService(accounts AccountProbeAccountReader, repo AccountProbeRepository, client AccountProbeHTTPClient, testSvc *AccountTestService) *AccountProbeService {
 	if client == nil {
@@ -216,10 +224,15 @@ func (s *AccountProbeService) Start(ctx context.Context, req AccountProbeRunRequ
 }
 
 func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeResult, req AccountProbeRunRequest) (AccountProbeResult, error) {
-	account, keys, plan, model, baseURL, useResponses, err := s.prepareRun(ctx, req)
+	account, keys, plan, model, baseURLs, useResponses, err := s.prepareRun(ctx, req)
 	if err != nil {
 		return s.failExistingRun(ctx, run, err.Error()), err
 	}
+	releaseBaseURL := acquireAccountProbeBaseURLLock(ctx, strings.Join(baseURLs, "\n"))
+	if releaseBaseURL == nil {
+		return s.failExistingRun(ctx, run, "probe canceled while waiting for upstream concurrency slot"), ctx.Err()
+	}
+	defer releaseBaseURL()
 	run.AccountID = account.ID
 	run.Profile = plan.Profile
 	run.Model = model
@@ -238,7 +251,8 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 
 	for idx, planned := range plan.Samples {
 		key := keys[idx%len(keys)]
-		sample := s.runOpenAIAPIKeySample(ctx, account, baseURL, model, key, planned, useResponses, run.RequestMode)
+		baseURL := baseURLs[idx%len(baseURLs)]
+		sample := s.runOpenAIAPIKeySampleWithRetry(ctx, account, baseURL, model, key, planned, useResponses, run.RequestMode)
 		sample.RunID = run.ID
 		sample.RequestIndex = idx + 1
 		sample.Type = planned.Type
@@ -269,19 +283,89 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 	return run, nil
 }
 
-func (s *AccountProbeService) prepareRun(ctx context.Context, req AccountProbeRunRequest) (*Account, []string, accountProbePlan, string, string, bool, error) {
+func acquireAccountProbeBaseURLLock(ctx context.Context, baseURL string) func() {
+	key := strings.ToLower(strings.TrimSpace(baseURL))
+	if key == "" {
+		key = "default"
+	}
+	value, _ := accountProbeBaseURLLocks.LoadOrStore(key, make(chan struct{}, 1))
+	sem := value.(chan struct{})
+	select {
+	case sem <- struct{}{}:
+		return func() { <-sem }
+	default:
+	}
+	select {
+	case sem <- struct{}{}:
+		return func() { <-sem }
+	case <-ctx.Done():
+		return nil
+	}
+}
+
+func (s *AccountProbeService) runOpenAIAPIKeySampleWithRetry(ctx context.Context, account *Account, baseURL, model, apiKey string, sample APIKeyProbePlannedSample, useResponses bool, requestMode string) AccountProbeSample {
+	result := s.runOpenAIAPIKeySample(ctx, account, baseURL, model, apiKey, sample, useResponses, requestMode)
+	if !shouldRetryAccountProbeSample(result) || ctx.Err() != nil {
+		return result
+	}
+	delay := accountProbeRetryDelay
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < delay {
+		delay = 0
+	}
+	if delay > 0 {
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return result
+		}
+	}
+	retry := s.runOpenAIAPIKeySample(ctx, account, baseURL, model, apiKey, sample, useResponses, requestMode)
+	if retry.Status == AccountProbeSampleSuccess {
+		return retry
+	}
+	return result
+}
+
+func shouldRetryAccountProbeSample(sample AccountProbeSample) bool {
+	if sample.Status != AccountProbeSampleFailed {
+		return false
+	}
+	if sample.ErrorCode == "request_failed" && isTransientAccountProbeError(sample.ErrorMessage) {
+		return true
+	}
+	switch sample.HTTPStatus {
+	case http.StatusTooManyRequests, http.StatusServiceUnavailable, 522, 524:
+		return true
+	}
+	return false
+}
+
+func isTransientAccountProbeError(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	return strings.Contains(lower, "context deadline exceeded") ||
+		strings.Contains(lower, "timeout") ||
+		strings.Contains(lower, "unexpected eof") ||
+		lower == "eof" ||
+		strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "server overloaded") ||
+		strings.Contains(lower, "currently overloaded")
+}
+
+func (s *AccountProbeService) prepareRun(ctx context.Context, req AccountProbeRunRequest) (*Account, []string, accountProbePlan, string, []string, bool, error) {
 	if s.accounts == nil {
-		return nil, nil, accountProbePlan{}, "", "", false, fmt.Errorf("account probe account repository is nil")
+		return nil, nil, accountProbePlan{}, "", nil, false, fmt.Errorf("account probe account repository is nil")
 	}
 	account, err := s.accounts.GetByID(ctx, req.AccountID)
 	if err != nil {
-		return nil, nil, accountProbePlan{}, "", "", false, err
+		return nil, nil, accountProbePlan{}, "", nil, false, err
 	}
 	if account == nil {
-		return nil, nil, accountProbePlan{}, "", "", false, ErrAccountNotFound
+		return nil, nil, accountProbePlan{}, "", nil, false, ErrAccountNotFound
 	}
 	if !account.IsOpenAIApiKey() {
-		return nil, nil, accountProbePlan{}, "", "", false, fmt.Errorf("only openai api key accounts support probe runs")
+		return nil, nil, accountProbePlan{}, "", nil, false, fmt.Errorf("only openai api key accounts support probe runs")
 	}
 	keys := account.GetAPIKeys()
 	if len(keys) == 0 {
@@ -290,32 +374,36 @@ func (s *AccountProbeService) prepareRun(ctx context.Context, req AccountProbeRu
 		}
 	}
 	if len(keys) == 0 {
-		return nil, nil, accountProbePlan{}, "", "", false, fmt.Errorf("no api key available")
+		return nil, nil, accountProbePlan{}, "", nil, false, fmt.Errorf("no api key available")
 	}
 
 	plan, err := buildAccountProbePlan(req)
 	if err != nil {
-		return nil, nil, accountProbePlan{}, "", "", false, err
+		return nil, nil, accountProbePlan{}, "", nil, false, err
 	}
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
 		model = openai.DefaultTestModel
 	}
 	model = account.GetMappedModel(model)
-	baseURL := account.GetOpenAIBaseURL()
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
+	baseURLs := account.GetOpenAIRequestBaseURLs()
+	if len(baseURLs) == 0 {
+		baseURLs = []string{"https://api.openai.com"}
 	}
 	if s.testSvc != nil {
-		normalized, err := s.testSvc.validateUpstreamBaseURL(baseURL)
-		if err != nil {
-			return nil, nil, accountProbePlan{}, "", "", false, fmt.Errorf("invalid base URL: %w", err)
+		normalizedBaseURLs := make([]string, 0, len(baseURLs))
+		for _, baseURL := range baseURLs {
+			normalized, err := s.testSvc.validateUpstreamBaseURL(baseURL)
+			if err != nil {
+				return nil, nil, accountProbePlan{}, "", nil, false, fmt.Errorf("invalid base URL: %w", err)
+			}
+			normalizedBaseURLs = append(normalizedBaseURLs, normalized)
 		}
-		baseURL = normalized
+		baseURLs = normalizedBaseURLs
 	}
 
 	useResponses := openai_compat.ShouldUseResponsesAPI(account.Extra)
-	return account, keys, plan, model, baseURL, useResponses, nil
+	return account, keys, plan, model, baseURLs, useResponses, nil
 }
 
 func (s *AccountProbeService) failExistingRun(ctx context.Context, run AccountProbeResult, message string) AccountProbeResult {
@@ -335,6 +423,9 @@ func (s *AccountProbeService) List(ctx context.Context, filter AccountProbeHisto
 	if s.repo == nil {
 		return nil, fmt.Errorf("account probe repository is nil")
 	}
+	if err := s.repo.ExpireStaleAccountProbeRuns(ctx, accountProbeStaleRunAge); err != nil {
+		return nil, err
+	}
 	if filter.Limit <= 0 || filter.Limit > 50 {
 		filter.Limit = 20
 	}
@@ -344,6 +435,9 @@ func (s *AccountProbeService) List(ctx context.Context, filter AccountProbeHisto
 func (s *AccountProbeService) Get(ctx context.Context, accountID, runID int64) (*AccountProbeResult, error) {
 	if s.repo == nil {
 		return nil, fmt.Errorf("account probe repository is nil")
+	}
+	if err := s.repo.ExpireStaleAccountProbeRuns(ctx, accountProbeStaleRunAge); err != nil {
+		return nil, err
 	}
 	run, err := s.repo.GetAccountProbeRun(ctx, accountID, runID)
 	if err != nil {
@@ -360,6 +454,9 @@ func (s *AccountProbeService) Get(ctx context.Context, accountID, runID int64) (
 func (s *AccountProbeService) ListReports(ctx context.Context, filter AccountProbeReportFilter) (AccountProbeReportPage, error) {
 	if s.repo == nil {
 		return AccountProbeReportPage{}, fmt.Errorf("account probe repository is nil")
+	}
+	if err := s.repo.ExpireStaleAccountProbeRuns(ctx, accountProbeStaleRunAge); err != nil {
+		return AccountProbeReportPage{}, err
 	}
 	filter = normalizeAccountProbeReportFilter(filter)
 	items, total, err := s.repo.ListAccountProbeReportRuns(ctx, filter)
@@ -389,6 +486,9 @@ func (s *AccountProbeService) ListReports(ctx context.Context, filter AccountPro
 func (s *AccountProbeService) GetReport(ctx context.Context, runID int64) (*AccountProbeReportItem, error) {
 	if s.repo == nil {
 		return nil, fmt.Errorf("account probe repository is nil")
+	}
+	if err := s.repo.ExpireStaleAccountProbeRuns(ctx, accountProbeStaleRunAge); err != nil {
+		return nil, err
 	}
 	item, err := s.repo.GetAccountProbeReportRun(ctx, runID)
 	if err != nil {

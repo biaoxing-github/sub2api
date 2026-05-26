@@ -46,6 +46,28 @@
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
+        <div v-if="account.platform === 'openai'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.openai.requestBaseUrls') }}</label>
+            <textarea
+              v-model="editRequestBaseUrlsText"
+              rows="3"
+              class="input font-mono text-xs"
+              :placeholder="t('admin.accounts.openai.requestBaseUrlsPlaceholder')"
+            ></textarea>
+            <p class="input-hint">{{ t('admin.accounts.openai.requestBaseUrlsHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.openai.balanceBaseUrl') }}</label>
+            <input
+              v-model="editBalanceBaseUrl"
+              type="text"
+              class="input font-mono text-xs"
+              placeholder="https://api.openai.com"
+            />
+            <p class="input-hint">{{ t('admin.accounts.openai.balanceBaseUrlHint') }}</p>
+          </div>
+        </div>
         <div>
           <label class="input-label">{{ t('admin.accounts.apiKey') }}</label>
           <input
@@ -2480,6 +2502,21 @@ function parseAPIKeysText(value: string): string[] {
   return keys
 }
 
+function parseBaseURLsText(value: string): string[] {
+  const seen = new Set<string>()
+  const urls: string[] = []
+  value
+    .split(/\r?\n|,/)
+    .map(item => item.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+    .forEach(url => {
+      if (seen.has(url)) return
+      seen.add(url)
+      urls.push(url)
+    })
+  return urls
+}
+
 function parseEndpointPathsText(value: string): string[] {
   const seen = new Set<string>()
   const paths: string[] = []
@@ -2528,6 +2565,8 @@ interface TempUnschedRuleForm {
 // State
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
+const editRequestBaseUrlsText = ref('')
+const editBalanceBaseUrl = ref('')
 const editApiKey = ref('')
 const editApiKeysText = ref('')
 const apiKeysEditMode = ref<'append' | 'replace'>('append')
@@ -3106,6 +3145,15 @@ const syncFormFromAccount = (newAccount: Account | null) => {
           ? 'https://generativelanguage.googleapis.com'
           : 'https://api.anthropic.com'
     editBaseUrl.value = (credentials.base_url as string) || platformDefaultUrl
+    const requestBaseURLs = parseBaseURLsText(
+      Array.isArray(credentials.request_base_urls)
+        ? (credentials.request_base_urls as unknown[]).join('\n')
+        : typeof credentials.request_base_urls === 'string'
+          ? credentials.request_base_urls
+          : ''
+    )
+    editRequestBaseUrlsText.value = requestBaseURLs.length > 0 ? requestBaseURLs.join('\n') : editBaseUrl.value
+    editBalanceBaseUrl.value = (credentials.balance_base_url as string) || ''
 
     // Load model mappings and detect mode
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
@@ -3728,13 +3776,25 @@ const handleSubmit = async () => {
     // For apikey type, handle credentials update
     if (props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
-      const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
+      const requestBaseUrls = props.account.platform === 'openai'
+        ? parseBaseURLsText([editBaseUrl.value, editRequestBaseUrlsText.value].filter(Boolean).join('\n'))
+        : []
+      const newBaseUrl = requestBaseUrls[0] || editBaseUrl.value.trim() || defaultBaseUrl.value
       const shouldApplyModelMapping = !(props.account.platform === 'openai' && openaiPassthroughEnabled.value)
 
       // Always update credentials for apikey type to handle model mapping changes
       const newCredentials: Record<string, unknown> = {
         ...currentCredentials,
         base_url: newBaseUrl
+      }
+      if (props.account.platform === 'openai') {
+        newCredentials.request_base_urls = requestBaseUrls.length > 0 ? requestBaseUrls : [newBaseUrl]
+        const normalizedBalanceBaseURL = parseBaseURLsText(editBalanceBaseUrl.value)[0]
+        if (normalizedBalanceBaseURL) {
+          newCredentials.balance_base_url = normalizedBalanceBaseURL
+        } else {
+          delete newCredentials.balance_base_url
+        }
       }
 
       // Handle API key. 后端响应已脱敏，追加模式通过 api_keys_append 让服务端用已保存明文合并。

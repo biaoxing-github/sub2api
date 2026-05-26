@@ -1166,7 +1166,7 @@ func allAccountAPIKeys(account *Account) []string {
 }
 
 func upstreamBalanceBaseURL(account *Account) string {
-	baseURL := strings.TrimSpace(account.GetOpenAIBaseURL())
+	baseURL := strings.TrimSpace(account.GetOpenAIBalanceBaseURL())
 	if baseURL == "" {
 		baseURL = strings.TrimSpace(account.GetCredential("base_url"))
 	}

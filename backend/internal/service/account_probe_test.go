@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +45,10 @@ func (r *accountProbeRepoStub) CreateAccountProbeRun(ctx context.Context, run *A
 func (r *accountProbeRepoStub) UpdateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error {
 	copy := *run
 	r.updated = &copy
+	return nil
+}
+
+func (r *accountProbeRepoStub) ExpireStaleAccountProbeRuns(ctx context.Context, olderThan time.Duration) error {
 	return nil
 }
 
@@ -88,9 +93,12 @@ func (r *contextCanceledProbeRepoStub) UpdateAccountProbeRun(ctx context.Context
 type accountProbeHTTPClientStub struct {
 	requests []*http.Request
 	bodies   []string
+	mu       sync.Mutex
 }
 
 func (c *accountProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.requests = append(c.requests, req)
 	if req.Body != nil {
 		data, _ := io.ReadAll(req.Body)
@@ -110,6 +118,65 @@ type contextDeadlineProbeHTTPClientStub struct{}
 func (c *contextDeadlineProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
 	<-req.Context().Done()
 	return nil, req.Context().Err()
+}
+
+type flakyAccountProbeHTTPClientStub struct {
+	mu       sync.Mutex
+	attempts int
+}
+
+func (c *flakyAccountProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.attempts++
+	if c.attempts == 1 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	body := `{"usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}`
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}, nil
+}
+
+type blockingProbeHTTPClientStub struct {
+	started   chan struct{}
+	release   chan struct{}
+	active    int
+	maxActive int
+	mu        sync.Mutex
+}
+
+func (c *blockingProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	c.active++
+	if c.active > c.maxActive {
+		c.maxActive = c.active
+	}
+	started := c.started
+	release := c.release
+	c.mu.Unlock()
+	if started != nil {
+		started <- struct{}{}
+	}
+	if release != nil {
+		select {
+		case <-release:
+		case <-req.Context().Done():
+		}
+	}
+	c.mu.Lock()
+	c.active--
+	c.mu.Unlock()
+	body := `{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}, nil
 }
 
 func TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples(t *testing.T) {
@@ -191,7 +258,7 @@ func TestAccountProbeService_RunOpenAIAPIKeyStreamModeRecordsFirstToken(t *testi
 		Type:     AccountTypeAPIKey,
 		Status:   StatusActive,
 		Credentials: map[string]any{
-			"base_url": "https://example.test/v1",
+			"base_url": "https://stream-mode.example.test/v1",
 			"api_key":  "sk-one",
 		},
 		Extra: map[string]any{"openai_api_mode": "responses"},
@@ -218,6 +285,84 @@ func TestAccountProbeService_RunOpenAIAPIKeyStreamModeRecordsFirstToken(t *testi
 	require.Contains(t, client.bodies[0], `"stream":true`)
 }
 
+func TestAccountProbeService_RetriesTransientProbeFailure(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "encore",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://retry-transient.example.test/v1",
+			"api_key":  "sk-one",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	repo := &accountProbeRepoStub{}
+	client := &flakyAccountProbeHTTPClientStub{}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID: 128,
+		Profile:   AccountProbeProfileQuick,
+		Model:     "gpt-test",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeStatusSuccess, result.Status)
+	require.Equal(t, 1, result.SuccessCount)
+	require.Equal(t, 0, result.FailureCount)
+	require.Equal(t, 2, client.attempts)
+	require.Len(t, repo.samples, 1)
+	require.Equal(t, AccountProbeSampleSuccess, repo.samples[0].Status)
+}
+
+func TestAccountProbeService_LimitsConcurrentRunsForSameBaseURL(t *testing.T) {
+	account := &Account{
+		ID:       128,
+		Name:     "encore",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://same.example.test/v1",
+			"api_key":  "sk-one",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	client := &blockingProbeHTTPClientStub{
+		started: make(chan struct{}, 2),
+		release: make(chan struct{}),
+	}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, &accountProbeRepoStub{}, client, nil)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = svc.Run(context.Background(), AccountProbeRunRequest{
+				AccountID: 128,
+				Profile:   AccountProbeProfileQuick,
+				Model:     "gpt-test",
+			})
+		}()
+	}
+
+	require.Eventually(t, func() bool {
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		return client.active == 1 && client.maxActive == 1
+	}, time.Second, 10*time.Millisecond)
+	close(client.release)
+	wg.Wait()
+	client.mu.Lock()
+	require.Equal(t, 1, client.maxActive)
+	client.mu.Unlock()
+}
+
 func TestAccountProbeService_RunExistingFinalizesAfterCallerContextDeadline(t *testing.T) {
 	t.Parallel()
 
@@ -228,7 +373,7 @@ func TestAccountProbeService_RunExistingFinalizesAfterCallerContextDeadline(t *t
 		Type:     AccountTypeAPIKey,
 		Status:   StatusActive,
 		Credentials: map[string]any{
-			"base_url": "https://example.test/v1",
+			"base_url": "https://canceled-context.example.test/v1",
 			"api_key":  "sk-one",
 		},
 		Extra: map[string]any{"openai_api_mode": "responses"},
@@ -291,4 +436,14 @@ func TestFinalizeAccountProbeResultMarksPartial(t *testing.T) {
 	require.Equal(t, 200, run.Latency.AvgMillis)
 	require.Equal(t, "upstream failed", run.ErrorMessage)
 	require.WithinDuration(t, time.Now(), *run.FinishedAt, time.Second)
+}
+
+func TestClassifyAccountProbeErrorDetectsCloudflareWAF(t *testing.T) {
+	t.Parallel()
+
+	key, label, penalty := classifyAccountProbeError(`<!DOCTYPE html><title>Just a moment...</title><center>cloudflare</center>`)
+
+	require.Equal(t, "cloudflare_waf", key)
+	require.Equal(t, "Cloudflare/WAF 拦截", label)
+	require.Equal(t, 15, penalty)
 }

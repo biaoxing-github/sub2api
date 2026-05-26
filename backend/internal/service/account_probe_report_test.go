@@ -25,6 +25,10 @@ func (r *accountProbeReportRepoStub) UpdateAccountProbeRun(ctx context.Context, 
 	return nil
 }
 
+func (r *accountProbeReportRepoStub) ExpireStaleAccountProbeRuns(ctx context.Context, olderThan time.Duration) error {
+	return nil
+}
+
 func (r *accountProbeReportRepoStub) SaveAccountProbeSample(ctx context.Context, sample AccountProbeSample) error {
 	return nil
 }

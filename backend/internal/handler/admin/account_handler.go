@@ -31,6 +31,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const accountProbeBatchConcurrency = 2
+
 // OAuthHandler handles OAuth-related operations for accounts
 type OAuthHandler struct {
 	oauthService *service.OAuthService
@@ -1398,12 +1400,52 @@ func (h *AccountHandler) BatchCreateProbeReportRuns(c *gin.Context) {
 			return
 		}
 		runs = append(runs, run)
-		go h.runAccountProbeBackground(run, probeReq)
 	}
+	go h.runAccountProbeBatchBackground(runs, req)
 	response.Accepted(c, gin.H{
 		"accepted_count": len(runs),
 		"runs":           runs,
 	})
+}
+
+func (h *AccountHandler) runAccountProbeBatchBackground(runs []service.AccountProbeResult, req BatchCreateAccountProbeRunsRequest) {
+	if h == nil || h.accountProbeService == nil || len(runs) == 0 {
+		return
+	}
+	limit := accountProbeBatchConcurrency
+	if limit <= 0 {
+		limit = 1
+	}
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for _, run := range runs {
+		run := run
+		probeReq := service.AccountProbeRunRequest{
+			AccountID:             run.AccountID,
+			Profile:               run.Profile,
+			Model:                 run.Model,
+			IncludeCodexStability: run.IncludeCodexStability || req.IncludeCodexStability || req.CodexStability,
+			IncludeLongContext:    run.IncludeLongContext || req.IncludeLongContext || req.LongContext,
+			RequestMode:           run.RequestMode,
+		}
+		if strings.TrimSpace(probeReq.Profile) == "" {
+			probeReq.Profile = req.Mode
+		}
+		if strings.TrimSpace(probeReq.Model) == "" {
+			probeReq.Model = req.Model
+		}
+		if strings.TrimSpace(probeReq.RequestMode) == "" {
+			probeReq.RequestMode = req.RequestMode
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			h.runAccountProbeBackground(run, probeReq)
+		}()
+	}
+	wg.Wait()
 }
 
 func parseAccountProbeReportFilter(c *gin.Context) (service.AccountProbeReportFilter, error) {

@@ -158,3 +158,108 @@ func TestGetGeminiBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIRequestBaseURLs(t *testing.T) {
+	tests := []struct {
+		name     string
+		account  Account
+		expected []string
+	}{
+		{
+			name: "legacy base_url remains the only request URL",
+			account: Account{
+				Type:        AccountTypeAPIKey,
+				Platform:    PlatformOpenAI,
+				Credentials: map[string]any{"base_url": "https://legacy.example.com/v1/"},
+			},
+			expected: []string{"https://legacy.example.com/v1"},
+		},
+		{
+			name: "request_base_urls are normalized and deduped with base_url first",
+			account: Account{
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{
+					"base_url":             "https://primary.example.com/v1/",
+					"request_base_urls":    []any{" https://primary.example.com/v1 ", "https://fast.example.com/", "", "https://fast.example.com"},
+					"balance_base_url":     "https://balance.example.com/v1",
+					"unrelated_credential": "kept",
+				},
+			},
+			expected: []string{"https://primary.example.com/v1", "https://fast.example.com"},
+		},
+		{
+			name: "non openai account has no openai request URLs",
+			account: Account{
+				Type:        AccountTypeAPIKey,
+				Platform:    PlatformAnthropic,
+				Credentials: map[string]any{"base_url": "https://anthropic.example.com"},
+			},
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.account.GetOpenAIRequestBaseURLs()
+			if len(got) != len(tt.expected) {
+				t.Fatalf("GetOpenAIRequestBaseURLs() = %#v, want %#v", got, tt.expected)
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Fatalf("GetOpenAIRequestBaseURLs()[%d] = %q, want %q", i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestOpenAIBalanceBaseURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		account  Account
+		expected string
+	}{
+		{
+			name: "explicit balance_base_url wins",
+			account: Account{
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{
+					"base_url":          "https://request.example.com/v1",
+					"request_base_urls": []string{"https://request.example.com/v1", "https://fast.example.com/v1"},
+					"balance_base_url":  "https://balance.example.com/v1/",
+				},
+			},
+			expected: "https://balance.example.com/v1",
+		},
+		{
+			name: "empty balance_base_url follows first request URL",
+			account: Account{
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{
+					"base_url":          "https://request.example.com/v1",
+					"request_base_urls": []string{"https://request.example.com/v1", "https://fast.example.com/v1"},
+				},
+			},
+			expected: "https://request.example.com/v1",
+		},
+		{
+			name: "oauth keeps default openai base url",
+			account: Account{
+				Type:     AccountTypeOAuth,
+				Platform: PlatformOpenAI,
+			},
+			expected: "https://api.openai.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.account.GetOpenAIBalanceBaseURL(); got != tt.expected {
+				t.Fatalf("GetOpenAIBalanceBaseURL() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}

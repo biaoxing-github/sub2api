@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -84,6 +85,27 @@ WHERE id = $1`,
 		run.ErrorMessage,
 		run.Summary,
 		run.FinishedAt,
+	)
+	return err
+}
+
+func (r *accountProbeRepository) ExpireStaleAccountProbeRuns(ctx context.Context, olderThan time.Duration) error {
+	if olderThan <= 0 {
+		olderThan = 15 * time.Minute
+	}
+	_, err := r.db.ExecContext(ctx, `
+UPDATE account_probe_runs
+SET status = $2,
+    error_message = COALESCE(NULLIF(error_message,''), $3),
+    summary = COALESCE(NULLIF(summary,''), $4),
+    finished_at = COALESCE(finished_at, now())
+WHERE status = $1
+  AND created_at < now() - $5::interval`,
+		service.AccountProbeStatusRunning,
+		service.AccountProbeStatusFailed,
+		"probe run timed out before completion",
+		"体检任务超时未完成，已自动收尾",
+		formatPostgresDuration(olderThan),
 	)
 	return err
 }
@@ -414,6 +436,14 @@ func accountProbeReportOrderBy(filter service.AccountProbeReportFilter) string {
 	default:
 		return "r.created_at " + direction
 	}
+}
+
+func formatPostgresDuration(d time.Duration) string {
+	if d <= 0 {
+		return "0 seconds"
+	}
+	seconds := int64(d.Round(time.Second) / time.Second)
+	return fmt.Sprintf("%d seconds", seconds)
 }
 
 var _ service.AccountProbeRepository = (*accountProbeRepository)(nil)

@@ -1156,6 +1156,52 @@ func TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover(t *test
 	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", upstream.lastReq.URL.String())
 }
 
+func TestOpenAIGatewayService_APIKeyRequestBaseURLFailoverBeforeAccountFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	originalBody := []byte(`{"model":"gpt-5.5","stream":false,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{
+		errs: []error{errors.New("Post \"https://bad.example.com/v1/responses\": unexpected EOF"), nil},
+		responses: []*http.Response{{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-ok"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_1","model":"gpt-5.5","output":[],"usage":{"input_tokens":1,"output_tokens":1}}`)),
+		}},
+	}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{OpenAIRequestHeaderTimeoutSeconds: 60}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          123,
+		Name:        "acc",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":           "sk-test",
+			"base_url":          "https://bad.example.com/v1",
+			"request_base_urls": []string{"https://bad.example.com/v1", "https://good.example.com/v1"},
+		},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, originalBody)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://bad.example.com/v1/responses", upstream.requests[0].URL.String())
+	require.Equal(t, "https://good.example.com/v1/responses", upstream.requests[1].URL.String())
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"resp_1"`)
+}
+
 func TestOpenAIStreamingResponseFailedBeforeOutputReturnsFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
