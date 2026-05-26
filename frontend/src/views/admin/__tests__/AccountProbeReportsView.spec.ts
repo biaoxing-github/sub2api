@@ -284,4 +284,69 @@ describe('AccountProbeReportsView', () => {
     }, expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
   })
+
+  it('does not expose unused pending status and refreshes while runs are active', async () => {
+    vi.useFakeTimers()
+    listAccountProbeRuns
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 101,
+            account_id: 12,
+            account_name: 'rayapi-running',
+            status: 'running',
+            mode: 'standard',
+            model: 'gpt-4.1-mini',
+            created_at: '2026-05-26T10:00:00Z',
+          },
+        ],
+        total: 1,
+        page: 1,
+        page_size: 20,
+        summary: {},
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 101,
+            account_id: 12,
+            account_name: 'rayapi-running',
+            status: 'success',
+            mode: 'standard',
+            model: 'gpt-4.1-mini',
+            created_at: '2026-05-26T10:00:00Z',
+          },
+        ],
+        total: 1,
+        page: 1,
+        page_size: 20,
+        summary: {},
+      })
+
+    try {
+      const wrapper = mount(AccountProbeReportsView, {
+        global: {
+          stubs: {
+            AppLayout: AppLayoutStub,
+            TablePageLayout: TablePageLayoutStub,
+            Select: SelectStub,
+            Pagination: PaginationStub,
+            Icon: true,
+          },
+        },
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('admin.accountProbeReports.statuses.pending')
+      expect(listAccountProbeRuns).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(3000)
+      await flushPromises()
+
+      expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
+      expect(wrapper.text()).toContain('admin.accountProbeReports.statuses.success')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

@@ -407,14 +407,18 @@ describe('admin accounts api usage summary', () => {
 
     const result = await batchTestNonAPIKeyAccounts({
       model_id: 'gpt-5.4',
-      concurrency: 2,
+      concurrency: 5,
       platform: 'openai',
+      group: '12',
+      account_ids: [31, 33],
     })
 
     expect(post).toHaveBeenCalledWith('/admin/accounts/batch-test-non-apikey', {
       model_id: 'gpt-5.4',
-      concurrency: 2,
+      concurrency: 5,
       platform: 'openai',
+      group: '12',
+      account_ids: [31, 33],
     }, {
       timeout: 30000,
       signal: undefined,
@@ -424,7 +428,7 @@ describe('admin accounts api usage summary', () => {
 
   it('lists and loads non-api-key batch test history', async () => {
     const listResponse = {
-      items: [{ id: 12, status: 'running', model_id: 'gpt-5.4', concurrency: 2, limit: 500, total: 3, success_count: 1, failed_count: 0, unauthorized_count: 0, created_at: '2026-05-26T10:00:00Z' }],
+      items: [{ id: 12, status: 'running', model_id: 'gpt-5.4', concurrency: 2, limit: 500, total: 3, success_count: 1, failed_count: 0, unauthorized_count: 0, rate_limited_count: 1, created_at: '2026-05-26T10:00:00Z' }],
       total: 1,
       page: 1,
       page_size: 20,
@@ -436,13 +440,14 @@ describe('admin accounts api usage summary', () => {
     get.mockResolvedValueOnce({ data: listResponse }).mockResolvedValueOnce({ data: detailResponse })
 
     await expect(listBatchTestNonAPIKeyRuns(1, 20, { status: 'running', keyword: 'openai' })).resolves.toEqual(listResponse)
-    await expect(getBatchTestNonAPIKeyRun(12)).resolves.toEqual(detailResponse)
+    await expect(getBatchTestNonAPIKeyRun(12, { category: 'rate_limited' })).resolves.toEqual(detailResponse)
 
     expect(get).toHaveBeenNthCalledWith(1, '/admin/accounts/batch-test-runs', {
       params: { page: 1, page_size: 20, status: 'running', keyword: 'openai' },
       signal: undefined,
     })
     expect(get).toHaveBeenNthCalledWith(2, '/admin/accounts/batch-test-runs/12', {
+      params: { category: 'rate_limited' },
       signal: undefined,
     })
   })

@@ -87,6 +87,125 @@ func TestAccountBatchTestNonAPIKeySkipsAPIKeyAndClassifies401(t *testing.T) {
 	require.ElementsMatch(t, []int64{11, 13}, tester.calledIDsSnapshot())
 }
 
+func TestAccountBatchTestNonAPIKeyClassifiesAndCounts429(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := time.Now()
+	adminSvc := &stubAdminService{
+		accounts: []service.Account{
+			{ID: 21, Name: "openai-oauth-ok", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, CreatedAt: now, UpdatedAt: now},
+			{ID: 22, Name: "openai-oauth-429", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	tester := &stubBatchAccountTester{
+		results: map[int64]*service.ScheduledTestResult{
+			21: {Status: "success", ResponseText: "ok", LatencyMs: 80},
+			22: {Status: "failed", ErrorMessage: "API returned 429: rate limit exceeded", LatencyMs: 92},
+		},
+	}
+	repo := newStubAccountBatchTestRepository()
+	h := &AccountHandler{adminService: adminSvc, batchAccountTester: tester, accountBatchTestRepo: repo}
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/batch-test-non-apikey", h.BatchTestNonAPIKey)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/batch-test-non-apikey", bytes.NewBufferString(`{"model_id":"gpt-5.4","concurrency":2}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	require.Eventually(t, func() bool {
+		run, items, err := repo.GetAccountBatchTestRun(context.Background(), 1001)
+		if err != nil {
+			return false
+		}
+		return run.Status == service.AccountBatchTestStatusPartial &&
+			run.SuccessCount == 1 &&
+			run.FailedCount == 1 &&
+			run.UnauthorizedCount == 0 &&
+			run.RateLimitedCount == 1 &&
+			len(items) == 2 &&
+			items[1].Status == service.AccountBatchTestItemStatusFailed &&
+			items[1].Category == "rate_limited"
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestAccountBatchTestNonAPIKeyUsesSelectedAccountsAndSkipsAPIKeys(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := time.Now()
+	adminSvc := &stubAdminService{
+		accounts: []service.Account{
+			{ID: 31, Name: "selected-oauth", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, CreatedAt: now, UpdatedAt: now},
+			{ID: 32, Name: "selected-api-key", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, CreatedAt: now, UpdatedAt: now},
+			{ID: 33, Name: "selected-oauth-two", Platform: service.PlatformAnthropic, Type: service.AccountTypeOAuth, Status: service.StatusActive, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	tester := &stubBatchAccountTester{
+		results: map[int64]*service.ScheduledTestResult{
+			31: {Status: "success", ResponseText: "ok", LatencyMs: 80},
+			33: {Status: "success", ResponseText: "ok", LatencyMs: 90},
+		},
+	}
+	repo := newStubAccountBatchTestRepository()
+	h := &AccountHandler{adminService: adminSvc, batchAccountTester: tester, accountBatchTestRepo: repo}
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/batch-test-non-apikey", h.BatchTestNonAPIKey)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/batch-test-non-apikey", bytes.NewBufferString(`{"model_id":"gpt-5.4","account_ids":[31,32,33,31],"concurrency":99,"platform":"ignored"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.Equal(t, 0, adminSvc.lastListAccounts.calls)
+	require.Equal(t, []int64{31, 32, 33}, adminSvc.lastGetAccountsByIDs.ids)
+
+	var body struct {
+		Data struct {
+			Total       int `json:"total"`
+			Concurrency int `json:"concurrency"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, 2, body.Data.Total)
+	require.Equal(t, 20, body.Data.Concurrency)
+	require.Eventually(t, func() bool {
+		return len(tester.calledIDsSnapshot()) == 2
+	}, time.Second, 10*time.Millisecond)
+	require.ElementsMatch(t, []int64{31, 33}, tester.calledIDsSnapshot())
+}
+
+func TestAccountBatchTestNonAPIKeyUsesGroupFilterAndDefaultConcurrency(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := time.Now()
+	adminSvc := &stubAdminService{
+		accounts: []service.Account{
+			{ID: 41, Name: "group-oauth", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	tester := &stubBatchAccountTester{results: map[int64]*service.ScheduledTestResult{
+		41: {Status: "success", ResponseText: "ok", LatencyMs: 80},
+	}}
+	repo := newStubAccountBatchTestRepository()
+	h := &AccountHandler{adminService: adminSvc, batchAccountTester: tester, accountBatchTestRepo: repo}
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/batch-test-non-apikey", h.BatchTestNonAPIKey)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/batch-test-non-apikey", bytes.NewBufferString(`{"model_id":"gpt-5.4","group":"12"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.Equal(t, 1, adminSvc.lastListAccounts.calls)
+	require.Equal(t, int64(12), adminSvc.lastListAccounts.groupID)
+	var body struct {
+		Data struct {
+			Concurrency int `json:"concurrency"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, 5, body.Data.Concurrency)
+}
+
 func TestAccountBatchTestNonAPIKeyListAndDetail(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newStubAccountBatchTestRepository()
@@ -94,10 +213,14 @@ func TestAccountBatchTestNonAPIKeyListAndDetail(t *testing.T) {
 	finishedAt := time.Now()
 	repo.runs[77] = service.AccountBatchTestRun{
 		ID: 77, Status: service.AccountBatchTestStatusSuccess, ModelID: "gpt-5.4",
-		Total: 1, SuccessCount: 1, CreatedAt: createdAt, FinishedAt: &finishedAt,
+		Total: 1, SuccessCount: 1, UnauthorizedCount: 99, CreatedAt: createdAt, FinishedAt: &finishedAt,
 	}
 	repo.items[77] = []service.AccountBatchTestItem{
 		{ID: 1, RunID: 77, AccountID: 11, AccountName: "claude-oauth", Platform: "anthropic", Type: "oauth", Status: service.AccountBatchTestItemStatusSuccess, Category: "ok", LatencyMs: 88},
+		{ID: 2, RunID: 77, AccountID: 12, AccountName: "openai-429", Platform: "openai", Type: "oauth", Status: service.AccountBatchTestItemStatusFailed, Category: "rate_limited", LatencyMs: 66},
+		{ID: 3, RunID: 77, AccountID: 13, AccountName: "openai-401", Platform: "openai", Type: "oauth", Status: service.AccountBatchTestItemStatusFailed, Category: "unauthorized", LatencyMs: 55},
+		{ID: 4, RunID: 77, AccountID: 14, AccountName: "legacy-429", Platform: "openai", Type: "oauth", Status: service.AccountBatchTestItemStatusFailed, Category: "error", ErrorMessage: "API returned 429: usage_limit_reached", LatencyMs: 44},
+		{ID: 5, RunID: 77, AccountID: 15, AccountName: "legacy-401", Platform: "openai", Type: "oauth", Status: service.AccountBatchTestItemStatusFailed, Category: "error", ErrorMessage: "Authentication failed (401): token invalid", LatencyMs: 33},
 	}
 	h := &AccountHandler{accountBatchTestRepo: repo}
 	router := gin.New()
@@ -113,6 +236,23 @@ func TestAccountBatchTestNonAPIKeyListAndDetail(t *testing.T) {
 	router.ServeHTTP(detailRec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/batch-test-runs/77", nil))
 	require.Equal(t, http.StatusOK, detailRec.Code)
 	require.Contains(t, detailRec.Body.String(), `"account_name":"claude-oauth"`)
+	require.Contains(t, detailRec.Body.String(), `"rate_limited_count":2`)
+	require.Contains(t, detailRec.Body.String(), `"unauthorized_count":1`)
+
+	filteredRec := httptest.NewRecorder()
+	router.ServeHTTP(filteredRec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/batch-test-runs/77?category=rate_limited", nil))
+	require.Equal(t, http.StatusOK, filteredRec.Code)
+	require.Contains(t, filteredRec.Body.String(), `"account_name":"openai-429"`)
+	require.Contains(t, filteredRec.Body.String(), `"account_name":"legacy-429"`)
+	require.NotContains(t, filteredRec.Body.String(), `"account_name":"claude-oauth"`)
+	require.NotContains(t, filteredRec.Body.String(), `"account_name":"openai-401"`)
+
+	unauthorizedRec := httptest.NewRecorder()
+	router.ServeHTTP(unauthorizedRec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/batch-test-runs/77?category=unauthorized", nil))
+	require.Equal(t, http.StatusOK, unauthorizedRec.Code)
+	require.Contains(t, unauthorizedRec.Body.String(), `"account_name":"openai-401"`)
+	require.Contains(t, unauthorizedRec.Body.String(), `"account_name":"legacy-401"`)
+	require.NotContains(t, unauthorizedRec.Body.String(), `"account_name":"openai-429"`)
 }
 
 type stubBatchAccountTester struct {
@@ -229,5 +369,15 @@ func (r *stubAccountBatchTestRepository) GetAccountBatchTestRun(ctx context.Cont
 		return nil, nil, service.ErrAccountNotFound
 	}
 	items := append([]service.AccountBatchTestItem(nil), r.items[runID]...)
+	run.UnauthorizedCount = 0
+	run.RateLimitedCount = 0
+	for _, item := range items {
+		if item.Category == "unauthorized" {
+			run.UnauthorizedCount++
+		}
+		if accountBatchTestItemMatchesCategory(item, "rate_limited") {
+			run.RateLimitedCount++
+		}
+	}
 	return &run, items, nil
 }

@@ -445,6 +445,12 @@
           <template #cell-last_used_at="{ value }">
             <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatRelativeTime(value) }}</span>
           </template>
+          <template #cell-created_at="{ value }">
+            <div class="flex min-w-[8rem] flex-col gap-0.5">
+              <span class="text-sm text-gray-700 dark:text-gray-300">{{ formatAccountCreatedAt(value) }}</span>
+              <span class="text-xs text-gray-500 dark:text-dark-400">{{ formatAccountAge(value) }}</span>
+            </div>
+          </template>
           <template #cell-expires_at="{ row, value }">
             <div class="flex flex-col items-start gap-1">
               <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatExpiresAt(value) }}</span>
@@ -668,18 +674,18 @@
             <div class="text-xs text-emerald-700 dark:text-emerald-300">{{ t('admin.accounts.batchTest.total') }}</div>
             <div class="text-xl font-semibold text-emerald-900 dark:text-emerald-100">{{ selectedBatchRun?.total ?? batchNonAPIKeySubmittedRun?.total ?? 0 }}</div>
           </div>
-          <div class="bg-green-50 px-3 py-2 dark:bg-green-900/20">
+          <button type="button" :class="batchTestFilterCardClass('ok')" @click="setBatchTestCategoryFilter('ok')">
             <div class="text-xs text-green-700 dark:text-green-300">{{ t('admin.accounts.batchTest.success') }}</div>
             <div class="text-xl font-semibold text-green-900 dark:text-green-100">{{ selectedBatchRun?.success_count ?? batchNonAPIKeySubmittedRun?.success_count ?? 0 }}</div>
-          </div>
-          <div class="bg-red-50 px-3 py-2 dark:bg-red-900/20">
-            <div class="text-xs text-red-700 dark:text-red-300">{{ t('admin.accounts.batchTest.failed') }}</div>
-            <div class="text-xl font-semibold text-red-900 dark:text-red-100">{{ selectedBatchRun?.failed_count ?? batchNonAPIKeySubmittedRun?.failed_count ?? 0 }}</div>
-          </div>
-          <div class="bg-amber-50 px-3 py-2 dark:bg-amber-900/20">
+          </button>
+          <button type="button" :class="batchTestFilterCardClass('rate_limited')" @click="setBatchTestCategoryFilter('rate_limited')">
+            <div class="text-xs text-sky-700 dark:text-sky-300">{{ t('admin.accounts.batchTest.rateLimited') }}</div>
+            <div class="text-xl font-semibold text-sky-900 dark:text-sky-100">{{ selectedBatchRun?.rate_limited_count ?? batchNonAPIKeySubmittedRun?.rate_limited_count ?? 0 }}</div>
+          </button>
+          <button type="button" :class="batchTestFilterCardClass('unauthorized')" @click="setBatchTestCategoryFilter('unauthorized')">
             <div class="text-xs text-amber-700 dark:text-amber-300">{{ t('admin.accounts.batchTest.unauthorized') }}</div>
             <div class="text-xl font-semibold text-amber-900 dark:text-amber-100">{{ selectedBatchRun?.unauthorized_count ?? batchNonAPIKeySubmittedRun?.unauthorized_count ?? 0 }}</div>
-          </div>
+          </button>
         </div>
 
         <div v-if="batchNonAPIKeyTesting" class="flex items-center gap-2 border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200">
@@ -688,6 +694,21 @@
         </div>
         <div v-else-if="batchNonAPIKeyError" class="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-700/40 dark:bg-red-900/20 dark:text-red-200">
           {{ batchNonAPIKeyError }}
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" :class="batchTestFilterChipClass('')" @click="setBatchTestCategoryFilter('')">
+            {{ t('common.all') }}
+          </button>
+          <button type="button" :class="batchTestFilterChipClass('ok')" @click="setBatchTestCategoryFilter('ok')">
+            {{ t('admin.accounts.batchTest.categories.ok') }}
+          </button>
+          <button type="button" :class="batchTestFilterChipClass('rate_limited')" @click="setBatchTestCategoryFilter('rate_limited')">
+            {{ t('admin.accounts.batchTest.categories.rate_limited') }}
+          </button>
+          <button type="button" :class="batchTestFilterChipClass('unauthorized')" @click="setBatchTestCategoryFilter('unauthorized')">
+            {{ t('admin.accounts.batchTest.categories.unauthorized') }}
+          </button>
         </div>
 
         <div class="max-h-[56vh] overflow-auto border border-gray-200 dark:border-gray-700">
@@ -719,7 +740,11 @@
                     {{ batchTestStatusLabel(item.status) }}
                   </span>
                 </td>
-                <td class="px-3 py-2">{{ batchTestCategoryLabel(item.category) }}</td>
+                <td class="px-3 py-2">
+                  <span :class="batchTestCategoryClass(item.category)" class="inline-flex px-2 py-0.5 text-xs font-medium">
+                    {{ batchTestCategoryLabel(item.category) }}
+                  </span>
+                </td>
                 <td class="px-3 py-2">{{ item.latency_ms ? `${item.latency_ms}ms` : '-' }}</td>
                 <td class="max-w-md px-3 py-2 text-gray-600 dark:text-gray-300">
                   <span class="line-clamp-2" :title="item.error_message || item.message || ''">{{ item.error_message || item.message || '-' }}</span>
@@ -777,13 +802,33 @@
                     {{ batchRunStatusLabel(run.status) }}
                   </span>
                 </td>
-                <td class="px-3 py-2">{{ run.success_count }}/{{ run.total }}</td>
+                <td class="px-3 py-2">
+                  <div>{{ run.success_count }}/{{ run.total }}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('admin.accounts.batchTest.rateLimitedShort') }} {{ run.rate_limited_count ?? 0 }} · 401 {{ run.unauthorized_count }}
+                  </div>
+                </td>
                 <td class="px-3 py-2 text-gray-600 dark:text-gray-300">{{ formatDateTime(new Date(run.created_at)) }}</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <div class="max-h-[62vh] overflow-auto border border-gray-200 dark:border-gray-700">
+        <div class="space-y-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <button data-test="batch-test-record-filter-all" type="button" :class="batchTestFilterChipClass('')" @click="setBatchTestCategoryFilter('')">
+              {{ t('common.all') }}
+            </button>
+            <button data-test="batch-test-record-filter-ok" type="button" :class="batchTestFilterChipClass('ok')" @click="setBatchTestCategoryFilter('ok')">
+              {{ t('admin.accounts.batchTest.categories.ok') }} {{ selectedBatchRun?.success_count ?? 0 }}
+            </button>
+            <button data-test="batch-test-record-filter-rate-limited" type="button" :class="batchTestFilterChipClass('rate_limited')" @click="setBatchTestCategoryFilter('rate_limited')">
+              {{ t('admin.accounts.batchTest.categories.rate_limited') }} {{ selectedBatchRun?.rate_limited_count ?? 0 }}
+            </button>
+            <button data-test="batch-test-record-filter-unauthorized" type="button" :class="batchTestFilterChipClass('unauthorized')" @click="setBatchTestCategoryFilter('unauthorized')">
+              {{ t('admin.accounts.batchTest.categories.unauthorized') }} {{ selectedBatchRun?.unauthorized_count ?? 0 }}
+            </button>
+          </div>
+          <div class="max-h-[58vh] overflow-auto border border-gray-200 dark:border-gray-700">
           <table class="w-full min-w-[760px] text-sm">
             <thead class="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">
               <tr>
@@ -813,7 +858,11 @@
                     {{ batchTestStatusLabel(item.status) }}
                   </span>
                 </td>
-                <td class="px-3 py-2">{{ batchTestCategoryLabel(item.category) }}</td>
+                <td class="px-3 py-2">
+                  <span :class="batchTestCategoryClass(item.category)" class="inline-flex px-2 py-0.5 text-xs font-medium">
+                    {{ batchTestCategoryLabel(item.category) }}
+                  </span>
+                </td>
                 <td class="px-3 py-2">{{ item.latency_ms ? `${item.latency_ms}ms` : '-' }}</td>
                 <td class="max-w-md px-3 py-2 text-gray-600 dark:text-gray-300">
                   <span class="line-clamp-2" :title="item.error_message || item.message || ''">{{ item.error_message || item.message || '-' }}</span>
@@ -821,6 +870,7 @@
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
       </div>
       <template #footer>
@@ -1036,6 +1086,7 @@ const batchTestRecords = ref<BatchTestNonAPIKeyRun[]>([])
 const selectedBatchRun = ref<BatchTestNonAPIKeyRunDetail | null>(null)
 const batchTestRecordsLoading = ref(false)
 const batchTestDetailLoading = ref(false)
+const batchTestCategoryFilter = ref('')
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)
@@ -2101,6 +2152,7 @@ const allColumns = computed(() => {
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
+    { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
     { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true },
     { key: 'notes', label: t('admin.accounts.columns.notes'), sortable: false },
@@ -2242,14 +2294,27 @@ const handleBatchTestNonAPIKey = async () => {
   batchNonAPIKeyError.value = ''
   batchNonAPIKeySubmittedRun.value = null
   selectedBatchRun.value = null
+  batchTestCategoryFilter.value = ''
   try {
+    const selectedAccountIds = [...selIds.value]
+    const request = selectedAccountIds.length > 0
+      ? {
+          model_id: 'gpt-5.4',
+          account_ids: selectedAccountIds,
+          concurrency: 5,
+          limit: 500,
+        }
+      : {
+          model_id: 'gpt-5.4',
+          platform: params.platform || undefined,
+          status: params.status || undefined,
+          search: params.search || undefined,
+          group: params.group || undefined,
+          concurrency: 5,
+          limit: 500,
+        }
     const run = await adminAPI.accounts.batchTestNonAPIKeyAccounts({
-      model_id: 'gpt-5.4',
-      platform: params.platform || undefined,
-      status: params.status || undefined,
-      search: params.search || undefined,
-      concurrency: 2,
-      limit: 500,
+      ...request,
     })
     batchNonAPIKeySubmittedRun.value = run
     appStore.showSuccess(t('admin.accounts.batchTest.submitted', { id: run.id }))
@@ -2271,6 +2336,8 @@ const openBatchTestRecords = async () => {
   showAccountToolsDropdown.value = false
   showBatchNonAPIKeyDialog.value = false
   showBatchTestRecordsDialog.value = true
+  batchTestCategoryFilter.value = ''
+  selectedBatchRun.value = null
   await loadBatchTestRecords()
 }
 
@@ -2295,12 +2362,21 @@ const loadBatchTestRecords = async () => {
 const selectBatchTestRun = async (runId: number) => {
   batchTestDetailLoading.value = true
   try {
-    selectedBatchRun.value = await adminAPI.accounts.getBatchTestNonAPIKeyRun(runId)
+    selectedBatchRun.value = batchTestCategoryFilter.value
+      ? await adminAPI.accounts.getBatchTestNonAPIKeyRun(runId, { category: batchTestCategoryFilter.value })
+      : await adminAPI.accounts.getBatchTestNonAPIKeyRun(runId)
   } catch (error: any) {
     console.error('Failed to load non-api-key batch test detail:', error)
     appStore.showError(error?.response?.data?.message || error?.message || t('admin.accounts.batchTest.failedToLoadRecords'))
   } finally {
     batchTestDetailLoading.value = false
+  }
+}
+
+const setBatchTestCategoryFilter = async (category: string) => {
+  batchTestCategoryFilter.value = category
+  if (selectedBatchRun.value?.id) {
+    await selectBatchTestRun(selectedBatchRun.value.id)
   }
 }
 
@@ -2315,6 +2391,27 @@ const batchTestStatusLabel = (status: string) => {
   const label = t(key)
   return label === key ? status : label
 }
+
+const batchTestCategoryClass = (category: string) => {
+  if (category === 'ok') return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-200'
+  if (category === 'rate_limited') return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-200'
+  if (category === 'unauthorized' || category === 'reauth_required') return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
+  if (category === 'timeout') return 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-200'
+  return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200'
+}
+
+const batchTestFilterCardClass = (category: string) => [
+  category === 'ok' ? 'bg-green-50 dark:bg-green-900/20' : category === 'rate_limited' ? 'bg-sky-50 dark:bg-sky-900/20' : 'bg-amber-50 dark:bg-amber-900/20',
+  'px-3 py-2 text-left transition hover:ring-2 hover:ring-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-400',
+  batchTestCategoryFilter.value === category ? 'ring-2 ring-primary-500' : ''
+]
+
+const batchTestFilterChipClass = (category: string) => [
+  'inline-flex px-2.5 py-1 text-xs font-medium transition',
+  batchTestCategoryFilter.value === category
+    ? 'bg-primary-600 text-white'
+    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700'
+]
 
 const batchRunStatusClass = (status: string) => {
   if (status === 'success') return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-200'
@@ -2333,6 +2430,24 @@ const batchTestCategoryLabel = (category: string) => {
   const key = `admin.accounts.batchTest.categories.${category}`
   const label = t(key)
   return label === key ? category : label
+}
+
+const formatAccountCreatedAt = (value: string | Date | null | undefined) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return formatDateTime(date)
+}
+
+const formatAccountAge = (value: string | Date | null | undefined) => {
+  if (!value) return t('admin.accounts.accountAgeUnknown')
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return t('admin.accounts.accountAgeUnknown')
+  const diffMs = Date.now() - date.getTime()
+  if (diffMs < 0) return t('common.time.justNow')
+  const days = Math.floor(diffMs / (24 * 60 * 60 * 1000))
+  if (days <= 0) return t('admin.accounts.accountAgeToday')
+  return t('admin.accounts.accountAgeDays', { count: days })
 }
 
 const updateSchedulableInList = (accountIds: number[], schedulable: boolean) => {

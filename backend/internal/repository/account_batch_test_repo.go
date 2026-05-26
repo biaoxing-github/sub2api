@@ -164,7 +164,21 @@ ORDER BY id ASC`, runID)
 
 const accountBatchTestRunSelectSQL = `
 SELECT id, status, model_id, platform, status_filter, search, concurrency, limit_count,
-       total_count, success_count, failed_count, unauthorized_count,
+       total_count, success_count, failed_count,
+       COALESCE((SELECT COUNT(*) FROM account_batch_test_items i WHERE i.run_id = account_batch_test_runs.id AND i.category = 'unauthorized'), unauthorized_count),
+       COALESCE((
+         SELECT COUNT(*)
+         FROM account_batch_test_items i
+         WHERE i.run_id = account_batch_test_runs.id
+           AND (i.category = 'rate_limited' OR (
+             i.category <> 'rate_limited' AND (
+               LOWER(COALESCE(i.error_message,'')) LIKE '%429%' OR
+               LOWER(COALESCE(i.error_message,'')) LIKE '%rate limit%' OR
+               LOWER(COALESCE(i.error_message,'')) LIKE '%rate_limited%' OR
+               LOWER(COALESCE(i.error_message,'')) LIKE '%too many requests%'
+             )
+           ))
+       ), 0),
        COALESCE(error_message,''), created_at, started_at, finished_at
 `
 
@@ -202,7 +216,7 @@ func scanAccountBatchTestRun(scanner interface{ Scan(...any) error }) (*service.
 	var startedAt, finishedAt sql.NullTime
 	if err := scanner.Scan(
 		&run.ID, &run.Status, &run.ModelID, &run.Platform, &run.StatusFilter, &run.Search, &run.Concurrency, &run.Limit,
-		&run.Total, &run.SuccessCount, &run.FailedCount, &run.UnauthorizedCount,
+		&run.Total, &run.SuccessCount, &run.FailedCount, &run.UnauthorizedCount, &run.RateLimitedCount,
 		&run.ErrorMessage, &run.CreatedAt, &startedAt, &finishedAt,
 	); err != nil {
 		return nil, err

@@ -448,6 +448,7 @@ let detailAbortController: AbortController | null = null
 let batchAbortController: AbortController | null = null
 let batchAccountsAbortController: AbortController | null = null
 let keywordTimer: number | null = null
+let activeRunsTimer: number | null = null
 
 const statusOptions = computed<SelectOption[]>(() => [
   { value: '', label: t('admin.accountProbeReports.allStatuses') },
@@ -455,7 +456,6 @@ const statusOptions = computed<SelectOption[]>(() => [
   { value: 'partial', label: t('admin.accountProbeReports.statuses.partial') },
   { value: 'failed', label: t('admin.accountProbeReports.statuses.failed') },
   { value: 'running', label: t('admin.accountProbeReports.statuses.running') },
-  { value: 'pending', label: t('admin.accountProbeReports.statuses.pending') },
 ])
 
 const modeOptions = computed<SelectOption[]>(() => [
@@ -518,6 +518,7 @@ async function loadRuns() {
     pagination.total = response.total || 0
     pagination.page = response.page || pagination.page
     pagination.page_size = response.page_size || pagination.page_size
+    scheduleActiveRunRefresh()
   } catch (err: any) {
     if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
     error.value = err?.response?.data?.error || err?.message || t('admin.accountProbeReports.failedToLoad')
@@ -529,6 +530,18 @@ async function loadRuns() {
       listAbortController = null
     }
   }
+}
+
+function scheduleActiveRunRefresh() {
+  if (activeRunsTimer) {
+    window.clearTimeout(activeRunsTimer)
+    activeRunsTimer = null
+  }
+  if (!runs.value.some(run => run.status === 'running')) return
+  activeRunsTimer = window.setTimeout(() => {
+    activeRunsTimer = null
+    loadRuns()
+  }, 3000)
 }
 
 async function openDetail(run: AccountProbeRun) {
@@ -665,6 +678,10 @@ function toggleAllBatchAccounts(checked: boolean) {
 
 function applyFilters() {
   pagination.page = 1
+  if (activeRunsTimer) {
+    window.clearTimeout(activeRunsTimer)
+    activeRunsTimer = null
+  }
   loadRuns()
 }
 
@@ -793,6 +810,7 @@ onUnmounted(() => {
   batchAbortController?.abort()
   batchAccountsAbortController?.abort()
   if (keywordTimer) window.clearTimeout(keywordTimer)
+  if (activeRunsTimer) window.clearTimeout(activeRunsTimer)
 })
 </script>
 

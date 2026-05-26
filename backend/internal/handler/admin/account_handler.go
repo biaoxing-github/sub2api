@@ -586,19 +586,12 @@ func (h *AccountHandler) RefreshUpstreamBalance(c *gin.Context) {
 }
 
 func parseAccountListGroupFilter(c *gin.Context) (int64, bool) {
-	groupIDStr := c.Query("group")
-	if groupIDStr == "" {
-		return 0, true
-	}
-	if groupIDStr == accountListGroupUngroupedQueryValue {
-		return service.AccountListGroupUngrouped, true
-	}
-	parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
-	if parseErr != nil || parsedGroupID < 0 {
-		response.ErrorFrom(c, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter"))
+	groupID, err := parseAccountListGroupFilterValue(c.Query("group"))
+	if err != nil {
+		response.ErrorFrom(c, err)
 		return 0, false
 	}
-	return parsedGroupID, true
+	return groupID, true
 }
 
 func buildAccountsListETag(
@@ -912,12 +905,14 @@ type TestAccountRequest struct {
 }
 
 type BatchTestNonAPIKeyAccountsRequest struct {
-	ModelID     string `json:"model_id"`
-	Platform    string `json:"platform"`
-	Status      string `json:"status"`
-	Search      string `json:"search"`
-	Concurrency int    `json:"concurrency"`
-	Limit       int    `json:"limit"`
+	ModelID     string  `json:"model_id"`
+	Platform    string  `json:"platform"`
+	Status      string  `json:"status"`
+	Search      string  `json:"search"`
+	Group       string  `json:"group"`
+	AccountIDs  []int64 `json:"account_ids"`
+	Concurrency int     `json:"concurrency"`
+	Limit       int     `json:"limit"`
 }
 
 type CreateAccountProbeRunRequest struct {
@@ -1001,25 +996,12 @@ func (h *AccountHandler) BatchTestNonAPIKey(c *gin.Context) {
 	if limit <= 0 || limit > 500 {
 		limit = 500
 	}
-	concurrency := req.Concurrency
-	if concurrency <= 0 {
-		concurrency = 2
-	}
-	if concurrency > 5 {
-		concurrency = 5
-	}
+	concurrency := normalizeBatchTestNonAPIKeyConcurrency(req.Concurrency)
 
-	accounts, _, err := h.adminService.ListAccounts(c.Request.Context(), 1, limit, platform, "", status, search, 0, "", "", "name", "asc")
+	targets, err := h.resolveBatchTestNonAPIKeyTargets(c.Request.Context(), req, limit)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
-	}
-	targets := make([]service.Account, 0, len(accounts))
-	for _, account := range accounts {
-		if account.Type == service.AccountTypeAPIKey {
-			continue
-		}
-		targets = append(targets, account)
 	}
 
 	now := time.Now()
@@ -1059,6 +1041,94 @@ func (h *AccountHandler) BatchTestNonAPIKey(c *gin.Context) {
 	response.Accepted(c, run)
 }
 
+func (h *AccountHandler) resolveBatchTestNonAPIKeyTargets(ctx context.Context, req BatchTestNonAPIKeyAccountsRequest, limit int) ([]service.Account, error) {
+	if len(req.AccountIDs) > 0 {
+		ids := dedupePositiveAccountIDs(req.AccountIDs)
+		accounts, err := h.adminService.GetAccountsByIDs(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		targets := make([]service.Account, 0, len(accounts))
+		for _, account := range accounts {
+			if account == nil || account.Type == service.AccountTypeAPIKey {
+				continue
+			}
+			targets = append(targets, *account)
+		}
+		return targets, nil
+	}
+
+	groupID, err := parseAccountListGroupFilterValue(strings.TrimSpace(req.Group))
+	if err != nil {
+		return nil, err
+	}
+	accounts, _, err := h.adminService.ListAccounts(
+		ctx,
+		1,
+		limit,
+		strings.TrimSpace(req.Platform),
+		"",
+		strings.TrimSpace(req.Status),
+		strings.TrimSpace(req.Search),
+		groupID,
+		"",
+		"",
+		"name",
+		"asc",
+	)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]service.Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.Type == service.AccountTypeAPIKey {
+			continue
+		}
+		targets = append(targets, account)
+	}
+	return targets, nil
+}
+
+func normalizeBatchTestNonAPIKeyConcurrency(concurrency int) int {
+	if concurrency <= 0 {
+		return 5
+	}
+	if concurrency > 20 {
+		return 20
+	}
+	return concurrency
+}
+
+func dedupePositiveAccountIDs(ids []int64) []int64 {
+	out := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func parseAccountListGroupFilterValue(groupIDStr string) (int64, error) {
+	if groupIDStr == "" {
+		return 0, nil
+	}
+	if groupIDStr == accountListGroupUngroupedQueryValue {
+		return service.AccountListGroupUngrouped, nil
+	}
+	parsedGroupID, parseErr := strconv.ParseInt(groupIDStr, 10, 64)
+	if parseErr != nil || parsedGroupID < 0 {
+		return 0, infraerrors.BadRequest("INVALID_GROUP_FILTER", "invalid group filter")
+	}
+	return parsedGroupID, nil
+}
+
 func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatchTestRun, items []service.AccountBatchTestItem) {
 	if h.batchAccountTester == nil || h.accountBatchTestRepo == nil {
 		return
@@ -1074,12 +1144,7 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 		}
 	}()
 	concurrency := run.Concurrency
-	if concurrency <= 0 {
-		concurrency = 2
-	}
-	if concurrency > 5 {
-		concurrency = 5
-	}
+	concurrency = normalizeBatchTestNonAPIKeyConcurrency(concurrency)
 	modelID := strings.TrimSpace(run.ModelID)
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -1138,6 +1203,9 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 		if item.Category == "unauthorized" {
 			run.UnauthorizedCount++
 		}
+		if item.Category == "rate_limited" {
+			run.RateLimitedCount++
+		}
 	}
 	if run.FailedCount == 0 {
 		run.Status = service.AccountBatchTestStatusSuccess
@@ -1186,11 +1254,24 @@ func (h *AccountHandler) GetBatchTestRun(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	category := strings.TrimSpace(c.Query("category"))
+	if category != "" {
+		filtered := make([]service.AccountBatchTestItem, 0, len(items))
+		for _, item := range items {
+			if accountBatchTestItemMatchesCategory(item, category) {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
 	response.Success(c, service.AccountBatchTestRunDetail{AccountBatchTestRun: *run, Items: items})
 }
 
 func classifyAccountTestError(message string) string {
 	lower := strings.ToLower(message)
+	if strings.Contains(lower, "429") || strings.Contains(lower, "rate limit") || strings.Contains(lower, "rate_limited") || strings.Contains(lower, "too many requests") {
+		return "rate_limited"
+	}
 	if strings.Contains(lower, "401") || strings.Contains(lower, "unauthorized") || strings.Contains(lower, "authentication failed") || strings.Contains(lower, "token invalid") {
 		return "unauthorized"
 	}
@@ -1201,6 +1282,38 @@ func classifyAccountTestError(message string) string {
 		return "reauth_required"
 	}
 	return "error"
+}
+
+func accountBatchTestItemMatchesCategory(item service.AccountBatchTestItem, category string) bool {
+	if category == "" {
+		return true
+	}
+	if category == "ok" && item.Category != "ok" && item.Status == service.AccountBatchTestItemStatusSuccess {
+		return true
+	}
+	if category == "rate_limited" && item.Category != "rate_limited" && accountBatchTestMessageIsRateLimited(item.ErrorMessage) {
+		return true
+	}
+	if category == "unauthorized" && item.Category != "unauthorized" && accountBatchTestMessageIsUnauthorized(item.ErrorMessage) {
+		return true
+	}
+	return item.Category == category
+}
+
+func accountBatchTestMessageIsRateLimited(message string) bool {
+	lower := strings.ToLower(message)
+	return strings.Contains(lower, "429") ||
+		strings.Contains(lower, "rate limit") ||
+		strings.Contains(lower, "rate_limited") ||
+		strings.Contains(lower, "too many requests")
+}
+
+func accountBatchTestMessageIsUnauthorized(message string) bool {
+	lower := strings.ToLower(message)
+	return strings.Contains(lower, "401") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "authentication failed") ||
+		strings.Contains(lower, "token invalid")
 }
 
 // CreateProbeRun runs and persists an upstream account probe.

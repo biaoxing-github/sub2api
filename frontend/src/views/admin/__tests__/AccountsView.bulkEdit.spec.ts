@@ -97,6 +97,12 @@ const DataTableStub = {
       >
         {{ column.label }}
       </button>
+      <div v-for="row in data" :key="row.id" :data-test="'row-' + row.id">
+        <slot name="cell-select" :row="row" />
+        <template v-for="column in columns" :key="column.key">
+          <slot :name="'cell-' + column.key" :row="row" :value="row[column.key]" />
+        </template>
+      </div>
       <div data-test="data-table">{{ data.map((row) => \`\${row.name}:\${row.status}:\${row.error_message || ""}:\${row.total_account_cost ?? 0}:\${row.total_requests ?? 0}\`).join("|") }}</div>
     </div>
   `
@@ -386,7 +392,7 @@ describe('admin AccountsView bulk edit scope', () => {
       unauthorized_count: 0,
       created_at: '2026-05-26T10:00:00Z',
     })
-    getBatchTestNonAPIKeyRun.mockResolvedValue({
+    getBatchTestNonAPIKeyRun.mockImplementation(async (_runId: number, filters?: { category?: string }) => ({
       id: 88,
       status: 'partial',
       model_id: 'gpt-5.4',
@@ -397,17 +403,41 @@ describe('admin AccountsView bulk edit scope', () => {
       failed_count: 1,
       unauthorized_count: 1,
       created_at: '2026-05-26T10:00:00Z',
-      items: [{
-        account_id: 7,
-        account_name: 'dropped-oauth@example.com',
-        platform: 'openai',
-        type: 'oauth',
-        status: 'failed',
-        category: 'unauthorized',
-        error_message: 'Authentication failed (401)',
-        latency_ms: 42,
-      }],
-    })
+      rate_limited_count: 1,
+      items: filters?.category === 'unauthorized'
+        ? [{
+            account_id: 7,
+            account_name: 'dropped-oauth@example.com',
+            platform: 'openai',
+            type: 'oauth',
+            status: 'failed',
+            category: 'unauthorized',
+            error_message: 'Authentication failed (401)',
+            latency_ms: 42,
+          }]
+        : [
+            {
+              account_id: 6,
+              account_name: 'limited-oauth@example.com',
+              platform: 'openai',
+              type: 'oauth',
+              status: 'failed',
+              category: 'rate_limited',
+              error_message: 'API returned 429',
+              latency_ms: 50,
+            },
+            {
+              account_id: 7,
+              account_name: 'dropped-oauth@example.com',
+              platform: 'openai',
+              type: 'oauth',
+              status: 'failed',
+              category: 'unauthorized',
+              error_message: 'Authentication failed (401)',
+              latency_ms: 42,
+            },
+          ],
+    }))
 
     const wrapper = mount(AccountsView, {
       global: {
@@ -454,10 +484,93 @@ describe('admin AccountsView bulk edit scope', () => {
 
     expect(batchTestNonAPIKeyAccounts).toHaveBeenCalledWith(expect.objectContaining({
       model_id: 'gpt-5.4',
-      concurrency: 2,
+      concurrency: 5,
       limit: 500,
     }))
     expect(wrapper.text()).toContain('admin.accounts.batchTest.submitted')
+  })
+
+  it('runs batch connectivity tests only for selected non-api-key accounts', async () => {
+    listAccounts.mockResolvedValueOnce({
+      items: [
+        {
+          id: 31,
+          name: 'selected-one@example.com',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'active',
+          schedulable: true,
+          credentials: {},
+          extra: {},
+        },
+        {
+          id: 33,
+          name: 'selected-two@example.com',
+          platform: 'anthropic',
+          type: 'oauth',
+          status: 'active',
+          schedulable: true,
+          credentials: {},
+          extra: {},
+        },
+      ],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          BaseDialog: { template: '<section data-test="base-dialog"><slot /><slot name="footer" /></section>' },
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.get('[data-test="row-31"] input[type="checkbox"]').setValue(true)
+    await wrapper.get('[data-test="row-33"] input[type="checkbox"]').setValue(true)
+    await wrapper.get('button[title="admin.accounts.moreActions"]').trigger('click')
+    await wrapper.get('[data-test="batch-test-non-apikey"]').trigger('click')
+    await flushPromises()
+
+    expect(batchTestNonAPIKeyAccounts).toHaveBeenCalledWith(expect.objectContaining({
+      account_ids: [31, 33],
+      concurrency: 5,
+      limit: 500,
+    }))
+    expect(batchTestNonAPIKeyAccounts.mock.calls[0][0]).not.toHaveProperty('platform')
   })
 
   it('opens non-api-key batch test records from tools menu', async () => {
@@ -478,7 +591,7 @@ describe('admin AccountsView bulk edit scope', () => {
       page: 1,
       page_size: 20,
     })
-    getBatchTestNonAPIKeyRun.mockResolvedValue({
+    getBatchTestNonAPIKeyRun.mockImplementation(async (_runId: number, filters?: { category?: string }) => ({
       id: 88,
       status: 'partial',
       model_id: 'gpt-5.4',
@@ -489,17 +602,41 @@ describe('admin AccountsView bulk edit scope', () => {
       failed_count: 1,
       unauthorized_count: 1,
       created_at: '2026-05-26T10:00:00Z',
-      items: [{
-        account_id: 7,
-        account_name: 'dropped-oauth@example.com',
-        platform: 'openai',
-        type: 'oauth',
-        status: 'failed',
-        category: 'unauthorized',
-        error_message: 'Authentication failed (401)',
-        latency_ms: 42,
-      }],
-    })
+      rate_limited_count: 1,
+      items: filters?.category === 'unauthorized'
+        ? [{
+            account_id: 7,
+            account_name: 'dropped-oauth@example.com',
+            platform: 'openai',
+            type: 'oauth',
+            status: 'failed',
+            category: 'unauthorized',
+            error_message: 'Authentication failed (401)',
+            latency_ms: 42,
+          }]
+        : [
+            {
+              account_id: 6,
+              account_name: 'limited-oauth@example.com',
+              platform: 'openai',
+              type: 'oauth',
+              status: 'failed',
+              category: 'rate_limited',
+              error_message: 'API returned 429',
+              latency_ms: 50,
+            },
+            {
+              account_id: 7,
+              account_name: 'dropped-oauth@example.com',
+              platform: 'openai',
+              type: 'oauth',
+              status: 'failed',
+              category: 'unauthorized',
+              error_message: 'Authentication failed (401)',
+              latency_ms: 42,
+            },
+          ],
+    }))
 
     const wrapper = mount(AccountsView, {
       global: {
@@ -546,8 +683,16 @@ describe('admin AccountsView bulk edit scope', () => {
 
     expect(listBatchTestNonAPIKeyRuns).toHaveBeenCalledWith(1, 20)
     expect(getBatchTestNonAPIKeyRun).toHaveBeenCalledWith(88)
+    expect(wrapper.text()).toContain('limited-oauth@example.com')
     expect(wrapper.text()).toContain('dropped-oauth@example.com')
     expect(wrapper.text()).toContain('Authentication failed (401)')
+
+    await wrapper.get('[data-test="batch-test-record-filter-unauthorized"]').trigger('click')
+    await flushPromises()
+
+    expect(getBatchTestNonAPIKeyRun).toHaveBeenLastCalledWith(88, { category: 'unauthorized' })
+    expect(wrapper.text()).toContain('dropped-oauth@example.com')
+    expect(wrapper.text()).not.toContain('limited-oauth@example.com')
   })
 
   it('passes total account cost sorting to the server and displays usage totals', async () => {
@@ -631,5 +776,84 @@ describe('admin AccountsView bulk edit scope', () => {
       }),
       expect.any(Object)
     )
+  })
+
+  it('shows account created/imported time and alive days', async () => {
+    vi.setSystemTime(new Date('2026-05-27T10:00:00Z'))
+    listAccounts.mockResolvedValueOnce({
+      items: [
+        {
+          id: 9,
+          name: 'aged-oauth@example.com',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'active',
+          schedulable: true,
+          credentials: {},
+          created_at: '2026-05-24T09:00:00Z',
+          extra: {},
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accounts.columns.createdAt')
+    expect(wrapper.text()).toContain('admin.accounts.accountAgeDays')
+
+    await wrapper.get('[data-test="sort-created_at"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenLastCalledWith(
+      1,
+      20,
+      expect.objectContaining({
+        sort_by: 'created_at',
+        sort_order: 'desc'
+      }),
+      expect.any(Object)
+    )
+    vi.useRealTimers()
   })
 })

@@ -42,6 +42,8 @@ export interface BatchTestNonAPIKeyAccountsRequest {
   platform?: string
   status?: string
   search?: string
+  group?: string
+  account_ids?: number[]
   concurrency?: number
   limit?: number
 }
@@ -54,7 +56,7 @@ export interface BatchTestNonAPIKeyAccountItem {
   platform: string
   type: string
   status: 'pending' | 'running' | 'success' | 'failed' | string
-  category: 'ok' | 'unauthorized' | 'timeout' | 'reauth_required' | 'error' | string
+  category: 'ok' | 'unauthorized' | 'rate_limited' | 'timeout' | 'reauth_required' | 'error' | string
   message?: string
   error_message?: string
   latency_ms?: number
@@ -76,6 +78,7 @@ export interface BatchTestNonAPIKeyRun {
   success_count: number
   failed_count: number
   unauthorized_count: number
+  rate_limited_count?: number
   error_message?: string
   created_at: string
   started_at?: string
@@ -330,9 +333,13 @@ export async function listBatchTestNonAPIKeyRuns(
 
 export async function getBatchTestNonAPIKeyRun(
   runId: number,
+  filters?: { category?: string },
   options?: FetchOptions
 ): Promise<BatchTestNonAPIKeyRunDetail> {
   const { data } = await apiClient.get<BatchTestNonAPIKeyRunDetail>(`/admin/accounts/batch-test-runs/${runId}`, {
+    params: {
+      category: filters?.category || undefined,
+    },
     signal: options?.signal,
   })
   return data

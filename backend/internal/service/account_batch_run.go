@@ -30,6 +30,7 @@ type AccountBatchTestRun struct {
 	SuccessCount      int        `json:"success_count"`
 	FailedCount       int        `json:"failed_count"`
 	UnauthorizedCount int        `json:"unauthorized_count"`
+	RateLimitedCount  int        `json:"rate_limited_count"`
 	ErrorMessage      string     `json:"error_message,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	StartedAt         *time.Time `json:"started_at,omitempty"`

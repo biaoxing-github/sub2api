@@ -52,6 +52,9 @@ type stubAdminService struct {
 		sortOrder   string
 		calls       int
 	}
+	lastGetAccountsByIDs struct {
+		ids []int64
+	}
 	lastListUsers struct {
 		page      int
 		pageSize  int
@@ -333,9 +336,16 @@ func (s *stubAdminService) GetAccount(ctx context.Context, id int64) (*service.A
 }
 
 func (s *stubAdminService) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*service.Account, error) {
+	s.lastGetAccountsByIDs.ids = append([]int64(nil), ids...)
 	out := make([]*service.Account, 0, len(ids))
 	for _, id := range ids {
 		account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
+		for i := range s.accounts {
+			if s.accounts[i].ID == id {
+				account = s.accounts[i]
+				break
+			}
+		}
 		out = append(out, &account)
 	}
 	return out, nil
