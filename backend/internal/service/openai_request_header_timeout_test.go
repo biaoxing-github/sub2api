@@ -36,6 +36,24 @@ func TestOpenAIRequestHeaderTimeoutForBodyRespectsConfiguredCap(t *testing.T) {
 	require.Equal(t, 12*time.Second, svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"`+strings.Repeat("x", 160000)+`"}`)))
 }
 
+func TestOpenAIRequestHeaderTimeoutForBodyUsesWaitGuardCap(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{
+			Gateway: config.GatewayConfig{
+				OpenAIRequestHeaderTimeoutSeconds: 60,
+			},
+		},
+	}
+	policy := openAICodexStabilityPolicy{
+		Enabled:                     true,
+		DynamicHeaderTimeoutEnabled: true,
+		WaitGuardEnabled:            true,
+		MaxHeaderWaitSeconds:        8,
+	}
+
+	require.Equal(t, 8*time.Second, svc.openAIRequestHeaderTimeoutForBodyWithPolicy([]byte(`{"input":"hello"}`), policy))
+}
+
 func TestOpenAIRequestHeaderTimeoutForBodyCanBeDisabled(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 
@@ -108,6 +126,32 @@ func TestOpenAICodexStabilityPolicyResolvesByMode(t *testing.T) {
 			require.Equal(t, tt.wantFail, policy.RequestPhaseFailoverEnabled)
 		})
 	}
+}
+
+func TestOpenAICodexStabilityPolicyIncludesWaitGuard(t *testing.T) {
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+		CodexStability: config.GatewayCodexStabilityConfig{
+			Mode:                        config.GatewayCodexStabilityModeCodex,
+			DynamicHeaderTimeoutEnabled: true,
+			RequestPhaseFailoverEnabled: true,
+			StreamKeepaliveEnabled:      true,
+		},
+		CodexWaitGuard: config.GatewayCodexWaitGuardConfig{
+			Enabled:                  true,
+			MaxHeaderWaitSeconds:     9,
+			MaxStreamSilentSeconds:   21,
+			KeepaliveIntervalSeconds: 6,
+			ProtectAfterOutput:       true,
+		},
+	}}}
+
+	policy := svc.openAICodexStabilityPolicy(true)
+
+	require.True(t, policy.WaitGuardEnabled)
+	require.Equal(t, 9, policy.MaxHeaderWaitSeconds)
+	require.Equal(t, 21, policy.MaxStreamSilentSeconds)
+	require.Equal(t, 6, policy.KeepaliveIntervalSeconds)
+	require.True(t, policy.ProtectAfterOutput)
 }
 
 func TestOpenAIRequestHeaderTimeoutRequiresStablePolicy(t *testing.T) {

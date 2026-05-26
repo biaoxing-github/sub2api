@@ -517,6 +517,14 @@ export interface SystemSettings {
   codex_stability_request_phase_failover_enabled: boolean;
   codex_stability_suppress_client_timeout_headers: boolean;
   codex_stability_stream_keepalive_enabled: boolean;
+  codex_autopilot_enabled?: boolean;
+  codex_autopilot_observe_only?: boolean;
+  openai_path_health_circuit_breaker_enabled?: boolean;
+  openai_fast_lane_enabled?: boolean;
+  realtime_balance_confirm_top_n?: number;
+  realtime_balance_confirm_timeout_ms?: number;
+  context_journal_backend?: string;
+  context_journal_ttl_hours?: number;
   web_search_emulation_enabled?: boolean;
 
   // Payment configuration
@@ -745,6 +753,14 @@ export interface UpdateSettingsRequest {
   codex_stability_request_phase_failover_enabled?: boolean;
   codex_stability_suppress_client_timeout_headers?: boolean;
   codex_stability_stream_keepalive_enabled?: boolean;
+  codex_autopilot_enabled?: boolean;
+  codex_autopilot_observe_only?: boolean;
+  openai_path_health_circuit_breaker_enabled?: boolean;
+  openai_fast_lane_enabled?: boolean;
+  realtime_balance_confirm_top_n?: number;
+  realtime_balance_confirm_timeout_ms?: number;
+  context_journal_backend?: string;
+  context_journal_ttl_hours?: number;
   // Payment configuration
   payment_enabled?: boolean;
   risk_control_enabled?: boolean;

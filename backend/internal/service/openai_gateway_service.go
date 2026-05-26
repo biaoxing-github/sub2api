@@ -2855,7 +2855,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			if stabilityPolicy.RequestPhaseFailoverEnabled && isOpenAIRequestPhaseTransientError(err) {
-				return nil, s.newOpenAIRequestFailoverError(c, account, false, safeErr)
+				return nil, s.newOpenAIRequestFailoverError(c, account, false, "failover", safeErr)
 			}
 			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 			setOpsUpstreamError(c, 0, safeErr, "")
@@ -2938,7 +2938,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageCount := 0
 		var imageOutputSizes []string
 		if reqStream {
-			streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, upstreamModel)
+			streamResult, err := s.handleStreamingResponseWithPolicy(ctx, resp, c, account, startTime, originalModel, upstreamModel, stabilityPolicy)
 			if err != nil {
 				return nil, err
 			}
@@ -3166,7 +3166,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		if stabilityPolicy.RequestPhaseFailoverEnabled && isOpenAIRequestPhaseTransientError(err) {
-			return nil, s.newOpenAIRequestFailoverError(c, account, true, safeErr)
+			return nil, s.newOpenAIRequestFailoverError(c, account, true, "failover", safeErr)
 		}
 		setOpsUpstreamError(c, 0, safeErr, "")
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -3657,6 +3657,11 @@ type openAICodexStabilityPolicy struct {
 	RequestPhaseFailoverEnabled  bool
 	SuppressClientTimeoutHeaders bool
 	StreamKeepaliveEnabled       bool
+	WaitGuardEnabled             bool
+	MaxHeaderWaitSeconds         int
+	MaxStreamSilentSeconds       int
+	KeepaliveIntervalSeconds     int
+	ProtectAfterOutput           bool
 }
 
 func (s *OpenAIGatewayService) openAICodexStabilityPolicy(isCodexCLI bool) openAICodexStabilityPolicy {
@@ -3688,10 +3693,18 @@ func (s *OpenAIGatewayService) openAICodexStabilityPolicy(isCodexCLI bool) openA
 		RequestPhaseFailoverEnabled:  stability.RequestPhaseFailoverEnabled,
 		SuppressClientTimeoutHeaders: stability.SuppressClientTimeoutHeaders,
 		StreamKeepaliveEnabled:       stability.StreamKeepaliveEnabled,
+		WaitGuardEnabled:             s.cfg.Gateway.CodexWaitGuard.Enabled,
+		MaxHeaderWaitSeconds:         s.cfg.Gateway.CodexWaitGuard.MaxHeaderWaitSeconds,
+		MaxStreamSilentSeconds:       s.cfg.Gateway.CodexWaitGuard.MaxStreamSilentSeconds,
+		KeepaliveIntervalSeconds:     s.cfg.Gateway.CodexWaitGuard.KeepaliveIntervalSeconds,
+		ProtectAfterOutput:           s.cfg.Gateway.CodexWaitGuard.ProtectAfterOutput,
 	}
 }
 
-func (s *OpenAIGatewayService) openAIRequestHeaderTimeout() time.Duration {
+func (s *OpenAIGatewayService) openAIRequestHeaderTimeout(policy openAICodexStabilityPolicy) time.Duration {
+	if policy.Enabled && policy.WaitGuardEnabled && policy.MaxHeaderWaitSeconds > 0 {
+		return time.Duration(policy.MaxHeaderWaitSeconds) * time.Second
+	}
 	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds <= 0 {
 		return 0
 	}
@@ -3709,7 +3722,7 @@ func (s *OpenAIGatewayService) openAIRequestHeaderTimeoutForBodyWithPolicy(body 
 	if !policy.Enabled || !policy.DynamicHeaderTimeoutEnabled {
 		return 0
 	}
-	configured := s.openAIRequestHeaderTimeout()
+	configured := s.openAIRequestHeaderTimeout(policy)
 	if configured <= 0 {
 		return 0
 	}
@@ -3882,6 +3895,7 @@ func (s *OpenAIGatewayService) newOpenAIRequestFailoverError(
 	c *gin.Context,
 	account *Account,
 	passthrough bool,
+	kind string,
 	message string,
 ) *UpstreamFailoverError {
 	message = sanitizeUpstreamErrorMessage(strings.TrimSpace(message))
@@ -3894,7 +3908,7 @@ func (s *OpenAIGatewayService) newOpenAIRequestFailoverError(
 			Platform:           PlatformOpenAI,
 			UpstreamStatusCode: http.StatusBadGateway,
 			Passthrough:        passthrough,
-			Kind:               "failover",
+			Kind:               firstNonEmptyString(kind, "failover"),
 			Message:            message,
 		}
 		if account != nil {
@@ -4713,6 +4727,10 @@ type openaiNonStreamingResult struct {
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
+	return s.handleStreamingResponseWithPolicy(ctx, resp, c, account, startTime, originalModel, mappedModel, openAICodexStabilityPolicy{})
+}
+
+func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string, stabilityPolicy openAICodexStabilityPolicy) (*openaiStreamingResult, error) {
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
@@ -4757,6 +4775,9 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
 	}
+	if stabilityPolicy.Enabled && stabilityPolicy.WaitGuardEnabled && stabilityPolicy.MaxStreamSilentSeconds > 0 {
+		streamInterval = time.Duration(stabilityPolicy.MaxStreamSilentSeconds) * time.Second
+	}
 	// 仅监控上游数据间隔超时，不被下游写入阻塞影响
 	var intervalTicker *time.Ticker
 	if streamInterval > 0 {
@@ -4771,6 +4792,9 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	keepaliveInterval := time.Duration(0)
 	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
+	}
+	if stabilityPolicy.Enabled && stabilityPolicy.StreamKeepaliveEnabled && stabilityPolicy.WaitGuardEnabled && stabilityPolicy.KeepaliveIntervalSeconds > 0 {
+		keepaliveInterval = time.Duration(stabilityPolicy.KeepaliveIntervalSeconds) * time.Second
 	}
 	// 下游 keepalive 仅用于防止代理空闲断开
 	var keepaliveTicker *time.Ticker
@@ -5060,8 +5084,13 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
 			}
+			err := fmt.Errorf("stream data interval timeout")
+			if stabilityPolicy.Enabled && stabilityPolicy.WaitGuardEnabled && stabilityPolicy.RequestPhaseFailoverEnabled &&
+				(!stabilityPolicy.ProtectAfterOutput || !openAIStreamClientOutputStarted(c, clientOutputStarted)) {
+				return resultWithUsage(), s.newOpenAIRequestFailoverError(c, account, false, "stream_timeout", err.Error())
+			}
 			sendErrorEvent("stream_timeout")
-			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
+			return resultWithUsage(), err
 
 		case <-keepaliveCh:
 			if clientDisconnected {

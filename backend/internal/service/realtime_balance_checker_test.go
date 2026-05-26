@@ -477,3 +477,54 @@ func TestRealtimeBalanceCheckerSelectFirstVerifiedCandidateChecksTopNConcurrentl
 		t.Fatal("SelectFirstVerifiedCandidate did not return")
 	}
 }
+
+func TestRealtimeBalanceCheckerSelectFirstVerifiedCandidateWithDiagnosticsRecordsTopNOutcome(t *testing.T) {
+	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
+		switch account.ID {
+		case 81:
+			return &UpstreamBalanceSnapshot{Available: 0, OKCount: 1}, nil
+		case 82:
+			return &UpstreamBalanceSnapshot{Available: 10, OKCount: 0, Error: "parse failed"}, nil
+		default:
+			return nil, errors.New("unexpected account")
+		}
+	}), RealtimeBalanceCheckerOptions{Timeout: time.Second, CandidateTopN: 2, StickyReserveUSD: 0.5})
+
+	account, snapshot, diagnostic, err := checker.SelectFirstVerifiedCandidateWithDiagnostics(
+		context.Background(),
+		[]*Account{
+			{ID: 81, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+			{ID: 82, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+			{ID: 83, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+		},
+		1,
+		RealtimeBalanceCheckOptions{},
+	)
+	if !errors.Is(err, ErrNoVerifiedRealtimeBalanceCandidate) {
+		t.Fatalf("err = %v, want ErrNoVerifiedRealtimeBalanceCandidate", err)
+	}
+	if account != nil || snapshot != nil {
+		t.Fatalf("account=%v snapshot=%v, want nil", account, snapshot)
+	}
+	if diagnostic == nil {
+		t.Fatal("diagnostic is nil")
+	}
+	if diagnostic.Source != "top_n" || diagnostic.TopN != 2 || diagnostic.Checked != 2 || diagnostic.SelectedAccountID != 0 {
+		t.Fatalf("diagnostic = %+v", diagnostic)
+	}
+	if diagnostic.LatencyMs < 0 {
+		t.Fatalf("LatencyMs = %d, want non-negative", diagnostic.LatencyMs)
+	}
+	if !strings.Contains(diagnostic.Reason, "no verified realtime balance candidate") {
+		t.Fatalf("Reason = %q, want no verified candidate", diagnostic.Reason)
+	}
+	if len(diagnostic.Candidates) != 2 {
+		t.Fatalf("candidates = %+v, want 2", diagnostic.Candidates)
+	}
+	if diagnostic.Candidates[0].AccountID != 81 || diagnostic.Candidates[0].State != RealtimeBalanceStateExhausted || diagnostic.Candidates[0].Reason != "available_below_min" {
+		t.Fatalf("candidate[0] = %+v", diagnostic.Candidates[0])
+	}
+	if diagnostic.Candidates[1].AccountID != 82 || diagnostic.Candidates[1].Source != RealtimeBalanceSourceError || !strings.Contains(diagnostic.Candidates[1].Reason, "parse failed") {
+		t.Fatalf("candidate[1] = %+v", diagnostic.Candidates[1])
+	}
+}

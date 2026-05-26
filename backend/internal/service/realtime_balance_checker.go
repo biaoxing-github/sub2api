@@ -43,6 +43,27 @@ type RealtimeBalanceDecision struct {
 	Error     string
 }
 
+type RealtimeBalanceCandidateDiagnostic struct {
+	Index     int
+	AccountID int64
+	State     string
+	Available float64
+	Threshold string
+	Source    string
+	Reason    string
+	LatencyMs int64
+}
+
+type RealtimeBalanceConfirmDiagnostic struct {
+	Source            string
+	TopN              int
+	Checked           int
+	LatencyMs         int64
+	SelectedAccountID int64
+	Reason            string
+	Candidates        []RealtimeBalanceCandidateDiagnostic
+}
+
 type RealtimeBalanceCheckOptions struct {
 	Now                   time.Time
 	CodexLongSessionStart bool
@@ -155,17 +176,31 @@ func (c *RealtimeBalanceChecker) SelectFirstVerifiedCandidate(ctx context.Contex
 }
 
 func (c *RealtimeBalanceChecker) SelectFirstVerifiedCandidateWithOptions(ctx context.Context, accounts []*Account, minAvailable float64, options RealtimeBalanceCheckOptions) (*Account, *UpstreamBalanceSnapshot, error) {
+	selected, snapshot, _, err := c.SelectFirstVerifiedCandidateWithDiagnostics(ctx, accounts, minAvailable, options)
+	return selected, snapshot, err
+}
+
+func (c *RealtimeBalanceChecker) SelectFirstVerifiedCandidateWithDiagnostics(ctx context.Context, accounts []*Account, minAvailable float64, options RealtimeBalanceCheckOptions) (*Account, *UpstreamBalanceSnapshot, *RealtimeBalanceConfirmDiagnostic, error) {
+	start := time.Now()
+	diagnostic := &RealtimeBalanceConfirmDiagnostic{Source: "top_n"}
+	defer func() {
+		diagnostic.LatencyMs = time.Since(start).Milliseconds()
+	}()
 	if c == nil {
-		return nil, nil, errors.New("realtime balance checker is not configured")
+		diagnostic.Reason = "realtime balance checker is not configured"
+		return nil, nil, diagnostic, errors.New("realtime balance checker is not configured")
 	}
 	topN := c.candidateTopN
 	if topN <= 0 || topN > len(accounts) {
 		topN = len(accounts)
 	}
+	diagnostic.TopN = topN
 	type candidateDecision struct {
-		index    int
-		account  *Account
-		decision *RealtimeBalanceDecision
+		index     int
+		account   *Account
+		decision  *RealtimeBalanceDecision
+		err       error
+		latencyMs int64
 	}
 	results := make([]candidateDecision, 0, topN)
 	var mu sync.Mutex
@@ -180,31 +215,87 @@ func (c *RealtimeBalanceChecker) SelectFirstVerifiedCandidateWithOptions(ctx con
 		wg.Add(1)
 		go func(index int, candidate *Account) {
 			defer wg.Done()
+			candidateStart := time.Now()
 			decision, err := c.CheckAccountSnapshotFirst(ctx, candidate, options)
-			if err != nil || decision == nil {
-				return
-			}
 			mu.Lock()
-			results = append(results, candidateDecision{index: index, account: candidate, decision: decision})
+			results = append(results, candidateDecision{
+				index:     index,
+				account:   candidate,
+				decision:  decision,
+				err:       err,
+				latencyMs: time.Since(candidateStart).Milliseconds(),
+			})
 			mu.Unlock()
 		}(i, account)
 	}
 	wg.Wait()
+	diagnostic.Checked = len(results)
 	if len(results) == 0 {
-		return nil, nil, ErrNoVerifiedRealtimeBalanceCandidate
+		diagnostic.Reason = ErrNoVerifiedRealtimeBalanceCandidate.Error()
+		return nil, nil, diagnostic, ErrNoVerifiedRealtimeBalanceCandidate
 	}
 	for i := 0; i < topN; i++ {
 		for _, result := range results {
-			if result.index != i || result.decision == nil {
+			if result.index != i {
+				continue
+			}
+			diagnostic.Candidates = append(diagnostic.Candidates, realtimeBalanceCandidateDiagnostic(
+				result.index,
+				result.account,
+				result.decision,
+				result.err,
+				result.latencyMs,
+				minAvailable,
+			))
+			if result.decision == nil {
 				continue
 			}
 			if result.decision.State == RealtimeBalanceStateUnknown || result.decision.Available < minAvailable {
 				continue
 			}
-			return result.account, &UpstreamBalanceSnapshot{Available: result.decision.Available, OKCount: 1}, nil
+			diagnostic.SelectedAccountID = result.account.ID
+			diagnostic.Reason = "selected"
+			return result.account, &UpstreamBalanceSnapshot{Available: result.decision.Available, OKCount: 1}, diagnostic, nil
 		}
 	}
-	return nil, nil, ErrNoVerifiedRealtimeBalanceCandidate
+	diagnostic.Reason = ErrNoVerifiedRealtimeBalanceCandidate.Error()
+	return nil, nil, diagnostic, ErrNoVerifiedRealtimeBalanceCandidate
+}
+
+func realtimeBalanceCandidateDiagnostic(index int, account *Account, decision *RealtimeBalanceDecision, err error, latencyMs int64, minAvailable float64) RealtimeBalanceCandidateDiagnostic {
+	out := RealtimeBalanceCandidateDiagnostic{
+		Index:     index,
+		LatencyMs: latencyMs,
+	}
+	if account != nil {
+		out.AccountID = account.ID
+	}
+	if err != nil {
+		out.Source = RealtimeBalanceSourceError
+		out.Reason = err.Error()
+		return out
+	}
+	if decision == nil {
+		out.Source = RealtimeBalanceSourceError
+		out.Reason = "missing decision"
+		return out
+	}
+	out.State = decision.State
+	out.Available = decision.Available
+	out.Threshold = decision.Threshold
+	out.Source = decision.Source
+	out.Reason = strings.TrimSpace(decision.Error)
+	if out.Reason == "" {
+		switch {
+		case decision.State == RealtimeBalanceStateUnknown:
+			out.Reason = RealtimeBalanceStateUnknown
+		case decision.Available < minAvailable:
+			out.Reason = "available_below_min"
+		default:
+			out.Reason = "verified"
+		}
+	}
+	return out
 }
 
 func (c *RealtimeBalanceChecker) preflightAccount(ctx context.Context, account *Account) (*RealtimeBalanceDecision, error) {

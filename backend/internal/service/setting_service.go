@@ -1795,6 +1795,39 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyCodexStabilityRequestPhaseFailoverEnabled] = strconv.FormatBool(settings.CodexStabilityRequestPhaseFailoverEnabled)
 	updates[SettingKeyCodexStabilitySuppressClientTimeoutHeaders] = strconv.FormatBool(settings.CodexStabilitySuppressClientTimeoutHeaders)
 	updates[SettingKeyCodexStabilityStreamKeepaliveEnabled] = strconv.FormatBool(settings.CodexStabilityStreamKeepaliveEnabled)
+	updates[SettingKeyCodexAutopilotEnabled] = strconv.FormatBool(settings.CodexAutopilotEnabled)
+	updates[SettingKeyCodexAutopilotObserveOnly] = strconv.FormatBool(settings.CodexAutopilotObserveOnly)
+	updates[SettingKeyCodexAutopilotWindowSeconds] = strconv.Itoa(nonNegativeInt(settings.CodexAutopilotWindowSeconds))
+	updates[SettingKeyCodexAutopilotMinSamples] = strconv.Itoa(nonNegativeInt(settings.CodexAutopilotMinSamples))
+	updates[SettingKeyCodexAutopilotHeaderTimeoutThreshold] = strconv.Itoa(nonNegativeInt(settings.CodexAutopilotHeaderTimeoutThreshold))
+	updates[SettingKeyCodexAutopilotEOFThreshold] = strconv.Itoa(nonNegativeInt(settings.CodexAutopilotEOFThreshold))
+	updates[SettingKeyCodexAutopilotSilentStreamTimeoutSeconds] = strconv.Itoa(nonNegativeInt(settings.CodexAutopilotSilentStreamTimeoutSeconds))
+	updates[SettingKeyOpenAIPathHealthEnabled] = strconv.FormatBool(settings.OpenAIPathHealthEnabled)
+	updates[SettingKeyOpenAIPathHealthCircuitBreakerEnabled] = strconv.FormatBool(settings.OpenAIPathHealthCircuitBreakerEnabled)
+	updates[SettingKeyOpenAIPathHealthFailureWindowSeconds] = strconv.Itoa(nonNegativeInt(settings.OpenAIPathHealthFailureWindowSeconds))
+	updates[SettingKeyOpenAIPathHealthCooldownSeconds] = strconv.Itoa(nonNegativeInt(settings.OpenAIPathHealthCooldownSeconds))
+	updates[SettingKeyOpenAIPathHealthDegradedFailures] = strconv.Itoa(nonNegativeInt(settings.OpenAIPathHealthDegradedFailures))
+	updates[SettingKeyOpenAIPathHealthOpenFailures] = strconv.Itoa(nonNegativeInt(settings.OpenAIPathHealthOpenFailures))
+	updates[SettingKeyOpenAIPathHealthHalfOpenMaxProbes] = strconv.Itoa(nonNegativeInt(settings.OpenAIPathHealthHalfOpenMaxProbes))
+	updates[SettingKeyOpenAIFastLaneEnabled] = strconv.FormatBool(settings.OpenAIFastLaneEnabled)
+	updates[SettingKeyOpenAIFastLaneNewSessionOnly] = strconv.FormatBool(settings.OpenAIFastLaneNewSessionOnly)
+	updates[SettingKeyOpenAIFastLaneTTFTWeight] = strconv.FormatFloat(nonNegativeFloat(settings.OpenAIFastLaneTTFTWeight), 'f', -1, 64)
+	updates[SettingKeyOpenAIFastLaneHeaderWaitWeight] = strconv.FormatFloat(nonNegativeFloat(settings.OpenAIFastLaneHeaderWaitWeight), 'f', -1, 64)
+	updates[SettingKeyOpenAIFastLaneMinSamples] = strconv.Itoa(nonNegativeInt(settings.OpenAIFastLaneMinSamples))
+	updates[SettingKeyOpenAIFastLaneExploreRatio] = strconv.FormatFloat(clamp01Float(settings.OpenAIFastLaneExploreRatio), 'f', -1, 64)
+	updates[SettingKeyRealtimeBalancePrewarmEnabled] = strconv.FormatBool(settings.RealtimeBalancePrewarmEnabled)
+	updates[SettingKeyRealtimeBalancePrewarmIntervalSeconds] = strconv.Itoa(nonNegativeInt(settings.RealtimeBalancePrewarmIntervalSeconds))
+	updates[SettingKeyRealtimeBalancePrewarmActiveAccountLimit] = strconv.Itoa(nonNegativeInt(settings.RealtimeBalancePrewarmActiveAccountLimit))
+	updates[SettingKeyRealtimeBalanceConfirmTopN] = strconv.Itoa(nonNegativeInt(settings.RealtimeBalanceConfirmTopN))
+	updates[SettingKeyRealtimeBalanceConfirmTimeoutMs] = strconv.Itoa(nonNegativeInt(settings.RealtimeBalanceConfirmTimeoutMs))
+	updates[SettingKeyCodexWaitGuardEnabled] = strconv.FormatBool(settings.CodexWaitGuardEnabled)
+	updates[SettingKeyCodexWaitGuardMaxHeaderWaitSeconds] = strconv.Itoa(nonNegativeInt(settings.CodexWaitGuardMaxHeaderWaitSeconds))
+	updates[SettingKeyCodexWaitGuardMaxStreamSilentSeconds] = strconv.Itoa(nonNegativeInt(settings.CodexWaitGuardMaxStreamSilentSeconds))
+	updates[SettingKeyCodexWaitGuardKeepaliveIntervalSeconds] = strconv.Itoa(nonNegativeInt(settings.CodexWaitGuardKeepaliveIntervalSeconds))
+	updates[SettingKeyCodexWaitGuardProtectAfterOutput] = strconv.FormatBool(settings.CodexWaitGuardProtectAfterOutput)
+	updates[SettingKeyContextJournalBackend] = normalizeContextJournalBackend(settings.ContextJournalBackend)
+	updates[SettingKeyContextJournalTTLHours] = strconv.Itoa(nonNegativeInt(settings.ContextJournalTTLHours))
+	updates[SettingKeyContextJournalMaxSessionBytes] = strconv.FormatInt(nonNegativeInt64(settings.ContextJournalMaxSessionBytes), 10)
 	updates[SettingPaymentVisibleMethodAlipaySource] = settings.PaymentVisibleMethodAlipaySource
 	updates[SettingPaymentVisibleMethodWxpaySource] = settings.PaymentVisibleMethodWxpaySource
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
@@ -1899,6 +1932,51 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		s.cfg.Gateway.CodexStability.RequestPhaseFailoverEnabled = settings.CodexStabilityRequestPhaseFailoverEnabled
 		s.cfg.Gateway.CodexStability.SuppressClientTimeoutHeaders = settings.CodexStabilitySuppressClientTimeoutHeaders
 		s.cfg.Gateway.CodexStability.StreamKeepaliveEnabled = settings.CodexStabilityStreamKeepaliveEnabled
+		s.cfg.Gateway.CodexAutopilot = config.GatewayCodexAutopilotConfig{
+			Enabled:                    settings.CodexAutopilotEnabled,
+			ObserveOnly:                settings.CodexAutopilotObserveOnly,
+			WindowSeconds:              nonNegativeInt(settings.CodexAutopilotWindowSeconds),
+			MinSamples:                 nonNegativeInt(settings.CodexAutopilotMinSamples),
+			HeaderTimeoutThreshold:     nonNegativeInt(settings.CodexAutopilotHeaderTimeoutThreshold),
+			EOFThreshold:               nonNegativeInt(settings.CodexAutopilotEOFThreshold),
+			SilentStreamTimeoutSeconds: nonNegativeInt(settings.CodexAutopilotSilentStreamTimeoutSeconds),
+		}
+		s.cfg.Gateway.OpenAIPathHealth = config.GatewayOpenAIPathHealthConfig{
+			Enabled:               settings.OpenAIPathHealthEnabled,
+			CircuitBreakerEnabled: settings.OpenAIPathHealthCircuitBreakerEnabled,
+			FailureWindowSeconds:  nonNegativeInt(settings.OpenAIPathHealthFailureWindowSeconds),
+			CooldownSeconds:       nonNegativeInt(settings.OpenAIPathHealthCooldownSeconds),
+			DegradedFailures:      nonNegativeInt(settings.OpenAIPathHealthDegradedFailures),
+			OpenFailures:          nonNegativeInt(settings.OpenAIPathHealthOpenFailures),
+			HalfOpenMaxProbes:     nonNegativeInt(settings.OpenAIPathHealthHalfOpenMaxProbes),
+		}
+		s.cfg.Gateway.OpenAIFastLane = config.GatewayOpenAIFastLaneConfig{
+			Enabled:          settings.OpenAIFastLaneEnabled,
+			NewSessionOnly:   settings.OpenAIFastLaneNewSessionOnly,
+			TTFTWeight:       nonNegativeFloat(settings.OpenAIFastLaneTTFTWeight),
+			HeaderWaitWeight: nonNegativeFloat(settings.OpenAIFastLaneHeaderWaitWeight),
+			MinSamples:       nonNegativeInt(settings.OpenAIFastLaneMinSamples),
+			ExploreRatio:     clamp01Float(settings.OpenAIFastLaneExploreRatio),
+		}
+		s.cfg.Gateway.RealtimeBalancePrewarm = config.GatewayRealtimeBalancePrewarmConfig{
+			Enabled:            settings.RealtimeBalancePrewarmEnabled,
+			IntervalSeconds:    nonNegativeInt(settings.RealtimeBalancePrewarmIntervalSeconds),
+			ActiveAccountLimit: nonNegativeInt(settings.RealtimeBalancePrewarmActiveAccountLimit),
+		}
+		s.cfg.Gateway.RealtimeBalanceConfirmTopN = nonNegativeInt(settings.RealtimeBalanceConfirmTopN)
+		s.cfg.Gateway.RealtimeBalanceConfirmTimeoutMs = nonNegativeInt(settings.RealtimeBalanceConfirmTimeoutMs)
+		s.cfg.Gateway.CodexWaitGuard = config.GatewayCodexWaitGuardConfig{
+			Enabled:                  settings.CodexWaitGuardEnabled,
+			MaxHeaderWaitSeconds:     nonNegativeInt(settings.CodexWaitGuardMaxHeaderWaitSeconds),
+			MaxStreamSilentSeconds:   nonNegativeInt(settings.CodexWaitGuardMaxStreamSilentSeconds),
+			KeepaliveIntervalSeconds: nonNegativeInt(settings.CodexWaitGuardKeepaliveIntervalSeconds),
+			ProtectAfterOutput:       settings.CodexWaitGuardProtectAfterOutput,
+		}
+		s.cfg.Gateway.ContextJournal = config.GatewayContextJournalConfig{
+			Backend:         normalizeContextJournalBackend(settings.ContextJournalBackend),
+			TTLHours:        nonNegativeInt(settings.ContextJournalTTLHours),
+			MaxSessionBytes: nonNegativeInt64(settings.ContextJournalMaxSessionBytes),
+		}
 	}
 	if s.onUpdate != nil {
 		s.onUpdate() // Invalidate cache after settings update
@@ -2643,6 +2721,39 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyCodexStabilityRequestPhaseFailoverEnabled:  "true",
 		SettingKeyCodexStabilitySuppressClientTimeoutHeaders: "true",
 		SettingKeyCodexStabilityStreamKeepaliveEnabled:       "true",
+		SettingKeyCodexAutopilotEnabled:                      strconv.FormatBool(s.defaultCodexAutopilot().Enabled),
+		SettingKeyCodexAutopilotObserveOnly:                  strconv.FormatBool(s.defaultCodexAutopilot().ObserveOnly),
+		SettingKeyCodexAutopilotWindowSeconds:                strconv.Itoa(s.defaultCodexAutopilot().WindowSeconds),
+		SettingKeyCodexAutopilotMinSamples:                   strconv.Itoa(s.defaultCodexAutopilot().MinSamples),
+		SettingKeyCodexAutopilotHeaderTimeoutThreshold:       strconv.Itoa(s.defaultCodexAutopilot().HeaderTimeoutThreshold),
+		SettingKeyCodexAutopilotEOFThreshold:                 strconv.Itoa(s.defaultCodexAutopilot().EOFThreshold),
+		SettingKeyCodexAutopilotSilentStreamTimeoutSeconds:   strconv.Itoa(s.defaultCodexAutopilot().SilentStreamTimeoutSeconds),
+		SettingKeyOpenAIPathHealthEnabled:                    strconv.FormatBool(s.defaultOpenAIPathHealth().Enabled),
+		SettingKeyOpenAIPathHealthCircuitBreakerEnabled:      strconv.FormatBool(s.defaultOpenAIPathHealth().CircuitBreakerEnabled),
+		SettingKeyOpenAIPathHealthFailureWindowSeconds:       strconv.Itoa(s.defaultOpenAIPathHealth().FailureWindowSeconds),
+		SettingKeyOpenAIPathHealthCooldownSeconds:            strconv.Itoa(s.defaultOpenAIPathHealth().CooldownSeconds),
+		SettingKeyOpenAIPathHealthDegradedFailures:           strconv.Itoa(s.defaultOpenAIPathHealth().DegradedFailures),
+		SettingKeyOpenAIPathHealthOpenFailures:               strconv.Itoa(s.defaultOpenAIPathHealth().OpenFailures),
+		SettingKeyOpenAIPathHealthHalfOpenMaxProbes:          strconv.Itoa(s.defaultOpenAIPathHealth().HalfOpenMaxProbes),
+		SettingKeyOpenAIFastLaneEnabled:                      strconv.FormatBool(s.defaultOpenAIFastLane().Enabled),
+		SettingKeyOpenAIFastLaneNewSessionOnly:               strconv.FormatBool(s.defaultOpenAIFastLane().NewSessionOnly),
+		SettingKeyOpenAIFastLaneTTFTWeight:                   strconv.FormatFloat(s.defaultOpenAIFastLane().TTFTWeight, 'f', -1, 64),
+		SettingKeyOpenAIFastLaneHeaderWaitWeight:             strconv.FormatFloat(s.defaultOpenAIFastLane().HeaderWaitWeight, 'f', -1, 64),
+		SettingKeyOpenAIFastLaneMinSamples:                   strconv.Itoa(s.defaultOpenAIFastLane().MinSamples),
+		SettingKeyOpenAIFastLaneExploreRatio:                 strconv.FormatFloat(s.defaultOpenAIFastLane().ExploreRatio, 'f', -1, 64),
+		SettingKeyRealtimeBalancePrewarmEnabled:              strconv.FormatBool(s.defaultRealtimeBalancePrewarm().Enabled),
+		SettingKeyRealtimeBalancePrewarmIntervalSeconds:      strconv.Itoa(s.defaultRealtimeBalancePrewarm().IntervalSeconds),
+		SettingKeyRealtimeBalancePrewarmActiveAccountLimit:   strconv.Itoa(s.defaultRealtimeBalancePrewarm().ActiveAccountLimit),
+		SettingKeyRealtimeBalanceConfirmTopN:                 strconv.Itoa(s.defaultRealtimeBalanceConfirmTopN()),
+		SettingKeyRealtimeBalanceConfirmTimeoutMs:            strconv.Itoa(s.defaultRealtimeBalanceConfirmTimeoutMs()),
+		SettingKeyCodexWaitGuardEnabled:                      strconv.FormatBool(s.defaultCodexWaitGuard().Enabled),
+		SettingKeyCodexWaitGuardMaxHeaderWaitSeconds:         strconv.Itoa(s.defaultCodexWaitGuard().MaxHeaderWaitSeconds),
+		SettingKeyCodexWaitGuardMaxStreamSilentSeconds:       strconv.Itoa(s.defaultCodexWaitGuard().MaxStreamSilentSeconds),
+		SettingKeyCodexWaitGuardKeepaliveIntervalSeconds:     strconv.Itoa(s.defaultCodexWaitGuard().KeepaliveIntervalSeconds),
+		SettingKeyCodexWaitGuardProtectAfterOutput:           strconv.FormatBool(s.defaultCodexWaitGuard().ProtectAfterOutput),
+		SettingKeyContextJournalBackend:                      s.defaultContextJournal().Backend,
+		SettingKeyContextJournalTTLHours:                     strconv.Itoa(s.defaultContextJournal().TTLHours),
+		SettingKeyContextJournalMaxSessionBytes:              strconv.FormatInt(s.defaultContextJournal().MaxSessionBytes, 10),
 		SettingPaymentVisibleMethodAlipaySource:              "",
 		SettingPaymentVisibleMethodWxpaySource:               "",
 		SettingPaymentVisibleMethodAlipayEnabled:             "false",
@@ -3168,6 +3279,45 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.CodexStabilityRequestPhaseFailoverEnabled = !isFalseSettingValue(settings[SettingKeyCodexStabilityRequestPhaseFailoverEnabled])
 	result.CodexStabilitySuppressClientTimeoutHeaders = !isFalseSettingValue(settings[SettingKeyCodexStabilitySuppressClientTimeoutHeaders])
 	result.CodexStabilityStreamKeepaliveEnabled = !isFalseSettingValue(settings[SettingKeyCodexStabilityStreamKeepaliveEnabled])
+	defaultAutopilot := s.defaultCodexAutopilot()
+	result.CodexAutopilotEnabled = boolSettingWithDefault(settings[SettingKeyCodexAutopilotEnabled], defaultAutopilot.Enabled)
+	result.CodexAutopilotObserveOnly = boolSettingWithDefault(settings[SettingKeyCodexAutopilotObserveOnly], defaultAutopilot.ObserveOnly)
+	result.CodexAutopilotWindowSeconds = intSettingWithDefault(settings[SettingKeyCodexAutopilotWindowSeconds], defaultAutopilot.WindowSeconds)
+	result.CodexAutopilotMinSamples = intSettingWithDefault(settings[SettingKeyCodexAutopilotMinSamples], defaultAutopilot.MinSamples)
+	result.CodexAutopilotHeaderTimeoutThreshold = intSettingWithDefault(settings[SettingKeyCodexAutopilotHeaderTimeoutThreshold], defaultAutopilot.HeaderTimeoutThreshold)
+	result.CodexAutopilotEOFThreshold = intSettingWithDefault(settings[SettingKeyCodexAutopilotEOFThreshold], defaultAutopilot.EOFThreshold)
+	result.CodexAutopilotSilentStreamTimeoutSeconds = intSettingWithDefault(settings[SettingKeyCodexAutopilotSilentStreamTimeoutSeconds], defaultAutopilot.SilentStreamTimeoutSeconds)
+	defaultPathHealth := s.defaultOpenAIPathHealth()
+	result.OpenAIPathHealthEnabled = boolSettingWithDefault(settings[SettingKeyOpenAIPathHealthEnabled], defaultPathHealth.Enabled)
+	result.OpenAIPathHealthCircuitBreakerEnabled = boolSettingWithDefault(settings[SettingKeyOpenAIPathHealthCircuitBreakerEnabled], defaultPathHealth.CircuitBreakerEnabled)
+	result.OpenAIPathHealthFailureWindowSeconds = intSettingWithDefault(settings[SettingKeyOpenAIPathHealthFailureWindowSeconds], defaultPathHealth.FailureWindowSeconds)
+	result.OpenAIPathHealthCooldownSeconds = intSettingWithDefault(settings[SettingKeyOpenAIPathHealthCooldownSeconds], defaultPathHealth.CooldownSeconds)
+	result.OpenAIPathHealthDegradedFailures = intSettingWithDefault(settings[SettingKeyOpenAIPathHealthDegradedFailures], defaultPathHealth.DegradedFailures)
+	result.OpenAIPathHealthOpenFailures = intSettingWithDefault(settings[SettingKeyOpenAIPathHealthOpenFailures], defaultPathHealth.OpenFailures)
+	result.OpenAIPathHealthHalfOpenMaxProbes = intSettingWithDefault(settings[SettingKeyOpenAIPathHealthHalfOpenMaxProbes], defaultPathHealth.HalfOpenMaxProbes)
+	defaultFastLane := s.defaultOpenAIFastLane()
+	result.OpenAIFastLaneEnabled = boolSettingWithDefault(settings[SettingKeyOpenAIFastLaneEnabled], defaultFastLane.Enabled)
+	result.OpenAIFastLaneNewSessionOnly = boolSettingWithDefault(settings[SettingKeyOpenAIFastLaneNewSessionOnly], defaultFastLane.NewSessionOnly)
+	result.OpenAIFastLaneTTFTWeight = floatSettingWithDefault(settings[SettingKeyOpenAIFastLaneTTFTWeight], defaultFastLane.TTFTWeight)
+	result.OpenAIFastLaneHeaderWaitWeight = floatSettingWithDefault(settings[SettingKeyOpenAIFastLaneHeaderWaitWeight], defaultFastLane.HeaderWaitWeight)
+	result.OpenAIFastLaneMinSamples = intSettingWithDefault(settings[SettingKeyOpenAIFastLaneMinSamples], defaultFastLane.MinSamples)
+	result.OpenAIFastLaneExploreRatio = floatSettingWithDefault(settings[SettingKeyOpenAIFastLaneExploreRatio], defaultFastLane.ExploreRatio)
+	defaultPrewarm := s.defaultRealtimeBalancePrewarm()
+	result.RealtimeBalancePrewarmEnabled = boolSettingWithDefault(settings[SettingKeyRealtimeBalancePrewarmEnabled], defaultPrewarm.Enabled)
+	result.RealtimeBalancePrewarmIntervalSeconds = intSettingWithDefault(settings[SettingKeyRealtimeBalancePrewarmIntervalSeconds], defaultPrewarm.IntervalSeconds)
+	result.RealtimeBalancePrewarmActiveAccountLimit = intSettingWithDefault(settings[SettingKeyRealtimeBalancePrewarmActiveAccountLimit], defaultPrewarm.ActiveAccountLimit)
+	result.RealtimeBalanceConfirmTopN = intSettingWithDefault(settings[SettingKeyRealtimeBalanceConfirmTopN], s.defaultRealtimeBalanceConfirmTopN())
+	result.RealtimeBalanceConfirmTimeoutMs = intSettingWithDefault(settings[SettingKeyRealtimeBalanceConfirmTimeoutMs], s.defaultRealtimeBalanceConfirmTimeoutMs())
+	defaultWaitGuard := s.defaultCodexWaitGuard()
+	result.CodexWaitGuardEnabled = boolSettingWithDefault(settings[SettingKeyCodexWaitGuardEnabled], defaultWaitGuard.Enabled)
+	result.CodexWaitGuardMaxHeaderWaitSeconds = intSettingWithDefault(settings[SettingKeyCodexWaitGuardMaxHeaderWaitSeconds], defaultWaitGuard.MaxHeaderWaitSeconds)
+	result.CodexWaitGuardMaxStreamSilentSeconds = intSettingWithDefault(settings[SettingKeyCodexWaitGuardMaxStreamSilentSeconds], defaultWaitGuard.MaxStreamSilentSeconds)
+	result.CodexWaitGuardKeepaliveIntervalSeconds = intSettingWithDefault(settings[SettingKeyCodexWaitGuardKeepaliveIntervalSeconds], defaultWaitGuard.KeepaliveIntervalSeconds)
+	result.CodexWaitGuardProtectAfterOutput = boolSettingWithDefault(settings[SettingKeyCodexWaitGuardProtectAfterOutput], defaultWaitGuard.ProtectAfterOutput)
+	defaultJournal := s.defaultContextJournal()
+	result.ContextJournalBackend = normalizeContextJournalBackend(firstNonEmpty(settings[SettingKeyContextJournalBackend], defaultJournal.Backend))
+	result.ContextJournalTTLHours = intSettingWithDefault(settings[SettingKeyContextJournalTTLHours], defaultJournal.TTLHours)
+	result.ContextJournalMaxSessionBytes = int64SettingWithDefault(settings[SettingKeyContextJournalMaxSessionBytes], defaultJournal.MaxSessionBytes)
 
 	// Web search emulation: quick enabled check from the JSON config
 	if raw := settings[SettingKeyWebSearchEmulationConfig]; raw != "" {
@@ -3232,6 +3382,162 @@ func normalizeCodexStabilityMode(mode string) string {
 		return config.GatewayCodexStabilityModeAllOpenAIResponses
 	default:
 		return config.GatewayCodexStabilityModeCodex
+	}
+}
+
+func (s *SettingService) defaultCodexAutopilot() config.GatewayCodexAutopilotConfig {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.CodexAutopilot
+	}
+	return config.GatewayCodexAutopilotConfig{
+		Enabled:                    true,
+		ObserveOnly:                true,
+		WindowSeconds:              300,
+		MinSamples:                 5,
+		HeaderTimeoutThreshold:     2,
+		EOFThreshold:               2,
+		SilentStreamTimeoutSeconds: 90,
+	}
+}
+
+func (s *SettingService) defaultOpenAIPathHealth() config.GatewayOpenAIPathHealthConfig {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.OpenAIPathHealth
+	}
+	return config.GatewayOpenAIPathHealthConfig{
+		Enabled:               true,
+		CircuitBreakerEnabled: true,
+		FailureWindowSeconds:  120,
+		CooldownSeconds:       60,
+		DegradedFailures:      2,
+		OpenFailures:          4,
+		HalfOpenMaxProbes:     2,
+	}
+}
+
+func (s *SettingService) defaultOpenAIFastLane() config.GatewayOpenAIFastLaneConfig {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.OpenAIFastLane
+	}
+	return config.GatewayOpenAIFastLaneConfig{
+		Enabled:          true,
+		NewSessionOnly:   true,
+		TTFTWeight:       0.8,
+		HeaderWaitWeight: 0.2,
+		MinSamples:       3,
+		ExploreRatio:     0.1,
+	}
+}
+
+func (s *SettingService) defaultRealtimeBalancePrewarm() config.GatewayRealtimeBalancePrewarmConfig {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.RealtimeBalancePrewarm
+	}
+	return config.GatewayRealtimeBalancePrewarmConfig{}
+}
+
+func (s *SettingService) defaultRealtimeBalanceConfirmTopN() int {
+	if s != nil && s.cfg != nil && s.cfg.Gateway.RealtimeBalanceConfirmTopN > 0 {
+		return s.cfg.Gateway.RealtimeBalanceConfirmTopN
+	}
+	return 3
+}
+
+func (s *SettingService) defaultRealtimeBalanceConfirmTimeoutMs() int {
+	if s != nil && s.cfg != nil && s.cfg.Gateway.RealtimeBalanceConfirmTimeoutMs > 0 {
+		return s.cfg.Gateway.RealtimeBalanceConfirmTimeoutMs
+	}
+	return 1200
+}
+
+func (s *SettingService) defaultCodexWaitGuard() config.GatewayCodexWaitGuardConfig {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.CodexWaitGuard
+	}
+	return config.GatewayCodexWaitGuardConfig{
+		Enabled:                  true,
+		MaxHeaderWaitSeconds:     30,
+		MaxStreamSilentSeconds:   90,
+		KeepaliveIntervalSeconds: 15,
+		ProtectAfterOutput:       true,
+	}
+}
+
+func (s *SettingService) defaultContextJournal() config.GatewayContextJournalConfig {
+	if s != nil && s.cfg != nil {
+		return s.cfg.Gateway.ContextJournal
+	}
+	return config.GatewayContextJournalConfig{
+		Backend:         "memory",
+		TTLHours:        24,
+		MaxSessionBytes: 50 * 1024 * 1024,
+	}
+}
+
+func boolSettingWithDefault(value string, fallback bool) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return !isFalseSettingValue(value)
+}
+
+func intSettingWithDefault(value string, fallback int) int {
+	if v, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && v >= 0 {
+		return v
+	}
+	return fallback
+}
+
+func int64SettingWithDefault(value string, fallback int64) int64 {
+	if v, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && v >= 0 {
+		return v
+	}
+	return fallback
+}
+
+func floatSettingWithDefault(value string, fallback float64) float64 {
+	if v, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil && v >= 0 {
+		return v
+	}
+	return fallback
+}
+
+func nonNegativeInt(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func nonNegativeInt64(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func nonNegativeFloat(value float64) float64 {
+	if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return value
+}
+
+func clamp01Float(value float64) float64 {
+	value = nonNegativeFloat(value)
+	if value > 1 {
+		return 1
+	}
+	return value
+}
+
+func normalizeContextJournalBackend(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "redis":
+		return "redis"
+	default:
+		return "memory"
 	}
 }
 

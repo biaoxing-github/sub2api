@@ -261,6 +261,39 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		CodexStabilityRequestPhaseFailoverEnabled:  settings.CodexStabilityRequestPhaseFailoverEnabled,
 		CodexStabilitySuppressClientTimeoutHeaders: settings.CodexStabilitySuppressClientTimeoutHeaders,
 		CodexStabilityStreamKeepaliveEnabled:       settings.CodexStabilityStreamKeepaliveEnabled,
+		CodexAutopilotEnabled:                      settings.CodexAutopilotEnabled,
+		CodexAutopilotObserveOnly:                  settings.CodexAutopilotObserveOnly,
+		CodexAutopilotWindowSeconds:                settings.CodexAutopilotWindowSeconds,
+		CodexAutopilotMinSamples:                   settings.CodexAutopilotMinSamples,
+		CodexAutopilotHeaderTimeoutThreshold:       settings.CodexAutopilotHeaderTimeoutThreshold,
+		CodexAutopilotEOFThreshold:                 settings.CodexAutopilotEOFThreshold,
+		CodexAutopilotSilentStreamTimeoutSeconds:   settings.CodexAutopilotSilentStreamTimeoutSeconds,
+		OpenAIPathHealthEnabled:                    settings.OpenAIPathHealthEnabled,
+		OpenAIPathHealthCircuitBreakerEnabled:      settings.OpenAIPathHealthCircuitBreakerEnabled,
+		OpenAIPathHealthFailureWindowSeconds:       settings.OpenAIPathHealthFailureWindowSeconds,
+		OpenAIPathHealthCooldownSeconds:            settings.OpenAIPathHealthCooldownSeconds,
+		OpenAIPathHealthDegradedFailures:           settings.OpenAIPathHealthDegradedFailures,
+		OpenAIPathHealthOpenFailures:               settings.OpenAIPathHealthOpenFailures,
+		OpenAIPathHealthHalfOpenMaxProbes:          settings.OpenAIPathHealthHalfOpenMaxProbes,
+		OpenAIFastLaneEnabled:                      settings.OpenAIFastLaneEnabled,
+		OpenAIFastLaneNewSessionOnly:               settings.OpenAIFastLaneNewSessionOnly,
+		OpenAIFastLaneTTFTWeight:                   settings.OpenAIFastLaneTTFTWeight,
+		OpenAIFastLaneHeaderWaitWeight:             settings.OpenAIFastLaneHeaderWaitWeight,
+		OpenAIFastLaneMinSamples:                   settings.OpenAIFastLaneMinSamples,
+		OpenAIFastLaneExploreRatio:                 settings.OpenAIFastLaneExploreRatio,
+		RealtimeBalancePrewarmEnabled:              settings.RealtimeBalancePrewarmEnabled,
+		RealtimeBalancePrewarmIntervalSeconds:      settings.RealtimeBalancePrewarmIntervalSeconds,
+		RealtimeBalancePrewarmActiveAccountLimit:   settings.RealtimeBalancePrewarmActiveAccountLimit,
+		RealtimeBalanceConfirmTopN:                 settings.RealtimeBalanceConfirmTopN,
+		RealtimeBalanceConfirmTimeoutMs:            settings.RealtimeBalanceConfirmTimeoutMs,
+		CodexWaitGuardEnabled:                      settings.CodexWaitGuardEnabled,
+		CodexWaitGuardMaxHeaderWaitSeconds:         settings.CodexWaitGuardMaxHeaderWaitSeconds,
+		CodexWaitGuardMaxStreamSilentSeconds:       settings.CodexWaitGuardMaxStreamSilentSeconds,
+		CodexWaitGuardKeepaliveIntervalSeconds:     settings.CodexWaitGuardKeepaliveIntervalSeconds,
+		CodexWaitGuardProtectAfterOutput:           settings.CodexWaitGuardProtectAfterOutput,
+		ContextJournalBackend:                      settings.ContextJournalBackend,
+		ContextJournalTTLHours:                     settings.ContextJournalTTLHours,
+		ContextJournalMaxSessionBytes:              settings.ContextJournalMaxSessionBytes,
 		WebSearchEmulationEnabled:                  settings.WebSearchEmulationEnabled,
 		PaymentVisibleMethodAlipaySource:           settings.PaymentVisibleMethodAlipaySource,
 		PaymentVisibleMethodWxpaySource:            settings.PaymentVisibleMethodWxpaySource,
@@ -575,18 +608,51 @@ type UpdateSettingsRequest struct {
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
 	// Gateway forwarding behavior
-	EnableFingerprintUnification               *bool   `json:"enable_fingerprint_unification"`
-	EnableMetadataPassthrough                  *bool   `json:"enable_metadata_passthrough"`
-	EnableCCHSigning                           *bool   `json:"enable_cch_signing"`
-	EnableAnthropicCacheTTL1hInjection         *bool   `json:"enable_anthropic_cache_ttl_1h_injection"`
-	RewriteMessageCacheControl                 *bool   `json:"rewrite_message_cache_control"`
-	AntigravityUserAgentVersion                *string `json:"antigravity_user_agent_version"`
-	OpenAICodexUserAgent                       *string `json:"openai_codex_user_agent"`
-	CodexStabilityMode                         *string `json:"codex_stability_mode"`
-	CodexStabilityDynamicHeaderTimeoutEnabled  *bool   `json:"codex_stability_dynamic_header_timeout_enabled"`
-	CodexStabilityRequestPhaseFailoverEnabled  *bool   `json:"codex_stability_request_phase_failover_enabled"`
-	CodexStabilitySuppressClientTimeoutHeaders *bool   `json:"codex_stability_suppress_client_timeout_headers"`
-	CodexStabilityStreamKeepaliveEnabled       *bool   `json:"codex_stability_stream_keepalive_enabled"`
+	EnableFingerprintUnification               *bool    `json:"enable_fingerprint_unification"`
+	EnableMetadataPassthrough                  *bool    `json:"enable_metadata_passthrough"`
+	EnableCCHSigning                           *bool    `json:"enable_cch_signing"`
+	EnableAnthropicCacheTTL1hInjection         *bool    `json:"enable_anthropic_cache_ttl_1h_injection"`
+	RewriteMessageCacheControl                 *bool    `json:"rewrite_message_cache_control"`
+	AntigravityUserAgentVersion                *string  `json:"antigravity_user_agent_version"`
+	OpenAICodexUserAgent                       *string  `json:"openai_codex_user_agent"`
+	CodexStabilityMode                         *string  `json:"codex_stability_mode"`
+	CodexStabilityDynamicHeaderTimeoutEnabled  *bool    `json:"codex_stability_dynamic_header_timeout_enabled"`
+	CodexStabilityRequestPhaseFailoverEnabled  *bool    `json:"codex_stability_request_phase_failover_enabled"`
+	CodexStabilitySuppressClientTimeoutHeaders *bool    `json:"codex_stability_suppress_client_timeout_headers"`
+	CodexStabilityStreamKeepaliveEnabled       *bool    `json:"codex_stability_stream_keepalive_enabled"`
+	CodexAutopilotEnabled                      *bool    `json:"codex_autopilot_enabled"`
+	CodexAutopilotObserveOnly                  *bool    `json:"codex_autopilot_observe_only"`
+	CodexAutopilotWindowSeconds                *int     `json:"codex_autopilot_window_seconds"`
+	CodexAutopilotMinSamples                   *int     `json:"codex_autopilot_min_samples"`
+	CodexAutopilotHeaderTimeoutThreshold       *int     `json:"codex_autopilot_header_timeout_threshold"`
+	CodexAutopilotEOFThreshold                 *int     `json:"codex_autopilot_eof_threshold"`
+	CodexAutopilotSilentStreamTimeoutSeconds   *int     `json:"codex_autopilot_silent_stream_timeout_seconds"`
+	OpenAIPathHealthEnabled                    *bool    `json:"openai_path_health_enabled"`
+	OpenAIPathHealthCircuitBreakerEnabled      *bool    `json:"openai_path_health_circuit_breaker_enabled"`
+	OpenAIPathHealthFailureWindowSeconds       *int     `json:"openai_path_health_failure_window_seconds"`
+	OpenAIPathHealthCooldownSeconds            *int     `json:"openai_path_health_cooldown_seconds"`
+	OpenAIPathHealthDegradedFailures           *int     `json:"openai_path_health_degraded_failures"`
+	OpenAIPathHealthOpenFailures               *int     `json:"openai_path_health_open_failures"`
+	OpenAIPathHealthHalfOpenMaxProbes          *int     `json:"openai_path_health_half_open_max_probes"`
+	OpenAIFastLaneEnabled                      *bool    `json:"openai_fast_lane_enabled"`
+	OpenAIFastLaneNewSessionOnly               *bool    `json:"openai_fast_lane_new_session_only"`
+	OpenAIFastLaneTTFTWeight                   *float64 `json:"openai_fast_lane_ttft_weight"`
+	OpenAIFastLaneHeaderWaitWeight             *float64 `json:"openai_fast_lane_header_wait_weight"`
+	OpenAIFastLaneMinSamples                   *int     `json:"openai_fast_lane_min_samples"`
+	OpenAIFastLaneExploreRatio                 *float64 `json:"openai_fast_lane_explore_ratio"`
+	RealtimeBalancePrewarmEnabled              *bool    `json:"realtime_balance_prewarm_enabled"`
+	RealtimeBalancePrewarmIntervalSeconds      *int     `json:"realtime_balance_prewarm_interval_seconds"`
+	RealtimeBalancePrewarmActiveAccountLimit   *int     `json:"realtime_balance_prewarm_active_account_limit"`
+	RealtimeBalanceConfirmTopN                 *int     `json:"realtime_balance_confirm_top_n"`
+	RealtimeBalanceConfirmTimeoutMs            *int     `json:"realtime_balance_confirm_timeout_ms"`
+	CodexWaitGuardEnabled                      *bool    `json:"codex_wait_guard_enabled"`
+	CodexWaitGuardMaxHeaderWaitSeconds         *int     `json:"codex_wait_guard_max_header_wait_seconds"`
+	CodexWaitGuardMaxStreamSilentSeconds       *int     `json:"codex_wait_guard_max_stream_silent_seconds"`
+	CodexWaitGuardKeepaliveIntervalSeconds     *int     `json:"codex_wait_guard_keepalive_interval_seconds"`
+	CodexWaitGuardProtectAfterOutput           *bool    `json:"codex_wait_guard_protect_after_output_started"`
+	ContextJournalBackend                      *string  `json:"context_journal_backend"`
+	ContextJournalTTLHours                     *int     `json:"context_journal_ttl_hours"`
+	ContextJournalMaxSessionBytes              *int64   `json:"context_journal_max_session_bytes"`
 
 	// Payment visible method routing
 	PaymentVisibleMethodAlipaySource  *string `json:"payment_visible_method_alipay_source"`
@@ -1448,6 +1514,21 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			return
 		}
 	}
+	if req.ContextJournalBackend != nil {
+		normalized := strings.ToLower(strings.TrimSpace(*req.ContextJournalBackend))
+		if normalized == "" {
+			normalized = "memory"
+		}
+		req.ContextJournalBackend = &normalized
+		if normalized != "memory" && normalized != "redis" {
+			response.Error(c, http.StatusBadRequest, "context_journal_backend must be memory or redis")
+			return
+		}
+	}
+	if err := validateNonNegativeSettings(req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// 交叉验证：如果同时设置了最低和最高版本号，最高版本号必须 >= 最低版本号
 	if req.MinClaudeCodeVersion != "" && req.MaxClaudeCodeVersion != "" {
@@ -1663,6 +1744,44 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CodexStabilityRequestPhaseFailoverEnabled:  boolValueOrDefault(req.CodexStabilityRequestPhaseFailoverEnabled, previousSettings.CodexStabilityRequestPhaseFailoverEnabled),
 		CodexStabilitySuppressClientTimeoutHeaders: boolValueOrDefault(req.CodexStabilitySuppressClientTimeoutHeaders, previousSettings.CodexStabilitySuppressClientTimeoutHeaders),
 		CodexStabilityStreamKeepaliveEnabled:       boolValueOrDefault(req.CodexStabilityStreamKeepaliveEnabled, previousSettings.CodexStabilityStreamKeepaliveEnabled),
+		CodexAutopilotEnabled:                      boolValueOrDefault(req.CodexAutopilotEnabled, previousSettings.CodexAutopilotEnabled),
+		CodexAutopilotObserveOnly:                  boolValueOrDefault(req.CodexAutopilotObserveOnly, previousSettings.CodexAutopilotObserveOnly),
+		CodexAutopilotWindowSeconds:                intValueOrDefault(req.CodexAutopilotWindowSeconds, previousSettings.CodexAutopilotWindowSeconds),
+		CodexAutopilotMinSamples:                   intValueOrDefault(req.CodexAutopilotMinSamples, previousSettings.CodexAutopilotMinSamples),
+		CodexAutopilotHeaderTimeoutThreshold:       intValueOrDefault(req.CodexAutopilotHeaderTimeoutThreshold, previousSettings.CodexAutopilotHeaderTimeoutThreshold),
+		CodexAutopilotEOFThreshold:                 intValueOrDefault(req.CodexAutopilotEOFThreshold, previousSettings.CodexAutopilotEOFThreshold),
+		CodexAutopilotSilentStreamTimeoutSeconds:   intValueOrDefault(req.CodexAutopilotSilentStreamTimeoutSeconds, previousSettings.CodexAutopilotSilentStreamTimeoutSeconds),
+		OpenAIPathHealthEnabled:                    boolValueOrDefault(req.OpenAIPathHealthEnabled, previousSettings.OpenAIPathHealthEnabled),
+		OpenAIPathHealthCircuitBreakerEnabled:      boolValueOrDefault(req.OpenAIPathHealthCircuitBreakerEnabled, previousSettings.OpenAIPathHealthCircuitBreakerEnabled),
+		OpenAIPathHealthFailureWindowSeconds:       intValueOrDefault(req.OpenAIPathHealthFailureWindowSeconds, previousSettings.OpenAIPathHealthFailureWindowSeconds),
+		OpenAIPathHealthCooldownSeconds:            intValueOrDefault(req.OpenAIPathHealthCooldownSeconds, previousSettings.OpenAIPathHealthCooldownSeconds),
+		OpenAIPathHealthDegradedFailures:           intValueOrDefault(req.OpenAIPathHealthDegradedFailures, previousSettings.OpenAIPathHealthDegradedFailures),
+		OpenAIPathHealthOpenFailures:               intValueOrDefault(req.OpenAIPathHealthOpenFailures, previousSettings.OpenAIPathHealthOpenFailures),
+		OpenAIPathHealthHalfOpenMaxProbes:          intValueOrDefault(req.OpenAIPathHealthHalfOpenMaxProbes, previousSettings.OpenAIPathHealthHalfOpenMaxProbes),
+		OpenAIFastLaneEnabled:                      boolValueOrDefault(req.OpenAIFastLaneEnabled, previousSettings.OpenAIFastLaneEnabled),
+		OpenAIFastLaneNewSessionOnly:               boolValueOrDefault(req.OpenAIFastLaneNewSessionOnly, previousSettings.OpenAIFastLaneNewSessionOnly),
+		OpenAIFastLaneTTFTWeight:                   floatValueOrDefault(req.OpenAIFastLaneTTFTWeight, previousSettings.OpenAIFastLaneTTFTWeight),
+		OpenAIFastLaneHeaderWaitWeight:             floatValueOrDefault(req.OpenAIFastLaneHeaderWaitWeight, previousSettings.OpenAIFastLaneHeaderWaitWeight),
+		OpenAIFastLaneMinSamples:                   intValueOrDefault(req.OpenAIFastLaneMinSamples, previousSettings.OpenAIFastLaneMinSamples),
+		OpenAIFastLaneExploreRatio:                 floatValueOrDefault(req.OpenAIFastLaneExploreRatio, previousSettings.OpenAIFastLaneExploreRatio),
+		RealtimeBalancePrewarmEnabled:              boolValueOrDefault(req.RealtimeBalancePrewarmEnabled, previousSettings.RealtimeBalancePrewarmEnabled),
+		RealtimeBalancePrewarmIntervalSeconds:      intValueOrDefault(req.RealtimeBalancePrewarmIntervalSeconds, previousSettings.RealtimeBalancePrewarmIntervalSeconds),
+		RealtimeBalancePrewarmActiveAccountLimit:   intValueOrDefault(req.RealtimeBalancePrewarmActiveAccountLimit, previousSettings.RealtimeBalancePrewarmActiveAccountLimit),
+		RealtimeBalanceConfirmTopN:                 intValueOrDefault(req.RealtimeBalanceConfirmTopN, previousSettings.RealtimeBalanceConfirmTopN),
+		RealtimeBalanceConfirmTimeoutMs:            intValueOrDefault(req.RealtimeBalanceConfirmTimeoutMs, previousSettings.RealtimeBalanceConfirmTimeoutMs),
+		CodexWaitGuardEnabled:                      boolValueOrDefault(req.CodexWaitGuardEnabled, previousSettings.CodexWaitGuardEnabled),
+		CodexWaitGuardMaxHeaderWaitSeconds:         intValueOrDefault(req.CodexWaitGuardMaxHeaderWaitSeconds, previousSettings.CodexWaitGuardMaxHeaderWaitSeconds),
+		CodexWaitGuardMaxStreamSilentSeconds:       intValueOrDefault(req.CodexWaitGuardMaxStreamSilentSeconds, previousSettings.CodexWaitGuardMaxStreamSilentSeconds),
+		CodexWaitGuardKeepaliveIntervalSeconds:     intValueOrDefault(req.CodexWaitGuardKeepaliveIntervalSeconds, previousSettings.CodexWaitGuardKeepaliveIntervalSeconds),
+		CodexWaitGuardProtectAfterOutput:           boolValueOrDefault(req.CodexWaitGuardProtectAfterOutput, previousSettings.CodexWaitGuardProtectAfterOutput),
+		ContextJournalBackend: func() string {
+			if req.ContextJournalBackend != nil {
+				return *req.ContextJournalBackend
+			}
+			return previousSettings.ContextJournalBackend
+		}(),
+		ContextJournalTTLHours:        intValueOrDefault(req.ContextJournalTTLHours, previousSettings.ContextJournalTTLHours),
+		ContextJournalMaxSessionBytes: int64ValueOrDefault(req.ContextJournalMaxSessionBytes, previousSettings.ContextJournalMaxSessionBytes),
 		PaymentVisibleMethodAlipaySource: func() string {
 			if req.PaymentVisibleMethodAlipaySource != nil {
 				return strings.TrimSpace(*req.PaymentVisibleMethodAlipaySource)
@@ -2035,6 +2154,39 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CodexStabilityRequestPhaseFailoverEnabled:  updatedSettings.CodexStabilityRequestPhaseFailoverEnabled,
 		CodexStabilitySuppressClientTimeoutHeaders: updatedSettings.CodexStabilitySuppressClientTimeoutHeaders,
 		CodexStabilityStreamKeepaliveEnabled:       updatedSettings.CodexStabilityStreamKeepaliveEnabled,
+		CodexAutopilotEnabled:                      updatedSettings.CodexAutopilotEnabled,
+		CodexAutopilotObserveOnly:                  updatedSettings.CodexAutopilotObserveOnly,
+		CodexAutopilotWindowSeconds:                updatedSettings.CodexAutopilotWindowSeconds,
+		CodexAutopilotMinSamples:                   updatedSettings.CodexAutopilotMinSamples,
+		CodexAutopilotHeaderTimeoutThreshold:       updatedSettings.CodexAutopilotHeaderTimeoutThreshold,
+		CodexAutopilotEOFThreshold:                 updatedSettings.CodexAutopilotEOFThreshold,
+		CodexAutopilotSilentStreamTimeoutSeconds:   updatedSettings.CodexAutopilotSilentStreamTimeoutSeconds,
+		OpenAIPathHealthEnabled:                    updatedSettings.OpenAIPathHealthEnabled,
+		OpenAIPathHealthCircuitBreakerEnabled:      updatedSettings.OpenAIPathHealthCircuitBreakerEnabled,
+		OpenAIPathHealthFailureWindowSeconds:       updatedSettings.OpenAIPathHealthFailureWindowSeconds,
+		OpenAIPathHealthCooldownSeconds:            updatedSettings.OpenAIPathHealthCooldownSeconds,
+		OpenAIPathHealthDegradedFailures:           updatedSettings.OpenAIPathHealthDegradedFailures,
+		OpenAIPathHealthOpenFailures:               updatedSettings.OpenAIPathHealthOpenFailures,
+		OpenAIPathHealthHalfOpenMaxProbes:          updatedSettings.OpenAIPathHealthHalfOpenMaxProbes,
+		OpenAIFastLaneEnabled:                      updatedSettings.OpenAIFastLaneEnabled,
+		OpenAIFastLaneNewSessionOnly:               updatedSettings.OpenAIFastLaneNewSessionOnly,
+		OpenAIFastLaneTTFTWeight:                   updatedSettings.OpenAIFastLaneTTFTWeight,
+		OpenAIFastLaneHeaderWaitWeight:             updatedSettings.OpenAIFastLaneHeaderWaitWeight,
+		OpenAIFastLaneMinSamples:                   updatedSettings.OpenAIFastLaneMinSamples,
+		OpenAIFastLaneExploreRatio:                 updatedSettings.OpenAIFastLaneExploreRatio,
+		RealtimeBalancePrewarmEnabled:              updatedSettings.RealtimeBalancePrewarmEnabled,
+		RealtimeBalancePrewarmIntervalSeconds:      updatedSettings.RealtimeBalancePrewarmIntervalSeconds,
+		RealtimeBalancePrewarmActiveAccountLimit:   updatedSettings.RealtimeBalancePrewarmActiveAccountLimit,
+		RealtimeBalanceConfirmTopN:                 updatedSettings.RealtimeBalanceConfirmTopN,
+		RealtimeBalanceConfirmTimeoutMs:            updatedSettings.RealtimeBalanceConfirmTimeoutMs,
+		CodexWaitGuardEnabled:                      updatedSettings.CodexWaitGuardEnabled,
+		CodexWaitGuardMaxHeaderWaitSeconds:         updatedSettings.CodexWaitGuardMaxHeaderWaitSeconds,
+		CodexWaitGuardMaxStreamSilentSeconds:       updatedSettings.CodexWaitGuardMaxStreamSilentSeconds,
+		CodexWaitGuardKeepaliveIntervalSeconds:     updatedSettings.CodexWaitGuardKeepaliveIntervalSeconds,
+		CodexWaitGuardProtectAfterOutput:           updatedSettings.CodexWaitGuardProtectAfterOutput,
+		ContextJournalBackend:                      updatedSettings.ContextJournalBackend,
+		ContextJournalTTLHours:                     updatedSettings.ContextJournalTTLHours,
+		ContextJournalMaxSessionBytes:              updatedSettings.ContextJournalMaxSessionBytes,
 		PaymentVisibleMethodAlipaySource:           updatedSettings.PaymentVisibleMethodAlipaySource,
 		PaymentVisibleMethodWxpaySource:            updatedSettings.PaymentVisibleMethodWxpaySource,
 		PaymentVisibleMethodAlipayEnabled:          updatedSettings.PaymentVisibleMethodAlipayEnabled,
@@ -2512,6 +2664,7 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.CodexStabilityStreamKeepaliveEnabled != after.CodexStabilityStreamKeepaliveEnabled {
 		changed = append(changed, "codex_stability_stream_keepalive_enabled")
 	}
+	changed = appendGatewayRuntimeSettingChanges(changed, before, after)
 	if before.PaymentVisibleMethodAlipaySource != after.PaymentVisibleMethodAlipaySource {
 		changed = append(changed, "payment_visible_method_alipay_source")
 	}
@@ -2611,6 +2764,109 @@ func appendAuthSourceDefaultChanges(changed []string, before *service.AuthSource
 	return changed
 }
 
+func appendGatewayRuntimeSettingChanges(changed []string, before *service.SystemSettings, after *service.SystemSettings) []string {
+	if before.CodexAutopilotEnabled != after.CodexAutopilotEnabled {
+		changed = append(changed, "codex_autopilot_enabled")
+	}
+	if before.CodexAutopilotObserveOnly != after.CodexAutopilotObserveOnly {
+		changed = append(changed, "codex_autopilot_observe_only")
+	}
+	if before.CodexAutopilotWindowSeconds != after.CodexAutopilotWindowSeconds {
+		changed = append(changed, "codex_autopilot_window_seconds")
+	}
+	if before.CodexAutopilotMinSamples != after.CodexAutopilotMinSamples {
+		changed = append(changed, "codex_autopilot_min_samples")
+	}
+	if before.CodexAutopilotHeaderTimeoutThreshold != after.CodexAutopilotHeaderTimeoutThreshold {
+		changed = append(changed, "codex_autopilot_header_timeout_threshold")
+	}
+	if before.CodexAutopilotEOFThreshold != after.CodexAutopilotEOFThreshold {
+		changed = append(changed, "codex_autopilot_eof_threshold")
+	}
+	if before.CodexAutopilotSilentStreamTimeoutSeconds != after.CodexAutopilotSilentStreamTimeoutSeconds {
+		changed = append(changed, "codex_autopilot_silent_stream_timeout_seconds")
+	}
+	if before.OpenAIPathHealthEnabled != after.OpenAIPathHealthEnabled {
+		changed = append(changed, "openai_path_health_enabled")
+	}
+	if before.OpenAIPathHealthCircuitBreakerEnabled != after.OpenAIPathHealthCircuitBreakerEnabled {
+		changed = append(changed, "openai_path_health_circuit_breaker_enabled")
+	}
+	if before.OpenAIPathHealthFailureWindowSeconds != after.OpenAIPathHealthFailureWindowSeconds {
+		changed = append(changed, "openai_path_health_failure_window_seconds")
+	}
+	if before.OpenAIPathHealthCooldownSeconds != after.OpenAIPathHealthCooldownSeconds {
+		changed = append(changed, "openai_path_health_cooldown_seconds")
+	}
+	if before.OpenAIPathHealthDegradedFailures != after.OpenAIPathHealthDegradedFailures {
+		changed = append(changed, "openai_path_health_degraded_failures")
+	}
+	if before.OpenAIPathHealthOpenFailures != after.OpenAIPathHealthOpenFailures {
+		changed = append(changed, "openai_path_health_open_failures")
+	}
+	if before.OpenAIPathHealthHalfOpenMaxProbes != after.OpenAIPathHealthHalfOpenMaxProbes {
+		changed = append(changed, "openai_path_health_half_open_max_probes")
+	}
+	if before.OpenAIFastLaneEnabled != after.OpenAIFastLaneEnabled {
+		changed = append(changed, "openai_fast_lane_enabled")
+	}
+	if before.OpenAIFastLaneNewSessionOnly != after.OpenAIFastLaneNewSessionOnly {
+		changed = append(changed, "openai_fast_lane_new_session_only")
+	}
+	if before.OpenAIFastLaneTTFTWeight != after.OpenAIFastLaneTTFTWeight {
+		changed = append(changed, "openai_fast_lane_ttft_weight")
+	}
+	if before.OpenAIFastLaneHeaderWaitWeight != after.OpenAIFastLaneHeaderWaitWeight {
+		changed = append(changed, "openai_fast_lane_header_wait_weight")
+	}
+	if before.OpenAIFastLaneMinSamples != after.OpenAIFastLaneMinSamples {
+		changed = append(changed, "openai_fast_lane_min_samples")
+	}
+	if before.OpenAIFastLaneExploreRatio != after.OpenAIFastLaneExploreRatio {
+		changed = append(changed, "openai_fast_lane_explore_ratio")
+	}
+	if before.RealtimeBalancePrewarmEnabled != after.RealtimeBalancePrewarmEnabled {
+		changed = append(changed, "realtime_balance_prewarm_enabled")
+	}
+	if before.RealtimeBalancePrewarmIntervalSeconds != after.RealtimeBalancePrewarmIntervalSeconds {
+		changed = append(changed, "realtime_balance_prewarm_interval_seconds")
+	}
+	if before.RealtimeBalancePrewarmActiveAccountLimit != after.RealtimeBalancePrewarmActiveAccountLimit {
+		changed = append(changed, "realtime_balance_prewarm_active_account_limit")
+	}
+	if before.RealtimeBalanceConfirmTopN != after.RealtimeBalanceConfirmTopN {
+		changed = append(changed, "realtime_balance_confirm_top_n")
+	}
+	if before.RealtimeBalanceConfirmTimeoutMs != after.RealtimeBalanceConfirmTimeoutMs {
+		changed = append(changed, "realtime_balance_confirm_timeout_ms")
+	}
+	if before.CodexWaitGuardEnabled != after.CodexWaitGuardEnabled {
+		changed = append(changed, "codex_wait_guard_enabled")
+	}
+	if before.CodexWaitGuardMaxHeaderWaitSeconds != after.CodexWaitGuardMaxHeaderWaitSeconds {
+		changed = append(changed, "codex_wait_guard_max_header_wait_seconds")
+	}
+	if before.CodexWaitGuardMaxStreamSilentSeconds != after.CodexWaitGuardMaxStreamSilentSeconds {
+		changed = append(changed, "codex_wait_guard_max_stream_silent_seconds")
+	}
+	if before.CodexWaitGuardKeepaliveIntervalSeconds != after.CodexWaitGuardKeepaliveIntervalSeconds {
+		changed = append(changed, "codex_wait_guard_keepalive_interval_seconds")
+	}
+	if before.CodexWaitGuardProtectAfterOutput != after.CodexWaitGuardProtectAfterOutput {
+		changed = append(changed, "codex_wait_guard_protect_after_output_started")
+	}
+	if before.ContextJournalBackend != after.ContextJournalBackend {
+		changed = append(changed, "context_journal_backend")
+	}
+	if before.ContextJournalTTLHours != after.ContextJournalTTLHours {
+		changed = append(changed, "context_journal_ttl_hours")
+	}
+	if before.ContextJournalMaxSessionBytes != after.ContextJournalMaxSessionBytes {
+		changed = append(changed, "context_journal_max_session_bytes")
+	}
+	return changed
+}
+
 func normalizeDefaultSubscriptions(input []dto.DefaultSubscriptionSetting) []dto.DefaultSubscriptionSetting {
 	if len(input) == 0 {
 		return nil
@@ -2643,7 +2899,18 @@ func float64ValueOrDefault(value *float64, fallback float64) float64 {
 	return *value
 }
 
+func floatValueOrDefault(value *float64, fallback float64) float64 {
+	return float64ValueOrDefault(value, fallback)
+}
+
 func intValueOrDefault(value *int, fallback int) int {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func int64ValueOrDefault(value *int64, fallback int64) int64 {
 	if value == nil {
 		return fallback
 	}
@@ -2655,6 +2922,59 @@ func boolValueOrDefault(value *bool, fallback bool) bool {
 		return fallback
 	}
 	return *value
+}
+
+func validateNonNegativeSettings(req UpdateSettingsRequest) error {
+	intFields := []struct {
+		name  string
+		value *int
+	}{
+		{"codex_autopilot_window_seconds", req.CodexAutopilotWindowSeconds},
+		{"codex_autopilot_min_samples", req.CodexAutopilotMinSamples},
+		{"codex_autopilot_header_timeout_threshold", req.CodexAutopilotHeaderTimeoutThreshold},
+		{"codex_autopilot_eof_threshold", req.CodexAutopilotEOFThreshold},
+		{"codex_autopilot_silent_stream_timeout_seconds", req.CodexAutopilotSilentStreamTimeoutSeconds},
+		{"openai_path_health_failure_window_seconds", req.OpenAIPathHealthFailureWindowSeconds},
+		{"openai_path_health_cooldown_seconds", req.OpenAIPathHealthCooldownSeconds},
+		{"openai_path_health_degraded_failures", req.OpenAIPathHealthDegradedFailures},
+		{"openai_path_health_open_failures", req.OpenAIPathHealthOpenFailures},
+		{"openai_path_health_half_open_max_probes", req.OpenAIPathHealthHalfOpenMaxProbes},
+		{"openai_fast_lane_min_samples", req.OpenAIFastLaneMinSamples},
+		{"realtime_balance_prewarm_interval_seconds", req.RealtimeBalancePrewarmIntervalSeconds},
+		{"realtime_balance_prewarm_active_account_limit", req.RealtimeBalancePrewarmActiveAccountLimit},
+		{"realtime_balance_confirm_top_n", req.RealtimeBalanceConfirmTopN},
+		{"realtime_balance_confirm_timeout_ms", req.RealtimeBalanceConfirmTimeoutMs},
+		{"codex_wait_guard_max_header_wait_seconds", req.CodexWaitGuardMaxHeaderWaitSeconds},
+		{"codex_wait_guard_max_stream_silent_seconds", req.CodexWaitGuardMaxStreamSilentSeconds},
+		{"codex_wait_guard_keepalive_interval_seconds", req.CodexWaitGuardKeepaliveIntervalSeconds},
+		{"context_journal_ttl_hours", req.ContextJournalTTLHours},
+	}
+	for _, field := range intFields {
+		if field.value != nil && *field.value < 0 {
+			return fmt.Errorf("%s must be non-negative", field.name)
+		}
+	}
+
+	floatFields := []struct {
+		name  string
+		value *float64
+	}{
+		{"openai_fast_lane_ttft_weight", req.OpenAIFastLaneTTFTWeight},
+		{"openai_fast_lane_header_wait_weight", req.OpenAIFastLaneHeaderWaitWeight},
+		{"openai_fast_lane_explore_ratio", req.OpenAIFastLaneExploreRatio},
+	}
+	for _, field := range floatFields {
+		if field.value != nil && *field.value < 0 {
+			return fmt.Errorf("%s must be non-negative", field.name)
+		}
+	}
+	if req.OpenAIFastLaneExploreRatio != nil && *req.OpenAIFastLaneExploreRatio > 1 {
+		return fmt.Errorf("openai_fast_lane_explore_ratio must be between 0 and 1")
+	}
+	if req.ContextJournalMaxSessionBytes != nil && *req.ContextJournalMaxSessionBytes < 0 {
+		return fmt.Errorf("context_journal_max_session_bytes must be non-negative")
+	}
+	return nil
 }
 
 func defaultSubscriptionsValueOrDefault(input *[]dto.DefaultSubscriptionSetting, fallback []service.DefaultSubscriptionSetting) []service.DefaultSubscriptionSetting {

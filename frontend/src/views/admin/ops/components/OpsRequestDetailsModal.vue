@@ -182,19 +182,38 @@ const diagnosisSections = computed(() => {
   const diagnosis = diagnosisResult.value
   if (!diagnosis) return []
   return [
-    { key: 'path', title: t('admin.ops.requestDetails.codexDiagnosis.path'), data: diagnosis.path },
     { key: 'latency', title: t('admin.ops.requestDetails.codexDiagnosis.latency'), data: diagnosis.latency },
+    { key: 'path', title: t('admin.ops.requestDetails.codexDiagnosis.path'), data: diagnosis.path },
     { key: 'routing', title: t('admin.ops.requestDetails.codexDiagnosis.routing'), data: diagnosis.routing },
-    { key: 'usage', title: t('admin.ops.requestDetails.codexDiagnosis.usage'), data: diagnosis.usage },
-    { key: 'context', title: t('admin.ops.requestDetails.codexDiagnosis.context'), data: diagnosis.context }
+    { key: 'context', title: t('admin.ops.requestDetails.codexDiagnosis.context'), data: diagnosis.context },
+    { key: 'usage', title: t('admin.ops.requestDetails.codexDiagnosis.usage'), data: diagnosis.usage }
   ].filter((section) => section.data && Object.keys(section.data).length > 0)
 })
 
-function formatDiagnosisValue(value: unknown): string {
+function diagnosisSectionTone(key: string): string {
+  if (key === 'latency') return 'border-blue-200 bg-blue-50/60 dark:border-blue-900/50 dark:bg-blue-900/10'
+  if (key === 'path') return 'border-cyan-200 bg-cyan-50/60 dark:border-cyan-900/50 dark:bg-cyan-900/10'
+  if (key === 'routing') return 'border-violet-200 bg-violet-50/60 dark:border-violet-900/50 dark:bg-violet-900/10'
+  if (key === 'context') return 'border-slate-200 bg-slate-50/70 dark:border-slate-700 dark:bg-slate-900/30'
+  if (key === 'usage') return 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/50 dark:bg-emerald-900/10'
+  return 'border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800'
+}
+
+function formatDiagnosisKey(key: string): string {
+  return key.replace(/_/g, ' ')
+}
+
+function formatDiagnosisValue(key: string, value: unknown): string {
   if (value == null) return '-'
   if (typeof value === 'boolean') return value ? t('common.yes') : t('common.no')
-  if (typeof value === 'number') return Number.isFinite(value) ? String(Math.round(value)) : '-'
-  if (typeof value === 'object') return JSON.stringify(value)
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return '-'
+    const rounded = Math.round(value * 100) / 100
+    if (key.endsWith('_ms') || key.includes('latency') || key.includes('duration')) return `${rounded} ms`
+    if (key.endsWith('_percent') || key.endsWith('_rate')) return `${rounded}%`
+    return String(rounded)
+  }
+  if (typeof value === 'object') return JSON.stringify(value, null, 2)
   return String(value)
 }
 </script>
@@ -355,36 +374,52 @@ function formatDiagnosisValue(value: unknown): string {
         <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-dark-700 dark:bg-dark-900">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0">
-              <div class="text-sm font-bold text-gray-900 dark:text-white">
+              <div class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                {{ t('admin.ops.requestDetails.codexDiagnosis.headline') }}
+              </div>
+              <div class="mt-1 text-sm font-bold text-gray-900 dark:text-white">
                 {{ diagnosisResult.headline || t('admin.ops.requestDetails.codexDiagnosis.noHeadline') }}
               </div>
               <div class="mt-1 truncate font-mono text-[11px] text-gray-500 dark:text-gray-400" :title="diagnosisResult.request_id">
                 {{ diagnosisResult.request_id }}
               </div>
             </div>
-            <span class="rounded-full px-2.5 py-1 text-[11px] font-bold" :class="diagnosisStatusClass">
-              {{ diagnosisResult.status || 'unknown' }}
-            </span>
+            <div class="flex flex-col items-end gap-1">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                {{ t('admin.ops.requestDetails.codexDiagnosis.status') }}
+              </span>
+              <span class="rounded-full px-2.5 py-1 text-[11px] font-bold" :class="diagnosisStatusClass">
+                {{ diagnosisResult.status || 'unknown' }}
+              </span>
+            </div>
           </div>
-          <div v-if="diagnosisResult.suggested_action" class="mt-3 text-sm leading-6 text-gray-700 dark:text-gray-300">
-            {{ diagnosisResult.suggested_action }}
+          <div v-if="diagnosisResult.suggested_action" class="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-900/10">
+            <div class="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+              {{ t('admin.ops.requestDetails.codexDiagnosis.suggestedAction') }}
+            </div>
+            <div class="mt-1 text-sm leading-6 text-gray-800 dark:text-gray-200">
+              {{ diagnosisResult.suggested_action }}
+            </div>
           </div>
         </div>
 
-        <div v-if="diagnosisSections.length > 0" class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div v-if="diagnosisSections.length > 0" class="grid gap-3 md:grid-cols-2">
           <section
             v-for="section in diagnosisSections"
             :key="section.key"
-            class="rounded-lg border border-gray-200 p-3 dark:border-dark-700"
+            class="rounded-lg border p-3"
+            :class="diagnosisSectionTone(section.key)"
           >
-            <h4 class="mb-2 text-xs font-bold uppercase text-gray-500 dark:text-gray-400">
+            <h4 class="mb-2 text-xs font-bold uppercase tracking-wider text-gray-600 dark:text-gray-300">
               {{ section.title }}
             </h4>
             <dl class="space-y-2">
               <div v-for="[key, value] in Object.entries(section.data || {})" :key="key" class="min-w-0">
-                <dt class="text-[11px] font-semibold text-gray-500 dark:text-gray-400">{{ key }}</dt>
-                <dd class="mt-0.5 break-words font-mono text-xs text-gray-800 dark:text-gray-100">
-                  {{ formatDiagnosisValue(value) }}
+                <dt class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  {{ formatDiagnosisKey(key) }}
+                </dt>
+                <dd class="mt-0.5 whitespace-pre-wrap break-words font-mono text-xs leading-5 text-gray-800 dark:text-gray-100">
+                  {{ formatDiagnosisValue(key, value) }}
                 </dd>
               </div>
             </dl>

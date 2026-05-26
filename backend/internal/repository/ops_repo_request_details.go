@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -111,7 +112,16 @@ WITH combined AS (
     (COALESCE(ul.input_tokens, 0) + COALESCE(ul.output_tokens, 0) + COALESCE(ul.cache_creation_tokens, 0) + COALESCE(ul.cache_read_tokens, 0) + COALESCE(ul.image_output_tokens, 0))::INT AS total_tokens,
     ul.first_token_ms AS first_token_ms,
     ul.total_cost::TEXT AS total_cost,
-    ul.actual_cost::TEXT AS actual_cost
+    ul.actual_cost::TEXT AS actual_cost,
+    NULL::INT AS upstream_status_code,
+    NULL::TEXT AS upstream_error_message,
+    NULL::TEXT AS upstream_error_detail,
+    NULL::TEXT AS upstream_errors,
+    NULL::BIGINT AS auth_latency_ms,
+    NULL::BIGINT AS routing_latency_ms,
+    NULL::BIGINT AS upstream_latency_ms,
+    NULL::BIGINT AS response_latency_ms,
+    NULL::BIGINT AS time_to_first_token_ms
   FROM usage_logs ul
   LEFT JOIN groups g ON g.id = ul.group_id
   LEFT JOIN accounts a ON a.id = ul.account_id
@@ -144,7 +154,16 @@ WITH combined AS (
     NULL::INT AS total_tokens,
     o.time_to_first_token_ms::INT AS first_token_ms,
     NULL::TEXT AS total_cost,
-    NULL::TEXT AS actual_cost
+    NULL::TEXT AS actual_cost,
+    o.upstream_status_code AS upstream_status_code,
+    o.upstream_error_message AS upstream_error_message,
+    o.upstream_error_detail AS upstream_error_detail,
+    o.upstream_errors::TEXT AS upstream_errors,
+    o.auth_latency_ms AS auth_latency_ms,
+    o.routing_latency_ms AS routing_latency_ms,
+    o.upstream_latency_ms AS upstream_latency_ms,
+    o.response_latency_ms AS response_latency_ms,
+    o.time_to_first_token_ms AS time_to_first_token_ms
   FROM ops_error_logs o
   LEFT JOIN groups g ON g.id = o.group_id
   LEFT JOIN accounts a ON a.id = o.account_id
@@ -202,7 +221,16 @@ SELECT
   total_tokens,
   first_token_ms,
   total_cost,
-  actual_cost
+  actual_cost,
+  upstream_status_code,
+  upstream_error_message,
+  upstream_error_detail,
+  upstream_errors,
+  auth_latency_ms,
+  routing_latency_ms,
+  upstream_latency_ms,
+  response_latency_ms,
+  time_to_first_token_ms
 FROM combined
 %s
 %s
@@ -255,15 +283,24 @@ LIMIT $%d OFFSET $%d
 
 			stream bool
 
-			accountName      sql.NullString
-			requestedModel   sql.NullString
-			upstreamEndpoint sql.NullString
-			inputTokens      sql.NullInt64
-			outputTokens     sql.NullInt64
-			totalTokens      sql.NullInt64
-			firstTokenMs     sql.NullInt64
-			totalCost        sql.NullString
-			actualCost       sql.NullString
+			accountName          sql.NullString
+			requestedModel       sql.NullString
+			upstreamEndpoint     sql.NullString
+			inputTokens          sql.NullInt64
+			outputTokens         sql.NullInt64
+			totalTokens          sql.NullInt64
+			firstTokenMs         sql.NullInt64
+			totalCost            sql.NullString
+			actualCost           sql.NullString
+			upstreamStatusCode   sql.NullInt64
+			upstreamErrorMessage sql.NullString
+			upstreamErrorDetail  sql.NullString
+			upstreamErrorsJSON   sql.NullString
+			authLatencyMs        sql.NullInt64
+			routingLatencyMs     sql.NullInt64
+			upstreamLatencyMs    sql.NullInt64
+			responseLatencyMs    sql.NullInt64
+			timeToFirstTokenMs   sql.NullInt64
 		)
 
 		if err := rows.Scan(
@@ -292,6 +329,15 @@ LIMIT $%d OFFSET $%d
 			&firstTokenMs,
 			&totalCost,
 			&actualCost,
+			&upstreamStatusCode,
+			&upstreamErrorMessage,
+			&upstreamErrorDetail,
+			&upstreamErrorsJSON,
+			&authLatencyMs,
+			&routingLatencyMs,
+			&upstreamLatencyMs,
+			&responseLatencyMs,
+			&timeToFirstTokenMs,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -317,15 +363,24 @@ LIMIT $%d OFFSET $%d
 
 			Stream: stream,
 
-			AccountName:      strings.TrimSpace(accountName.String),
-			RequestedModel:   strings.TrimSpace(requestedModel.String),
-			UpstreamEndpoint: strings.TrimSpace(upstreamEndpoint.String),
-			InputTokens:      toIntPtr(inputTokens),
-			OutputTokens:     toIntPtr(outputTokens),
-			TotalTokens:      toIntPtr(totalTokens),
-			FirstTokenMs:     toIntPtr(firstTokenMs),
-			TotalCost:        strings.TrimSpace(totalCost.String),
-			ActualCost:       strings.TrimSpace(actualCost.String),
+			AccountName:          strings.TrimSpace(accountName.String),
+			RequestedModel:       strings.TrimSpace(requestedModel.String),
+			UpstreamEndpoint:     strings.TrimSpace(upstreamEndpoint.String),
+			InputTokens:          toIntPtr(inputTokens),
+			OutputTokens:         toIntPtr(outputTokens),
+			TotalTokens:          toIntPtr(totalTokens),
+			FirstTokenMs:         toIntPtr(firstTokenMs),
+			TotalCost:            strings.TrimSpace(totalCost.String),
+			ActualCost:           strings.TrimSpace(actualCost.String),
+			UpstreamStatusCode:   toIntPtr(upstreamStatusCode),
+			UpstreamErrorMessage: strings.TrimSpace(upstreamErrorMessage.String),
+			UpstreamErrorDetail:  strings.TrimSpace(upstreamErrorDetail.String),
+			UpstreamErrors:       decodeOpsUpstreamErrorsJSON(upstreamErrorsJSON.String),
+			AuthLatencyMs:        toInt64Ptr(authLatencyMs),
+			RoutingLatencyMs:     toInt64Ptr(routingLatencyMs),
+			UpstreamLatencyMs:    toInt64Ptr(upstreamLatencyMs),
+			ResponseLatencyMs:    toInt64Ptr(responseLatencyMs),
+			TimeToFirstTokenMs:   toInt64Ptr(timeToFirstTokenMs),
 		}
 
 		if item.Platform == "" {
@@ -339,4 +394,16 @@ LIMIT $%d OFFSET $%d
 	}
 
 	return out, total, nil
+}
+
+func decodeOpsUpstreamErrorsJSON(raw string) []*service.OpsUpstreamErrorEvent {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return nil
+	}
+	var events []*service.OpsUpstreamErrorEvent
+	if err := json.Unmarshal([]byte(raw), &events); err != nil {
+		return nil
+	}
+	return events
 }

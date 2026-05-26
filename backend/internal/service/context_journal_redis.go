@@ -224,16 +224,34 @@ func (j *redisContextJournal) replaySafetyAndTurns(ctx context.Context, groupID 
 		return ContextJournalReplaySafetyResult{}, nil, err
 	}
 	if !ok {
-		return protectedReplayResult(ContextReplayReasonMissingBody), nil, nil
+		return withContextJournalDiagnostics(
+			protectedReplayResult(ContextReplayReasonMissingBody),
+			ContextJournalBackendRedis,
+			nil,
+			nil,
+			j.maxBytes,
+		), nil, nil
 	}
 	turns, err := j.ListTurns(ctx, groupID, sessionHash)
 	if err != nil {
 		return ContextJournalReplaySafetyResult{}, nil, err
 	}
 	if state.Overflow {
-		return protectedReplayResult(ContextReplayReasonJournalOverflow), turns, nil
+		return withContextJournalDiagnostics(
+			protectedReplayResult(ContextReplayReasonJournalOverflow),
+			ContextJournalBackendRedis,
+			&state,
+			turns,
+			j.maxBytes,
+		), turns, nil
 	}
-	return classifyReplayTurns(turns), turns, nil
+	return withContextJournalDiagnostics(
+		classifyReplayTurns(turns),
+		ContextJournalBackendRedis,
+		&state,
+		turns,
+		j.maxBytes,
+	), turns, nil
 }
 
 func (j *redisContextJournal) getSessionState(ctx context.Context, groupID int64, sessionHash string) (ContextJournalSessionState, bool, error) {

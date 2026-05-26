@@ -64,9 +64,16 @@ type OpenAIAccountScheduleDecision struct {
 	SelectedAccountType     string
 	ContinuityAction        string
 	ContinuityReason        string
+	ContinuityDetail        map[string]any
 	ContinuityFromAccountID int64
 	ContinuityReplayBody    []byte
+	BalanceConfirmSource    string
+	BalanceConfirmTopN      int
+	BalanceConfirmLatencyMs int64
+	BalanceConfirmReason    string
 }
+
+type openAIAccountScheduleDecisionSinkKey struct{}
 
 type OpenAIAccountSchedulerMetricsSnapshot struct {
 	SelectTotal              int64
@@ -262,6 +269,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	req OpenAIAccountScheduleRequest,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	decision := OpenAIAccountScheduleDecision{}
+	ctx = context.WithValue(ctx, openAIAccountScheduleDecisionSinkKey{}, &decision)
 	start := time.Now()
 	defer func() {
 		decision.LatencyMs = time.Since(start).Milliseconds()
@@ -945,10 +953,11 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireVerifiedOpenAISelectionTopN(
 	if len(candidates) == 0 {
 		return nil, compactBlocked, false, nil
 	}
-	selected, _, err := s.service.realtimeBalanceChecker.SelectFirstVerifiedCandidateWithOptions(ctx, candidates, 1, RealtimeBalanceCheckOptions{
+	selected, _, diagnostic, err := s.service.realtimeBalanceChecker.SelectFirstVerifiedCandidateWithDiagnostics(ctx, candidates, 1, RealtimeBalanceCheckOptions{
 		CodexLongSessionStart: req.CodexLongSessionStart,
 		AllowAsyncRefresh:     true,
 	})
+	s.applyRealtimeBalanceConfirmDiagnostic(ctx, diagnostic)
 	if err != nil {
 		if errors.Is(err, ErrNoVerifiedRealtimeBalanceCandidate) {
 			return nil, compactBlocked, true, nil
@@ -973,6 +982,18 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireVerifiedOpenAISelectionTopN(
 		Acquired:    true,
 		ReleaseFunc: result.ReleaseFunc,
 	}, compactBlocked, true, nil
+}
+
+func (s *defaultOpenAIAccountScheduler) applyRealtimeBalanceConfirmDiagnostic(ctx context.Context, diagnostic *RealtimeBalanceConfirmDiagnostic) {
+	if s == nil || diagnostic == nil {
+		return
+	}
+	if sink, ok := ctx.Value(openAIAccountScheduleDecisionSinkKey{}).(*OpenAIAccountScheduleDecision); ok && sink != nil {
+		sink.BalanceConfirmSource = diagnostic.Source
+		sink.BalanceConfirmTopN = diagnostic.TopN
+		sink.BalanceConfirmLatencyMs = diagnostic.LatencyMs
+		sink.BalanceConfirmReason = diagnostic.Reason
+	}
 }
 
 func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(

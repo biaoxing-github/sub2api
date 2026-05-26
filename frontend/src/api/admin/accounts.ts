@@ -34,6 +34,9 @@ import type {
   FetchOptions
 } from '@/types'
 
+const UPSTREAM_BALANCE_REFRESH_TIMEOUT_MS = 120000
+const UPSTREAM_BALANCES_REFRESH_TIMEOUT_MS = 300000
+
 export interface BatchTestNonAPIKeyAccountsRequest {
   model_id?: string
   platform?: string
@@ -529,12 +532,20 @@ export async function getActionItems(
 }
 
 export async function refreshUpstreamBalances(): Promise<UpstreamBalanceRefreshResult> {
-  const { data } = await apiClient.post<UpstreamBalanceRefreshResult>('/admin/accounts/refresh-upstream-balances')
+  const { data } = await apiClient.post<UpstreamBalanceRefreshResult>(
+    '/admin/accounts/refresh-upstream-balances',
+    undefined,
+    { timeout: UPSTREAM_BALANCES_REFRESH_TIMEOUT_MS }
+  )
   return data
 }
 
 export async function refreshUpstreamBalance(id: number): Promise<Account> {
-  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/refresh-upstream-balance`)
+  const { data } = await apiClient.post<Account>(
+    `/admin/accounts/${id}/refresh-upstream-balance`,
+    undefined,
+    { timeout: UPSTREAM_BALANCE_REFRESH_TIMEOUT_MS }
+  )
   return data
 }
 

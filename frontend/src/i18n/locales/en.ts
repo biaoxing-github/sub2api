@@ -5116,6 +5116,9 @@ export default {
           title: 'Codex Diagnosis',
           loadFailed: 'Failed to load Codex diagnosis',
           noHeadline: 'No diagnosis headline',
+          status: 'Status',
+          headline: 'Headline',
+          suggestedAction: 'Suggested action',
           path: 'Path',
           latency: 'Latency',
           routing: 'Routing',
@@ -5856,6 +5859,34 @@ export default {
           requestPhaseFailover: 'Request-phase failover',
           suppressTimeoutHeaders: 'Suppress client timeout headers',
           streamKeepalive: 'Stream keepalive'
+        },
+        codexAutopilot: {
+          title: 'Codex Autopilot',
+          description: 'Automatically adjusts stability behavior from recent Codex failure signals. Observe-only records recommendations without switching behavior.',
+          enabled: 'Enable autopilot',
+          observeOnly: 'Observe only'
+        },
+        openaiPathHealth: {
+          title: 'OpenAI Path Health Circuit Breaker',
+          description: 'Tracks failures per account and transport path, then briefly avoids unhealthy routes when needed.'
+        },
+        openaiFastLane: {
+          title: 'OpenAI Fast Lane',
+          description: 'Prioritizes accounts with faster first-token and header-wait history for new sessions.'
+        },
+        realtimeBalanceConfirm: {
+          title: 'Realtime Balance Confirm',
+          description: 'Confirms candidate account balance before committing in long-session or high-risk flows.',
+          topN: 'Candidate Top N',
+          timeoutMs: 'Timeout (ms)'
+        },
+        contextJournal: {
+          title: 'Context Journal',
+          description: 'Stores Responses continuity context for safe replay and response ID binding.',
+          backend: 'Backend',
+          backendMemory: 'Memory',
+          backendRedis: 'Redis',
+          ttlHours: 'TTL (hours)'
         },
       },
       webSearchEmulation: {

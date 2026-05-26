@@ -200,6 +200,39 @@ type SystemSettings struct {
 	CodexStabilityRequestPhaseFailoverEnabled  bool
 	CodexStabilitySuppressClientTimeoutHeaders bool
 	CodexStabilityStreamKeepaliveEnabled       bool
+	CodexAutopilotEnabled                      bool
+	CodexAutopilotObserveOnly                  bool
+	CodexAutopilotWindowSeconds                int
+	CodexAutopilotMinSamples                   int
+	CodexAutopilotHeaderTimeoutThreshold       int
+	CodexAutopilotEOFThreshold                 int
+	CodexAutopilotSilentStreamTimeoutSeconds   int
+	OpenAIPathHealthEnabled                    bool
+	OpenAIPathHealthCircuitBreakerEnabled      bool
+	OpenAIPathHealthFailureWindowSeconds       int
+	OpenAIPathHealthCooldownSeconds            int
+	OpenAIPathHealthDegradedFailures           int
+	OpenAIPathHealthOpenFailures               int
+	OpenAIPathHealthHalfOpenMaxProbes          int
+	OpenAIFastLaneEnabled                      bool
+	OpenAIFastLaneNewSessionOnly               bool
+	OpenAIFastLaneTTFTWeight                   float64
+	OpenAIFastLaneHeaderWaitWeight             float64
+	OpenAIFastLaneMinSamples                   int
+	OpenAIFastLaneExploreRatio                 float64
+	RealtimeBalancePrewarmEnabled              bool
+	RealtimeBalancePrewarmIntervalSeconds      int
+	RealtimeBalancePrewarmActiveAccountLimit   int
+	RealtimeBalanceConfirmTopN                 int
+	RealtimeBalanceConfirmTimeoutMs            int
+	CodexWaitGuardEnabled                      bool
+	CodexWaitGuardMaxHeaderWaitSeconds         int
+	CodexWaitGuardMaxStreamSilentSeconds       int
+	CodexWaitGuardKeepaliveIntervalSeconds     int
+	CodexWaitGuardProtectAfterOutput           bool
+	ContextJournalBackend                      string
+	ContextJournalTTLHours                     int
+	ContextJournalMaxSessionBytes              int64
 
 	// Web Search Emulation
 	WebSearchEmulationEnabled bool // 是否启用 web search 模拟

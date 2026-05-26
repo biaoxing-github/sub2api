@@ -3875,6 +3875,134 @@
                   </label>
                 </div>
               </div>
+
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.gatewayForwarding.codexAutopilot.title") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.codexAutopilot.description") }}
+                  </p>
+                </div>
+                <div class="mt-4 grid gap-3 md:grid-cols-2">
+                  <label class="flex items-center justify-between gap-3 rounded-md bg-gray-50 px-3 py-2 dark:bg-dark-800">
+                    <span class="text-sm text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.codexAutopilot.enabled") }}
+                    </span>
+                    <Toggle v-model="form.codex_autopilot_enabled" />
+                  </label>
+                  <label class="flex items-center justify-between gap-3 rounded-md bg-gray-50 px-3 py-2 dark:bg-dark-800">
+                    <span class="text-sm text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.codexAutopilot.observeOnly") }}
+                    </span>
+                    <Toggle v-model="form.codex_autopilot_observe_only" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.openaiPathHealth.title") }}
+                    </label>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.openaiPathHealth.description") }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.openai_path_health_circuit_breaker_enabled" />
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.openaiFastLane.title") }}
+                    </label>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.openaiFastLane.description") }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.openai_fast_lane_enabled" />
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.gatewayForwarding.realtimeBalanceConfirm.title") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.realtimeBalanceConfirm.description") }}
+                  </p>
+                </div>
+                <div class="mt-4 grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.realtimeBalanceConfirm.topN") }}
+                    </label>
+                    <input
+                      v-model.number="form.realtime_balance_confirm_top_n"
+                      type="number"
+                      min="0"
+                      class="input max-w-xs"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.realtimeBalanceConfirm.timeoutMs") }}
+                    </label>
+                    <input
+                      v-model.number="form.realtime_balance_confirm_timeout_ms"
+                      type="number"
+                      min="0"
+                      class="input max-w-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                <div>
+                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t("admin.settings.gatewayForwarding.contextJournal.title") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.contextJournal.description") }}
+                  </p>
+                </div>
+                <div class="mt-4 grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.contextJournal.backend") }}
+                    </label>
+                    <select
+                      v-model="form.context_journal_backend"
+                      class="select max-w-xs"
+                    >
+                      <option value="memory">
+                        {{ t("admin.settings.gatewayForwarding.contextJournal.backendMemory") }}
+                      </option>
+                      <option value="redis">
+                        {{ t("admin.settings.gatewayForwarding.contextJournal.backendRedis") }}
+                      </option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.gatewayForwarding.contextJournal.ttlHours") }}
+                    </label>
+                    <input
+                      v-model.number="form.context_journal_ttl_hours"
+                      type="number"
+                      min="0"
+                      class="input max-w-xs"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           <!-- Web Search Emulation -->
@@ -6894,6 +7022,14 @@ type SettingsForm = Omit<
   codex_stability_request_phase_failover_enabled: boolean;
   codex_stability_suppress_client_timeout_headers: boolean;
   codex_stability_stream_keepalive_enabled: boolean;
+  codex_autopilot_enabled: boolean;
+  codex_autopilot_observe_only: boolean;
+  openai_path_health_circuit_breaker_enabled: boolean;
+  openai_fast_lane_enabled: boolean;
+  realtime_balance_confirm_top_n: number;
+  realtime_balance_confirm_timeout_ms: number;
+  context_journal_backend: string;
+  context_journal_ttl_hours: number;
 };
 
 const form = reactive<SettingsForm>({
@@ -7093,6 +7229,14 @@ const form = reactive<SettingsForm>({
   codex_stability_request_phase_failover_enabled: true,
   codex_stability_suppress_client_timeout_headers: true,
   codex_stability_stream_keepalive_enabled: true,
+  codex_autopilot_enabled: true,
+  codex_autopilot_observe_only: true,
+  openai_path_health_circuit_breaker_enabled: true,
+  openai_fast_lane_enabled: true,
+  realtime_balance_confirm_top_n: 3,
+  realtime_balance_confirm_timeout_ms: 1200,
+  context_journal_backend: "memory",
+  context_journal_ttl_hours: 24,
   // 余额、订阅到期与账号限额通知
   balance_low_notify_enabled: false,
   balance_low_notify_threshold: 0,
@@ -8206,6 +8350,24 @@ async function saveSettings() {
         form.codex_stability_suppress_client_timeout_headers,
       codex_stability_stream_keepalive_enabled:
         form.codex_stability_stream_keepalive_enabled,
+      codex_autopilot_enabled: form.codex_autopilot_enabled,
+      codex_autopilot_observe_only: form.codex_autopilot_observe_only,
+      openai_path_health_circuit_breaker_enabled:
+        form.openai_path_health_circuit_breaker_enabled,
+      openai_fast_lane_enabled: form.openai_fast_lane_enabled,
+      realtime_balance_confirm_top_n: Math.max(
+        0,
+        Math.floor(Number(form.realtime_balance_confirm_top_n) || 0),
+      ),
+      realtime_balance_confirm_timeout_ms: Math.max(
+        0,
+        Math.floor(Number(form.realtime_balance_confirm_timeout_ms) || 0),
+      ),
+      context_journal_backend: form.context_journal_backend || "memory",
+      context_journal_ttl_hours: Math.max(
+        0,
+        Math.floor(Number(form.context_journal_ttl_hours) || 0),
+      ),
       // Payment configuration
       payment_enabled: form.payment_enabled,
       risk_control_enabled: form.risk_control_enabled,

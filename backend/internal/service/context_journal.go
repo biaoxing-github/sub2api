@@ -19,6 +19,9 @@ const (
 	ContextJournalProtocolOpenAIResponses = "openai_responses"
 	ContextJournalProtocolOpenAIMessages  = "openai_messages"
 
+	ContextJournalBackendMemory = "memory"
+	ContextJournalBackendRedis  = "redis"
+
 	defaultContextJournalTTL             = 24 * time.Hour
 	defaultContextJournalMaxSessionBytes = 50 * 1024 * 1024
 )
@@ -111,8 +114,13 @@ const (
 )
 
 type ContextJournalReplaySafetyResult struct {
-	Safe   bool
-	Reason ContextReplayReason
+	Safe            bool
+	Reason          ContextReplayReason
+	Backend         string
+	TurnCount       int
+	SessionBytes    int64
+	MaxSessionBytes int64
+	Overflow        bool
 }
 
 type ContextJournalReplay struct {
@@ -378,13 +386,31 @@ func (j *memoryContextJournal) replaySafetyAndTurns(ctx context.Context, groupID
 	j.cleanupLocked(now)
 	session := j.sessions[key]
 	if session == nil {
-		return protectedReplayResult(ContextReplayReasonMissingBody), nil, nil
+		return withContextJournalDiagnostics(
+			protectedReplayResult(ContextReplayReasonMissingBody),
+			ContextJournalBackendMemory,
+			nil,
+			nil,
+			j.maxBytes,
+		), nil, nil
 	}
 	turns := cloneContextJournalTurns(session.turns)
 	if session.state.Overflow {
-		return protectedReplayResult(ContextReplayReasonJournalOverflow), turns, nil
+		return withContextJournalDiagnostics(
+			protectedReplayResult(ContextReplayReasonJournalOverflow),
+			ContextJournalBackendMemory,
+			&session.state,
+			turns,
+			j.maxBytes,
+		), turns, nil
 	}
-	return classifyReplayTurns(turns), turns, nil
+	return withContextJournalDiagnostics(
+		classifyReplayTurns(turns),
+		ContextJournalBackendMemory,
+		&session.state,
+		turns,
+		j.maxBytes,
+	), turns, nil
 }
 
 func classifyReplayTurns(turns []ContextJournalTurn) ContextJournalReplaySafetyResult {
@@ -410,6 +436,29 @@ func classifyReplayTurns(turns []ContextJournalTurn) ContextJournalReplaySafetyR
 
 func protectedReplayResult(reason ContextReplayReason) ContextJournalReplaySafetyResult {
 	return ContextJournalReplaySafetyResult{Safe: false, Reason: reason}
+}
+
+func withContextJournalDiagnostics(
+	result ContextJournalReplaySafetyResult,
+	backend string,
+	state *ContextJournalSessionState,
+	turns []ContextJournalTurn,
+	maxBytes int64,
+) ContextJournalReplaySafetyResult {
+	result.Backend = backend
+	result.TurnCount = len(turns)
+	result.MaxSessionBytes = maxBytes
+	if state != nil {
+		result.SessionBytes = state.TotalBytes
+		result.Overflow = state.Overflow
+		return result
+	}
+	var total int64
+	for _, turn := range turns {
+		total += int64(len(turn.RequestBody))
+	}
+	result.SessionBytes = total
+	return result
 }
 
 func (j *memoryContextJournal) cleanupLocked(now time.Time) {

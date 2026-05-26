@@ -304,6 +304,77 @@ func TestSettingService_UpdateSettings_CodexStabilityRefreshesGatewayConfig(t *t
 	require.False(t, cfg.Gateway.CodexStability.StreamKeepaliveEnabled)
 }
 
+func TestSettingService_UpdateSettings_GatewayRuntimeStabilityRefreshesConfig(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	cfg := &config.Config{}
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		CodexAutopilotEnabled:                    true,
+		CodexAutopilotObserveOnly:                false,
+		CodexAutopilotWindowSeconds:              180,
+		CodexAutopilotMinSamples:                 9,
+		CodexAutopilotHeaderTimeoutThreshold:     3,
+		CodexAutopilotEOFThreshold:               4,
+		CodexAutopilotSilentStreamTimeoutSeconds: 45,
+		OpenAIPathHealthEnabled:                  true,
+		OpenAIPathHealthCircuitBreakerEnabled:    true,
+		OpenAIPathHealthFailureWindowSeconds:     120,
+		OpenAIPathHealthCooldownSeconds:          90,
+		OpenAIPathHealthDegradedFailures:         2,
+		OpenAIPathHealthOpenFailures:             5,
+		OpenAIPathHealthHalfOpenMaxProbes:        1,
+		OpenAIFastLaneEnabled:                    true,
+		OpenAIFastLaneNewSessionOnly:             true,
+		OpenAIFastLaneTTFTWeight:                 0.7,
+		OpenAIFastLaneHeaderWaitWeight:           0.3,
+		OpenAIFastLaneMinSamples:                 6,
+		OpenAIFastLaneExploreRatio:               0.2,
+		RealtimeBalancePrewarmEnabled:            true,
+		RealtimeBalancePrewarmIntervalSeconds:    300,
+		RealtimeBalancePrewarmActiveAccountLimit: 12,
+		RealtimeBalanceConfirmTopN:               4,
+		RealtimeBalanceConfirmTimeoutMs:          2500,
+		CodexWaitGuardEnabled:                    true,
+		CodexWaitGuardMaxHeaderWaitSeconds:       35,
+		CodexWaitGuardMaxStreamSilentSeconds:     60,
+		CodexWaitGuardKeepaliveIntervalSeconds:   8,
+		CodexWaitGuardProtectAfterOutput:         true,
+		ContextJournalBackend:                    "redis",
+		ContextJournalTTLHours:                   48,
+		ContextJournalMaxSessionBytes:            1 << 20,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "true", repo.updates[SettingKeyCodexAutopilotEnabled])
+	require.Equal(t, "180", repo.updates[SettingKeyCodexAutopilotWindowSeconds])
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAIPathHealthEnabled])
+	require.Equal(t, "120", repo.updates[SettingKeyOpenAIPathHealthFailureWindowSeconds])
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAIFastLaneEnabled])
+	require.Equal(t, "0.7", repo.updates[SettingKeyOpenAIFastLaneTTFTWeight])
+	require.Equal(t, "true", repo.updates[SettingKeyRealtimeBalancePrewarmEnabled])
+	require.Equal(t, "4", repo.updates[SettingKeyRealtimeBalanceConfirmTopN])
+	require.Equal(t, "true", repo.updates[SettingKeyCodexWaitGuardEnabled])
+	require.Equal(t, "redis", repo.updates[SettingKeyContextJournalBackend])
+	require.Equal(t, "1048576", repo.updates[SettingKeyContextJournalMaxSessionBytes])
+
+	require.True(t, cfg.Gateway.CodexAutopilot.Enabled)
+	require.Equal(t, 180, cfg.Gateway.CodexAutopilot.WindowSeconds)
+	require.True(t, cfg.Gateway.OpenAIPathHealth.Enabled)
+	require.True(t, cfg.Gateway.OpenAIPathHealth.CircuitBreakerEnabled)
+	require.Equal(t, 120, cfg.Gateway.OpenAIPathHealth.FailureWindowSeconds)
+	require.True(t, cfg.Gateway.OpenAIFastLane.Enabled)
+	require.Equal(t, 0.7, cfg.Gateway.OpenAIFastLane.TTFTWeight)
+	require.Equal(t, 0.2, cfg.Gateway.OpenAIFastLane.ExploreRatio)
+	require.True(t, cfg.Gateway.RealtimeBalancePrewarm.Enabled)
+	require.Equal(t, 4, cfg.Gateway.RealtimeBalanceConfirmTopN)
+	require.Equal(t, 2500, cfg.Gateway.RealtimeBalanceConfirmTimeoutMs)
+	require.True(t, cfg.Gateway.CodexWaitGuard.Enabled)
+	require.True(t, cfg.Gateway.CodexWaitGuard.ProtectAfterOutput)
+	require.Equal(t, "redis", cfg.Gateway.ContextJournal.Backend)
+	require.Equal(t, int64(1<<20), cfg.Gateway.ContextJournal.MaxSessionBytes)
+}
+
 func TestSettingService_UpdateSettings_AntigravityUserAgentVersion(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := NewSettingService(repo, &config.Config{})

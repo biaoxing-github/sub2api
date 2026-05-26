@@ -27,7 +27,9 @@ import {
   getStatusSummary,
   getUsageSummary,
   list,
-  listBatchTestNonAPIKeyRuns
+  listBatchTestNonAPIKeyRuns,
+  refreshUpstreamBalance,
+  refreshUpstreamBalances
 } from '@/api/admin/accounts'
 
 describe('admin accounts api usage summary', () => {
@@ -144,6 +146,21 @@ describe('admin accounts api usage summary', () => {
       inactive: 1,
       temp_unschedulable: 4,
       unschedulable: 5,
+    })
+  })
+
+  it('uses an extended timeout for upstream balance refresh requests', async () => {
+    post.mockResolvedValueOnce({ data: { refreshed: 2 } })
+    post.mockResolvedValueOnce({ data: { id: 26 } })
+
+    await expect(refreshUpstreamBalances()).resolves.toEqual({ refreshed: 2 })
+    await expect(refreshUpstreamBalance(26)).resolves.toEqual({ id: 26 })
+
+    expect(post).toHaveBeenNthCalledWith(1, '/admin/accounts/refresh-upstream-balances', undefined, {
+      timeout: 300000,
+    })
+    expect(post).toHaveBeenNthCalledWith(2, '/admin/accounts/26/refresh-upstream-balance', undefined, {
+      timeout: 120000,
     })
   })
 

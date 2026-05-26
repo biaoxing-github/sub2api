@@ -240,6 +240,9 @@ func TestMemoryContextJournalBuildReplayFromCompleteTurns(t *testing.T) {
 	if !replay.Safe || replay.Reason != ContextReplayReasonSafe {
 		t.Fatalf("replay = %+v, want safe", replay)
 	}
+	if replay.Backend != ContextJournalBackendMemory || replay.TurnCount != 1 || replay.SessionBytes != int64(len(`{"input":"hello"}`)) || replay.MaxSessionBytes != 1024 || replay.Overflow {
+		t.Fatalf("replay diagnostics = %+v", replay.ContextJournalReplaySafetyResult)
+	}
 	if !bytes.Equal(replay.RequestBody, []byte(`{"input":"hello"}`)) {
 		t.Fatalf("replay body = %s", replay.RequestBody)
 	}
@@ -344,6 +347,9 @@ func TestMemoryContextJournalReplaySafetyReportsJournalOverflow(t *testing.T) {
 	}
 	if result.Safe || result.Reason != ContextReplayReasonJournalOverflow {
 		t.Fatalf("result = %+v, want journal overflow", result)
+	}
+	if result.Backend != ContextJournalBackendMemory || result.TurnCount != 0 || result.SessionBytes != 0 || result.MaxSessionBytes != 4 || !result.Overflow {
+		t.Fatalf("overflow diagnostics = %+v", result)
 	}
 }
 

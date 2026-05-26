@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -53,6 +54,17 @@ type OpsRequestDetail struct {
 
 	TotalCost  string `json:"total_cost,omitempty"`
 	ActualCost string `json:"actual_cost,omitempty"`
+
+	UpstreamStatusCode   *int                     `json:"upstream_status_code,omitempty"`
+	UpstreamErrorMessage string                   `json:"upstream_error_message,omitempty"`
+	UpstreamErrorDetail  string                   `json:"upstream_error_detail,omitempty"`
+	UpstreamErrors       []*OpsUpstreamErrorEvent `json:"upstream_errors,omitempty"`
+
+	AuthLatencyMs      *int64 `json:"auth_latency_ms,omitempty"`
+	RoutingLatencyMs   *int64 `json:"routing_latency_ms,omitempty"`
+	UpstreamLatencyMs  *int64 `json:"upstream_latency_ms,omitempty"`
+	ResponseLatencyMs  *int64 `json:"response_latency_ms,omitempty"`
+	TimeToFirstTokenMs *int64 `json:"time_to_first_token_ms,omitempty"`
 }
 
 type OpsRequestDetailFilter struct {
@@ -246,25 +258,35 @@ func (s *OpsService) GetRequestTimeline(ctx context.Context, requestID string) (
 		AccountID:   item.AccountID,
 		AccountName: item.AccountName,
 		Details: map[string]any{
-			"kind":              item.Kind,
-			"platform":          item.Platform,
-			"model":             item.Model,
-			"requested_model":   item.RequestedModel,
-			"status_code":       item.StatusCode,
-			"stream":            item.Stream,
-			"user_id":           item.UserID,
-			"api_key_id":        item.APIKeyID,
-			"group_id":          item.GroupID,
-			"duration_ms":       item.DurationMs,
-			"first_token_ms":    item.FirstTokenMs,
-			"input_tokens":      item.InputTokens,
-			"output_tokens":     item.OutputTokens,
-			"total_tokens":      item.TotalTokens,
-			"total_cost":        item.TotalCost,
-			"actual_cost":       item.ActualCost,
-			"upstream_endpoint": item.UpstreamEndpoint,
+			"kind":                   item.Kind,
+			"platform":               item.Platform,
+			"model":                  item.Model,
+			"requested_model":        item.RequestedModel,
+			"status_code":            item.StatusCode,
+			"stream":                 item.Stream,
+			"user_id":                item.UserID,
+			"api_key_id":             item.APIKeyID,
+			"group_id":               item.GroupID,
+			"duration_ms":            item.DurationMs,
+			"first_token_ms":         item.FirstTokenMs,
+			"input_tokens":           item.InputTokens,
+			"output_tokens":          item.OutputTokens,
+			"total_tokens":           item.TotalTokens,
+			"total_cost":             item.TotalCost,
+			"actual_cost":            item.ActualCost,
+			"upstream_endpoint":      item.UpstreamEndpoint,
+			"auth_latency_ms":        item.AuthLatencyMs,
+			"routing_latency_ms":     item.RoutingLatencyMs,
+			"upstream_latency_ms":    item.UpstreamLatencyMs,
+			"response_latency_ms":    item.ResponseLatencyMs,
+			"time_to_first_token_ms": item.TimeToFirstTokenMs,
+			"upstream_status_code":   item.UpstreamStatusCode,
+			"upstream_error_message": item.UpstreamErrorMessage,
+			"upstream_error_detail":  item.UpstreamErrorDetail,
 		},
 	})
+	appendOpsRequestLatencyEvents(timeline, item)
+	appendOpsRequestUpstreamErrorEvents(timeline, item)
 	return timeline, nil
 }
 
@@ -304,29 +326,36 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 		}
 		for key, value := range event.Details {
 			switch key {
-			case "status_code", "stream", "model", "platform":
+			case "status_code", "stream", "model", "platform", "upstream_status_code", "upstream_error_message", "upstream_error_detail":
 				diagnosis.Path[key] = value
-			case "duration_ms", "first_token_ms", "time_to_first_token_ms", "ttft_ms", "header_wait_ms", "upstream_latency_ms":
+				if key == "upstream_error_detail" {
+					mergeCodexDiagnosisDetailMaps(diagnosis, value)
+				}
+			case "duration_ms", "first_token_ms", "time_to_first_token_ms", "ttft_ms", "header_wait_ms", "auth_latency_ms", "routing_latency_ms", "upstream_latency_ms", "response_latency_ms":
 				diagnosis.Latency[key] = value
-			case "context_replay_reason", "context_continuity", "journal_reason", "replay_safe":
+			case "context_replay_reason", "context_continuity", "journal_reason", "replay_safe", "protected", "reason", "context_from_account_id", "context_journal_backend", "context_journal_turn_count", "context_journal_session_bytes", "context_journal_max_session_bytes", "context_journal_overflow":
 				diagnosis.Context[key] = value
 			case "requested_model", "upstream_endpoint", "user_id", "api_key_id", "group_id":
 				diagnosis.Routing[key] = value
-			case "input_tokens", "output_tokens", "total_tokens", "total_cost", "actual_cost":
+			case "input_tokens", "output_tokens", "total_tokens", "total_cost", "actual_cost", "balance_state", "available", "threshold", "balance_confirm_source", "balance_confirm_top_n", "balance_confirm_latency_ms", "balance_confirm_reason":
 				diagnosis.Usage[key] = value
 			}
 		}
 	}
 	reason := strings.ToLower(lastReason)
 	switch {
-	case strings.Contains(reason, "context") || strings.Contains(reason, "replay") || strings.Contains(reason, "function_call_output") || strings.Contains(reason, "encrypted"):
-		diagnosis.Status = "protected"
-		diagnosis.Headline = "不可安全重放，已保护会话"
-		diagnosis.SuggestedAction = "继续原账号或新开会话；当前续链依赖上游状态，不能静默跨账号重放。"
 	case strings.Contains(reason, "timeout awaiting response headers") || strings.Contains(reason, "timed out waiting"):
 		diagnosis.Status = "header_timeout"
 		diagnosis.Headline = "上游响应头等待超时"
 		diagnosis.SuggestedAction = "优先查看 path health 是否熔断该账号/代理/endpoint；未输出前可安全快速切号。"
+	case strings.Contains(reason, "context deadline exceeded"):
+		diagnosis.Status = "upstream_timeout"
+		diagnosis.Headline = "上游请求超过等待窗口"
+		diagnosis.SuggestedAction = "优先检查 upstream latency/header wait 和该账号并发；这是网络/上游等待问题，不是上下文保护。"
+	case strings.Contains(reason, "context") || strings.Contains(reason, "replay") || strings.Contains(reason, "function_call_output") || strings.Contains(reason, "encrypted"):
+		diagnosis.Status = "protected"
+		diagnosis.Headline = "不可安全重放，已保护会话"
+		diagnosis.SuggestedAction = "继续原账号或新开会话；当前续链依赖上游状态，不能静默跨账号重放。"
 	case strings.Contains(reason, "unexpected eof") || strings.Contains(reason, "eof"):
 		diagnosis.Status = "unexpected_eof"
 		diagnosis.Headline = "上游连接提前断开"
@@ -344,4 +373,127 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 		diagnosis.SuggestedAction = "如果仍感觉卡顿，重点看 TTFT、upstream latency 和账号切换次数。"
 	}
 	return diagnosis, nil
+}
+
+func appendOpsRequestLatencyEvents(timeline *OpsRequestTimeline, item *OpsRequestDetail) {
+	if timeline == nil || item == nil {
+		return
+	}
+	appendLatency := func(phase string, value *int64) {
+		if value == nil || *value < 0 {
+			return
+		}
+		timeline.Events = append(timeline.Events, OpsRequestTimelineEvent{
+			At:        item.CreatedAt,
+			Phase:     phase,
+			EventType: "phase_latency_recorded",
+			LatencyMs: value,
+			Details: map[string]any{
+				phase + "_latency_ms": *value,
+			},
+		})
+	}
+	appendLatency("auth", item.AuthLatencyMs)
+	appendLatency("routing", item.RoutingLatencyMs)
+	appendLatency("upstream", item.UpstreamLatencyMs)
+	appendLatency("response", item.ResponseLatencyMs)
+	appendLatency("first_token", item.TimeToFirstTokenMs)
+}
+
+func appendOpsRequestUpstreamErrorEvents(timeline *OpsRequestTimeline, item *OpsRequestDetail) {
+	if timeline == nil || item == nil {
+		return
+	}
+	events := item.UpstreamErrors
+	if len(events) == 0 && (item.UpstreamStatusCode != nil || strings.TrimSpace(item.UpstreamErrorMessage) != "") {
+		events = []*OpsUpstreamErrorEvent{{
+			Platform:           item.Platform,
+			AccountName:        item.AccountName,
+			Kind:               "upstream_error",
+			Message:            item.UpstreamErrorMessage,
+			Detail:             item.UpstreamErrorDetail,
+			UpstreamStatusCode: valueOrZeroInt(item.UpstreamStatusCode),
+		}}
+		if item.AccountID != nil {
+			events[0].AccountID = *item.AccountID
+		}
+	}
+	for _, ev := range events {
+		if ev == nil {
+			continue
+		}
+		at := item.CreatedAt
+		if ev.AtUnixMs > 0 {
+			at = time.UnixMilli(ev.AtUnixMs).UTC()
+		}
+		reason := strings.TrimSpace(ev.Message)
+		if reason == "" {
+			reason = strings.TrimSpace(ev.Detail)
+		}
+		var accountID *int64
+		if ev.AccountID > 0 {
+			v := ev.AccountID
+			accountID = &v
+		}
+		timeline.Events = append(timeline.Events, OpsRequestTimelineEvent{
+			At:          at,
+			Phase:       "upstream",
+			EventType:   normalizeOpsUpstreamTimelineEventType(ev.Kind),
+			AccountID:   accountID,
+			AccountName: strings.TrimSpace(ev.AccountName),
+			Reason:      reason,
+			Details: map[string]any{
+				"kind":                 strings.TrimSpace(ev.Kind),
+				"passthrough":          ev.Passthrough,
+				"platform":             strings.TrimSpace(ev.Platform),
+				"upstream_status_code": ev.UpstreamStatusCode,
+				"upstream_request_id":  strings.TrimSpace(ev.UpstreamRequestID),
+				"upstream_url":         strings.TrimSpace(ev.UpstreamURL),
+				"message":              reason,
+			},
+		})
+	}
+}
+
+func mergeCodexDiagnosisDetailMaps(diagnosis *OpsCodexDiagnosis, value any) {
+	if diagnosis == nil || value == nil {
+		return
+	}
+	raw, ok := value.(string)
+	if !ok {
+		return
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var detail map[string]any
+		if err := json.Unmarshal([]byte(line), &detail); err != nil {
+			continue
+		}
+		for key, item := range detail {
+			switch strings.TrimSpace(key) {
+			case "context_replay_reason", "context_continuity", "journal_reason", "replay_safe", "protected", "reason", "context_from_account_id", "context_journal_backend", "context_journal_turn_count", "context_journal_session_bytes", "context_journal_max_session_bytes", "context_journal_overflow":
+				diagnosis.Context[key] = item
+			case "balance_state", "available", "threshold", "balance_confirm_source", "balance_confirm_top_n", "balance_confirm_latency_ms", "balance_confirm_reason":
+				diagnosis.Usage[key] = item
+			}
+		}
+	}
+}
+
+func normalizeOpsUpstreamTimelineEventType(kind string) string {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		return "upstream_error"
+	}
+	return "upstream_" + kind
+}
+
+func valueOrZeroInt(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }

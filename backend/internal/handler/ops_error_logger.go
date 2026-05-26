@@ -906,6 +906,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				}
 			}
 		}
+		applyOpenAIScheduleDecisionToOpsEntry(c, entry)
 
 		if apiKey != nil {
 			entry.APIKeyID = &apiKey.ID
@@ -948,6 +949,60 @@ func applyOpsLatencyFieldsFromContext(c *gin.Context, entry *service.OpsInsertEr
 	entry.UpstreamLatencyMs = getContextLatencyMs(c, service.OpsUpstreamLatencyMsKey)
 	entry.ResponseLatencyMs = getContextLatencyMs(c, service.OpsResponseLatencyMsKey)
 	entry.TimeToFirstTokenMs = getContextLatencyMs(c, service.OpsTimeToFirstTokenMsKey)
+}
+
+func applyOpenAIScheduleDecisionToOpsEntry(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
+	if c == nil || entry == nil {
+		return
+	}
+	raw, ok := c.Get(service.OpsOpenAIScheduleDecisionKey)
+	if !ok {
+		return
+	}
+	decision, ok := raw.(service.OpenAIAccountScheduleDecision)
+	if !ok {
+		return
+	}
+	details := map[string]any{}
+	addString := func(key, value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			details[key] = value
+		}
+	}
+	addString("context_continuity", decision.ContinuityAction)
+	addString("context_replay_reason", decision.ContinuityReason)
+	addString("balance_confirm_source", decision.BalanceConfirmSource)
+	addString("balance_confirm_reason", decision.BalanceConfirmReason)
+	if decision.ContinuityFromAccountID > 0 {
+		details["context_from_account_id"] = decision.ContinuityFromAccountID
+	}
+	if len(decision.ContinuityDetail) > 0 {
+		for k, v := range decision.ContinuityDetail {
+			if key := strings.TrimSpace(k); key != "" {
+				details[key] = v
+			}
+		}
+	}
+	if decision.BalanceConfirmTopN > 0 {
+		details["balance_confirm_top_n"] = decision.BalanceConfirmTopN
+	}
+	if decision.BalanceConfirmLatencyMs >= 0 && (decision.BalanceConfirmTopN > 0 || strings.TrimSpace(decision.BalanceConfirmSource) != "") {
+		details["balance_confirm_latency_ms"] = decision.BalanceConfirmLatencyMs
+	}
+	if len(details) == 0 {
+		return
+	}
+	rawJSON, err := json.Marshal(details)
+	if err != nil || len(rawJSON) == 0 {
+		return
+	}
+	if entry.UpstreamErrorDetail != nil && strings.TrimSpace(*entry.UpstreamErrorDetail) != "" {
+		merged := strings.TrimSpace(*entry.UpstreamErrorDetail) + "\n" + string(rawJSON)
+		entry.UpstreamErrorDetail = &merged
+		return
+	}
+	detail := string(rawJSON)
+	entry.UpstreamErrorDetail = &detail
 }
 
 func getContextLatencyMs(c *gin.Context, key string) *int64 {

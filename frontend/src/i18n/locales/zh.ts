@@ -5278,6 +5278,9 @@ export default {
           title: 'Codex 诊断',
           loadFailed: '加载 Codex 诊断失败',
           noHeadline: '暂无诊断结论',
+          status: '状态',
+          headline: '结论',
+          suggestedAction: '建议动作',
           path: '线路',
           latency: '延迟',
           routing: '路由',
@@ -6013,6 +6016,34 @@ export default {
           requestPhaseFailover: '请求阶段快速切号',
           suppressTimeoutHeaders: '屏蔽客户端短超时头',
           streamKeepalive: '流式 keepalive'
+        },
+        codexAutopilot: {
+          title: 'Codex 自动驾驶',
+          description: '根据近期 Codex 请求失败特征自动调整稳定策略；观察模式只记录建议，不实际切换。',
+          enabled: '启用自动驾驶',
+          observeOnly: '仅观察'
+        },
+        openaiPathHealth: {
+          title: 'OpenAI 路径健康熔断',
+          description: '按账号和传输路径记录失败，必要时短暂避开不健康线路。'
+        },
+        openaiFastLane: {
+          title: 'OpenAI 快速线路',
+          description: '为新会话优先选择首 token 和响应头等待更快的账号。'
+        },
+        realtimeBalanceConfirm: {
+          title: '实时余额确认',
+          description: '长会话或高风险场景中，保存前额外确认候选账号余额。',
+          topN: '确认候选数 Top N',
+          timeoutMs: '确认超时（毫秒）'
+        },
+        contextJournal: {
+          title: '上下文日志',
+          description: '记录 Responses 连续上下文，用于安全重放和响应 ID 绑定。',
+          backend: '存储后端',
+          backendMemory: '内存',
+          backendRedis: 'Redis',
+          ttlHours: '保留时长（小时）'
         },
       },
       webSearchEmulation: {

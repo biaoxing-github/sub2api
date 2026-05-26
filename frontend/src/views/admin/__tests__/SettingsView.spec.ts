@@ -645,6 +645,57 @@ describe("admin SettingsView payment visible method controls", () => {
     );
   });
 
+  it("submits OpenAI stability and speed gateway settings", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      codex_autopilot_enabled: true,
+      codex_autopilot_observe_only: false,
+      openai_path_health_circuit_breaker_enabled: true,
+      openai_fast_lane_enabled: true,
+      realtime_balance_confirm_top_n: 5,
+      realtime_balance_confirm_timeout_ms: 1800,
+      context_journal_backend: "redis",
+      context_journal_ttl_hours: 48,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "admin.settings.gatewayForwarding.codexAutopilot.title",
+    );
+    expect(wrapper.text()).toContain(
+      "admin.settings.gatewayForwarding.openaiPathHealth.title",
+    );
+    expect(wrapper.text()).toContain(
+      "admin.settings.gatewayForwarding.openaiFastLane.title",
+    );
+    expect(wrapper.text()).toContain(
+      "admin.settings.gatewayForwarding.realtimeBalanceConfirm.title",
+    );
+    expect(wrapper.text()).toContain(
+      "admin.settings.gatewayForwarding.contextJournal.title",
+    );
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codex_autopilot_enabled: true,
+        codex_autopilot_observe_only: false,
+        openai_path_health_circuit_breaker_enabled: true,
+        openai_fast_lane_enabled: true,
+        realtime_balance_confirm_top_n: 5,
+        realtime_balance_confirm_timeout_ms: 1800,
+        context_journal_backend: "redis",
+        context_journal_ttl_hours: 48,
+      }),
+    );
+  });
+
   it("updates provider enablement immediately and reloads providers", async () => {
     const provider = {
       id: 7,
