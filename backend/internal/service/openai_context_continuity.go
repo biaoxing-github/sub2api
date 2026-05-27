@@ -223,7 +223,7 @@ func (s *OpenAIGatewayService) checkRealtimeBalanceAvailableForContinuity(ctx co
 	if account.Type != AccountTypeAPIKey || !account.IsOpenAI() {
 		return true, false, nil, nil
 	}
-	decision, err := s.realtimeBalanceChecker.CheckAccountSnapshotFirst(ctx, account, RealtimeBalanceCheckOptions{AllowAsyncRefresh: true})
+	decision, err := s.realtimeBalanceChecker.CheckAccountSnapshotFirst(ctx, account, RealtimeBalanceCheckOptions{SnapshotOnly: true})
 	detail = continuityBalanceDetail(decision, err)
 	if err != nil {
 		return false, true, detail, err

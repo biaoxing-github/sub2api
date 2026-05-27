@@ -15,6 +15,7 @@ import (
 
 type upstreamBalanceRefreshOneRepo struct {
 	account       *Account
+	accounts      []Account
 	updateExtraID int64
 	updateExtra   map[string]any
 	bulkUpdateIDs []int64
@@ -49,6 +50,10 @@ func (r *upstreamBalanceRefreshOneRepo) List(context.Context, pagination.Paginat
 	return nil, nil, nil
 }
 func (r *upstreamBalanceRefreshOneRepo) ListWithFilters(context.Context, pagination.PaginationParams, string, string, string, string, int64, string, string) ([]Account, *pagination.PaginationResult, error) {
+	if len(r.accounts) > 0 {
+		copied := append([]Account(nil), r.accounts...)
+		return copied, &pagination.PaginationResult{Total: int64(len(copied))}, nil
+	}
 	return nil, nil, nil
 }
 func (r *upstreamBalanceRefreshOneRepo) ListByGroup(context.Context, int64) ([]Account, error) {
@@ -219,6 +224,33 @@ func TestUpstreamBalanceBaseURLUsesDedicatedBalanceBaseURL(t *testing.T) {
 
 	if got != "https://balance.example.com" {
 		t.Fatalf("upstreamBalanceBaseURL() = %q, want %q", got, "https://balance.example.com")
+	}
+}
+
+func TestUpstreamBalanceServiceRefreshAllHonorsActiveAccountLimit(t *testing.T) {
+	repo := &upstreamBalanceRefreshOneRepo{
+		accounts: []Account{
+			{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-one"}},
+			{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-two"}},
+			{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-three"}},
+		},
+	}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+	svc.activeAccountLimit = 2
+
+	result, err := svc.RefreshAll(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshAll() error = %v", err)
+	}
+	if result.MatchedAccounts != 3 {
+		t.Fatalf("matched accounts = %d, want 3", result.MatchedAccounts)
+	}
+	if result.Refreshed != 2 {
+		t.Fatalf("refreshed = %d, want 2", result.Refreshed)
+	}
+	if len(httpUpstream.requests) != 4 {
+		t.Fatalf("upstream requests = %d, want 4 for two refreshed accounts", len(httpUpstream.requests))
 	}
 }
 

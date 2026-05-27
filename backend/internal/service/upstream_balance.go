@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"golang.org/x/sync/errgroup"
 )
@@ -107,12 +108,18 @@ type UpstreamBalanceRefreshResult struct {
 }
 
 type UpstreamBalanceService struct {
-	accountRepo  AccountRepository
-	httpUpstream HTTPUpstream
-	interval     time.Duration
-	stopCh       chan struct{}
-	stopOnce     sync.Once
-	runMu        sync.Mutex
+	accountRepo         AccountRepository
+	httpUpstream        HTTPUpstream
+	interval            time.Duration
+	// activeAccountLimit 限制定时刷新每轮最多触达的上游账号数，0 表示不限制。
+	activeAccountLimit  int
+	// autoRefreshEnabled 控制后台定时刷新是否启动，手动刷新接口不受影响。
+	autoRefreshEnabled  bool
+	// initialRefreshDelay 避免服务启动后立刻打满上游余额接口。
+	initialRefreshDelay time.Duration
+	stopCh              chan struct{}
+	stopOnce            sync.Once
+	runMu               sync.Mutex
 }
 
 type upstreamAuthContext struct {
@@ -135,21 +142,44 @@ func NewUpstreamBalanceService(accountRepo AccountRepository, httpUpstream HTTPU
 	if interval <= 0 {
 		interval = 30 * time.Minute
 	}
-	return &UpstreamBalanceService{accountRepo: accountRepo, httpUpstream: httpUpstream, interval: interval, stopCh: make(chan struct{})}
+	return &UpstreamBalanceService{
+		accountRepo:         accountRepo,
+		httpUpstream:        httpUpstream,
+		interval:            interval,
+		autoRefreshEnabled:  true,
+		initialRefreshDelay: 90 * time.Second,
+		stopCh:              make(chan struct{}),
+	}
 }
 
-func ProvideUpstreamBalanceService(accountRepo AccountRepository, httpUpstream HTTPUpstream) *UpstreamBalanceService {
-	svc := NewUpstreamBalanceService(accountRepo, httpUpstream, 30*time.Minute)
+func ProvideUpstreamBalanceService(accountRepo AccountRepository, httpUpstream HTTPUpstream, cfg *config.Config) *UpstreamBalanceService {
+	interval := 30 * time.Minute
+	autoRefreshEnabled := true
+	activeAccountLimit := 0
+	if cfg != nil {
+		autoRefreshEnabled = cfg.Gateway.RealtimeBalancePrewarm.Enabled
+		if cfg.Gateway.RealtimeBalancePrewarm.IntervalSeconds > 0 {
+			interval = time.Duration(cfg.Gateway.RealtimeBalancePrewarm.IntervalSeconds) * time.Second
+		}
+		activeAccountLimit = cfg.Gateway.RealtimeBalancePrewarm.ActiveAccountLimit
+	}
+	svc := NewUpstreamBalanceService(accountRepo, httpUpstream, interval)
+	svc.autoRefreshEnabled = autoRefreshEnabled
+	svc.activeAccountLimit = activeAccountLimit
 	svc.Start()
 	return svc
 }
 
 func (s *UpstreamBalanceService) Start() {
-	if s == nil || s.accountRepo == nil || s.httpUpstream == nil {
+	if s == nil || s.accountRepo == nil || s.httpUpstream == nil || !s.autoRefreshEnabled {
 		return
 	}
 	go func() {
-		timer := time.NewTimer(90 * time.Second)
+		delay := s.initialRefreshDelay
+		if delay <= 0 {
+			delay = s.interval
+		}
+		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		for {
 			select {
@@ -185,9 +215,13 @@ func (s *UpstreamBalanceService) RefreshAll(ctx context.Context) (*UpstreamBalan
 	if err != nil {
 		return nil, err
 	}
+	matchedAccounts := len(accounts)
+	if s.activeAccountLimit > 0 && len(accounts) > s.activeAccountLimit {
+		accounts = accounts[:s.activeAccountLimit]
+	}
 
 	now := time.Now().UTC()
-	result := &UpstreamBalanceRefreshResult{GeneratedAt: now, MatchedAccounts: len(accounts)}
+	result := &UpstreamBalanceRefreshResult{GeneratedAt: now, MatchedAccounts: matchedAccounts}
 	var mu sync.Mutex
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(8)

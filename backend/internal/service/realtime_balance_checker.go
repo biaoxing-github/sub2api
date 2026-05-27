@@ -68,6 +68,8 @@ type RealtimeBalanceCheckOptions struct {
 	Now                   time.Time
 	CodexLongSessionStart bool
 	AllowAsyncRefresh     bool
+	// SnapshotOnly 表示只读取账号 extra 中的余额快照，不能在请求热路径触发远端余额刷新。
+	SnapshotOnly          bool
 }
 
 type RealtimeBalanceRefresher interface {
@@ -162,6 +164,9 @@ func (c *RealtimeBalanceChecker) CheckAccountSnapshotFirst(ctx context.Context, 
 		now = time.Now().UTC()
 	}
 	snapshot := UpstreamBalanceSnapshotFromExtra(account.Extra)
+	if options.SnapshotOnly {
+		return c.decisionFromSnapshot(account.ID, snapshot, nil), nil
+	}
 	if isHighRiskRealtimeBalanceSnapshot(snapshot, options, c.drainThresholdUSD) {
 		return c.preflightAccount(ctx, account)
 	}

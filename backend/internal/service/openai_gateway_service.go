@@ -1956,6 +1956,8 @@ func (s *OpenAIGatewayService) hasVerifiedRealtimeBalanceForCandidate(ctx contex
 	if account.Type != AccountTypeAPIKey || !account.IsOpenAI() {
 		return true
 	}
+	options.SnapshotOnly = true
+	options.AllowAsyncRefresh = false
 	snapshot, err := s.realtimeBalanceChecker.CheckAccountSnapshotFirst(ctx, account, options)
 	if err != nil {
 		return false

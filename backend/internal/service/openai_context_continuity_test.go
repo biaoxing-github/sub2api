@@ -2,16 +2,15 @@ package service
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestOpenAIContextContinuityBalanceUnknownIncludesDiagnosticDetail(t *testing.T) {
 	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
-		return nil, errors.New("upstream timeout")
-	}), RealtimeBalanceCheckerOptions{Timeout: time.Second})
+		t.Fatal("continuity balance check must not refresh remote balance on request path")
+		return nil, nil
+	}), RealtimeBalanceCheckerOptions{})
 	svc := &OpenAIGatewayService{realtimeBalanceChecker: checker}
 
 	available, checked, detail, err := svc.checkRealtimeBalanceAvailableForContinuity(
@@ -19,8 +18,8 @@ func TestOpenAIContextContinuityBalanceUnknownIncludesDiagnosticDetail(t *testin
 		&Account{ID: 91, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
 	)
 
-	if err == nil || !strings.Contains(err.Error(), "upstream timeout") {
-		t.Fatalf("error = %v, want upstream timeout", err)
+	if err == nil || !strings.Contains(err.Error(), "realtime balance not verified") {
+		t.Fatalf("error = %v, want local snapshot not verified", err)
 	}
 	if available || !checked {
 		t.Fatalf("available=%v checked=%v, want checked unavailable", available, checked)
@@ -34,8 +33,8 @@ func TestOpenAIContextContinuityBalanceUnknownIncludesDiagnosticDetail(t *testin
 	if detail["replay_safe"] != false {
 		t.Fatalf("detail replay_safe = %v, want false", detail["replay_safe"])
 	}
-	if reason, _ := detail["reason"].(string); !strings.Contains(reason, "upstream timeout") {
-		t.Fatalf("reason = %q, want upstream timeout", reason)
+	if reason, _ := detail["reason"].(string); !strings.Contains(reason, "realtime balance not verified") {
+		t.Fatalf("reason = %q, want local snapshot not verified", reason)
 	}
 }
 
