@@ -176,6 +176,7 @@ type AccountProbeService struct {
 	repo     AccountProbeRepository
 	client   AccountProbeHTTPClient
 	testSvc  *AccountTestService
+	health   *OpenAIPathHealthTracker
 }
 
 var accountProbeBaseURLLocks sync.Map
@@ -184,7 +185,18 @@ func NewAccountProbeService(accounts AccountProbeAccountReader, repo AccountProb
 	if client == nil {
 		client = &http.Client{}
 	}
-	return &AccountProbeService{accounts: accounts, repo: repo, client: client, testSvc: testSvc}
+	service := &AccountProbeService{accounts: accounts, repo: repo, client: client, testSvc: testSvc}
+	if testSvc != nil {
+		service.health = testSvc.openAIPathHealth()
+	}
+	return service
+}
+
+func (s *AccountProbeService) SetOpenAIPathHealthTracker(tracker *OpenAIPathHealthTracker) {
+	if s == nil {
+		return
+	}
+	s.health = tracker
 }
 
 func (s *AccountProbeService) Run(ctx context.Context, req AccountProbeRunRequest) (AccountProbeResult, error) {
@@ -253,6 +265,7 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 		key := keys[idx%len(keys)]
 		baseURL := baseURLs[idx%len(baseURLs)]
 		sample := s.runOpenAIAPIKeySampleWithRetry(ctx, account, baseURL, model, key, planned, useResponses, run.RequestMode)
+		s.recordProbePathHealth(account, baseURL, sample)
 		sample.RunID = run.ID
 		sample.RequestIndex = idx + 1
 		sample.Type = planned.Type
@@ -281,6 +294,26 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 		}
 	}
 	return run, nil
+}
+
+func (s *AccountProbeService) recordProbePathHealth(account *Account, baseURL string, sample AccountProbeSample) {
+	if s == nil || s.health == nil || account == nil {
+		return
+	}
+	key := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), baseURL)
+	headerWait := int64(sample.DurationMillis)
+	if sample.Status == AccountProbeSampleSuccess {
+		s.health.RecordSuccess(key, sample.FirstTokenMillis, &headerWait)
+		return
+	}
+	reason := sample.ErrorMessage
+	if reason == "" && sample.ErrorCode != "" {
+		reason = sample.ErrorCode
+	}
+	if reason == "" && sample.HTTPStatus > 0 {
+		reason = fmt.Sprintf("http_%d", sample.HTTPStatus)
+	}
+	s.health.RecordFailure(key, reason, &headerWait)
 }
 
 func acquireAccountProbeBaseURLLock(ctx context.Context, baseURL string) func() {

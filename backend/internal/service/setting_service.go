@@ -141,6 +141,15 @@ const openAICodexUserAgentCacheTTL = 60 * time.Second
 const openAICodexUserAgentErrorTTL = 5 * time.Second
 const openAICodexUserAgentDBTimeout = 5 * time.Second
 
+type cachedClientRequestDebugLog struct {
+	value     bool
+	expiresAt int64 // unix nano
+}
+
+const clientRequestDebugLogCacheTTL = 60 * time.Second
+const clientRequestDebugLogErrorTTL = 5 * time.Second
+const clientRequestDebugLogDBTimeout = 5 * time.Second
+
 // DefaultSubscriptionGroupReader validates group references used by default subscriptions.
 type DefaultSubscriptionGroupReader interface {
 	GetByID(ctx context.Context, id int64) (*Group, error)
@@ -163,6 +172,8 @@ type SettingService struct {
 	antigravityUAVersionSF    singleflight.Group
 	openAICodexUACache        atomic.Value // *cachedOpenAICodexUserAgent
 	openAICodexUASF           singleflight.Group
+	clientRequestDebugCache   atomic.Value // *cachedClientRequestDebugLog
+	clientRequestDebugSF      singleflight.Group
 }
 
 type ProviderDefaultGrantSettings struct {
@@ -1790,6 +1801,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyRewriteMessageCacheControl] = strconv.FormatBool(settings.RewriteMessageCacheControl)
 	updates[SettingKeyAntigravityUserAgentVersion] = antigravity.NormalizeUserAgentVersion(settings.AntigravityUserAgentVersion)
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
+	updates[SettingKeyClientRequestDebugLogEnabled] = strconv.FormatBool(settings.ClientRequestDebugLogEnabled)
 	updates[SettingKeyCodexStabilityMode] = normalizeCodexStabilityMode(settings.CodexStabilityMode)
 	updates[SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled] = strconv.FormatBool(settings.CodexStabilityDynamicHeaderTimeoutEnabled)
 	updates[SettingKeyCodexStabilityRequestPhaseFailoverEnabled] = strconv.FormatBool(settings.CodexStabilityRequestPhaseFailoverEnabled)
@@ -1919,6 +1931,11 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	s.openAICodexUACache.Store(&cachedOpenAICodexUserAgent{
 		value:     codexUA,
 		expiresAt: time.Now().Add(openAICodexUserAgentCacheTTL).UnixNano(),
+	})
+	s.clientRequestDebugSF.Forget("client_request_debug_log")
+	s.clientRequestDebugCache.Store(&cachedClientRequestDebugLog{
+		value:     settings.ClientRequestDebugLogEnabled,
+		expiresAt: time.Now().Add(clientRequestDebugLogCacheTTL).UnixNano(),
 	})
 	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
@@ -2235,6 +2252,47 @@ func (s *SettingService) IsAnthropicCacheTTL1hInjectionEnabled(ctx context.Conte
 // IsRewriteMessageCacheControlEnabled 检查是否启用 messages cache_control 改写。
 func (s *SettingService) IsRewriteMessageCacheControlEnabled(ctx context.Context) bool {
 	return s.getGatewayForwardingSettingsCached(ctx).rewriteMessageCacheControl
+}
+
+func (s *SettingService) ClientRequestDebugLogEnabled() bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	if cached, ok := s.clientRequestDebugCache.Load().(*cachedClientRequestDebugLog); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.value
+		}
+	}
+	result, _, _ := s.clientRequestDebugSF.Do("client_request_debug_log", func() (any, error) {
+		if cached, ok := s.clientRequestDebugCache.Load().(*cachedClientRequestDebugLog); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.value, nil
+			}
+		}
+		dbCtx, cancel := context.WithTimeout(context.Background(), clientRequestDebugLogDBTimeout)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyClientRequestDebugLogEnabled)
+		if err != nil {
+			if !errors.Is(err, ErrSettingNotFound) {
+				slog.Warn("failed to get client request debug log setting", "error", err)
+			}
+			s.clientRequestDebugCache.Store(&cachedClientRequestDebugLog{
+				value:     false,
+				expiresAt: time.Now().Add(clientRequestDebugLogErrorTTL).UnixNano(),
+			})
+			return false, nil
+		}
+		enabled := value == "true"
+		s.clientRequestDebugCache.Store(&cachedClientRequestDebugLog{
+			value:     enabled,
+			expiresAt: time.Now().Add(clientRequestDebugLogCacheTTL).UnixNano(),
+		})
+		return enabled, nil
+	})
+	if enabled, ok := result.(bool); ok {
+		return enabled
+	}
+	return false
 }
 
 // IsEmailVerifyEnabled 检查是否开启邮件验证
@@ -2716,6 +2774,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRewriteMessageCacheControl:                 strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyAntigravityUserAgentVersion:                "",
 		SettingKeyOpenAICodexUserAgent:                       "",
+		SettingKeyClientRequestDebugLogEnabled:               "false",
 		SettingKeyCodexStabilityMode:                         config.GatewayCodexStabilityModeCodex,
 		SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled:  "true",
 		SettingKeyCodexStabilityRequestPhaseFailoverEnabled:  "true",
@@ -3274,6 +3333,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result.AntigravityUserAgentVersion = antigravity.NormalizeUserAgentVersion(settings[SettingKeyAntigravityUserAgentVersion])
 	result.OpenAICodexUserAgent = strings.TrimSpace(settings[SettingKeyOpenAICodexUserAgent])
+	result.ClientRequestDebugLogEnabled = settings[SettingKeyClientRequestDebugLogEnabled] == "true"
 	result.CodexStabilityMode = normalizeCodexStabilityMode(settings[SettingKeyCodexStabilityMode])
 	result.CodexStabilityDynamicHeaderTimeoutEnabled = !isFalseSettingValue(settings[SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled])
 	result.CodexStabilityRequestPhaseFailoverEnabled = !isFalseSettingValue(settings[SettingKeyCodexStabilityRequestPhaseFailoverEnabled])

@@ -200,7 +200,34 @@ function diagnosisSectionTone(key: string): string {
 }
 
 function formatDiagnosisKey(key: string): string {
-  return key.replace(/_/g, ' ')
+  const labels: Record<string, string> = {
+    context_migration_class: t('admin.ops.requestDetails.codexDiagnosis.labels.contextMigrationClass'),
+    context_migration_reason: t('admin.ops.requestDetails.codexDiagnosis.labels.contextMigrationReason'),
+    context_continuity: t('admin.ops.requestDetails.codexDiagnosis.labels.contextContinuity'),
+    continuity_state: t('admin.ops.requestDetails.codexDiagnosis.labels.contextContinuity'),
+    has_previous_response_id: t('admin.ops.requestDetails.codexDiagnosis.labels.hasPreviousResponseId'),
+    previous_response_id_kind: t('admin.ops.requestDetails.codexDiagnosis.labels.previousResponseIdKind'),
+    has_full_input: t('admin.ops.requestDetails.codexDiagnosis.labels.hasFullInput'),
+    input_item_count: t('admin.ops.requestDetails.codexDiagnosis.labels.inputItemCount'),
+    request_body_bytes: t('admin.ops.requestDetails.codexDiagnosis.labels.requestBodyBytes'),
+    snapshot_available: t('admin.ops.requestDetails.codexDiagnosis.labels.snapshotAvailable'),
+    snapshot_replayable: t('admin.ops.requestDetails.codexDiagnosis.labels.snapshotReplayable'),
+    already_streamed_to_client: t('admin.ops.requestDetails.codexDiagnosis.labels.alreadyStreamed'),
+    base_url_failover_count: t('admin.ops.requestDetails.codexDiagnosis.labels.baseURLFailoverCount'),
+    last_base_url_failover_reason: t('admin.ops.requestDetails.codexDiagnosis.labels.lastBaseURLFailoverReason'),
+    last_base_url_failover_url: t('admin.ops.requestDetails.codexDiagnosis.labels.lastBaseURLFailoverURL'),
+    path_health_state: t('admin.ops.requestDetails.codexDiagnosis.labels.pathHealthState'),
+    path_health_ttft_ewma_ms: t('admin.ops.requestDetails.codexDiagnosis.labels.pathHealthTTFT'),
+    path_health_header_wait_ewma_ms: t('admin.ops.requestDetails.codexDiagnosis.labels.pathHealthHeaderWait'),
+    selected_request_base_url: t('admin.ops.requestDetails.codexDiagnosis.labels.selectedRequestBaseURL'),
+    selected_base_url: t('admin.ops.requestDetails.codexDiagnosis.labels.selectedRequestBaseURL'),
+    selected_account_id: t('admin.ops.requestDetails.codexDiagnosis.labels.selectedAccountId'),
+    selected_account_name: t('admin.ops.requestDetails.codexDiagnosis.labels.selectedAccountName'),
+    candidate_accounts: t('admin.ops.requestDetails.codexDiagnosis.labels.candidateAccounts'),
+    candidate_base_urls: t('admin.ops.requestDetails.codexDiagnosis.labels.candidateBaseURLs'),
+    skipped_reasons: t('admin.ops.requestDetails.codexDiagnosis.labels.skippedReasons'),
+  }
+  return labels[key] || key.replace(/_/g, ' ')
 }
 
 function formatDiagnosisValue(key: string, value: unknown): string {

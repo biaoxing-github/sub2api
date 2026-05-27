@@ -183,6 +183,7 @@ type SystemSettings struct {
 	RewriteMessageCacheControl                 bool    `json:"rewrite_message_cache_control"`
 	AntigravityUserAgentVersion                string  `json:"antigravity_user_agent_version"`
 	OpenAICodexUserAgent                       string  `json:"openai_codex_user_agent"`
+	ClientRequestDebugLogEnabled               bool    `json:"client_request_debug_log_enabled"`
 	CodexStabilityMode                         string  `json:"codex_stability_mode"`
 	CodexStabilityDynamicHeaderTimeoutEnabled  bool    `json:"codex_stability_dynamic_header_timeout_enabled"`
 	CodexStabilityRequestPhaseFailoverEnabled  bool    `json:"codex_stability_request_phase_failover_enabled"`

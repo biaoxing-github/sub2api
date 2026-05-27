@@ -285,6 +285,42 @@ func TestAccountProbeService_RunOpenAIAPIKeyStreamModeRecordsFirstToken(t *testi
 	require.Contains(t, client.bodies[0], `"stream":true`)
 }
 
+func TestAccountProbeService_RunFeedsOpenAIPathHealth(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "encore",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://path-health.example.test/v1",
+			"api_key":  "sk-one",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true})
+	repo := &accountProbeRepoStub{}
+	client := &accountProbeStreamHTTPClientStub{}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+	svc.SetOpenAIPathHealthTracker(tracker)
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID:   128,
+		Profile:     AccountProbeProfileQuick,
+		Model:       "gpt-test",
+		RequestMode: AccountProbeRequestModeStream,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeStatusSuccess, result.Status)
+	snapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), "https://path-health.example.test/v1"))
+	require.Equal(t, int64(1), snapshot.SuccessCount)
+	require.Equal(t, int64(1), snapshot.Samples)
+	require.Greater(t, snapshot.TTFTEWMAMs, 0.0)
+}
+
 func TestAccountProbeService_RetriesTransientProbeFailure(t *testing.T) {
 	t.Parallel()
 

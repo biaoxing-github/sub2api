@@ -66,6 +66,9 @@ type OpenAIAccountScheduleDecision struct {
 	ContinuityDetail        map[string]any
 	ContinuityFromAccountID int64
 	ContinuityReplayBody    []byte
+	ContextMigrationClass   string
+	ContextMigrationReason  string
+	ContextMigrationDetail  map[string]any
 	BalanceConfirmSource    string
 	BalanceConfirmTopN      int
 	BalanceConfirmLatencyMs int64

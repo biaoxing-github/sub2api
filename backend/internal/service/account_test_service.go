@@ -70,6 +70,7 @@ type AccountTestService struct {
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
 	tlsFPProfileService       *TLSFingerprintProfileService
+	openAIPathHealthTracker   *OpenAIPathHealthTracker
 }
 
 // NewAccountTestService creates a new AccountTestService
@@ -109,6 +110,20 @@ func (s *AccountTestService) validateUpstreamBaseURL(raw string) (string, error)
 		return "", err
 	}
 	return normalized, nil
+}
+
+func (s *AccountTestService) SetOpenAIPathHealthTracker(tracker *OpenAIPathHealthTracker) {
+	if s == nil {
+		return
+	}
+	s.openAIPathHealthTracker = tracker
+}
+
+func (s *AccountTestService) openAIPathHealth() *OpenAIPathHealthTracker {
+	if s == nil {
+		return nil
+	}
+	return s.openAIPathHealthTracker
 }
 
 // generateSessionString generates a Claude Code style session string.

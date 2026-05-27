@@ -165,7 +165,7 @@ func TestOpenAIPathHealthScheduleFailureReportDoesNotDoubleCount(t *testing.T) {
 	tracker.RecordFailure(key, OpenAIPathFailureHTTP429, nil)
 
 	svc := &OpenAIGatewayService{
-		accountRepo:       schedulerTestOpenAIAccountRepo{accounts: []Account{*account}},
+		accountRepo:      schedulerTestOpenAIAccountRepo{accounts: []Account{*account}},
 		openaiPathHealth: tracker,
 	}
 	svc.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
@@ -279,5 +279,25 @@ func TestOpenAIPathHealthDefaultTransportMatchesHTTPSSE(t *testing.T) {
 	key := OpenAIPathHealthKeyForAccount(&Account{ID: 1}, string(OpenAIUpstreamTransportAny))
 	if key.Transport != string(OpenAIUpstreamTransportHTTPSSE) {
 		t.Fatalf("transport = %q, want %q", key.Transport, OpenAIUpstreamTransportHTTPSSE)
+	}
+}
+
+func TestOpenAIPathHealthKeyForAccountBaseURLUsesRequestURL(t *testing.T) {
+	account := &Account{
+		ID:       12,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://primary.example.com/v1",
+		},
+	}
+
+	key := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), " https://fast.example.com/v1/ ")
+
+	if key.AccountID != 12 {
+		t.Fatalf("AccountID = %d, want 12", key.AccountID)
+	}
+	if key.Upstream != "https://fast.example.com/v1/" {
+		t.Fatalf("Upstream = %q", key.Upstream)
 	}
 }

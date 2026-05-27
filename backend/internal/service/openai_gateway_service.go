@@ -467,6 +467,13 @@ func (s *OpenAIGatewayService) SnapshotOpenAIPathHealthForAccount(account *Accou
 	return snapshot, true
 }
 
+func (s *OpenAIGatewayService) OpenAIPathHealthTracker() *OpenAIPathHealthTracker {
+	if s == nil {
+		return nil
+	}
+	return s.openaiPathHealth
+}
+
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）
 func (s *OpenAIGatewayService) ResolveChannelMapping(ctx context.Context, groupID int64, model string) ChannelMappingResult {
 	if s.channelService == nil {
@@ -2819,7 +2826,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	httpInvalidEncryptedContentRetryTried := false
-	requestBaseURLs := openAIRequestBaseURLsForForward(account)
+	requestBaseURLs := s.orderedOpenAIRequestBaseURLsForForward(account, OpenAIUpstreamTransportHTTPSSE)
 	for urlIdx := 0; urlIdx < len(requestBaseURLs); urlIdx++ {
 		requestBaseURL := requestBaseURLs[urlIdx]
 		// Build upstream request
@@ -2838,7 +2845,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
-		resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body, stabilityPolicy)
+		resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body, stabilityPolicy, requestBaseURL)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -2987,6 +2994,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		if usage == nil {
 			usage = &OpenAIUsage{}
+		}
+		if firstTokenMs != nil {
+			s.recordOpenAIPathHealthFirstToken(account, requestBaseURL, firstTokenMs)
 		}
 
 		forwardResult := &OpenAIForwardResult{
@@ -3176,8 +3186,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		c.Set("openai_passthrough", true)
 	}
 
-	requestBaseURLs := openAIRequestBaseURLsForForward(account)
+	requestBaseURLs := s.orderedOpenAIRequestBaseURLsForForward(account, OpenAIUpstreamTransportHTTPSSE)
 	var resp *http.Response
+	selectedRequestBaseURL := ""
 	for urlIdx := 0; urlIdx < len(requestBaseURLs); urlIdx++ {
 		requestBaseURL := requestBaseURLs[urlIdx]
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
@@ -3188,7 +3199,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 
 		upstreamStart := time.Now()
-		resp, err = s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body, stabilityPolicy)
+		resp, err = s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body, stabilityPolicy, requestBaseURL)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -3226,6 +3237,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			})
 			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 		}
+		selectedRequestBaseURL = requestBaseURL
 		if resp != nil && resp.StatusCode >= 400 {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 			_ = resp.Body.Close()
@@ -3293,6 +3305,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	if usage == nil {
 		usage = &OpenAIUsage{}
+	}
+	if firstTokenMs != nil {
+		s.recordOpenAIPathHealthFirstToken(account, selectedRequestBaseURL, firstTokenMs)
 	}
 
 	forwardResult := &OpenAIForwardResult{
@@ -3742,6 +3757,87 @@ func openAIRequestBaseURLsForForward(account *Account) []string {
 	return []string{""}
 }
 
+type openAIRequestBaseURLCandidate struct {
+	URL       string
+	Index     int
+	State     string
+	Score     float64
+	HasSample bool
+	Samples   int64
+}
+
+func (s *OpenAIGatewayService) orderedOpenAIRequestBaseURLsForForward(account *Account, transport OpenAIUpstreamTransport) []string {
+	urls := openAIRequestBaseURLsForForward(account)
+	if len(urls) <= 1 || s == nil || s.openaiPathHealth == nil || !s.openAIPathHealthEnabled() {
+		return urls
+	}
+	fastLaneEnabled := s.openAIFastLaneEnabled(OpenAIAccountScheduleRequest{})
+	candidates := make([]openAIRequestBaseURLCandidate, 0, len(urls))
+	for idx, rawURL := range urls {
+		key := OpenAIPathHealthKeyForAccountBaseURL(account, string(transport), rawURL)
+		snapshot := s.openaiPathHealth.Snapshot(key)
+		var score float64
+		var hasSample bool
+		if fastLaneEnabled {
+			score, hasSample = s.openaiPathHealth.ScoreBoost(
+				key,
+				int64(s.openAIFastLaneMinSamples()),
+				s.openAIFastLaneTTFTWeight(),
+				s.openAIFastLaneHeaderWaitWeight(),
+			)
+		}
+		candidates = append(candidates, openAIRequestBaseURLCandidate{
+			URL:       rawURL,
+			Index:     idx,
+			State:     snapshot.State,
+			Score:     score,
+			HasSample: hasSample,
+			Samples:   snapshot.Samples,
+		})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left := candidates[i]
+		right := candidates[j]
+		if rankOpenAIPathHealthState(left.State) != rankOpenAIPathHealthState(right.State) {
+			return rankOpenAIPathHealthState(left.State) < rankOpenAIPathHealthState(right.State)
+		}
+		if left.HasSample != right.HasSample {
+			return left.HasSample
+		}
+		if left.Score != right.Score {
+			return left.Score > right.Score
+		}
+		if left.Samples != right.Samples {
+			return left.Samples > right.Samples
+		}
+		return left.Index < right.Index
+	})
+	ordered := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		ordered = append(ordered, candidate.URL)
+	}
+	return ordered
+}
+
+func (s *OpenAIGatewayService) openAIPathHealthEnabled() bool {
+	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIPathHealth.Enabled && s.openaiPathHealth != nil
+}
+
+func rankOpenAIPathHealthState(state string) int {
+	switch strings.TrimSpace(state) {
+	case OpenAIPathHealthStateHealthy, "":
+		return 0
+	case OpenAIPathHealthStateHalfOpen:
+		return 1
+	case OpenAIPathHealthStateDegraded:
+		return 2
+	case OpenAIPathHealthStateOpenCircuit:
+		return 3
+	default:
+		return 1
+	}
+}
+
 func shouldFailoverOpenAIRequestBaseURLResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	switch statusCode {
 	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 520, 522, 523, 524, 529:
@@ -3883,6 +3979,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	account *Account,
 	body []byte,
 	stabilityPolicy openAICodexStabilityPolicy,
+	requestBaseURL string,
 ) (*http.Response, error) {
 	if s == nil || s.httpUpstream == nil {
 		return nil, errors.New("http upstream not configured")
@@ -3892,7 +3989,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	}
 	timeout := s.openAIRequestHeaderTimeoutForBodyWithPolicy(body, stabilityPolicy)
 	upstreamStart := time.Now()
-	pathKey := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	pathKey := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), requestBaseURL)
 	if timeout <= 0 {
 		accountID, accountConcurrency := openAIRequestAccountParams(account)
 		resp, err := s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
@@ -3974,6 +4071,14 @@ func (s *OpenAIGatewayService) recordOpenAIPathHealthFromUpstreamResult(key Open
 		}
 		s.openaiPathHealth.RecordSuccess(key, nil, headerWaitMs)
 	}
+}
+
+func (s *OpenAIGatewayService) recordOpenAIPathHealthFirstToken(account *Account, requestBaseURL string, firstTokenMs *int) {
+	if s == nil || s.openaiPathHealth == nil || account == nil || firstTokenMs == nil || *firstTokenMs <= 0 {
+		return
+	}
+	key := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), requestBaseURL)
+	s.openaiPathHealth.RecordSuccess(key, firstTokenMs, nil)
 }
 
 type openAIRequestCancelOnCloseBody struct {

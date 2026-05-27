@@ -140,12 +140,14 @@ func TestSetOpenAIContinuityHeaders(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 
 	setOpenAIContinuityHeaders(c, service.OpenAIAccountScheduleDecision{
-		ContinuityAction: service.OpenAIContinuityActionReplay,
-		ContinuityReason: service.OpenAIContinuityReasonBalanceExhausted,
+		ContinuityAction:      service.OpenAIContinuityActionReplay,
+		ContinuityReason:      service.OpenAIContinuityReasonBalanceExhausted,
+		ContextMigrationClass: service.OpenAIContextMigrationPortableFull,
 	}, 43102)
 
 	require.Equal(t, service.OpenAIContinuityActionReplay, w.Header().Get("X-Sub2API-Continuity-Action"))
 	require.Equal(t, service.OpenAIContinuityReasonBalanceExhausted, w.Header().Get("X-Sub2API-Continuity-Reason"))
+	require.Equal(t, service.OpenAIContextMigrationPortableFull, w.Header().Get("X-Sub2API-Context-Migration"))
 	require.Equal(t, "43102", w.Header().Get("X-Sub2API-Upstream-Account"))
 }
 

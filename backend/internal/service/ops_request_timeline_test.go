@@ -146,3 +146,40 @@ func TestOpsServiceGetCodexDiagnosisTreatsContextDeadlineAsUpstreamTimeout(t *te
 		t.Fatalf("status = %q, want upstream_timeout, diagnosis=%#v", diagnosis.Status, diagnosis)
 	}
 }
+
+func TestOpsServiceGetCodexDiagnosisIncludesBaseURLFailover(t *testing.T) {
+	startedAt := time.Date(2026, 5, 27, 9, 0, 0, 0, time.UTC)
+	statusCode := 502
+	svc := NewOpsService(&opsRepoMock{
+		ListRequestDetailsFn: func(ctx context.Context, filter *OpsRequestDetailFilter) ([]*OpsRequestDetail, int64, error) {
+			return []*OpsRequestDetail{{
+				Kind:       OpsRequestKindError,
+				CreatedAt:  startedAt,
+				RequestID:  "req_baseurl_failover",
+				Platform:   PlatformOpenAI,
+				StatusCode: &statusCode,
+				Message:    "unexpected EOF",
+				Stream:     true,
+				UpstreamErrors: []*OpsUpstreamErrorEvent{{
+					AtUnixMs:  startedAt.Add(time.Second).UnixMilli(),
+					Platform:  PlatformOpenAI,
+					Kind:      "base_url_failover",
+					Message:   "unexpected EOF",
+					Detail:    "https://bad.example.com/v1",
+					AccountID: 99,
+				}},
+			}}, 1, nil
+		},
+	}, nil, &config.Config{Ops: config.OpsConfig{Enabled: true}}, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	diagnosis, err := svc.GetCodexDiagnosis(context.Background(), "req_baseurl_failover")
+	if err != nil {
+		t.Fatalf("GetCodexDiagnosis() error = %v", err)
+	}
+	if diagnosis.Path["base_url_failover_count"] != 1 {
+		t.Fatalf("path = %+v", diagnosis.Path)
+	}
+	if diagnosis.Path["last_base_url_failover_detail"] != "https://bad.example.com/v1" {
+		t.Fatalf("path = %+v", diagnosis.Path)
+	}
+}

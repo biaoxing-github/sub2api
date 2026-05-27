@@ -311,6 +311,7 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 		return diagnosis, nil
 	}
 	var lastReason string
+	baseURLFailoverCount := 0
 	for _, event := range timeline.Events {
 		if event.Reason != "" {
 			lastReason = event.Reason
@@ -326,19 +327,34 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 		}
 		for key, value := range event.Details {
 			switch key {
-			case "status_code", "stream", "model", "platform", "upstream_status_code", "upstream_error_message", "upstream_error_detail":
+			case "status_code", "stream", "model", "platform", "upstream_status_code", "upstream_error_message", "upstream_error_detail", "upstream_request_id", "request_base_url", "selected_base_url", "base_url", "base_url_score", "base_url_state", "path_health_state", "path_health_samples", "path_health_ttft_ewma_ms", "path_health_header_wait_ewma_ms", "base_url_failover", "base_url_failover_count", "last_base_url_failover_reason", "last_base_url_failover_detail", "last_base_url_failover_url":
 				diagnosis.Path[key] = value
 				if key == "upstream_error_detail" {
 					mergeCodexDiagnosisDetailMaps(diagnosis, value)
 				}
 			case "duration_ms", "first_token_ms", "time_to_first_token_ms", "ttft_ms", "header_wait_ms", "auth_latency_ms", "routing_latency_ms", "upstream_latency_ms", "response_latency_ms":
 				diagnosis.Latency[key] = value
-			case "context_replay_reason", "context_continuity", "journal_reason", "replay_safe", "protected", "reason", "context_from_account_id", "context_journal_backend", "context_journal_turn_count", "context_journal_session_bytes", "context_journal_max_session_bytes", "context_journal_overflow":
+			case "context_replay_reason", "context_continuity", "continuity", "continuity_state", "continuity_reason", "context_migration", "context_migration_class", "context_migration_reason", "has_previous_response_id", "previous_response_id_kind", "previous_response_id_len", "has_full_input", "input_item_count", "message_item_count", "function_call_output_count", "custom_tool_call_output_count", "reasoning_item_count", "request_body_bytes", "snapshot_available", "snapshot_id", "snapshot_replayable", "snapshot_replay_block_reason", "already_streamed_to_client", "input_type_counts", "journal_reason", "replay_safe", "protected", "reason", "context_from_account_id", "context_journal_backend", "context_journal_turn_count", "context_journal_session_bytes", "context_journal_max_session_bytes", "context_journal_overflow", "request_type", "session_hash", "prompt_cache_key":
 				diagnosis.Context[key] = value
-			case "requested_model", "upstream_endpoint", "user_id", "api_key_id", "group_id":
+			case "requested_model", "upstream_endpoint", "user_id", "api_key_id", "group_id", "route", "route_mode", "route_reason", "selected_route", "candidate_accounts", "candidate_base_urls", "skipped_reasons", "selected_account_id", "selected_account_name", "selected_request_base_url", "account_score", "scheduler_profile", "balance_check_result", "failover_count", "account_failover_count", "switch_account_count":
 				diagnosis.Routing[key] = value
 			case "input_tokens", "output_tokens", "total_tokens", "total_cost", "actual_cost", "balance_state", "available", "threshold", "balance_confirm_source", "balance_confirm_top_n", "balance_confirm_latency_ms", "balance_confirm_reason":
 				diagnosis.Usage[key] = value
+			}
+		}
+		if event.Phase == "upstream" && strings.Contains(event.EventType, "base_url_failover") {
+			baseURLFailoverCount++
+			diagnosis.Path["base_url_failover_count"] = baseURLFailoverCount
+			if event.Reason != "" {
+				diagnosis.Path["last_base_url_failover_reason"] = event.Reason
+			}
+			if event.Details != nil {
+				if detail, ok := event.Details["detail"]; ok {
+					diagnosis.Path["last_base_url_failover_detail"] = detail
+				}
+				if upstreamURL, ok := event.Details["upstream_url"]; ok {
+					diagnosis.Path["last_base_url_failover_url"] = upstreamURL
+				}
 			}
 		}
 	}
@@ -449,6 +465,7 @@ func appendOpsRequestUpstreamErrorEvents(timeline *OpsRequestTimeline, item *Ops
 				"upstream_status_code": ev.UpstreamStatusCode,
 				"upstream_request_id":  strings.TrimSpace(ev.UpstreamRequestID),
 				"upstream_url":         strings.TrimSpace(ev.UpstreamURL),
+				"detail":               strings.TrimSpace(ev.Detail),
 				"message":              reason,
 			},
 		})
@@ -474,10 +491,14 @@ func mergeCodexDiagnosisDetailMaps(diagnosis *OpsCodexDiagnosis, value any) {
 		}
 		for key, item := range detail {
 			switch strings.TrimSpace(key) {
-			case "context_replay_reason", "context_continuity", "journal_reason", "replay_safe", "protected", "reason", "context_from_account_id", "context_journal_backend", "context_journal_turn_count", "context_journal_session_bytes", "context_journal_max_session_bytes", "context_journal_overflow":
+			case "context_replay_reason", "context_continuity", "continuity", "continuity_state", "continuity_reason", "context_migration", "context_migration_class", "context_migration_reason", "has_previous_response_id", "previous_response_id_kind", "previous_response_id_len", "has_full_input", "input_item_count", "message_item_count", "function_call_output_count", "custom_tool_call_output_count", "reasoning_item_count", "request_body_bytes", "snapshot_available", "snapshot_id", "snapshot_replayable", "snapshot_replay_block_reason", "already_streamed_to_client", "input_type_counts", "journal_reason", "replay_safe", "protected", "reason", "context_from_account_id", "context_journal_backend", "context_journal_turn_count", "context_journal_session_bytes", "context_journal_max_session_bytes", "context_journal_overflow", "request_type", "session_hash", "prompt_cache_key":
 				diagnosis.Context[key] = item
 			case "balance_state", "available", "threshold", "balance_confirm_source", "balance_confirm_top_n", "balance_confirm_latency_ms", "balance_confirm_reason":
 				diagnosis.Usage[key] = item
+			case "request_base_url", "selected_base_url", "base_url", "base_url_score", "base_url_state", "path_health_state", "path_health_samples", "path_health_ttft_ewma_ms", "path_health_header_wait_ewma_ms", "base_url_failover", "base_url_failover_count", "last_base_url_failover_reason", "last_base_url_failover_detail", "last_base_url_failover_url":
+				diagnosis.Path[key] = item
+			case "route", "route_mode", "route_reason", "selected_route", "candidate_accounts", "candidate_base_urls", "skipped_reasons", "selected_account_id", "selected_account_name", "selected_request_base_url", "account_score", "scheduler_profile", "balance_check_result", "failover_count", "account_failover_count", "switch_account_count":
+				diagnosis.Routing[key] = item
 			}
 		}
 	}

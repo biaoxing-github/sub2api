@@ -63,3 +63,29 @@ func TestOpenAIContextContinuityReplayBodyReportsProtectedReasonDetail(t *testin
 		t.Fatalf("detail = %+v", detail)
 	}
 }
+
+func TestOpenAIContextContinuityReplayBodyAllowsPortableFullWithoutPreviousResponseID(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	requestBody := []byte(`{"model":"gpt-5.5","input":[{"type":"message","role":"user"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}`)
+
+	body, reason, detail, ok := svc.buildOpenAIContinuityReplayBody(
+		context.Background(),
+		nil,
+		"",
+		"session_hash",
+		requestBody,
+	)
+
+	if !ok {
+		t.Fatalf("ok=false reason=%q detail=%+v", reason, detail)
+	}
+	if string(body) != string(requestBody) {
+		t.Fatalf("body = %s, want original request body", string(body))
+	}
+	if detail["context_migration_class"] != OpenAIContextMigrationPortableFull {
+		t.Fatalf("detail = %+v", detail)
+	}
+	if detail["replay_safe"] != true {
+		t.Fatalf("replay_safe = %v, want true", detail["replay_safe"])
+	}
+}

@@ -54,6 +54,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 	requireCompact bool,
 	requestBody []byte,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	migration := ClassifyOpenAIContextMigration(requestBody, false)
 	selection, decision, err := s.SelectAccountWithScheduler(
 		ctx,
 		groupID,
@@ -64,6 +65,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 		requiredTransport,
 		requireCompact,
 	)
+	applyOpenAIContextMigrationToDecision(&decision, migration)
 	if err != nil || selection == nil || selection.Account == nil {
 		return selection, decision, err
 	}
@@ -82,7 +84,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 					releaseOpenAISelection(selection)
 					decision.ContinuityAction = OpenAIContinuityActionProtected
 					decision.ContinuityReason = replayReason
-					decision.ContinuityDetail = replayDetail
+					decision.ContinuityDetail = mergeContinuityDetails(migration.DetailMap(), replayDetail)
 					decision.ContinuityFromAccountID = fromAccountID
 					return nil, decision, &OpenAIContextContinuityError{
 						Code:               "context_replay_not_safe",
@@ -91,18 +93,19 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 						PreviousResponseID: previousResponseID,
 						CurrentAccountID:   fromAccountID,
 						Reason:             replayReason,
-						Detail:             replayDetail,
+						Detail:             decision.ContinuityDetail,
 					}
 				}
 				decision.ContinuityAction = OpenAIContinuityActionReplay
 				decision.ContinuityReason = OpenAIContinuityReasonBalanceExhausted
-				decision.ContinuityDetail = replayDetail
+				decision.ContinuityDetail = mergeContinuityDetails(migration.DetailMap(), replayDetail)
 				decision.ContinuityFromAccountID = fromAccountID
 				decision.ContinuityReplayBody = cloneBytes(replayBody)
 				return selection, decision, nil
 			}
 		}
 		decision.ContinuityAction = OpenAIContinuityActionNewSession
+		decision.ContinuityDetail = mergeContinuityDetails(decision.ContinuityDetail, migration.DetailMap())
 		return selection, decision, nil
 	}
 
@@ -111,19 +114,19 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 	if !checked {
 		decision.ContinuityAction = OpenAIContinuityActionSticky
 		decision.ContinuityReason = OpenAIContinuityReasonBalanceOK
-		decision.ContinuityDetail = balanceDetail
+		decision.ContinuityDetail = mergeContinuityDetails(migration.DetailMap(), balanceDetail)
 		return selection, decision, nil
 	}
 	if checkErr != nil {
 		decision.ContinuityAction = OpenAIContinuityActionSticky
 		decision.ContinuityReason = OpenAIContinuityReasonBalanceUnknown
-		decision.ContinuityDetail = balanceDetail
+		decision.ContinuityDetail = mergeContinuityDetails(migration.DetailMap(), balanceDetail)
 		return selection, decision, nil
 	}
 	if available {
 		decision.ContinuityAction = OpenAIContinuityActionSticky
 		decision.ContinuityReason = OpenAIContinuityReasonBalanceOK
-		decision.ContinuityDetail = balanceDetail
+		decision.ContinuityDetail = mergeContinuityDetails(migration.DetailMap(), balanceDetail)
 		return selection, decision, nil
 	}
 
@@ -135,7 +138,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 		}
 		decision.ContinuityAction = OpenAIContinuityActionProtected
 		decision.ContinuityReason = replayReason
-		decision.ContinuityDetail = mergeContinuityDetails(balanceDetail, replayDetail)
+		decision.ContinuityDetail = mergeContinuityDetails(migration.DetailMap(), balanceDetail, replayDetail)
 		decision.ContinuityFromAccountID = account.ID
 		return nil, decision, &OpenAIContextContinuityError{
 			Code:               "context_replay_not_safe",
@@ -164,12 +167,14 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 		requireCompact,
 	)
 	if selectErr != nil || nextSelection == nil || nextSelection.Account == nil {
+		applyOpenAIContextMigrationToDecision(&nextDecision, migration)
 		nextDecision.ContinuityAction = OpenAIContinuityActionProtected
 		nextDecision.ContinuityReason = OpenAIContinuityReasonBalanceExhausted
-		nextDecision.ContinuityDetail = balanceDetail
+		nextDecision.ContinuityDetail = mergeContinuityDetails(migration.DetailMap(), balanceDetail)
 		nextDecision.ContinuityFromAccountID = account.ID
 		return nextSelection, nextDecision, selectErr
 	}
+	applyOpenAIContextMigrationToDecision(&nextDecision, migration)
 	if nextDecision.Layer == openAIAccountScheduleLayerLoadBalance &&
 		strings.TrimSpace(previousResponseID) != "" &&
 		nextSelection.Account.ID != account.ID {
@@ -177,7 +182,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 	}
 	nextDecision.ContinuityAction = OpenAIContinuityActionReplay
 	nextDecision.ContinuityReason = OpenAIContinuityReasonBalanceExhausted
-	nextDecision.ContinuityDetail = mergeContinuityDetails(balanceDetail, replayDetail)
+	nextDecision.ContinuityDetail = mergeContinuityDetails(migration.DetailMap(), balanceDetail, replayDetail)
 	nextDecision.ContinuityFromAccountID = account.ID
 	if len(nextDecision.ContinuityReplayBody) == 0 {
 		nextDecision.ContinuityReplayBody = cloneBytes(replayBody)
@@ -240,9 +245,10 @@ func (s *OpenAIGatewayService) buildOpenAIContinuityReplayBody(
 	sessionHash string,
 	requestBody []byte,
 ) ([]byte, string, map[string]any, bool) {
-	if ClassifyContextReplaySafety(requestBody) != ContextReplaySafe {
+	migration := ClassifyOpenAIContextMigration(requestBody, false)
+	if !migration.IsPortable() && ClassifyContextReplaySafety(requestBody) != ContextReplaySafe {
 		reason := OpenAIContinuityReasonReplayNotSafe
-		return nil, reason, continuityReplayDetail(false, true, reason), false
+		return nil, reason, mergeContinuityDetails(migration.DetailMap(), continuityReplayDetail(false, true, reason)), false
 	}
 
 	responseID := strings.TrimSpace(previousResponseID)
@@ -256,6 +262,7 @@ func (s *OpenAIGatewayService) buildOpenAIContinuityReplayBody(
 			reason := OpenAIContinuityReasonJournalMissing
 			return nil, reason, continuityReplayDetail(false, true, reason), false
 		}
+		migration = markOpenAIContextMigrationSnapshotReplayable(migration, "context_journal_response_snapshot_replayable")
 	}
 
 	replayBody := cloneBytes(requestBody)
@@ -267,11 +274,24 @@ func (s *OpenAIGatewayService) buildOpenAIContinuityReplayBody(
 		}
 		replayBody = updated
 	}
-	if ClassifyContextReplaySafety(replayBody) != ContextReplaySafe {
+	replayMigration := ClassifyOpenAIContextMigration(replayBody, false)
+	if !replayMigration.IsPortable() && ClassifyContextReplaySafety(replayBody) != ContextReplaySafe {
 		reason := OpenAIContinuityReasonReplayNotSafe
-		return nil, reason, continuityReplayDetail(false, true, reason), false
+		return nil, reason, mergeContinuityDetails(replayMigration.DetailMap(), continuityReplayDetail(false, true, reason)), false
 	}
-	return replayBody, "", continuityReplayDetail(true, false, "replay_safe"), true
+	return replayBody, "", mergeContinuityDetails(replayMigration.DetailMap(), continuityReplayDetail(true, false, "replay_safe")), true
+}
+
+func applyOpenAIContextMigrationToDecision(decision *OpenAIAccountScheduleDecision, migration OpenAIContextMigrationObservation) {
+	if decision == nil {
+		return
+	}
+	decision.ContextMigrationClass = migration.Class
+	decision.ContextMigrationReason = migration.Reason
+	decision.ContextMigrationDetail = migration.DetailMap()
+	if len(decision.ContinuityDetail) == 0 {
+		decision.ContinuityDetail = migration.DetailMap()
+	}
 }
 
 func continuityBalanceDetail(decision *RealtimeBalanceDecision, err error) map[string]any {

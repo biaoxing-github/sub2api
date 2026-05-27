@@ -1818,6 +1818,9 @@ func setOpenAIContinuityHeaders(c *gin.Context, decision service.OpenAIAccountSc
 	if reason := strings.TrimSpace(decision.ContinuityReason); reason != "" {
 		c.Header("X-Sub2API-Continuity-Reason", reason)
 	}
+	if migrationClass := strings.TrimSpace(decision.ContextMigrationClass); migrationClass != "" {
+		c.Header("X-Sub2API-Context-Migration", migrationClass)
+	}
 	if accountID > 0 {
 		c.Header("X-Sub2API-Upstream-Account", strconv.FormatInt(accountID, 10))
 	}

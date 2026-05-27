@@ -256,6 +256,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		RewriteMessageCacheControl:                 settings.RewriteMessageCacheControl,
 		AntigravityUserAgentVersion:                settings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                       settings.OpenAICodexUserAgent,
+		ClientRequestDebugLogEnabled:               settings.ClientRequestDebugLogEnabled,
 		CodexStabilityMode:                         settings.CodexStabilityMode,
 		CodexStabilityDynamicHeaderTimeoutEnabled:  settings.CodexStabilityDynamicHeaderTimeoutEnabled,
 		CodexStabilityRequestPhaseFailoverEnabled:  settings.CodexStabilityRequestPhaseFailoverEnabled,
@@ -615,6 +616,7 @@ type UpdateSettingsRequest struct {
 	RewriteMessageCacheControl                 *bool    `json:"rewrite_message_cache_control"`
 	AntigravityUserAgentVersion                *string  `json:"antigravity_user_agent_version"`
 	OpenAICodexUserAgent                       *string  `json:"openai_codex_user_agent"`
+	ClientRequestDebugLogEnabled               *bool    `json:"client_request_debug_log_enabled"`
 	CodexStabilityMode                         *string  `json:"codex_stability_mode"`
 	CodexStabilityDynamicHeaderTimeoutEnabled  *bool    `json:"codex_stability_dynamic_header_timeout_enabled"`
 	CodexStabilityRequestPhaseFailoverEnabled  *bool    `json:"codex_stability_request_phase_failover_enabled"`
@@ -1734,6 +1736,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAICodexUserAgent
 		}(),
+		ClientRequestDebugLogEnabled: boolValueOrDefault(req.ClientRequestDebugLogEnabled, previousSettings.ClientRequestDebugLogEnabled),
 		CodexStabilityMode: func() string {
 			if req.CodexStabilityMode != nil {
 				return *req.CodexStabilityMode
@@ -2149,6 +2152,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		RewriteMessageCacheControl:                 updatedSettings.RewriteMessageCacheControl,
 		AntigravityUserAgentVersion:                updatedSettings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                       updatedSettings.OpenAICodexUserAgent,
+		ClientRequestDebugLogEnabled:               updatedSettings.ClientRequestDebugLogEnabled,
 		CodexStabilityMode:                         updatedSettings.CodexStabilityMode,
 		CodexStabilityDynamicHeaderTimeoutEnabled:  updatedSettings.CodexStabilityDynamicHeaderTimeoutEnabled,
 		CodexStabilityRequestPhaseFailoverEnabled:  updatedSettings.CodexStabilityRequestPhaseFailoverEnabled,
@@ -2648,6 +2652,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.OpenAICodexUserAgent != after.OpenAICodexUserAgent {
 		changed = append(changed, "openai_codex_user_agent")
+	}
+	if before.ClientRequestDebugLogEnabled != after.ClientRequestDebugLogEnabled {
+		changed = append(changed, "client_request_debug_log_enabled")
 	}
 	if before.CodexStabilityMode != after.CodexStabilityMode {
 		changed = append(changed, "codex_stability_mode")

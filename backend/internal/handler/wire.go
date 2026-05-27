@@ -99,6 +99,15 @@ func ProvideAdminAccountHandler(
 	tokenCacheInvalidator service.TokenCacheInvalidator,
 ) *admin.AccountHandler {
 	h := admin.NewAccountHandler(adminService, oauthService, openaiOAuthService, geminiOAuthService, antigravityOAuthService, rateLimitService, accountUsageService, accountTestService, upstreamBalanceService, concurrencyService, crsSyncService, sessionLimitCache, rpmCache, tokenCacheInvalidator)
+	if openAIGatewayService != nil {
+		tracker := openAIGatewayService.OpenAIPathHealthTracker()
+		if accountTestService != nil {
+			accountTestService.SetOpenAIPathHealthTracker(tracker)
+		}
+		if accountProbeService != nil {
+			accountProbeService.SetOpenAIPathHealthTracker(tracker)
+		}
+	}
 	h.SetAccountProbeService(accountProbeService)
 	h.SetAccountBatchTestRepository(accountBatchTestRepo)
 	h.SetOpenAIPathHealthReader(openAIGatewayService)

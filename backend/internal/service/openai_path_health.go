@@ -104,6 +104,14 @@ func OpenAIPathHealthKeyForAccount(account *Account, transport string) OpenAIPat
 	return key
 }
 
+func OpenAIPathHealthKeyForAccountBaseURL(account *Account, transport string, requestBaseURL string) OpenAIPathHealthKey {
+	key := OpenAIPathHealthKeyForAccount(account, transport)
+	if upstream := strings.TrimSpace(requestBaseURL); upstream != "" {
+		key.Upstream = normalizeOpenAIPathHealthPart(upstream)
+	}
+	return key
+}
+
 func (t *OpenAIPathHealthTracker) Snapshot(key OpenAIPathHealthKey) OpenAIPathHealthRecord {
 	key = normalizeOpenAIPathHealthKey(key)
 	if t == nil {

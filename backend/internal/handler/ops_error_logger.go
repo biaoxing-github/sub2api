@@ -971,6 +971,8 @@ func applyOpenAIScheduleDecisionToOpsEntry(c *gin.Context, entry *service.OpsIns
 	}
 	addString("context_continuity", decision.ContinuityAction)
 	addString("context_replay_reason", decision.ContinuityReason)
+	addString("context_migration_class", decision.ContextMigrationClass)
+	addString("context_migration_reason", decision.ContextMigrationReason)
 	addString("balance_confirm_source", decision.BalanceConfirmSource)
 	addString("balance_confirm_reason", decision.BalanceConfirmReason)
 	if decision.ContinuityFromAccountID > 0 {
@@ -978,6 +980,13 @@ func applyOpenAIScheduleDecisionToOpsEntry(c *gin.Context, entry *service.OpsIns
 	}
 	if len(decision.ContinuityDetail) > 0 {
 		for k, v := range decision.ContinuityDetail {
+			if key := strings.TrimSpace(k); key != "" {
+				details[key] = v
+			}
+		}
+	}
+	if len(decision.ContextMigrationDetail) > 0 {
+		for k, v := range decision.ContextMigrationDetail {
 			if key := strings.TrimSpace(k); key != "" {
 				details[key] = v
 			}

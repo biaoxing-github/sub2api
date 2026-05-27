@@ -131,6 +131,9 @@ docs/*
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
+!docs/OPENAI_ROUTE_HEALTH_AUTOPILOT_PLAN_CN.md
+!docs/feature_list.jsonl
+!docs/process_list.jsonl
 .serena/
 .codex/
 frontend/coverage/

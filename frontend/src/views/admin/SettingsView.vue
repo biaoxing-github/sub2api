@@ -1082,6 +1082,28 @@
               </p>
             </div>
             <div class="space-y-5 p-6">
+              <div class="rounded-lg border border-dashed border-primary-200 bg-primary-50/50 p-4 dark:border-primary-900/50 dark:bg-primary-900/10">
+                <div class="mb-3">
+                  <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                    {{ t("admin.settings.openaiFastPolicy.routeTemplateTitle") }}
+                  </h3>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.openaiFastPolicy.routeTemplateDescription") }}
+                  </p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    v-for="preset in openaiRoutePolicyPresets"
+                    :key="preset.key"
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    @click="applyOpenAIRoutePolicyPreset(preset.key)"
+                  >
+                    {{ preset.label }}
+                  </button>
+                </div>
+              </div>
+
               <!-- Empty state -->
               <div
                 v-if="openaiFastPolicyForm.rules.length === 0"
@@ -3820,6 +3842,28 @@
                     )
                   }}
                 </p>
+              </div>
+
+              <div class="flex items-center justify-between">
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.clientRequestDebug",
+                      )
+                    }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.clientRequestDebugHint",
+                      )
+                    }}
+                  </p>
+                </div>
+                <Toggle v-model="form.client_request_debug_log_enabled" />
               </div>
 
               <!-- Codex Stability Mode -->
@@ -7017,6 +7061,7 @@ type SettingsForm = Omit<
   google_oauth_client_secret: string;
   force_email_on_third_party_signup: boolean;
   openai_advanced_scheduler_enabled: boolean;
+  client_request_debug_log_enabled: boolean;
   codex_stability_mode: "off" | "codex" | "all_openai_responses" | string;
   codex_stability_dynamic_header_timeout_enabled: boolean;
   codex_stability_request_phase_failover_enabled: boolean;
@@ -7224,6 +7269,7 @@ const form = reactive<SettingsForm>({
   rewrite_message_cache_control: false,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  client_request_debug_log_enabled: false,
   codex_stability_mode: "codex",
   codex_stability_dynamic_header_timeout_enabled: true,
   codex_stability_request_phase_failover_enabled: true,
@@ -8341,6 +8387,7 @@ async function saveSettings() {
         form.antigravity_user_agent_version?.trim() || "",
       openai_codex_user_agent:
         form.openai_codex_user_agent?.trim() || "",
+      client_request_debug_log_enabled: form.client_request_debug_log_enabled,
       codex_stability_mode: form.codex_stability_mode || "codex",
       codex_stability_dynamic_header_timeout_enabled:
         form.codex_stability_dynamic_header_timeout_enabled,
@@ -8911,6 +8958,70 @@ const openaiFastPolicyScopeOptions = computed(() => [
     label: t("admin.settings.openaiFastPolicy.scopeBedrock"),
   },
 ]);
+
+type OpenAIRoutePolicyPresetKey =
+  | "codex_stable"
+  | "first_token_fast"
+  | "quota_saver"
+  | "long_context";
+
+const openaiRoutePolicyPresets = computed(() => [
+  {
+    key: "codex_stable" as const,
+    label: t("admin.settings.openaiFastPolicy.presetCodexStable"),
+  },
+  {
+    key: "first_token_fast" as const,
+    label: t("admin.settings.openaiFastPolicy.presetFirstTokenFast"),
+  },
+  {
+    key: "quota_saver" as const,
+    label: t("admin.settings.openaiFastPolicy.presetQuotaSaver"),
+  },
+  {
+    key: "long_context" as const,
+    label: t("admin.settings.openaiFastPolicy.presetLongContext"),
+  },
+]);
+
+function cloneOpenAIFastPolicyRules(
+  rules: OpenAIFastPolicyRule[],
+): OpenAIFastPolicyRule[] {
+  return rules.map((rule) => ({
+    ...rule,
+    model_whitelist: rule.model_whitelist ? [...rule.model_whitelist] : [],
+  }));
+}
+
+function applyOpenAIRoutePolicyPreset(key: OpenAIRoutePolicyPresetKey) {
+  const presets: Record<OpenAIRoutePolicyPresetKey, OpenAIFastPolicyRule[]> = {
+    codex_stable: [
+      { service_tier: "priority", action: "filter", scope: "all", model_whitelist: [] },
+      { service_tier: "flex", action: "filter", scope: "all", model_whitelist: [] },
+    ],
+    first_token_fast: [
+      { service_tier: "priority", action: "pass", scope: "all", model_whitelist: [] },
+      { service_tier: "flex", action: "filter", scope: "all", model_whitelist: [] },
+    ],
+    quota_saver: [
+      { service_tier: "priority", action: "filter", scope: "all", model_whitelist: [] },
+      { service_tier: "flex", action: "filter", scope: "all", model_whitelist: [] },
+    ],
+    long_context: [
+      {
+        service_tier: "priority",
+        action: "filter",
+        scope: "all",
+        model_whitelist: ["gpt-5.4*", "gpt-5.5*"],
+        fallback_action: "filter",
+      },
+      { service_tier: "flex", action: "filter", scope: "all", model_whitelist: [] },
+    ],
+  };
+  openaiFastPolicyForm.rules = cloneOpenAIFastPolicyRules(presets[key]);
+  openaiFastPolicyLoaded.value = true;
+  appStore.showInfo(t("admin.settings.openaiFastPolicy.presetApplied"));
+}
 
 function addOpenAIFastPolicyRule() {
   openaiFastPolicyForm.rules.push({
