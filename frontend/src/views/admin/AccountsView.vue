@@ -2299,13 +2299,13 @@ const handleBatchTestNonAPIKey = async () => {
     const selectedAccountIds = [...selIds.value]
     const request = selectedAccountIds.length > 0
       ? {
-          model_id: 'gpt-5.4',
+          model_id: 'gpt-5.5',
           account_ids: selectedAccountIds,
           concurrency: 5,
           limit: 500,
         }
       : {
-          model_id: 'gpt-5.4',
+          model_id: 'gpt-5.5',
           platform: params.platform || undefined,
           status: params.status || undefined,
           search: params.search || undefined,

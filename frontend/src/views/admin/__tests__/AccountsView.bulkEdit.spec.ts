@@ -483,7 +483,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(batchTestNonAPIKeyAccounts).toHaveBeenCalledWith(expect.objectContaining({
-      model_id: 'gpt-5.4',
+      model_id: 'gpt-5.5',
       concurrency: 5,
       limit: 500,
     }))
@@ -566,6 +566,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(batchTestNonAPIKeyAccounts).toHaveBeenCalledWith(expect.objectContaining({
+      model_id: 'gpt-5.5',
       account_ids: [31, 33],
       concurrency: 5,
       limit: 500,

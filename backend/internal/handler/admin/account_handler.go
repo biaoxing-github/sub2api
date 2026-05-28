@@ -915,6 +915,8 @@ type BatchTestNonAPIKeyAccountsRequest struct {
 	Limit       int     `json:"limit"`
 }
 
+const defaultBatchTestNonAPIKeyModelID = "gpt-5.5"
+
 type CreateAccountProbeRunRequest struct {
 	Mode                  string `json:"mode"`
 	Model                 string `json:"model"`
@@ -997,6 +999,7 @@ func (h *AccountHandler) BatchTestNonAPIKey(c *gin.Context) {
 		limit = 500
 	}
 	concurrency := normalizeBatchTestNonAPIKeyConcurrency(req.Concurrency)
+	modelID := normalizeBatchTestNonAPIKeyModelID(req.ModelID)
 
 	targets, err := h.resolveBatchTestNonAPIKeyTargets(c.Request.Context(), req, limit)
 	if err != nil {
@@ -1007,7 +1010,7 @@ func (h *AccountHandler) BatchTestNonAPIKey(c *gin.Context) {
 	now := time.Now()
 	run := service.AccountBatchTestRun{
 		Status:       service.AccountBatchTestStatusRunning,
-		ModelID:      strings.TrimSpace(req.ModelID),
+		ModelID:      modelID,
 		Platform:     platform,
 		StatusFilter: status,
 		Search:       search,
@@ -1099,6 +1102,14 @@ func normalizeBatchTestNonAPIKeyConcurrency(concurrency int) int {
 	return concurrency
 }
 
+func normalizeBatchTestNonAPIKeyModelID(modelID string) string {
+	normalized := strings.TrimSpace(modelID)
+	if normalized == "" {
+		return defaultBatchTestNonAPIKeyModelID
+	}
+	return normalized
+}
+
 func dedupePositiveAccountIDs(ids []int64) []int64 {
 	out := make([]int64, 0, len(ids))
 	seen := make(map[int64]struct{}, len(ids))
@@ -1145,7 +1156,7 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 	}()
 	concurrency := run.Concurrency
 	concurrency = normalizeBatchTestNonAPIKeyConcurrency(concurrency)
-	modelID := strings.TrimSpace(run.ModelID)
+	modelID := normalizeBatchTestNonAPIKeyModelID(run.ModelID)
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	for i := range items {

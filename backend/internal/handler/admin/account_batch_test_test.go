@@ -190,7 +190,7 @@ func TestAccountBatchTestNonAPIKeyUsesGroupFilterAndDefaultConcurrency(t *testin
 	router.POST("/api/v1/admin/accounts/batch-test-non-apikey", h.BatchTestNonAPIKey)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/batch-test-non-apikey", bytes.NewBufferString(`{"model_id":"gpt-5.4","group":"12"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/batch-test-non-apikey", bytes.NewBufferString(`{"group":"12"}`))
 	req.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(rec, req)
 
@@ -204,6 +204,10 @@ func TestAccountBatchTestNonAPIKeyUsesGroupFilterAndDefaultConcurrency(t *testin
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, 5, body.Data.Concurrency)
+	require.Eventually(t, func() bool {
+		models := tester.calledModelsSnapshot()
+		return len(models) == 1 && models[0] == "gpt-5.5"
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestAccountBatchTestNonAPIKeyListAndDetail(t *testing.T) {
@@ -256,11 +260,12 @@ func TestAccountBatchTestNonAPIKeyListAndDetail(t *testing.T) {
 }
 
 type stubBatchAccountTester struct {
-	mu        sync.Mutex
-	results   map[int64]*service.ScheduledTestResult
-	calledIDs []int64
-	started   chan int64
-	release   chan struct{}
+	mu           sync.Mutex
+	results      map[int64]*service.ScheduledTestResult
+	calledIDs    []int64
+	calledModels []string
+	started      chan int64
+	release      chan struct{}
 }
 
 func (s *stubBatchAccountTester) RunTestBackground(ctx context.Context, accountID int64, modelID string) (*service.ScheduledTestResult, error) {
@@ -276,6 +281,7 @@ func (s *stubBatchAccountTester) RunTestBackground(ctx context.Context, accountI
 	}
 	s.mu.Lock()
 	s.calledIDs = append(s.calledIDs, accountID)
+	s.calledModels = append(s.calledModels, modelID)
 	s.mu.Unlock()
 	if result, ok := s.results[accountID]; ok {
 		return result, nil
@@ -287,6 +293,12 @@ func (s *stubBatchAccountTester) calledIDsSnapshot() []int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]int64(nil), s.calledIDs...)
+}
+
+func (s *stubBatchAccountTester) calledModelsSnapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.calledModels...)
 }
 
 type stubAccountBatchTestRepository struct {
