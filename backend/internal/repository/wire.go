@@ -79,6 +79,7 @@ var ProviderSet = wire.NewSet(
 	NewAPIKeyProbeRepository,
 	NewAccountProbeRepository,
 	NewAccountBatchTestRepository,
+	NewOpenAIRequestSnapshotRepository,
 	NewUsageBillingRepository,
 	NewIdempotencyRepository,
 	NewUsageCleanupRepository,

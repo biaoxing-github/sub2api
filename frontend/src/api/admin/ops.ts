@@ -129,6 +129,20 @@ export interface OpsRequestDetail {
   account_id?: number | null
   group_id?: number | null
 
+  account_name?: string
+  requested_model?: string
+  upstream_endpoint?: string
+  input_tokens?: number | null
+  output_tokens?: number | null
+  total_tokens?: number | null
+  first_token_ms?: number | null
+  time_to_first_token_ms?: number | null
+  tokens_per_second?: number | null
+  upstream_latency_ms?: number | null
+  auth_latency_ms?: number | null
+  routing_latency_ms?: number | null
+  upstream_errors?: OpsUpstreamErrorEvent[] | null
+
   stream?: boolean
 }
 

@@ -367,6 +367,7 @@ export default {
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
+    openaiRouteTrace: 'OpenAI Trace',
     promoCodes: 'Promo Codes',
     settings: 'Settings',
     myAccount: 'My Account',
@@ -4785,6 +4786,37 @@ export default {
       }
     },
 
+    openaiRouteTrace: {
+      title: 'OpenAI Route Trace',
+      description: 'Inspect recent OpenAI routing decisions, account choice, BaseURL, header racing, failover reasons, and context continuity.',
+      query: 'Search account/error/BaseURL',
+      requestId: 'Request ID',
+      accountId: 'Account ID',
+      model: 'Model',
+      kindAll: 'All',
+      kindSuccess: 'Success',
+      kindError: 'Error',
+      time: 'Time',
+      status: 'Status',
+      request: 'Request',
+      account: 'Account',
+      route: 'Route',
+      routing: 'Routing',
+      context: 'Context',
+      latency: 'Latency',
+      duration: 'Duration',
+      ttft: 'TTFT',
+      tokens: 'Tokens',
+      viewTrace: 'Trace',
+      traceTitle: 'Request Route Trace',
+      timeline: 'Timeline',
+      empty: 'No OpenAI route records yet',
+      noTimeline: 'No timeline events',
+      loadFailed: 'Failed to load route traces',
+      traceLoadFailed: 'Failed to load route trace details',
+      failoverCount: '{count} failovers'
+    },
+
     // Ops Monitoring
     ops: {
       title: 'Ops Monitoring',
@@ -5908,6 +5940,17 @@ export default {
         openaiPathHealth: {
           title: 'OpenAI Path Health Circuit Breaker',
           description: 'Tracks failures per account and transport path, then briefly avoids unhealthy routes when needed.'
+        },
+        headerRace: {
+          title: 'Header-timeout racing',
+          description: 'For streaming requests, starts one extra backup BaseURL request after the delay and within the daily budget; the first response wins.',
+          delay: 'Race delay (ms)',
+          dailyBudget: 'Daily backup request budget'
+        },
+        requestSnapshot: {
+          title: 'Full request snapshots',
+          description: 'Persist request bodies and context migration signals locally without Authorization/Cookie headers, for failover replay diagnostics.',
+          retention: 'Retention (hours)'
         },
         openaiFastLane: {
           title: 'OpenAI Fast Lane',

@@ -287,6 +287,11 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		RealtimeBalancePrewarmActiveAccountLimit:   settings.RealtimeBalancePrewarmActiveAccountLimit,
 		RealtimeBalanceConfirmTopN:                 settings.RealtimeBalanceConfirmTopN,
 		RealtimeBalanceConfirmTimeoutMs:            settings.RealtimeBalanceConfirmTimeoutMs,
+		OpenAIHeaderRaceEnabled:                    settings.OpenAIHeaderRaceEnabled,
+		OpenAIHeaderRaceDelayMs:                    settings.OpenAIHeaderRaceDelayMs,
+		OpenAIHeaderRaceDailyBudget:                settings.OpenAIHeaderRaceDailyBudget,
+		OpenAIRequestSnapshotEnabled:               settings.OpenAIRequestSnapshotEnabled,
+		OpenAIRequestSnapshotRetentionHours:        settings.OpenAIRequestSnapshotRetentionHours,
 		CodexWaitGuardEnabled:                      settings.CodexWaitGuardEnabled,
 		CodexWaitGuardMaxHeaderWaitSeconds:         settings.CodexWaitGuardMaxHeaderWaitSeconds,
 		CodexWaitGuardMaxStreamSilentSeconds:       settings.CodexWaitGuardMaxStreamSilentSeconds,
@@ -647,6 +652,11 @@ type UpdateSettingsRequest struct {
 	RealtimeBalancePrewarmActiveAccountLimit   *int     `json:"realtime_balance_prewarm_active_account_limit"`
 	RealtimeBalanceConfirmTopN                 *int     `json:"realtime_balance_confirm_top_n"`
 	RealtimeBalanceConfirmTimeoutMs            *int     `json:"realtime_balance_confirm_timeout_ms"`
+	OpenAIHeaderRaceEnabled                    *bool    `json:"openai_header_race_enabled"`
+	OpenAIHeaderRaceDelayMs                    *int     `json:"openai_header_race_delay_ms"`
+	OpenAIHeaderRaceDailyBudget                *int     `json:"openai_header_race_daily_budget"`
+	OpenAIRequestSnapshotEnabled               *bool    `json:"openai_request_snapshot_enabled"`
+	OpenAIRequestSnapshotRetentionHours        *int     `json:"openai_request_snapshot_retention_hours"`
 	CodexWaitGuardEnabled                      *bool    `json:"codex_wait_guard_enabled"`
 	CodexWaitGuardMaxHeaderWaitSeconds         *int     `json:"codex_wait_guard_max_header_wait_seconds"`
 	CodexWaitGuardMaxStreamSilentSeconds       *int     `json:"codex_wait_guard_max_stream_silent_seconds"`
@@ -1772,6 +1782,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		RealtimeBalancePrewarmActiveAccountLimit:   intValueOrDefault(req.RealtimeBalancePrewarmActiveAccountLimit, previousSettings.RealtimeBalancePrewarmActiveAccountLimit),
 		RealtimeBalanceConfirmTopN:                 intValueOrDefault(req.RealtimeBalanceConfirmTopN, previousSettings.RealtimeBalanceConfirmTopN),
 		RealtimeBalanceConfirmTimeoutMs:            intValueOrDefault(req.RealtimeBalanceConfirmTimeoutMs, previousSettings.RealtimeBalanceConfirmTimeoutMs),
+		OpenAIHeaderRaceEnabled:                    boolValueOrDefault(req.OpenAIHeaderRaceEnabled, previousSettings.OpenAIHeaderRaceEnabled),
+		OpenAIHeaderRaceDelayMs:                    intValueOrDefault(req.OpenAIHeaderRaceDelayMs, previousSettings.OpenAIHeaderRaceDelayMs),
+		OpenAIHeaderRaceDailyBudget:                intValueOrDefault(req.OpenAIHeaderRaceDailyBudget, previousSettings.OpenAIHeaderRaceDailyBudget),
+		OpenAIRequestSnapshotEnabled:               boolValueOrDefault(req.OpenAIRequestSnapshotEnabled, previousSettings.OpenAIRequestSnapshotEnabled),
+		OpenAIRequestSnapshotRetentionHours:        intValueOrDefault(req.OpenAIRequestSnapshotRetentionHours, previousSettings.OpenAIRequestSnapshotRetentionHours),
 		CodexWaitGuardEnabled:                      boolValueOrDefault(req.CodexWaitGuardEnabled, previousSettings.CodexWaitGuardEnabled),
 		CodexWaitGuardMaxHeaderWaitSeconds:         intValueOrDefault(req.CodexWaitGuardMaxHeaderWaitSeconds, previousSettings.CodexWaitGuardMaxHeaderWaitSeconds),
 		CodexWaitGuardMaxStreamSilentSeconds:       intValueOrDefault(req.CodexWaitGuardMaxStreamSilentSeconds, previousSettings.CodexWaitGuardMaxStreamSilentSeconds),
@@ -2183,6 +2198,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		RealtimeBalancePrewarmActiveAccountLimit:   updatedSettings.RealtimeBalancePrewarmActiveAccountLimit,
 		RealtimeBalanceConfirmTopN:                 updatedSettings.RealtimeBalanceConfirmTopN,
 		RealtimeBalanceConfirmTimeoutMs:            updatedSettings.RealtimeBalanceConfirmTimeoutMs,
+		OpenAIHeaderRaceEnabled:                    updatedSettings.OpenAIHeaderRaceEnabled,
+		OpenAIHeaderRaceDelayMs:                    updatedSettings.OpenAIHeaderRaceDelayMs,
+		OpenAIHeaderRaceDailyBudget:                updatedSettings.OpenAIHeaderRaceDailyBudget,
+		OpenAIRequestSnapshotEnabled:               updatedSettings.OpenAIRequestSnapshotEnabled,
+		OpenAIRequestSnapshotRetentionHours:        updatedSettings.OpenAIRequestSnapshotRetentionHours,
 		CodexWaitGuardEnabled:                      updatedSettings.CodexWaitGuardEnabled,
 		CodexWaitGuardMaxHeaderWaitSeconds:         updatedSettings.CodexWaitGuardMaxHeaderWaitSeconds,
 		CodexWaitGuardMaxStreamSilentSeconds:       updatedSettings.CodexWaitGuardMaxStreamSilentSeconds,
@@ -2847,6 +2867,21 @@ func appendGatewayRuntimeSettingChanges(changed []string, before *service.System
 	if before.RealtimeBalanceConfirmTimeoutMs != after.RealtimeBalanceConfirmTimeoutMs {
 		changed = append(changed, "realtime_balance_confirm_timeout_ms")
 	}
+	if before.OpenAIHeaderRaceEnabled != after.OpenAIHeaderRaceEnabled {
+		changed = append(changed, "openai_header_race_enabled")
+	}
+	if before.OpenAIHeaderRaceDelayMs != after.OpenAIHeaderRaceDelayMs {
+		changed = append(changed, "openai_header_race_delay_ms")
+	}
+	if before.OpenAIHeaderRaceDailyBudget != after.OpenAIHeaderRaceDailyBudget {
+		changed = append(changed, "openai_header_race_daily_budget")
+	}
+	if before.OpenAIRequestSnapshotEnabled != after.OpenAIRequestSnapshotEnabled {
+		changed = append(changed, "openai_request_snapshot_enabled")
+	}
+	if before.OpenAIRequestSnapshotRetentionHours != after.OpenAIRequestSnapshotRetentionHours {
+		changed = append(changed, "openai_request_snapshot_retention_hours")
+	}
 	if before.CodexWaitGuardEnabled != after.CodexWaitGuardEnabled {
 		changed = append(changed, "codex_wait_guard_enabled")
 	}
@@ -2951,6 +2986,9 @@ func validateNonNegativeSettings(req UpdateSettingsRequest) error {
 		{"realtime_balance_prewarm_active_account_limit", req.RealtimeBalancePrewarmActiveAccountLimit},
 		{"realtime_balance_confirm_top_n", req.RealtimeBalanceConfirmTopN},
 		{"realtime_balance_confirm_timeout_ms", req.RealtimeBalanceConfirmTimeoutMs},
+		{"openai_header_race_delay_ms", req.OpenAIHeaderRaceDelayMs},
+		{"openai_header_race_daily_budget", req.OpenAIHeaderRaceDailyBudget},
+		{"openai_request_snapshot_retention_hours", req.OpenAIRequestSnapshotRetentionHours},
 		{"codex_wait_guard_max_header_wait_seconds", req.CodexWaitGuardMaxHeaderWaitSeconds},
 		{"codex_wait_guard_max_stream_silent_seconds", req.CodexWaitGuardMaxStreamSilentSeconds},
 		{"codex_wait_guard_keepalive_interval_seconds", req.CodexWaitGuardKeepaliveIntervalSeconds},

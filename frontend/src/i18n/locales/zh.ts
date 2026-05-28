@@ -367,6 +367,7 @@ export default {
     proxies: 'IP管理',
     redeemCodes: '兑换码',
     ops: '运维监控',
+    openaiRouteTrace: 'OpenAI 路由追踪',
     promoCodes: '优惠码',
     settings: '系统设置',
     myAccount: '我的账户',
@@ -4941,6 +4942,37 @@ export default {
       }
     },
 
+    openaiRouteTrace: {
+      title: 'OpenAI 路由追踪',
+      description: '查看最近 OpenAI 请求的账号、BaseURL、首包抢跑、切换原因和上下文连续性。',
+      query: '搜索账号/错误/BaseURL',
+      requestId: 'Request ID',
+      accountId: '账号 ID',
+      model: '模型',
+      kindAll: '全部',
+      kindSuccess: '成功',
+      kindError: '错误',
+      time: '时间',
+      status: '状态',
+      request: '请求',
+      account: '账号',
+      route: '路由',
+      routing: '调度',
+      context: '上下文',
+      latency: '耗时',
+      duration: '总耗时',
+      ttft: '首 Token',
+      tokens: 'Token',
+      viewTrace: '追踪',
+      traceTitle: '请求路由追踪',
+      timeline: '时间线',
+      empty: '暂无 OpenAI 路由记录',
+      noTimeline: '暂无时间线事件',
+      loadFailed: '加载路由追踪失败',
+      traceLoadFailed: '加载请求追踪详情失败',
+      failoverCount: '切换 {count} 次'
+    },
+
     // Ops Monitoring
     ops: {
       title: '运维监控',
@@ -6065,6 +6097,17 @@ export default {
         openaiPathHealth: {
           title: 'OpenAI 路径健康熔断',
           description: '按账号和传输路径记录失败，必要时短暂避开不健康线路。'
+        },
+        headerRace: {
+          title: '首包超时抢跑',
+          description: '流式请求超过延迟仍未拿到响应头时，按每日预算额外发起备用 BaseURL 请求；谁先返回用谁。',
+          delay: '抢跑延迟（毫秒）',
+          dailyBudget: '每日备用请求预算'
+        },
+        requestSnapshot: {
+          title: '完整请求快照',
+          description: '仅在本地持久化请求 Body 和上下文迁移判定，不保存 Authorization/Cookie；用于切号重放诊断。',
+          retention: '保留时长（小时）'
         },
         openaiFastLane: {
           title: 'OpenAI 快速线路',

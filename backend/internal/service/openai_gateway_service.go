@@ -346,6 +346,8 @@ type OpenAIGatewayService struct {
 	contextJournal         ContextJournal
 	realtimeBalanceChecker *RealtimeBalanceChecker
 	openaiPathHealth       *OpenAIPathHealthTracker
+	requestSnapshotService *OpenAIRequestSnapshotService
+	headerRaceBudget       openAIHeaderRaceBudget
 
 	openaiWSPoolOnce              sync.Once
 	openaiWSStateStoreOnce        sync.Once
@@ -392,6 +394,7 @@ func NewOpenAIGatewayService(
 	settingService *SettingService,
 	contextJournal ContextJournal,
 	realtimeBalanceChecker *RealtimeBalanceChecker,
+	requestSnapshotService *OpenAIRequestSnapshotService,
 ) *OpenAIGatewayService {
 	svc := &OpenAIGatewayService{
 		accountRepo:         accountRepo,
@@ -425,6 +428,7 @@ func NewOpenAIGatewayService(
 		settingService:         settingService,
 		contextJournal:         contextJournal,
 		realtimeBalanceChecker: realtimeBalanceChecker,
+		requestSnapshotService: requestSnapshotService,
 		openaiPathHealth:       newOpenAIPathHealthTrackerFromConfig(cfg),
 		responseHeaderFilter:   compileResponseHeaderFilter(cfg),
 		codexSnapshotThrottle:  newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval),
@@ -2601,6 +2605,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 		}
 	}
+	contextMigrationObservation := ClassifyOpenAIContextMigration(body, false)
+	if c != nil {
+		c.Set("openai_context_migration", contextMigrationObservation)
+		c.Set("openai_context_migration_class", contextMigrationObservation.Class)
+	}
+	s.maybeSaveOpenAIRequestSnapshot(ctx, c, account, body, upstreamModel, promptCacheKey, contextMigrationObservation)
 
 	// Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
@@ -2829,16 +2839,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	httpInvalidEncryptedContentRetryTried := false
 	requestBaseURLs := s.orderedOpenAIRequestBaseURLsForForward(account, OpenAIUpstreamTransportHTTPSSE)
+	headerRaceOptions := s.openAIHeaderRaceOptions(ctx)
 	for urlIdx := 0; urlIdx < len(requestBaseURLs); urlIdx++ {
 		requestBaseURL := requestBaseURLs[urlIdx]
-		// Build upstream request
-		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-		upstreamReq, err := s.buildUpstreamRequestWithBaseURL(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI, requestBaseURL)
-		releaseUpstreamCtx()
-		if err != nil {
-			return nil, err
-		}
-
 		// Get proxy URL
 		proxyURL := ""
 		if account.ProxyID != nil && account.Proxy != nil {
@@ -2847,7 +2850,51 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Send request
 		upstreamStart := time.Now()
-		resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body, stabilityPolicy, requestBaseURL)
+		backupBaseURL := ""
+		if reqStream && headerRaceOptions.Enabled && urlIdx+1 < len(requestBaseURLs) {
+			backupBaseURL = requestBaseURLs[urlIdx+1]
+		}
+		raceResult := s.doOpenAIUpstreamWithHeaderRace(ctx, account, body, proxyURL, stabilityPolicy, requestBaseURL, backupBaseURL, func(reqCtx context.Context, baseURL string) (*http.Request, error) {
+			upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(reqCtx)
+			upstreamReq, buildErr := s.buildUpstreamRequestWithBaseURL(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI, baseURL)
+			releaseUpstreamCtx()
+			return upstreamReq, buildErr
+		}, headerRaceOptions)
+		resp, err := raceResult.resp, raceResult.err
+		requestBaseURL = raceResult.requestBaseURL
+		if requestBaseURL == "" {
+			requestBaseURL = requestBaseURLs[urlIdx]
+		}
+		if raceResult.backupStarted {
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:    account.Platform,
+				AccountID:   account.ID,
+				AccountName: account.Name,
+				Kind:        "header_race_started",
+				Message:     fmt.Sprintf("delay_ms=%d remaining_budget=%d", headerRaceOptions.Delay.Milliseconds(), raceResult.budgetRemaining),
+				Detail:      fmt.Sprintf("primary=%s backup=%s", requestBaseURLs[urlIdx], backupBaseURL),
+			})
+		} else if raceResult.budgetExhausted {
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:    account.Platform,
+				AccountID:   account.ID,
+				AccountName: account.Name,
+				Kind:        "header_race_budget_exhausted",
+				Message:     fmt.Sprintf("daily_budget=%d", headerRaceOptions.DailyBudget),
+				Detail:      fmt.Sprintf("primary=%s backup=%s", requestBaseURLs[urlIdx], backupBaseURL),
+			})
+		}
+		if raceResult.fromBackup {
+			urlIdx++
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:    account.Platform,
+				AccountID:   account.ID,
+				AccountName: account.Name,
+				Kind:        "header_race_winner",
+				Message:     fmt.Sprintf("backup_won header_wait_ms=%d", raceResult.headerWaitMs),
+				Detail:      requestBaseURL,
+			})
+		}
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -3172,6 +3219,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			}
 		}
 	}
+	contextMigrationObservation := ClassifyOpenAIContextMigration(body, false)
+	if c != nil {
+		c.Set("openai_context_migration", contextMigrationObservation)
+		c.Set("openai_context_migration_class", contextMigrationObservation.Class)
+	}
+	s.maybeSaveOpenAIRequestSnapshot(ctx, c, account, body, firstNonEmptyString(upstreamPassthroughModel, policyModel, reqModel), strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()), contextMigrationObservation)
 
 	// Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
@@ -3189,19 +3242,61 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	requestBaseURLs := s.orderedOpenAIRequestBaseURLsForForward(account, OpenAIUpstreamTransportHTTPSSE)
+	headerRaceOptions := s.openAIHeaderRaceOptions(ctx)
 	var resp *http.Response
 	selectedRequestBaseURL := ""
 	for urlIdx := 0; urlIdx < len(requestBaseURLs); urlIdx++ {
 		requestBaseURL := requestBaseURLs[urlIdx]
-		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
-		upstreamReq, err := s.buildUpstreamRequestOpenAIPassthroughWithBaseURL(upstreamCtx, c, account, body, token, stabilityPolicy, requestBaseURL)
-		releaseUpstreamCtx()
-		if err != nil {
-			return nil, err
+		backupBaseURL := ""
+		if headerRaceOptions.Enabled && urlIdx+1 < len(requestBaseURLs) {
+			backupBaseURL = requestBaseURLs[urlIdx+1]
 		}
 
 		upstreamStart := time.Now()
-		resp, err = s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, body, stabilityPolicy, requestBaseURL)
+		raceResult := s.doOpenAIUpstreamWithHeaderRace(ctx, account, body, proxyURL, stabilityPolicy, requestBaseURL, backupBaseURL, func(reqCtx context.Context, baseURL string) (*http.Request, error) {
+			upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(reqCtx)
+			upstreamReq, buildErr := s.buildUpstreamRequestOpenAIPassthroughWithBaseURL(upstreamCtx, c, account, body, token, stabilityPolicy, baseURL)
+			releaseUpstreamCtx()
+			return upstreamReq, buildErr
+		}, headerRaceOptions)
+		resp, err = raceResult.resp, raceResult.err
+		requestBaseURL = raceResult.requestBaseURL
+		if requestBaseURL == "" {
+			requestBaseURL = requestBaseURLs[urlIdx]
+		}
+		if raceResult.backupStarted {
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:    account.Platform,
+				AccountID:   account.ID,
+				AccountName: account.Name,
+				Passthrough: true,
+				Kind:        "header_race_started",
+				Message:     fmt.Sprintf("delay_ms=%d remaining_budget=%d", headerRaceOptions.Delay.Milliseconds(), raceResult.budgetRemaining),
+				Detail:      fmt.Sprintf("primary=%s backup=%s", requestBaseURLs[urlIdx], backupBaseURL),
+			})
+		} else if raceResult.budgetExhausted {
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:    account.Platform,
+				AccountID:   account.ID,
+				AccountName: account.Name,
+				Passthrough: true,
+				Kind:        "header_race_budget_exhausted",
+				Message:     fmt.Sprintf("daily_budget=%d", headerRaceOptions.DailyBudget),
+				Detail:      fmt.Sprintf("primary=%s backup=%s", requestBaseURLs[urlIdx], backupBaseURL),
+			})
+		}
+		if raceResult.fromBackup {
+			urlIdx++
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:    account.Platform,
+				AccountID:   account.ID,
+				AccountName: account.Name,
+				Passthrough: true,
+				Kind:        "header_race_winner",
+				Message:     fmt.Sprintf("backup_won header_wait_ms=%d", raceResult.headerWaitMs),
+				Detail:      requestBaseURL,
+			})
+		}
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
@@ -3768,6 +3863,79 @@ type openAIRequestBaseURLCandidate struct {
 	Samples   int64
 }
 
+type openAIHeaderRaceBudget struct {
+	mu   sync.Mutex
+	day  string
+	used int
+}
+
+func (b *openAIHeaderRaceBudget) tryAcquire(now time.Time, limit int) (bool, int) {
+	if b == nil || limit <= 0 {
+		return false, 0
+	}
+	day := now.Format("2006-01-02")
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.day != day {
+		b.day = day
+		b.used = 0
+	}
+	if b.used >= limit {
+		return false, limit - b.used
+	}
+	b.used++
+	return true, limit - b.used
+}
+
+type openAIHeaderRaceOptions struct {
+	Enabled     bool
+	Delay       time.Duration
+	DailyBudget int
+}
+
+type openAIHeaderRaceRequestBuilder func(context.Context, string) (*http.Request, error)
+
+type openAIHeaderRaceResult struct {
+	resp            *http.Response
+	err             error
+	requestBaseURL  string
+	fromBackup      bool
+	backupStarted   bool
+	budgetExhausted bool
+	budgetRemaining int
+	headerWaitMs    int64
+}
+
+func (s *OpenAIGatewayService) openAIHeaderRaceOptions(ctx context.Context) openAIHeaderRaceOptions {
+	if s == nil || s.settingService == nil {
+		return openAIHeaderRaceOptions{}
+	}
+	opts := openAIHeaderRaceOptions{
+		Enabled:     s.settingService.IsOpenAIHeaderRaceEnabled(ctx),
+		Delay:       s.settingService.GetOpenAIHeaderRaceDelay(ctx),
+		DailyBudget: s.settingService.GetOpenAIHeaderRaceDailyBudget(ctx),
+	}
+	if opts.Delay <= 0 {
+		opts.Delay = 3500 * time.Millisecond
+	}
+	return opts
+}
+
+func (s *OpenAIGatewayService) maybeSaveOpenAIRequestSnapshot(ctx context.Context, c *gin.Context, account *Account, body []byte, model, promptCacheKey string, obs OpenAIContextMigrationObservation) {
+	if s == nil || s.requestSnapshotService == nil || !s.requestSnapshotService.Enabled(ctx) {
+		return
+	}
+	snapshot, ok := buildOpenAIRequestSnapshotFromGin(c, account, body, model, promptCacheKey, obs, s.requestSnapshotService.RetentionHours(ctx))
+	if !ok {
+		return
+	}
+	if c != nil {
+		c.Set("openai_request_snapshot_saved", true)
+		c.Set("openai_request_snapshot_replayable", snapshot.SnapshotReplayable)
+	}
+	s.requestSnapshotService.Enqueue(snapshot)
+}
+
 func (s *OpenAIGatewayService) orderedOpenAIRequestBaseURLsForForward(account *Account, transport OpenAIUpstreamTransport) []string {
 	urls := openAIRequestBaseURLsForForward(account)
 	if len(urls) <= 1 || s == nil || s.openaiPathHealth == nil || !s.openAIPathHealthEnabled() {
@@ -4047,6 +4215,110 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, nil, parent.Err(), &headerWait)
 		return nil, parent.Err()
 	}
+}
+
+func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderRace(
+	parent context.Context,
+	account *Account,
+	body []byte,
+	proxyURL string,
+	stabilityPolicy openAICodexStabilityPolicy,
+	primaryBaseURL string,
+	backupBaseURL string,
+	builder openAIHeaderRaceRequestBuilder,
+	opts openAIHeaderRaceOptions,
+) openAIHeaderRaceResult {
+	if s == nil || builder == nil || !opts.Enabled || backupBaseURL == "" {
+		req, err := builder(parent, primaryBaseURL)
+		if err != nil {
+			return openAIHeaderRaceResult{err: err, requestBaseURL: primaryBaseURL}
+		}
+		start := time.Now()
+		resp, err := s.doOpenAIUpstreamWithHeaderTimeout(parent, req, proxyURL, account, body, stabilityPolicy, primaryBaseURL)
+		return openAIHeaderRaceResult{resp: resp, err: err, requestBaseURL: primaryBaseURL, headerWaitMs: time.Since(start).Milliseconds()}
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	raceCtx, cancel := context.WithCancel(parent)
+	defer cancel()
+	resultCh := make(chan openAIHeaderRaceResult, 2)
+	backupStarted := false
+	budgetExhausted := false
+	budgetRemaining := opts.DailyBudget
+	run := func(baseURL string, backup bool) {
+		req, err := builder(raceCtx, baseURL)
+		if err != nil {
+			resultCh <- openAIHeaderRaceResult{err: err, requestBaseURL: baseURL, fromBackup: backup}
+			return
+		}
+		start := time.Now()
+		resp, err := s.doOpenAIUpstreamWithHeaderTimeout(raceCtx, req, proxyURL, account, body, stabilityPolicy, baseURL)
+		resultCh <- openAIHeaderRaceResult{resp: resp, err: err, requestBaseURL: baseURL, fromBackup: backup, headerWaitMs: time.Since(start).Milliseconds()}
+	}
+	startBackup := func() bool {
+		if backupStarted {
+			return true
+		}
+		acquired, remaining := s.headerRaceBudget.tryAcquire(time.Now(), opts.DailyBudget)
+		if !acquired {
+			budgetExhausted = true
+			budgetRemaining = remaining
+			return false
+		}
+		backupStarted = true
+		budgetRemaining = remaining
+		go run(backupBaseURL, true)
+		accountID := int64(0)
+		if account != nil {
+			accountID = account.ID
+		}
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] header race started account_id=%d primary=%s backup=%s delay_ms=%d remaining_budget=%d", accountID, primaryBaseURL, backupBaseURL, opts.Delay.Milliseconds(), budgetRemaining)
+		return true
+	}
+	go run(primaryBaseURL, false)
+	timer := time.NewTimer(opts.Delay)
+	defer timer.Stop()
+	var lastErrResult openAIHeaderRaceResult
+	for received := 0; received < 2; {
+		select {
+		case result := <-resultCh:
+			received++
+			result.backupStarted = backupStarted
+			result.budgetExhausted = budgetExhausted
+			result.budgetRemaining = budgetRemaining
+			if result.err == nil && result.resp != nil {
+				cancel()
+				return result
+			}
+			lastErrResult = result
+			if !backupStarted {
+				if !startBackup() {
+					cancel()
+					return result
+				}
+			}
+			if result.fromBackup || received >= 2 {
+				cancel()
+				return result
+			}
+		case <-timer.C:
+			if !backupStarted {
+				startBackup()
+			}
+		case <-parent.Done():
+			cancel()
+			return openAIHeaderRaceResult{err: parent.Err(), requestBaseURL: primaryBaseURL, backupStarted: backupStarted, budgetExhausted: budgetExhausted, budgetRemaining: budgetRemaining}
+		}
+	}
+	cancel()
+	if lastErrResult.err != nil {
+		lastErrResult.backupStarted = backupStarted
+		lastErrResult.budgetExhausted = budgetExhausted
+		lastErrResult.budgetRemaining = budgetRemaining
+		return lastErrResult
+	}
+	return openAIHeaderRaceResult{err: errors.New("OpenAI header race exhausted"), requestBaseURL: primaryBaseURL, backupStarted: backupStarted, budgetExhausted: budgetExhausted, budgetRemaining: budgetRemaining}
 }
 
 func (s *OpenAIGatewayService) recordOpenAIPathHealthFromUpstreamResult(key OpenAIPathHealthKey, resp *http.Response, err error, headerWaitMs *int64) {

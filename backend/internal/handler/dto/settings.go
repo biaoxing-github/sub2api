@@ -214,6 +214,11 @@ type SystemSettings struct {
 	RealtimeBalancePrewarmActiveAccountLimit   int     `json:"realtime_balance_prewarm_active_account_limit"`
 	RealtimeBalanceConfirmTopN                 int     `json:"realtime_balance_confirm_top_n"`
 	RealtimeBalanceConfirmTimeoutMs            int     `json:"realtime_balance_confirm_timeout_ms"`
+	OpenAIHeaderRaceEnabled                    bool    `json:"openai_header_race_enabled"`
+	OpenAIHeaderRaceDelayMs                    int     `json:"openai_header_race_delay_ms"`
+	OpenAIHeaderRaceDailyBudget                int     `json:"openai_header_race_daily_budget"`
+	OpenAIRequestSnapshotEnabled               bool    `json:"openai_request_snapshot_enabled"`
+	OpenAIRequestSnapshotRetentionHours        int     `json:"openai_request_snapshot_retention_hours"`
 	CodexWaitGuardEnabled                      bool    `json:"codex_wait_guard_enabled"`
 	CodexWaitGuardMaxHeaderWaitSeconds         int     `json:"codex_wait_guard_max_header_wait_seconds"`
 	CodexWaitGuardMaxStreamSilentSeconds       int     `json:"codex_wait_guard_max_stream_silent_seconds"`

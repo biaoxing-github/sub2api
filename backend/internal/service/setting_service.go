@@ -1832,6 +1832,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyRealtimeBalancePrewarmActiveAccountLimit] = strconv.Itoa(nonNegativeInt(settings.RealtimeBalancePrewarmActiveAccountLimit))
 	updates[SettingKeyRealtimeBalanceConfirmTopN] = strconv.Itoa(nonNegativeInt(settings.RealtimeBalanceConfirmTopN))
 	updates[SettingKeyRealtimeBalanceConfirmTimeoutMs] = strconv.Itoa(nonNegativeInt(settings.RealtimeBalanceConfirmTimeoutMs))
+	updates[SettingKeyOpenAIHeaderRaceEnabled] = strconv.FormatBool(settings.OpenAIHeaderRaceEnabled)
+	updates[SettingKeyOpenAIHeaderRaceDelayMs] = strconv.Itoa(nonNegativeInt(settings.OpenAIHeaderRaceDelayMs))
+	updates[SettingKeyOpenAIHeaderRaceDailyBudget] = strconv.Itoa(nonNegativeInt(settings.OpenAIHeaderRaceDailyBudget))
+	updates[SettingKeyOpenAIRequestSnapshotEnabled] = strconv.FormatBool(settings.OpenAIRequestSnapshotEnabled)
+	updates[SettingKeyOpenAIRequestSnapshotRetentionHours] = strconv.Itoa(nonNegativeInt(settings.OpenAIRequestSnapshotRetentionHours))
 	updates[SettingKeyCodexWaitGuardEnabled] = strconv.FormatBool(settings.CodexWaitGuardEnabled)
 	updates[SettingKeyCodexWaitGuardMaxHeaderWaitSeconds] = strconv.Itoa(nonNegativeInt(settings.CodexWaitGuardMaxHeaderWaitSeconds))
 	updates[SettingKeyCodexWaitGuardMaxStreamSilentSeconds] = strconv.Itoa(nonNegativeInt(settings.CodexWaitGuardMaxStreamSilentSeconds))
@@ -2495,6 +2500,73 @@ func (s *SettingService) GetDefaultSubscriptions(ctx context.Context) []DefaultS
 	return parseDefaultSubscriptions(value)
 }
 
+func (s *SettingService) IsOpenAIHeaderRaceEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIHeaderRaceEnabled)
+	if err != nil {
+		return false
+	}
+	return value == "true"
+}
+
+func (s *SettingService) GetOpenAIHeaderRaceDelay(ctx context.Context) time.Duration {
+	if s == nil || s.settingRepo == nil {
+		return 3500 * time.Millisecond
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIHeaderRaceDelayMs)
+	if err != nil {
+		return 3500 * time.Millisecond
+	}
+	ms, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || ms <= 0 {
+		return 3500 * time.Millisecond
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+func (s *SettingService) GetOpenAIHeaderRaceDailyBudget(ctx context.Context) int {
+	if s == nil || s.settingRepo == nil {
+		return 0
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIHeaderRaceDailyBudget)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+func (s *SettingService) IsOpenAIRequestSnapshotEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return true
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIRequestSnapshotEnabled)
+	if err != nil {
+		return true
+	}
+	return !isFalseSettingValue(value)
+}
+
+func (s *SettingService) GetOpenAIRequestSnapshotRetentionHours(ctx context.Context) int {
+	if s == nil || s.settingRepo == nil {
+		return openAIRequestSnapshotDefaultRetentionHours
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIRequestSnapshotRetentionHours)
+	if err != nil {
+		return openAIRequestSnapshotDefaultRetentionHours
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n <= 0 {
+		return openAIRequestSnapshotDefaultRetentionHours
+	}
+	return n
+}
+
 func (s *SettingService) GetAuthSourceDefaultSettings(ctx context.Context) (*AuthSourceDefaultSettings, error) {
 	keys := []string{
 		SettingKeyAuthSourceDefaultEmailBalance,
@@ -2805,6 +2877,11 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRealtimeBalancePrewarmActiveAccountLimit:   strconv.Itoa(s.defaultRealtimeBalancePrewarm().ActiveAccountLimit),
 		SettingKeyRealtimeBalanceConfirmTopN:                 strconv.Itoa(s.defaultRealtimeBalanceConfirmTopN()),
 		SettingKeyRealtimeBalanceConfirmTimeoutMs:            strconv.Itoa(s.defaultRealtimeBalanceConfirmTimeoutMs()),
+		SettingKeyOpenAIHeaderRaceEnabled:                    "false",
+		SettingKeyOpenAIHeaderRaceDelayMs:                    "3500",
+		SettingKeyOpenAIHeaderRaceDailyBudget:                "0",
+		SettingKeyOpenAIRequestSnapshotEnabled:               "true",
+		SettingKeyOpenAIRequestSnapshotRetentionHours:        strconv.Itoa(openAIRequestSnapshotDefaultRetentionHours),
 		SettingKeyCodexWaitGuardEnabled:                      strconv.FormatBool(s.defaultCodexWaitGuard().Enabled),
 		SettingKeyCodexWaitGuardMaxHeaderWaitSeconds:         strconv.Itoa(s.defaultCodexWaitGuard().MaxHeaderWaitSeconds),
 		SettingKeyCodexWaitGuardMaxStreamSilentSeconds:       strconv.Itoa(s.defaultCodexWaitGuard().MaxStreamSilentSeconds),
@@ -3368,6 +3445,11 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.RealtimeBalancePrewarmActiveAccountLimit = intSettingWithDefault(settings[SettingKeyRealtimeBalancePrewarmActiveAccountLimit], defaultPrewarm.ActiveAccountLimit)
 	result.RealtimeBalanceConfirmTopN = intSettingWithDefault(settings[SettingKeyRealtimeBalanceConfirmTopN], s.defaultRealtimeBalanceConfirmTopN())
 	result.RealtimeBalanceConfirmTimeoutMs = intSettingWithDefault(settings[SettingKeyRealtimeBalanceConfirmTimeoutMs], s.defaultRealtimeBalanceConfirmTimeoutMs())
+	result.OpenAIHeaderRaceEnabled = settings[SettingKeyOpenAIHeaderRaceEnabled] == "true"
+	result.OpenAIHeaderRaceDelayMs = intSettingWithDefault(settings[SettingKeyOpenAIHeaderRaceDelayMs], 3500)
+	result.OpenAIHeaderRaceDailyBudget = intSettingWithDefault(settings[SettingKeyOpenAIHeaderRaceDailyBudget], 0)
+	result.OpenAIRequestSnapshotEnabled = boolSettingWithDefault(settings[SettingKeyOpenAIRequestSnapshotEnabled], true)
+	result.OpenAIRequestSnapshotRetentionHours = intSettingWithDefault(settings[SettingKeyOpenAIRequestSnapshotRetentionHours], openAIRequestSnapshotDefaultRetentionHours)
 	defaultWaitGuard := s.defaultCodexWaitGuard()
 	result.CodexWaitGuardEnabled = boolSettingWithDefault(settings[SettingKeyCodexWaitGuardEnabled], defaultWaitGuard.Enabled)
 	result.CodexWaitGuardMaxHeaderWaitSeconds = intSettingWithDefault(settings[SettingKeyCodexWaitGuardMaxHeaderWaitSeconds], defaultWaitGuard.MaxHeaderWaitSeconds)

@@ -402,6 +402,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/openai-route-trace',
+    name: 'AdminOpenAIRouteTrace',
+    component: () => import('@/views/admin/ops/OpenAIRouteTraceView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'OpenAI Route Trace',
+      titleKey: 'admin.openaiRouteTrace.title',
+      descriptionKey: 'admin.openaiRouteTrace.description'
+    }
+  },
+  {
     path: '/admin/users',
     name: 'AdminUsers',
     component: () => import('@/views/admin/UsersView.vue'),

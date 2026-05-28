@@ -3962,6 +3962,69 @@
               <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
                 <div class="flex items-center justify-between gap-3">
                   <div>
+                    <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                      {{ t("admin.settings.gatewayForwarding.headerRace.title") }}
+                    </h3>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.headerRace.description") }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.openai_header_race_enabled" />
+                </div>
+                <div class="mt-4 grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.headerRace.delay") }}
+                    </label>
+                    <input
+                      v-model.number="form.openai_header_race_delay_ms"
+                      type="number"
+                      min="0"
+                      class="input max-w-xs"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.headerRace.dailyBudget") }}
+                    </label>
+                    <input
+                      v-model.number="form.openai_header_race_daily_budget"
+                      type="number"
+                      min="0"
+                      class="input max-w-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                      {{ t("admin.settings.gatewayForwarding.requestSnapshot.title") }}
+                    </h3>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.requestSnapshot.description") }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.openai_request_snapshot_enabled" />
+                </div>
+                <div class="mt-4">
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.requestSnapshot.retention") }}
+                  </label>
+                  <input
+                    v-model.number="form.openai_request_snapshot_retention_hours"
+                    type="number"
+                    min="1"
+                    class="input max-w-xs"
+                  />
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
                     <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
                       {{ t("admin.settings.gatewayForwarding.openaiFastLane.title") }}
                     </label>
@@ -7073,6 +7136,11 @@ type SettingsForm = Omit<
   openai_fast_lane_enabled: boolean;
   realtime_balance_confirm_top_n: number;
   realtime_balance_confirm_timeout_ms: number;
+  openai_header_race_enabled: boolean;
+  openai_header_race_delay_ms: number;
+  openai_header_race_daily_budget: number;
+  openai_request_snapshot_enabled: boolean;
+  openai_request_snapshot_retention_hours: number;
   context_journal_backend: string;
   context_journal_ttl_hours: number;
 };
@@ -7281,6 +7349,11 @@ const form = reactive<SettingsForm>({
   openai_fast_lane_enabled: true,
   realtime_balance_confirm_top_n: 3,
   realtime_balance_confirm_timeout_ms: 1200,
+  openai_header_race_enabled: false,
+  openai_header_race_delay_ms: 3500,
+  openai_header_race_daily_budget: 0,
+  openai_request_snapshot_enabled: true,
+  openai_request_snapshot_retention_hours: 72,
   context_journal_backend: "memory",
   context_journal_ttl_hours: 24,
   // 余额、订阅到期与账号限额通知
@@ -8409,6 +8482,20 @@ async function saveSettings() {
       realtime_balance_confirm_timeout_ms: Math.max(
         0,
         Math.floor(Number(form.realtime_balance_confirm_timeout_ms) || 0),
+      ),
+      openai_header_race_enabled: form.openai_header_race_enabled,
+      openai_header_race_delay_ms: Math.max(
+        0,
+        Math.floor(Number(form.openai_header_race_delay_ms) || 0),
+      ),
+      openai_header_race_daily_budget: Math.max(
+        0,
+        Math.floor(Number(form.openai_header_race_daily_budget) || 0),
+      ),
+      openai_request_snapshot_enabled: form.openai_request_snapshot_enabled,
+      openai_request_snapshot_retention_hours: Math.max(
+        1,
+        Math.floor(Number(form.openai_request_snapshot_retention_hours) || 72),
       ),
       context_journal_backend: form.context_journal_backend || "memory",
       context_journal_ttl_hours: Math.max(

@@ -524,6 +524,11 @@ export interface SystemSettings {
   openai_fast_lane_enabled?: boolean;
   realtime_balance_confirm_top_n?: number;
   realtime_balance_confirm_timeout_ms?: number;
+  openai_header_race_enabled?: boolean;
+  openai_header_race_delay_ms?: number;
+  openai_header_race_daily_budget?: number;
+  openai_request_snapshot_enabled?: boolean;
+  openai_request_snapshot_retention_hours?: number;
   context_journal_backend?: string;
   context_journal_ttl_hours?: number;
   web_search_emulation_enabled?: boolean;
@@ -761,6 +766,11 @@ export interface UpdateSettingsRequest {
   openai_fast_lane_enabled?: boolean;
   realtime_balance_confirm_top_n?: number;
   realtime_balance_confirm_timeout_ms?: number;
+  openai_header_race_enabled?: boolean;
+  openai_header_race_delay_ms?: number;
+  openai_header_race_daily_budget?: number;
+  openai_request_snapshot_enabled?: boolean;
+  openai_request_snapshot_retention_hours?: number;
   context_journal_backend?: string;
   context_journal_ttl_hours?: number;
   // Payment configuration

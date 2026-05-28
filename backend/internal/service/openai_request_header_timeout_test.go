@@ -1,13 +1,50 @@
 package service
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
+
+type headerRaceHTTPUpstreamStub struct {
+	mu     sync.Mutex
+	calls  []string
+	delays map[string]time.Duration
+}
+
+func (u *headerRaceHTTPUpstreamStub) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	baseURL := req.URL.Scheme + "://" + req.URL.Host
+	u.mu.Lock()
+	u.calls = append(u.calls, baseURL)
+	delay := u.delays[baseURL]
+	u.mu.Unlock()
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+}
+
+func (u *headerRaceHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func (u *headerRaceHTTPUpstreamStub) callCount() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return len(u.calls)
+}
 
 func TestOpenAIRequestHeaderTimeoutForBodyUsesContextSizeBuckets(t *testing.T) {
 	svc := &OpenAIGatewayService{
@@ -192,4 +229,95 @@ func TestOpenAIPassthroughTimeoutHeadersRespectsStableSuppression(t *testing.T) 
 	svc.cfg.Gateway.CodexStability.Mode = config.GatewayCodexStabilityModeOff
 	policy = svc.openAICodexStabilityPolicy(true)
 	require.True(t, svc.isOpenAIPassthroughTimeoutHeadersAllowedForPolicy(policy))
+}
+
+func TestOpenAIHeaderRaceBudgetOnlyConsumedWhenBackupStarts(t *testing.T) {
+	upstream := &headerRaceHTTPUpstreamStub{
+		delays: map[string]time.Duration{
+			"https://primary.example": 30 * time.Millisecond,
+			"https://backup.example":  80 * time.Millisecond,
+		},
+	}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+	builder := func(ctx context.Context, baseURL string) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/responses", strings.NewReader(`{}`))
+	}
+
+	result := svc.doOpenAIUpstreamWithHeaderRace(
+		context.Background(),
+		&Account{ID: 10},
+		[]byte(`{}`),
+		"",
+		openAICodexStabilityPolicy{},
+		"https://primary.example",
+		"https://backup.example",
+		builder,
+		openAIHeaderRaceOptions{Enabled: true, Delay: 200 * time.Millisecond, DailyBudget: 1},
+	)
+
+	require.NoError(t, result.err)
+	require.False(t, result.backupStarted)
+	require.Equal(t, 1, upstream.callCount())
+	acquired, remaining := svc.headerRaceBudget.tryAcquire(time.Now(), 1)
+	require.True(t, acquired)
+	require.Equal(t, 0, remaining)
+}
+
+func TestOpenAIHeaderRaceStartsBackupAfterDelayAndUsesBudget(t *testing.T) {
+	upstream := &headerRaceHTTPUpstreamStub{
+		delays: map[string]time.Duration{
+			"https://primary.example": 120 * time.Millisecond,
+			"https://backup.example":  10 * time.Millisecond,
+		},
+	}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+	builder := func(ctx context.Context, baseURL string) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/responses", strings.NewReader(`{}`))
+	}
+
+	result := svc.doOpenAIUpstreamWithHeaderRace(
+		context.Background(),
+		&Account{ID: 10},
+		[]byte(`{}`),
+		"",
+		openAICodexStabilityPolicy{},
+		"https://primary.example",
+		"https://backup.example",
+		builder,
+		openAIHeaderRaceOptions{Enabled: true, Delay: 20 * time.Millisecond, DailyBudget: 1},
+	)
+
+	require.NoError(t, result.err)
+	require.True(t, result.backupStarted)
+	require.True(t, result.fromBackup)
+	require.Equal(t, 0, result.budgetRemaining)
+	require.Equal(t, 2, upstream.callCount())
+}
+
+func TestOpenAIHeaderRaceBudgetZeroDisablesBackupRequest(t *testing.T) {
+	upstream := &headerRaceHTTPUpstreamStub{
+		delays: map[string]time.Duration{
+			"https://primary.example": 30 * time.Millisecond,
+		},
+	}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+	builder := func(ctx context.Context, baseURL string) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/responses", strings.NewReader(`{}`))
+	}
+
+	result := svc.doOpenAIUpstreamWithHeaderRace(
+		context.Background(),
+		&Account{ID: 10},
+		[]byte(`{}`),
+		"",
+		openAICodexStabilityPolicy{},
+		"https://primary.example",
+		"https://backup.example",
+		builder,
+		openAIHeaderRaceOptions{Enabled: true, Delay: time.Millisecond, DailyBudget: 0},
+	)
+
+	require.NoError(t, result.err)
+	require.False(t, result.backupStarted)
+	require.Equal(t, 1, upstream.callCount())
 }

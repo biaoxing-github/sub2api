@@ -226,6 +226,11 @@ type SystemSettings struct {
 	RealtimeBalancePrewarmActiveAccountLimit   int
 	RealtimeBalanceConfirmTopN                 int
 	RealtimeBalanceConfirmTimeoutMs            int
+	OpenAIHeaderRaceEnabled                    bool
+	OpenAIHeaderRaceDelayMs                    int
+	OpenAIHeaderRaceDailyBudget                int
+	OpenAIRequestSnapshotEnabled               bool
+	OpenAIRequestSnapshotRetentionHours        int
 	CodexWaitGuardEnabled                      bool
 	CodexWaitGuardMaxHeaderWaitSeconds         int
 	CodexWaitGuardMaxStreamSilentSeconds       int
