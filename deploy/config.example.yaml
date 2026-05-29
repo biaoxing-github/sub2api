@@ -205,6 +205,14 @@ gateway:
   #
   # 注意：开启后会影响所有客户端的行为（不仅限于 VS Code / Codex CLI），请谨慎开启。
   force_codex_cli: false
+  # Cockpit-tools compatibility for OpenAI OAuth upstream requests.
+  # OpenAI OAuth 上游请求的 cockpit-tools 兼容模式。
+  #
+  # When enabled, OAuth accounts use the HTTP SSE Codex endpoint and rebuild
+  # upstream headers like cockpit-tools' Codex HTTP executor.
+  # 开启后 OAuth 账号强制走 HTTP SSE Codex 端点，并按 cockpit-tools 的 Codex HTTP
+  # executor 重建上游 header。
+  openai_cockpit_tools_compat: false
   # Enable Codex image-generation bridge injection for /openai/v1/responses.
   # 是否为 Codex /responses 请求自动注入 image_generation 工具与桥接指令。
   #

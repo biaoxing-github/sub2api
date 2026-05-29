@@ -93,6 +93,20 @@ func TestLoadDefaultOpenAIRequestHeaderTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadOpenAICockpitToolsCompatConfig(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_OPENAI_COCKPIT_TOOLS_COMPAT", "true")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Gateway.OpenAICockpitToolsCompat)
+}
+
 func TestLoadDefaultCodexStabilityConfig(t *testing.T) {
 	resetViperWithJWTSecret(t)
 

@@ -43,6 +43,7 @@ const (
 	openaiPlatformAPIURL   = "https://api.openai.com/v1/responses"
 	openaiStickySessionTTL = time.Hour // 粘性会话TTL
 	codexCLIUserAgent      = "codex_cli_rs/0.125.0"
+	cockpitToolsUserAgent  = "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
@@ -1295,6 +1296,94 @@ func resolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool) stri
 		return "codex_cli_rs"
 	}
 	return "opencode"
+}
+
+func (s *OpenAIGatewayService) isOpenAICockpitToolsCompatEnabled() bool {
+	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAICockpitToolsCompat
+}
+
+func (s *OpenAIGatewayService) applyOpenAICockpitToolsOAuthHeaders(c *gin.Context, account *Account, req *http.Request, stream bool) {
+	if !s.isOpenAICockpitToolsCompatEnabled() || req == nil || account == nil || account.Type != AccountTypeOAuth {
+		return
+	}
+
+	source := http.Header(nil)
+	if c != nil && c.Request != nil {
+		source = c.Request.Header
+	}
+
+	authHeader := strings.TrimSpace(req.Header.Get("authorization"))
+	next := make(http.Header)
+	next.Set("Content-Type", "application/json")
+	if authHeader != "" {
+		next.Set("Authorization", authHeader)
+	}
+	copyOpenAICockpitHeader(next, source, "X-Codex-Beta-Features")
+	copyOpenAICockpitHeader(next, source, "Version")
+	copyOpenAICockpitHeader(next, source, "X-Codex-Turn-Metadata")
+	copyOpenAICockpitHeader(next, source, "X-Client-Request-Id")
+
+	setOpenAICockpitHeaderWithConfigPrecedence(next, source, "User-Agent", account.GetOpenAIUserAgent(), cockpitToolsUserAgent)
+	if strings.Contains(next.Get("User-Agent"), "Mac OS") {
+		setOpenAICockpitHeaderFromSourceOrFallback(next, source, "Session_id", uuid.NewString())
+	}
+
+	if stream {
+		next.Set("Accept", "text/event-stream")
+	} else {
+		next.Set("Accept", "application/json")
+	}
+	next.Set("Connection", "Keep-Alive")
+
+	if source != nil {
+		if originator := strings.TrimSpace(source.Get("Originator")); originator != "" {
+			next.Set("Originator", originator)
+		}
+	}
+	if strings.TrimSpace(next.Get("Originator")) == "" {
+		next.Set("Originator", "codex_cli_rs")
+	}
+	if chatgptAccountID := account.GetChatGPTAccountID(); chatgptAccountID != "" {
+		next.Set("Chatgpt-Account-Id", chatgptAccountID)
+	}
+
+	req.Header = next
+	req.Host = "chatgpt.com"
+}
+
+func copyOpenAICockpitHeader(target http.Header, source http.Header, key string) {
+	if target == nil || source == nil {
+		return
+	}
+	if val := strings.TrimSpace(source.Get(key)); val != "" {
+		target.Set(key, val)
+	}
+}
+
+func setOpenAICockpitHeaderFromSourceOrFallback(target http.Header, source http.Header, key, fallback string) {
+	if target == nil {
+		return
+	}
+	if source != nil {
+		if val := strings.TrimSpace(source.Get(key)); val != "" {
+			target.Set(key, val)
+			return
+		}
+	}
+	if val := strings.TrimSpace(fallback); val != "" {
+		target.Set(key, val)
+	}
+}
+
+func setOpenAICockpitHeaderWithConfigPrecedence(target http.Header, source http.Header, key, configValue, fallback string) {
+	if target == nil {
+		return
+	}
+	if val := strings.TrimSpace(configValue); val != "" {
+		target.Set(key, val)
+		return
+	}
+	setOpenAICockpitHeaderFromSourceOrFallback(target, source, key, fallback)
 }
 
 // BindStickySession sets session -> account binding with standard TTL.
@@ -3586,6 +3675,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。
 	s.overrideBrowserUserAgent(ctx, account, req)
 
+	s.applyOpenAICockpitToolsOAuthHeaders(c, account, req, !isOpenAIResponsesCompactPath(c))
+
 	if req.Header.Get("content-type") == "" {
 		req.Header.Set("content-type", "application/json")
 	}
@@ -4901,6 +4992,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 	// 浏览器型 UA 兜底：仅 OAuth（ChatGPT 内部接口）账号生效，若最终 user-agent 仍为浏览器
 	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。
 	s.overrideBrowserUserAgent(ctx, account, req)
+
+	s.applyOpenAICockpitToolsOAuthHeaders(c, account, req, !isOpenAIResponsesCompactPath(c))
 
 	// Ensure required headers exist
 	if req.Header.Get("content-type") == "" {

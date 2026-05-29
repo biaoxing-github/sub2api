@@ -2079,6 +2079,7 @@ func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T)
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
+		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
 	}
@@ -2102,6 +2103,7 @@ func TestOpenAIBuildUpstreamRequestOAuthMessagesBridgeUsesSessionOnly(t *testing
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
+		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
 	}
@@ -2174,6 +2176,76 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 			require.Equal(t, tt.wantOriginator, req.Header.Get("originator"))
 		})
 	}
+}
+
+func TestOpenAIBuildUpstreamRequestCockpitToolsCompatibilityHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	c.Request.Header.Set("OpenAI-Beta", "responses=experimental")
+	c.Request.Header.Set("Accept-Language", "zh-CN")
+	c.Request.Header.Set("conversation_id", "client-conversation")
+	c.Request.Header.Set("session_id", "client-session")
+	c.Request.Header.Set("X-Client-Request-Id", "client-request-1")
+	c.Request.Header.Set("X-Codex-Beta-Features", "feature-a")
+	c.Request.Header.Set("X-Codex-Turn-State", "turn-state")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{
+		Gateway: config.GatewayConfig{OpenAICockpitToolsCompat: true},
+	}}
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+	}
+
+	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", true, "prompt-cache-key", false)
+	require.NoError(t, err)
+	require.Equal(t, chatgptCodexURL, req.URL.String())
+	require.Equal(t, "chatgpt.com", req.Host)
+	require.Equal(t, "Bearer token", req.Header.Get("Authorization"))
+	require.Equal(t, "application/json", req.Header.Get("Content-Type"))
+	require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
+	require.Equal(t, "Keep-Alive", req.Header.Get("Connection"))
+	require.Equal(t, cockpitToolsUserAgent, req.Header.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", req.Header.Get("Originator"))
+	require.Equal(t, "chatgpt-acc", req.Header.Get("Chatgpt-Account-Id"))
+	require.Equal(t, "client-session", req.Header.Get("Session_id"))
+	require.Equal(t, "client-request-1", req.Header.Get("X-Client-Request-Id"))
+	require.Equal(t, "feature-a", req.Header.Get("X-Codex-Beta-Features"))
+	require.Empty(t, req.Header.Get("OpenAI-Beta"))
+	require.Empty(t, req.Header.Get("conversation_id"))
+	require.Empty(t, req.Header.Get("Accept-Language"))
+	require.Empty(t, req.Header.Get("X-Codex-Turn-State"))
+}
+
+func TestOpenAIPassthroughCockpitToolsCompatibilityHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	c.Request.Header.Set("User-Agent", "client-ua/1.0")
+	c.Request.Header.Set("Originator", "Codex Desktop")
+	c.Request.Header.Set("OpenAI-Beta", "responses=experimental")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{
+		Gateway: config.GatewayConfig{OpenAICockpitToolsCompat: true},
+	}}
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+	}
+
+	req, err := svc.buildUpstreamRequestOpenAIPassthrough(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", openAICodexStabilityPolicy{})
+	require.NoError(t, err)
+	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
+	require.Equal(t, "application/json", req.Header.Get("Accept"))
+	require.Equal(t, "client-ua/1.0", req.Header.Get("User-Agent"))
+	require.Equal(t, "Codex Desktop", req.Header.Get("Originator"))
+	require.Empty(t, req.Header.Get("OpenAI-Beta"))
+	require.Empty(t, req.Header.Get("Session_id"))
 }
 
 // ==================== P1-08 修复：model 替换性能优化测试 ====================

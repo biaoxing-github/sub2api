@@ -45,6 +45,9 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 	if r == nil || r.cfg == nil {
 		return openAIWSHTTPDecision("config_missing")
 	}
+	if account.Type == AccountTypeOAuth && r.cfg.Gateway.OpenAICockpitToolsCompat {
+		return openAIWSHTTPDecision("cockpit_tools_compat")
+	}
 
 	wsCfg := r.cfg.Gateway.OpenAIWS
 	if wsCfg.ForceHTTP {
