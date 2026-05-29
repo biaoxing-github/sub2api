@@ -26,6 +26,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/cespare/xxhash/v2"
@@ -44,6 +45,7 @@ const (
 	openaiStickySessionTTL = time.Hour // 粘性会话TTL
 	codexCLIUserAgent      = "codex_cli_rs/0.125.0"
 	cockpitToolsUserAgent  = "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
+	codexDesktopUserAgent  = "Codex Desktop/0.133.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.519.81530)"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
@@ -1299,7 +1301,27 @@ func resolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool) stri
 }
 
 func (s *OpenAIGatewayService) isOpenAICockpitToolsCompatEnabled() bool {
-	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAICockpitToolsCompat
+	return s.openAIOAuthCompatMode() == config.GatewayOpenAIOAuthCompatModeCockpitTools
+}
+
+func (s *OpenAIGatewayService) isOpenAICodexDirectCompatEnabled() bool {
+	return s.openAIOAuthCompatMode() == config.GatewayOpenAIOAuthCompatModeCodexDirect
+}
+
+func (s *OpenAIGatewayService) openAIOAuthCompatMode() string {
+	if s == nil || s.cfg == nil {
+		return config.GatewayOpenAIOAuthCompatModeOff
+	}
+	return normalizeOpenAIOAuthCompatMode(s.cfg.Gateway.OpenAIOAuthCompatMode, s.cfg.Gateway.OpenAICockpitToolsCompat)
+}
+
+func (s *OpenAIGatewayService) applyOpenAIOAuthCompatHeaders(c *gin.Context, account *Account, req *http.Request, stream bool) {
+	switch s.openAIOAuthCompatMode() {
+	case config.GatewayOpenAIOAuthCompatModeCockpitTools:
+		s.applyOpenAICockpitToolsOAuthHeaders(c, account, req, stream)
+	case config.GatewayOpenAIOAuthCompatModeCodexDirect:
+		s.applyOpenAICodexDirectOAuthHeaders(c, account, req, stream)
+	}
 }
 
 func (s *OpenAIGatewayService) applyOpenAICockpitToolsOAuthHeaders(c *gin.Context, account *Account, req *http.Request, stream bool) {
@@ -1349,6 +1371,68 @@ func (s *OpenAIGatewayService) applyOpenAICockpitToolsOAuthHeaders(c *gin.Contex
 
 	req.Header = next
 	req.Host = "chatgpt.com"
+}
+
+func (s *OpenAIGatewayService) applyOpenAICodexDirectOAuthHeaders(c *gin.Context, account *Account, req *http.Request, stream bool) {
+	if !s.isOpenAICodexDirectCompatEnabled() || req == nil || account == nil || account.Type != AccountTypeOAuth {
+		return
+	}
+
+	source := http.Header(nil)
+	if c != nil && c.Request != nil {
+		source = c.Request.Header
+	}
+
+	authHeader := strings.TrimSpace(req.Header.Get("authorization"))
+	next := make(http.Header)
+	next.Set("Content-Type", "application/json")
+	if authHeader != "" {
+		next.Set("Authorization", authHeader)
+	}
+	if stream {
+		next.Set("Accept", "text/event-stream")
+	} else {
+		next.Set("Accept", "application/json")
+	}
+	next.Set("Connection", "Keep-Alive")
+	if userAgent := account.GetOpenAIUserAgent(); userAgent != "" {
+		next.Set("User-Agent", userAgent)
+	} else {
+		next.Set("User-Agent", codexDesktopUserAgent)
+	}
+	setOpenAICockpitHeaderFromSourceOrFallback(next, source, "Originator", "Codex Desktop")
+	copyOpenAICockpitHeader(next, source, "X-Codex-Beta-Features")
+	copyOpenAICockpitHeader(next, source, "X-Codex-Turn-Metadata")
+	copyOpenAICockpitHeader(next, source, "X-Client-Request-Id")
+
+	sessionID := firstHeaderValue(source, "Session-Id", "session_id", "Session_id")
+	threadID := firstHeaderValue(source, "Thread-Id", "conversation_id", "Conversation_id")
+	if sessionID == "" {
+		sessionID = uuid.NewString()
+	}
+	if threadID == "" {
+		threadID = sessionID
+	}
+	next.Set("Session-Id", sessionID)
+	next.Set("Thread-Id", threadID)
+	if chatgptAccountID := account.GetChatGPTAccountID(); chatgptAccountID != "" {
+		next.Set("Chatgpt-Account-Id", chatgptAccountID)
+	}
+
+	req.Header = next
+	req.Host = "chatgpt.com"
+}
+
+func firstHeaderValue(source http.Header, keys ...string) string {
+	if source == nil {
+		return ""
+	}
+	for _, key := range keys {
+		if val := strings.TrimSpace(source.Get(key)); val != "" {
+			return val
+		}
+	}
+	return ""
 }
 
 func copyOpenAICockpitHeader(target http.Header, source http.Header, key string) {
@@ -3675,7 +3759,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。
 	s.overrideBrowserUserAgent(ctx, account, req)
 
-	s.applyOpenAICockpitToolsOAuthHeaders(c, account, req, !isOpenAIResponsesCompactPath(c))
+	s.applyOpenAIOAuthCompatHeaders(c, account, req, !isOpenAIResponsesCompactPath(c))
 
 	if req.Header.Get("content-type") == "" {
 		req.Header.Set("content-type", "application/json")
@@ -4224,6 +4308,24 @@ func openAIRequestContextRawBytes(value gjson.Result) int {
 	return total
 }
 
+func (s *OpenAIGatewayService) doOpenAIUpstreamHTTPRequest(req *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+	accountID, accountConcurrency := openAIRequestAccountParams(account)
+	if profile := s.openAIUpstreamTLSProfile(account); profile != nil {
+		return s.httpUpstream.DoWithTLS(req, proxyURL, accountID, accountConcurrency, profile)
+	}
+	return s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func (s *OpenAIGatewayService) openAIUpstreamTLSProfile(account *Account) *tlsfingerprint.Profile {
+	if s == nil || account == nil {
+		return nil
+	}
+	if account.Type == AccountTypeOAuth && s.isOpenAICodexDirectCompatEnabled() {
+		return &tlsfingerprint.Profile{Name: "Built-in Default (Node.js 24.x)"}
+	}
+	return nil
+}
+
 func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	parent context.Context,
 	req *http.Request,
@@ -4243,8 +4345,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	upstreamStart := time.Now()
 	pathKey := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), requestBaseURL)
 	if timeout <= 0 {
-		accountID, accountConcurrency := openAIRequestAccountParams(account)
-		resp, err := s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
+		resp, err := s.doOpenAIUpstreamHTTPRequest(req, proxyURL, account)
 		headerWait := time.Since(upstreamStart).Milliseconds()
 		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, resp, err, &headerWait)
 		return resp, err
@@ -4257,8 +4358,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 
 	resultCh := make(chan openAIUpstreamDoResult, 1)
 	go func() {
-		accountID, accountConcurrency := openAIRequestAccountParams(account)
-		resp, err := s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
+		resp, err := s.doOpenAIUpstreamHTTPRequest(req, proxyURL, account)
 		resultCh <- openAIUpstreamDoResult{resp: resp, err: err}
 	}()
 
@@ -4993,7 +5093,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。
 	s.overrideBrowserUserAgent(ctx, account, req)
 
-	s.applyOpenAICockpitToolsOAuthHeaders(c, account, req, !isOpenAIResponsesCompactPath(c))
+	s.applyOpenAIOAuthCompatHeaders(c, account, req, !isOpenAIResponsesCompactPath(c))
 
 	// Ensure required headers exist
 	if req.Header.Get("content-type") == "" {

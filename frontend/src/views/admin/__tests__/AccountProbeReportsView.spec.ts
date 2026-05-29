@@ -3,11 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountProbeReportsView from '../AccountProbeReportsView.vue'
 
-const { listAccounts, listAccountProbeRuns, getAccountProbeRun, batchAccountProbeRuns } = vi.hoisted(() => ({
+const { listAccounts, listAccountProbeRuns, getAccountProbeRun, batchAccountProbeRuns, deleteAccountProbeRuns } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listAccountProbeRuns: vi.fn(),
   getAccountProbeRun: vi.fn(),
   batchAccountProbeRuns: vi.fn(),
+  deleteAccountProbeRuns: vi.fn(),
 }))
 
 vi.mock('@/api/admin/accounts', () => ({
@@ -16,11 +17,13 @@ vi.mock('@/api/admin/accounts', () => ({
     listAccountProbeRuns,
     getAccountProbeRun,
     batchAccountProbeRuns,
+    deleteAccountProbeRuns,
   },
   list: listAccounts,
   listAccountProbeRuns,
   getAccountProbeRun,
   batchAccountProbeRuns,
+  deleteAccountProbeRuns,
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -69,9 +72,12 @@ describe('AccountProbeReportsView', () => {
     listAccountProbeRuns.mockReset()
     getAccountProbeRun.mockReset()
     batchAccountProbeRuns.mockReset()
+    deleteAccountProbeRuns.mockReset()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     document.body.innerHTML = ''
   })
 
@@ -283,6 +289,71 @@ describe('AccountProbeReportsView', () => {
       long_context: false,
     }, expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
+  })
+
+  it('deletes selected finished report runs and reloads the list', async () => {
+    listAccountProbeRuns
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 91,
+            account_id: 12,
+            account_name: 'rayapi-free',
+            status: 'success',
+            mode: 'standard',
+            model: 'gpt-4.1-mini',
+            created_at: '2026-05-26T10:00:00Z',
+          },
+          {
+            id: 92,
+            account_id: 13,
+            account_name: 'rayapi-running',
+            status: 'running',
+            mode: 'standard',
+            model: 'gpt-4.1-mini',
+            created_at: '2026-05-26T10:01:00Z',
+          },
+        ],
+        total: 2,
+        page: 1,
+        page_size: 20,
+        summary: {},
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 20,
+        summary: {},
+      })
+    deleteAccountProbeRuns.mockResolvedValue({
+      requested_count: 1,
+      deleted_count: 1,
+      skipped_running_count: 0,
+    })
+
+    const wrapper = mount(AccountProbeReportsView, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          Pagination: PaginationStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="probe-run-select"]').setValue(true)
+    await wrapper.find('[data-test="delete-selected-probe-runs"]').trigger('click')
+    await flushPromises()
+
+    expect(window.confirm).toHaveBeenCalledWith('admin.accountProbeReports.deleteConfirm')
+    expect(deleteAccountProbeRuns).toHaveBeenCalledWith([91], expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('admin.accountProbeReports.deleteSucceeded')
   })
 
   it('does not expose unused pending status and refreshes while runs are active', async () => {

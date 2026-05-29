@@ -256,6 +256,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		RewriteMessageCacheControl:                 settings.RewriteMessageCacheControl,
 		AntigravityUserAgentVersion:                settings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                       settings.OpenAICodexUserAgent,
+		OpenAICockpitToolsCompat:                   settings.OpenAICockpitToolsCompat,
+		OpenAIOAuthCompatMode:                      settings.OpenAIOAuthCompatMode,
 		ClientRequestDebugLogEnabled:               settings.ClientRequestDebugLogEnabled,
 		CodexStabilityMode:                         settings.CodexStabilityMode,
 		CodexStabilityDynamicHeaderTimeoutEnabled:  settings.CodexStabilityDynamicHeaderTimeoutEnabled,
@@ -621,6 +623,8 @@ type UpdateSettingsRequest struct {
 	RewriteMessageCacheControl                 *bool    `json:"rewrite_message_cache_control"`
 	AntigravityUserAgentVersion                *string  `json:"antigravity_user_agent_version"`
 	OpenAICodexUserAgent                       *string  `json:"openai_codex_user_agent"`
+	OpenAICockpitToolsCompat                   *bool    `json:"openai_cockpit_tools_compat"`
+	OpenAIOAuthCompatMode                      *string  `json:"openai_oauth_compat_mode"`
 	ClientRequestDebugLogEnabled               *bool    `json:"client_request_debug_log_enabled"`
 	CodexStabilityMode                         *string  `json:"codex_stability_mode"`
 	CodexStabilityDynamicHeaderTimeoutEnabled  *bool    `json:"codex_stability_dynamic_header_timeout_enabled"`
@@ -1516,6 +1520,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			return
 		}
 	}
+	if req.OpenAIOAuthCompatMode != nil {
+		normalized := strings.ToLower(strings.TrimSpace(*req.OpenAIOAuthCompatMode))
+		req.OpenAIOAuthCompatMode = &normalized
+		switch normalized {
+		case config.GatewayOpenAIOAuthCompatModeOff,
+			config.GatewayOpenAIOAuthCompatModeCockpitTools,
+			config.GatewayOpenAIOAuthCompatModeCodexDirect:
+		default:
+			response.Error(c, http.StatusBadRequest, "openai_oauth_compat_mode must be off, cockpit_tools, or codex_direct")
+			return
+		}
+	}
 	if req.CodexStabilityMode != nil {
 		normalized := strings.ToLower(strings.TrimSpace(*req.CodexStabilityMode))
 		req.CodexStabilityMode = &normalized
@@ -1745,6 +1761,19 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.OpenAICodexUserAgent
 			}
 			return previousSettings.OpenAICodexUserAgent
+		}(),
+		OpenAICockpitToolsCompat: boolValueOrDefault(req.OpenAICockpitToolsCompat, previousSettings.OpenAICockpitToolsCompat),
+		OpenAIOAuthCompatMode: func() string {
+			if req.OpenAIOAuthCompatMode != nil {
+				return *req.OpenAIOAuthCompatMode
+			}
+			if req.OpenAICockpitToolsCompat != nil {
+				if *req.OpenAICockpitToolsCompat {
+					return config.GatewayOpenAIOAuthCompatModeCockpitTools
+				}
+				return config.GatewayOpenAIOAuthCompatModeOff
+			}
+			return previousSettings.OpenAIOAuthCompatMode
 		}(),
 		ClientRequestDebugLogEnabled: boolValueOrDefault(req.ClientRequestDebugLogEnabled, previousSettings.ClientRequestDebugLogEnabled),
 		CodexStabilityMode: func() string {
@@ -2167,6 +2196,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		RewriteMessageCacheControl:                 updatedSettings.RewriteMessageCacheControl,
 		AntigravityUserAgentVersion:                updatedSettings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                       updatedSettings.OpenAICodexUserAgent,
+		OpenAICockpitToolsCompat:                   updatedSettings.OpenAICockpitToolsCompat,
+		OpenAIOAuthCompatMode:                      updatedSettings.OpenAIOAuthCompatMode,
 		ClientRequestDebugLogEnabled:               updatedSettings.ClientRequestDebugLogEnabled,
 		CodexStabilityMode:                         updatedSettings.CodexStabilityMode,
 		CodexStabilityDynamicHeaderTimeoutEnabled:  updatedSettings.CodexStabilityDynamicHeaderTimeoutEnabled,
@@ -2672,6 +2703,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.OpenAICodexUserAgent != after.OpenAICodexUserAgent {
 		changed = append(changed, "openai_codex_user_agent")
+	}
+	if before.OpenAICockpitToolsCompat != after.OpenAICockpitToolsCompat {
+		changed = append(changed, "openai_cockpit_tools_compat")
+	}
+	if before.OpenAIOAuthCompatMode != after.OpenAIOAuthCompatMode {
+		changed = append(changed, "openai_oauth_compat_mode")
 	}
 	if before.ClientRequestDebugLogEnabled != after.ClientRequestDebugLogEnabled {
 		changed = append(changed, "client_request_debug_log_enabled")

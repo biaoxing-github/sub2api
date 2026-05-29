@@ -1801,6 +1801,10 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyRewriteMessageCacheControl] = strconv.FormatBool(settings.RewriteMessageCacheControl)
 	updates[SettingKeyAntigravityUserAgentVersion] = antigravity.NormalizeUserAgentVersion(settings.AntigravityUserAgentVersion)
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
+	settings.OpenAIOAuthCompatMode = normalizeOpenAIOAuthCompatMode(settings.OpenAIOAuthCompatMode, settings.OpenAICockpitToolsCompat)
+	settings.OpenAICockpitToolsCompat = settings.OpenAIOAuthCompatMode == config.GatewayOpenAIOAuthCompatModeCockpitTools
+	updates[SettingKeyOpenAIOAuthCompatMode] = settings.OpenAIOAuthCompatMode
+	updates[SettingKeyOpenAICockpitToolsCompat] = strconv.FormatBool(settings.OpenAICockpitToolsCompat)
 	updates[SettingKeyClientRequestDebugLogEnabled] = strconv.FormatBool(settings.ClientRequestDebugLogEnabled)
 	updates[SettingKeyCodexStabilityMode] = normalizeCodexStabilityMode(settings.CodexStabilityMode)
 	updates[SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled] = strconv.FormatBool(settings.CodexStabilityDynamicHeaderTimeoutEnabled)
@@ -1949,6 +1953,8 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	})
 	if s.cfg != nil {
 		s.cfg.SetTrustForwardedIPForAPIKeyACL(settings.APIKeyACLTrustForwardedIP)
+		s.cfg.Gateway.OpenAIOAuthCompatMode = normalizeOpenAIOAuthCompatMode(settings.OpenAIOAuthCompatMode, settings.OpenAICockpitToolsCompat)
+		s.cfg.Gateway.OpenAICockpitToolsCompat = settings.OpenAICockpitToolsCompat
 		s.cfg.Gateway.CodexStability.Mode = normalizeCodexStabilityMode(settings.CodexStabilityMode)
 		s.cfg.Gateway.CodexStability.DynamicHeaderTimeoutEnabled = settings.CodexStabilityDynamicHeaderTimeoutEnabled
 		s.cfg.Gateway.CodexStability.RequestPhaseFailoverEnabled = settings.CodexStabilityRequestPhaseFailoverEnabled
@@ -2007,6 +2013,17 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 
 func (s *SettingService) defaultRewriteMessageCacheControl() bool {
 	return false
+}
+
+func (s *SettingService) defaultOpenAICockpitToolsCompat() bool {
+	return s.defaultOpenAIOAuthCompatMode() == config.GatewayOpenAIOAuthCompatModeCockpitTools
+}
+
+func (s *SettingService) defaultOpenAIOAuthCompatMode() string {
+	if s == nil || s.cfg == nil {
+		return config.GatewayOpenAIOAuthCompatModeOff
+	}
+	return normalizeOpenAIOAuthCompatMode(s.cfg.Gateway.OpenAIOAuthCompatMode, s.cfg.Gateway.OpenAICockpitToolsCompat)
 }
 
 func (s *SettingService) validateDefaultSubscriptionGroups(ctx context.Context, items []DefaultSubscriptionSetting) error {
@@ -2846,6 +2863,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRewriteMessageCacheControl:                 strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyAntigravityUserAgentVersion:                "",
 		SettingKeyOpenAICodexUserAgent:                       "",
+		SettingKeyOpenAIOAuthCompatMode:                      s.defaultOpenAIOAuthCompatMode(),
+		SettingKeyOpenAICockpitToolsCompat:                   strconv.FormatBool(s.defaultOpenAICockpitToolsCompat()),
 		SettingKeyClientRequestDebugLogEnabled:               "false",
 		SettingKeyCodexStabilityMode:                         config.GatewayCodexStabilityModeCodex,
 		SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled:  "true",
@@ -3445,6 +3464,9 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.RealtimeBalancePrewarmActiveAccountLimit = intSettingWithDefault(settings[SettingKeyRealtimeBalancePrewarmActiveAccountLimit], defaultPrewarm.ActiveAccountLimit)
 	result.RealtimeBalanceConfirmTopN = intSettingWithDefault(settings[SettingKeyRealtimeBalanceConfirmTopN], s.defaultRealtimeBalanceConfirmTopN())
 	result.RealtimeBalanceConfirmTimeoutMs = intSettingWithDefault(settings[SettingKeyRealtimeBalanceConfirmTimeoutMs], s.defaultRealtimeBalanceConfirmTimeoutMs())
+	legacyCockpitCompat := boolSettingWithDefault(settings[SettingKeyOpenAICockpitToolsCompat], s.defaultOpenAICockpitToolsCompat())
+	result.OpenAIOAuthCompatMode = normalizeOpenAIOAuthCompatMode(settings[SettingKeyOpenAIOAuthCompatMode], legacyCockpitCompat)
+	result.OpenAICockpitToolsCompat = result.OpenAIOAuthCompatMode == config.GatewayOpenAIOAuthCompatModeCockpitTools
 	result.OpenAIHeaderRaceEnabled = settings[SettingKeyOpenAIHeaderRaceEnabled] == "true"
 	result.OpenAIHeaderRaceDelayMs = intSettingWithDefault(settings[SettingKeyOpenAIHeaderRaceDelayMs], 3500)
 	result.OpenAIHeaderRaceDailyBudget = intSettingWithDefault(settings[SettingKeyOpenAIHeaderRaceDailyBudget], 0)
@@ -3524,6 +3546,22 @@ func normalizeCodexStabilityMode(mode string) string {
 		return config.GatewayCodexStabilityModeAllOpenAIResponses
 	default:
 		return config.GatewayCodexStabilityModeCodex
+	}
+}
+
+func normalizeOpenAIOAuthCompatMode(mode string, legacyCockpitCompat bool) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case config.GatewayOpenAIOAuthCompatModeOff:
+		return config.GatewayOpenAIOAuthCompatModeOff
+	case config.GatewayOpenAIOAuthCompatModeCockpitTools:
+		return config.GatewayOpenAIOAuthCompatModeCockpitTools
+	case config.GatewayOpenAIOAuthCompatModeCodexDirect:
+		return config.GatewayOpenAIOAuthCompatModeCodexDirect
+	default:
+		if legacyCockpitCompat {
+			return config.GatewayOpenAIOAuthCompatModeCockpitTools
+		}
+		return config.GatewayOpenAIOAuthCompatModeOff
 	}
 }
 

@@ -18,6 +18,7 @@ vi.mock('@/api/client', () => ({
 
 import {
   batchAccountProbeRuns,
+  deleteAccountProbeRuns,
   getBatchTestNonAPIKeyRun,
   batchTestNonAPIKeyAccounts,
   getAccountProbeRun,
@@ -448,6 +449,18 @@ describe('admin accounts api usage summary', () => {
     })
     expect(get).toHaveBeenNthCalledWith(2, '/admin/accounts/batch-test-runs/12', {
       params: { category: 'rate_limited' },
+      signal: undefined,
+    })
+  })
+
+  it('deletes selected account probe report runs', async () => {
+    const response = { requested_count: 2, deleted_count: 2, skipped_running_count: 0 }
+    deleteRequest.mockResolvedValue({ data: response })
+
+    await expect(deleteAccountProbeRuns([91, 92])).resolves.toEqual(response)
+
+    expect(deleteRequest).toHaveBeenCalledWith('/admin/account-probe-runs', {
+      data: { run_ids: [91, 92] },
       signal: undefined,
     })
   })

@@ -3844,6 +3844,51 @@
                 </p>
               </div>
 
+              <div>
+                <label
+                  class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{
+                    t(
+                      "admin.settings.gatewayForwarding.openaiOAuthCompatMode",
+                    )
+                  }}
+                </label>
+                <select
+                  v-model="form.openai_oauth_compat_mode"
+                  class="input w-full"
+                >
+                  <option value="off">
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.openaiOAuthCompatModeOff",
+                      )
+                    }}
+                  </option>
+                  <option value="cockpit_tools">
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.openaiOAuthCompatModeCockpitTools",
+                      )
+                    }}
+                  </option>
+                  <option value="codex_direct">
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.openaiOAuthCompatModeCodexDirect",
+                      )
+                    }}
+                  </option>
+                </select>
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{
+                    t(
+                      "admin.settings.gatewayForwarding.openaiOAuthCompatModeHint",
+                    )
+                  }}
+                </p>
+              </div>
+
               <div class="flex items-center justify-between">
                 <div>
                   <label
@@ -6830,6 +6875,7 @@ import type {
   SystemSettings,
   UpdateSettingsRequest,
   DefaultSubscriptionSetting,
+  OpenAIOAuthCompatMode,
   OpenAIFastPolicyRule,
   WeChatConnectMode,
   WebSearchEmulationConfig,
@@ -7124,6 +7170,9 @@ type SettingsForm = Omit<
   google_oauth_client_secret: string;
   force_email_on_third_party_signup: boolean;
   openai_advanced_scheduler_enabled: boolean;
+  // OpenAI OAuth 上游兼容模式：关闭、Cockpit Tools 或 Codex Desktop 直连形态。
+  openai_oauth_compat_mode: OpenAIOAuthCompatMode;
+  openai_cockpit_tools_compat: boolean;
   client_request_debug_log_enabled: boolean;
   codex_stability_mode: "off" | "codex" | "all_openai_responses" | string;
   codex_stability_dynamic_header_timeout_enabled: boolean;
@@ -7337,6 +7386,8 @@ const form = reactive<SettingsForm>({
   rewrite_message_cache_control: false,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  openai_oauth_compat_mode: "off",
+  openai_cockpit_tools_compat: false,
   client_request_debug_log_enabled: false,
   codex_stability_mode: "codex",
   codex_stability_dynamic_header_timeout_enabled: true,
@@ -7972,6 +8023,12 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    // 兼容旧后端只返回布尔开关的场景，避免设置页展示为空值。
+    form.openai_oauth_compat_mode =
+      settings.openai_oauth_compat_mode ||
+      (settings.openai_cockpit_tools_compat ? "cockpit_tools" : "off");
+    form.openai_cockpit_tools_compat =
+      form.openai_oauth_compat_mode === "cockpit_tools";
     form.login_agreement_mode =
       settings.login_agreement_mode === "checkbox" ? "checkbox" : "modal";
     form.login_agreement_updated_at =
@@ -8460,6 +8517,9 @@ async function saveSettings() {
         form.antigravity_user_agent_version?.trim() || "",
       openai_codex_user_agent:
         form.openai_codex_user_agent?.trim() || "",
+      openai_oauth_compat_mode: form.openai_oauth_compat_mode || "off",
+      openai_cockpit_tools_compat:
+        form.openai_oauth_compat_mode === "cockpit_tools",
       client_request_debug_log_enabled: form.client_request_debug_log_enabled,
       codex_stability_mode: form.codex_stability_mode || "codex",
       codex_stability_dynamic_header_timeout_enabled:
@@ -8590,6 +8650,11 @@ async function saveSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    form.openai_oauth_compat_mode =
+      updated.openai_oauth_compat_mode ||
+      (updated.openai_cockpit_tools_compat ? "cockpit_tools" : "off");
+    form.openai_cockpit_tools_compat =
+      form.openai_oauth_compat_mode === "cockpit_tools";
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     registrationEmailSuffixWhitelistTags.value =
       normalizeRegistrationEmailSuffixDomains(

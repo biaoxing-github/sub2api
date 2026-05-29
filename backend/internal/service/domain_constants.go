@@ -411,6 +411,10 @@ const (
 	// 当客户端 UA 被识别为浏览器（Chrome/Firefox/Safari/Edge 等）时，转发给 OpenAI 上游前会替换为此值，
 	// 用于避免 Cloudflare 对浏览器型 UA 的质询拦截。
 	SettingKeyOpenAICodexUserAgent = "openai_codex_user_agent"
+	// SettingKeyOpenAICockpitToolsCompat 是否按 cockpit-tools 的 Codex HTTP executor 方式发送 OpenAI OAuth Responses 请求。
+	SettingKeyOpenAICockpitToolsCompat = "openai_cockpit_tools_compat"
+	// SettingKeyOpenAIOAuthCompatMode OpenAI OAuth 上游兼容模式：off/cockpit_tools/codex_direct。
+	SettingKeyOpenAIOAuthCompatMode = "openai_oauth_compat_mode"
 	// SettingKeyClientRequestDebugLogEnabled 是否把客户端打到本服务的完整请求体写入本地日志（默认 false）。
 	SettingKeyClientRequestDebugLogEnabled = "client_request_debug_log_enabled"
 	// SettingKeyCodexStabilityMode Codex 稳定模式档位：off/codex/all_openai_responses。

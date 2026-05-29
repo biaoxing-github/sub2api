@@ -46,6 +46,13 @@ export type PaymentVisibleMethodSource =
   | "easypay_wxpay";
 export type WeChatConnectMode = "open" | "mp" | "mobile";
 
+// OpenAI OAuth 兼容模式：off=默认转发，cockpit_tools=复用 cockpit-tools 请求形态，codex_direct=复用 Codex Desktop 直连形态。
+export type OpenAIOAuthCompatMode =
+  | "off"
+  | "cockpit_tools"
+  | "codex_direct"
+  | string;
+
 export interface PaymentVisibleMethodSourceOption {
   value: PaymentVisibleMethodSource;
   labelZh: string;
@@ -512,6 +519,8 @@ export interface SystemSettings {
   rewrite_message_cache_control: boolean;
   antigravity_user_agent_version: string;
   openai_codex_user_agent: string;
+  openai_oauth_compat_mode: OpenAIOAuthCompatMode;
+  openai_cockpit_tools_compat: boolean;
   client_request_debug_log_enabled: boolean;
   codex_stability_mode: "off" | "codex" | "all_openai_responses" | string;
   codex_stability_dynamic_header_timeout_enabled: boolean;
@@ -754,6 +763,8 @@ export interface UpdateSettingsRequest {
   rewrite_message_cache_control?: boolean;
   antigravity_user_agent_version?: string;
   openai_codex_user_agent?: string;
+  openai_oauth_compat_mode?: OpenAIOAuthCompatMode;
+  openai_cockpit_tools_compat?: boolean;
   client_request_debug_log_enabled?: boolean;
   codex_stability_mode?: "off" | "codex" | "all_openai_responses" | string;
   codex_stability_dynamic_header_timeout_enabled?: boolean;

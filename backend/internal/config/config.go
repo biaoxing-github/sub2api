@@ -681,6 +681,12 @@ const (
 	GatewayCodexStabilityModeAllOpenAIResponses = "all_openai_responses"
 )
 
+const (
+	GatewayOpenAIOAuthCompatModeOff          = "off"
+	GatewayOpenAIOAuthCompatModeCockpitTools = "cockpit_tools"
+	GatewayOpenAIOAuthCompatModeCodexDirect  = "codex_direct"
+)
+
 type GatewayCodexStabilityConfig struct {
 	// Mode: Codex 稳定模式。off=透明代理，codex=仅 Codex 客户端，all_openai_responses=全部 Responses 请求。
 	Mode string `mapstructure:"mode"`
@@ -777,6 +783,9 @@ type GatewayConfig struct {
 	// OpenAICockpitToolsCompat: 按 cockpit-tools 的 Codex HTTP executor 组装 OAuth 上游请求。
 	// 开启后 OAuth 账号强制走 HTTP SSE，并使用 cockpit-tools 的 header 集合，避免网关自有 WS/session/header 改写。
 	OpenAICockpitToolsCompat bool `mapstructure:"openai_cockpit_tools_compat"`
+	// OpenAIOAuthCompatMode: OpenAI OAuth 上游兼容模式。
+	// off=默认路径，cockpit_tools=按 cockpit-tools HTTP executor，codex_direct=按 Codex Desktop 直连形态。
+	OpenAIOAuthCompatMode string `mapstructure:"openai_oauth_compat_mode"`
 	// CodexImageGenerationBridgeEnabled: 是否为 Codex `/v1/responses` 自动注入 image_generation 工具和桥接指令。
 	// 默认关闭，避免纯文本 Codex 请求被意外改写；显式携带 image_generation 工具的请求仍按分组能力转发。
 	CodexImageGenerationBridgeEnabled bool `mapstructure:"codex_image_generation_bridge_enabled"`
@@ -1428,6 +1437,10 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
 	}
+	if !hasExplicitConfigOrEnv("gateway.openai_oauth_compat_mode", "GATEWAY_OPENAI_OAUTH_COMPAT_MODE") {
+		// 让旧布尔开关在未显式配置新枚举时仍能映射到 cockpit_tools。
+		cfg.Gateway.OpenAIOAuthCompatMode = ""
+	}
 
 	cfg.RunMode = NormalizeRunMode(cfg.RunMode)
 	cfg.Server.Mode = strings.ToLower(strings.TrimSpace(cfg.Server.Mode))
@@ -1835,6 +1848,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.max_account_switches", 10)
 	viper.SetDefault("gateway.max_account_switches_gemini", 3)
 	viper.SetDefault("gateway.force_codex_cli", false)
+	viper.SetDefault("gateway.openai_oauth_compat_mode", GatewayOpenAIOAuthCompatModeOff)
 	viper.SetDefault("gateway.openai_cockpit_tools_compat", false)
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
@@ -2516,6 +2530,27 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIRequestHeaderTimeoutSeconds < 0 {
 		return fmt.Errorf("gateway.openai_request_header_timeout_seconds must be non-negative")
+	}
+	c.Gateway.OpenAIOAuthCompatMode = strings.ToLower(strings.TrimSpace(c.Gateway.OpenAIOAuthCompatMode))
+	if c.Gateway.OpenAIOAuthCompatMode == "" {
+		if c.Gateway.OpenAICockpitToolsCompat {
+			c.Gateway.OpenAIOAuthCompatMode = GatewayOpenAIOAuthCompatModeCockpitTools
+		} else {
+			c.Gateway.OpenAIOAuthCompatMode = GatewayOpenAIOAuthCompatModeOff
+		}
+	}
+	switch c.Gateway.OpenAIOAuthCompatMode {
+	case GatewayOpenAIOAuthCompatModeOff:
+		c.Gateway.OpenAICockpitToolsCompat = false
+	case GatewayOpenAIOAuthCompatModeCockpitTools:
+		c.Gateway.OpenAICockpitToolsCompat = true
+	case GatewayOpenAIOAuthCompatModeCodexDirect:
+		c.Gateway.OpenAICockpitToolsCompat = false
+	default:
+		return fmt.Errorf("gateway.openai_oauth_compat_mode must be one of: %s/%s/%s",
+			GatewayOpenAIOAuthCompatModeOff,
+			GatewayOpenAIOAuthCompatModeCockpitTools,
+			GatewayOpenAIOAuthCompatModeCodexDirect)
 	}
 	c.Gateway.CodexStability.Mode = strings.ToLower(strings.TrimSpace(c.Gateway.CodexStability.Mode))
 	if c.Gateway.CodexStability.Mode == "" {

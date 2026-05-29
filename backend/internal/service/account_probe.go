@@ -151,6 +151,12 @@ type AccountProbeReportPage struct {
 	Summary  AccountProbeReportSummary `json:"summary"`
 }
 
+type AccountProbeReportDeleteResult struct {
+	RequestedCount      int `json:"requested_count"`
+	DeletedCount        int `json:"deleted_count"`
+	SkippedRunningCount int `json:"skipped_running_count"`
+}
+
 type AccountProbeRepository interface {
 	CreateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error
 	UpdateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error
@@ -160,6 +166,7 @@ type AccountProbeRepository interface {
 	GetAccountProbeRun(ctx context.Context, accountID, runID int64) (*AccountProbeResult, error)
 	ListAccountProbeReportRuns(ctx context.Context, filter AccountProbeReportFilter) ([]AccountProbeReportItem, int, error)
 	GetAccountProbeReportRun(ctx context.Context, runID int64) (*AccountProbeReportItem, error)
+	DeleteAccountProbeReportRuns(ctx context.Context, runIDs []int64) (AccountProbeReportDeleteResult, error)
 	ListAccountProbeSamples(ctx context.Context, runID int64) ([]AccountProbeSample, error)
 }
 
@@ -199,12 +206,39 @@ func (s *AccountProbeService) SetOpenAIPathHealthTracker(tracker *OpenAIPathHeal
 	s.health = tracker
 }
 
+func (s *AccountProbeService) DeleteReports(ctx context.Context, runIDs []int64) (AccountProbeReportDeleteResult, error) {
+	ids := uniquePositiveProbeRunIDs(runIDs)
+	if len(ids) == 0 {
+		return AccountProbeReportDeleteResult{}, fmt.Errorf("run_ids is required")
+	}
+	if len(ids) > 200 {
+		return AccountProbeReportDeleteResult{}, fmt.Errorf("run_ids cannot exceed 200")
+	}
+	if s.repo == nil {
+		return AccountProbeReportDeleteResult{}, fmt.Errorf("account probe repository is not configured")
+	}
+	return s.repo.DeleteAccountProbeReportRuns(ctx, ids)
+}
+
 func (s *AccountProbeService) Run(ctx context.Context, req AccountProbeRunRequest) (AccountProbeResult, error) {
 	run, err := s.Start(ctx, req)
 	if err != nil {
 		return AccountProbeResult{}, err
 	}
 	return s.RunExisting(ctx, run, req)
+}
+
+func uniquePositiveProbeRunIDs(values []int64) []int64 {
+	seen := make(map[int64]bool, len(values))
+	out := make([]int64, 0, len(values))
+	for _, value := range values {
+		if value <= 0 || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func (s *AccountProbeService) Start(ctx context.Context, req AccountProbeRunRequest) (AccountProbeResult, error) {
@@ -548,13 +582,7 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 	stream := normalizeAccountProbeRequestMode(requestMode) == AccountProbeRequestModeStream
 	var payload map[string]any
 	if useResponses {
-		payload = map[string]any{
-			"model":             model,
-			"input":             sample.Prompt,
-			"stream":            stream,
-			"store":             false,
-			"max_output_tokens": sample.MaxOutputTokens,
-		}
+		payload = buildOpenAIResponsesProbePayload(model, sample.Prompt, stream, sample.MaxOutputTokens)
 	} else {
 		endpoint = buildOpenAIChatCompletionsURL(baseURL)
 		payload = map[string]any{
@@ -631,6 +659,31 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		result.TotalTokens = parseOpenAIProbeTotalTokens(data)
 	}
 	return result
+}
+
+// buildOpenAIResponsesProbePayload 统一构造上游体检的 Responses 请求体。
+//
+// 部分 OpenAI 兼容上游只接受列表形态 input，并且要求 instructions 字段；
+// 这里保持和手动账号测试链路一致，避免探测时误报 “Input must be a list”。
+func buildOpenAIResponsesProbePayload(model, prompt string, stream bool, maxOutputTokens int) map[string]any {
+	return map[string]any{
+		"model": model,
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{
+						"type": "input_text",
+						"text": prompt,
+					},
+				},
+			},
+		},
+		"stream":            stream,
+		"store":             false,
+		"max_output_tokens": maxOutputTokens,
+		"instructions":      openai.DefaultInstructions,
+	}
 }
 
 func normalizeAccountProbeRequestMode(mode string) string {

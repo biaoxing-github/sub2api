@@ -47,6 +47,8 @@ const (
 	UpstreamBalanceAccountEndpoint          = "upstream-login:/api/user/self"
 	UpstreamBalanceSubscriptionEndpoint     = "upstream-login:/api/subscription/self"
 	UpstreamBalanceSubscriptionItemEndpoint = "upstream-login:/api/subscription/self#subscription"
+
+	defaultUpstreamAuthCacheTTL = 15 * time.Minute
 )
 
 type UpstreamBalanceGroupSnapshot struct {
@@ -108,18 +110,23 @@ type UpstreamBalanceRefreshResult struct {
 }
 
 type UpstreamBalanceService struct {
-	accountRepo         AccountRepository
-	httpUpstream        HTTPUpstream
-	interval            time.Duration
+	accountRepo  AccountRepository
+	httpUpstream HTTPUpstream
+	interval     time.Duration
 	// activeAccountLimit 限制定时刷新每轮最多触达的上游账号数，0 表示不限制。
-	activeAccountLimit  int
+	activeAccountLimit int
 	// autoRefreshEnabled 控制后台定时刷新是否启动，手动刷新接口不受影响。
-	autoRefreshEnabled  bool
+	autoRefreshEnabled bool
 	// initialRefreshDelay 避免服务启动后立刻打满上游余额接口。
 	initialRefreshDelay time.Duration
 	stopCh              chan struct{}
 	stopOnce            sync.Once
 	runMu               sync.Mutex
+	// authCacheTTL 控制上游后台登录态的进程内复用时长，避免连续余额刷新反复打登录接口。
+	authCacheTTL time.Duration
+	authCacheMu  sync.Mutex
+	// authCache 只保留运行期登录态；进程重启后重新登录，避免把 cookie 写入数据库。
+	authCache map[string]upstreamAuthSession
 }
 
 type upstreamAuthContext struct {
@@ -138,6 +145,13 @@ type upstreamTokenInfo struct {
 	group   string
 }
 
+type upstreamAuthSession struct {
+	token      string
+	cookie     string
+	newAPIUser string
+	expiresAt  time.Time
+}
+
 func NewUpstreamBalanceService(accountRepo AccountRepository, httpUpstream HTTPUpstream, interval time.Duration) *UpstreamBalanceService {
 	if interval <= 0 {
 		interval = 30 * time.Minute
@@ -149,6 +163,8 @@ func NewUpstreamBalanceService(accountRepo AccountRepository, httpUpstream HTTPU
 		autoRefreshEnabled:  true,
 		initialRefreshDelay: 90 * time.Second,
 		stopCh:              make(chan struct{}),
+		authCacheTTL:        defaultUpstreamAuthCacheTTL,
+		authCache:           make(map[string]upstreamAuthSession),
 	}
 }
 
@@ -383,6 +399,17 @@ func (s *UpstreamBalanceService) RefreshAccount(ctx context.Context, account *Ac
 
 func (s *UpstreamBalanceService) fetchKeyBalance(ctx context.Context, account *Account, apiKey string, authCtx *upstreamAuthContext) UpstreamBalanceKeySnapshot {
 	item := UpstreamBalanceKeySnapshot{Fingerprint: FingerprintAPIKey(apiKey), Masked: maskUpstreamAPIKey(apiKey), Status: "error"}
+	if balance := balanceForKeyFromAuthContext(authCtx, len(allAccountAPIKeys(account))); balance != nil {
+		item.Available = balance.Available
+		item.Used = balance.Used
+		item.Total = balance.Total
+		item.Endpoint = UpstreamBalanceAccountEndpoint
+		item.Groups = groupsForKey(authCtx, account, apiKey)
+		applyConvertedBalancesToGroups(&item)
+		item.Status = "ok"
+		item.Error = ""
+		return item
+	}
 	baseURL := upstreamBalanceBaseURL(account)
 	endpoints := upstreamBalanceEndpointsForAccount(account, baseURL)
 	proxyURL := ""
@@ -489,19 +516,100 @@ func (s *UpstreamBalanceService) fetchUpstreamAuthContext(ctx context.Context, a
 		return nil
 	}
 	baseURL := upstreamBalanceBaseURL(account)
-	token, cookie, newAPIUser, err := s.loginUpstream(ctx, account, baseURL, username, password)
-	if err != nil {
-		slog.Warn("upstream_balance.login_failed", "account_id", account.ID, "error", err)
-		return nil
+	cacheKey := upstreamAuthCacheKey(account, baseURL, username)
+	session, fromCache := s.cachedUpstreamAuthSession(cacheKey)
+	if !fromCache {
+		var err error
+		session, err = s.loginUpstreamSession(ctx, account, baseURL, username, password)
+		if err != nil {
+			slog.Warn("upstream_balance.login_failed", "account_id", account.ID, "error", err)
+			return nil
+		}
+		s.storeUpstreamAuthSession(cacheKey, session)
 	}
-	auth := &upstreamAuthContext{token: token, cookie: cookie, newAPIUser: newAPIUser}
+	auth := s.fetchUpstreamAuthContextWithSession(ctx, account, keys, baseURL, session)
+	if fromCache && auth.userBalance == nil {
+		s.deleteUpstreamAuthSession(cacheKey)
+		freshSession, err := s.loginUpstreamSession(ctx, account, baseURL, username, password)
+		if err != nil {
+			slog.Warn("upstream_balance.login_failed", "account_id", account.ID, "error", err)
+			return auth
+		}
+		s.storeUpstreamAuthSession(cacheKey, freshSession)
+		auth = s.fetchUpstreamAuthContextWithSession(ctx, account, keys, baseURL, freshSession)
+	}
+	return auth
+}
+
+func (s *UpstreamBalanceService) fetchUpstreamAuthContextWithSession(ctx context.Context, account *Account, keys []string, baseURL string, session upstreamAuthSession) *upstreamAuthContext {
+	auth := &upstreamAuthContext{token: session.token, cookie: session.cookie, newAPIUser: session.newAPIUser}
 	auth.userBalance, auth.concurrency = s.fetchAuthenticatedAuthMe(ctx, account, baseURL, auth)
-	if balance := s.fetchAuthenticatedAccountBalance(ctx, account, baseURL, auth); balance != nil {
-		auth.userBalance = balance
+	if auth.userBalance == nil {
+		if balance := s.fetchAuthenticatedAccountBalance(ctx, account, baseURL, auth); balance != nil {
+			auth.userBalance = balance
+		}
 	}
 	auth.allGroups = s.fetchAuthenticatedGroups(ctx, account, baseURL, auth)
 	auth.groupsByKey = s.fetchAuthenticatedKeyGroups(ctx, account, baseURL, auth, keys, auth.allGroups)
 	return auth
+}
+
+func upstreamAuthCacheKey(account *Account, baseURL, username string) string {
+	if account == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d|%s|%s|%d", account.ID, baseURL, username, account.UpdatedAt.UnixNano())
+}
+
+func (s *UpstreamBalanceService) cachedUpstreamAuthSession(key string) (upstreamAuthSession, bool) {
+	if s == nil || key == "" {
+		return upstreamAuthSession{}, false
+	}
+	now := time.Now()
+	s.authCacheMu.Lock()
+	defer s.authCacheMu.Unlock()
+	session, ok := s.authCache[key]
+	if !ok || !session.expiresAt.After(now) {
+		if ok {
+			delete(s.authCache, key)
+		}
+		return upstreamAuthSession{}, false
+	}
+	return session, true
+}
+
+func (s *UpstreamBalanceService) storeUpstreamAuthSession(key string, session upstreamAuthSession) {
+	if s == nil || key == "" {
+		return
+	}
+	ttl := s.authCacheTTL
+	if ttl <= 0 {
+		ttl = defaultUpstreamAuthCacheTTL
+	}
+	session.expiresAt = time.Now().Add(ttl)
+	s.authCacheMu.Lock()
+	defer s.authCacheMu.Unlock()
+	if s.authCache == nil {
+		s.authCache = make(map[string]upstreamAuthSession)
+	}
+	s.authCache[key] = session
+}
+
+func (s *UpstreamBalanceService) deleteUpstreamAuthSession(key string) {
+	if s == nil || key == "" {
+		return
+	}
+	s.authCacheMu.Lock()
+	defer s.authCacheMu.Unlock()
+	delete(s.authCache, key)
+}
+
+func (s *UpstreamBalanceService) loginUpstreamSession(ctx context.Context, account *Account, baseURL, username, password string) (upstreamAuthSession, error) {
+	token, cookie, newAPIUser, err := s.loginUpstream(ctx, account, baseURL, username, password)
+	if err != nil {
+		return upstreamAuthSession{}, err
+	}
+	return upstreamAuthSession{token: token, cookie: cookie, newAPIUser: newAPIUser}, nil
 }
 
 func (s *UpstreamBalanceService) loginUpstream(ctx context.Context, account *Account, baseURL, username, password string) (token string, cookie string, newAPIUser string, err error) {
@@ -522,6 +630,9 @@ func (s *UpstreamBalanceService) loginUpstream(ctx context.Context, account *Acc
 		}
 		if status < 200 || status >= 300 {
 			lastErr = fmt.Sprintf("%s returned %d: %s", payload.endpoint, status, trimErrorBody(respBody))
+			if shouldStopUpstreamLoginFallback(status) {
+				break
+			}
 			continue
 		}
 		token = extractAuthToken(respBody)
@@ -536,6 +647,10 @@ func (s *UpstreamBalanceService) loginUpstream(ctx context.Context, account *Acc
 		lastErr = "no upstream login endpoint matched"
 	}
 	return "", "", "", errors.New(lastErr)
+}
+
+func shouldStopUpstreamLoginFallback(status int) bool {
+	return status != http.StatusNotFound && status != http.StatusMethodNotAllowed
 }
 
 func (s *UpstreamBalanceService) fetchAuthenticatedAuthMe(ctx context.Context, account *Account, baseURL string, auth *upstreamAuthContext) (*parsedUpstreamBalance, *int) {
@@ -813,15 +928,44 @@ func parseNewAPIUserSelfResponse(body []byte) (*parsedUpstreamBalance, error) {
 	if !ok {
 		data = obj
 	}
-	quota, ok := parseAnyFloat(data["quota"])
-	if !ok {
-		return nil, errors.New("no user quota field found")
+	candidates := []map[string]any{data}
+	if user, ok := data["user"].(map[string]any); ok {
+		candidates = append([]map[string]any{user}, candidates...)
 	}
-	used, _ := parseAnyFloat(data["used_quota"])
-	available := quota / newAPIQuotaPerUSD
-	usedUSD := used / newAPIQuotaPerUSD
-	total := available + usedUSD
-	return &parsedUpstreamBalance{Available: &available, Used: &usedUSD, Total: &total}, nil
+	for _, candidate := range candidates {
+		quota, ok := parseAnyFloat(candidate["quota"])
+		if !ok {
+			continue
+		}
+		used, _ := parseAnyFloat(candidate["used_quota"])
+		available := quota / newAPIQuotaPerUSD
+		usedUSD := used / newAPIQuotaPerUSD
+		total := available + usedUSD
+		return &parsedUpstreamBalance{Available: &available, Used: &usedUSD, Total: &total}, nil
+	}
+	for _, candidate := range candidates {
+		available := firstFloatPtr(candidate, "balance", "available_balance", "available", "remain", "remaining")
+		if available == nil {
+			continue
+		}
+		out := &parsedUpstreamBalance{Available: available}
+		if used := firstFloatPtr(candidate, "used", "used_amount", "usage"); used != nil {
+			out.Used = used
+		}
+		if total := firstFloatPtr(candidate, "total", "quota_limit", "amount"); total != nil {
+			out.Total = total
+		}
+		if out.Total == nil && out.Used != nil {
+			total := *out.Available + *out.Used
+			out.Total = &total
+		}
+		if out.Total == nil {
+			total := *out.Available
+			out.Total = &total
+		}
+		return out, nil
+	}
+	return nil, errors.New("no user balance field found")
 }
 
 func parseAuthMeConcurrency(body []byte) *int {

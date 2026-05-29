@@ -21,6 +21,8 @@ type accountProbeReportHTTPServiceStub struct {
 	reportFilter service.AccountProbeReportFilter
 	reportPage   service.AccountProbeReportPage
 	reportItem   *service.AccountProbeReportItem
+	deleteIDs    []int64
+	deleteResult service.AccountProbeReportDeleteResult
 	startedRuns  []service.AccountProbeRunRequest
 	activeRuns   int
 	maxActive    int
@@ -82,6 +84,14 @@ func (s *accountProbeReportHTTPServiceStub) GetReport(ctx context.Context, runID
 	item := *s.reportItem
 	item.ID = runID
 	return &item, nil
+}
+
+func (s *accountProbeReportHTTPServiceStub) DeleteReports(ctx context.Context, runIDs []int64) (service.AccountProbeReportDeleteResult, error) {
+	s.deleteIDs = append([]int64{}, runIDs...)
+	if s.deleteResult.RequestedCount == 0 {
+		s.deleteResult.RequestedCount = len(runIDs)
+	}
+	return s.deleteResult, nil
 }
 
 func TestAccountProbeReportListParsesFiltersAndReturnsPage(t *testing.T) {
@@ -148,6 +158,32 @@ func TestAccountProbeReportGetReturnsDetail(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"id":99`)
 	require.Contains(t, rec.Body.String(), `"account_name":"foyeapi"`)
 	require.Contains(t, rec.Body.String(), `"penalty_items":["unexpected EOF，-10"]`)
+}
+
+func TestAccountProbeReportBatchDeleteDeduplicatesRunIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	probeSvc := &accountProbeReportHTTPServiceStub{
+		deleteResult: service.AccountProbeReportDeleteResult{
+			RequestedCount:      2,
+			DeletedCount:        1,
+			SkippedRunningCount: 1,
+		},
+	}
+	h := &AccountHandler{accountProbeService: probeSvc}
+	router := gin.New()
+	router.DELETE("/api/v1/admin/account-probe-runs", h.DeleteProbeReportRuns)
+
+	body := `{"run_ids":[91,91,92,0,-1]}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/account-probe-runs", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []int64{91, 92}, probeSvc.deleteIDs)
+	require.Contains(t, rec.Body.String(), `"deleted_count":1`)
+	require.Contains(t, rec.Body.String(), `"skipped_running_count":1`)
 }
 
 func TestAccountProbeReportBatchCreateDeduplicatesAccounts(t *testing.T) {

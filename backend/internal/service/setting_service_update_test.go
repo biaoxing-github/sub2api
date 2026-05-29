@@ -304,6 +304,35 @@ func TestSettingService_UpdateSettings_CodexStabilityRefreshesGatewayConfig(t *t
 	require.False(t, cfg.Gateway.CodexStability.StreamKeepaliveEnabled)
 }
 
+func TestSettingService_UpdateSettings_OpenAICockpitToolsCompatRefreshesGatewayConfig(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	cfg := &config.Config{}
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		OpenAICockpitToolsCompat: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAICockpitToolsCompat])
+	require.True(t, cfg.Gateway.OpenAICockpitToolsCompat)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCockpitTools, cfg.Gateway.OpenAIOAuthCompatMode)
+}
+
+func TestSettingService_UpdateSettings_OpenAIOAuthCompatModeRefreshesGatewayConfig(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	cfg := &config.Config{}
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect,
+	})
+	require.NoError(t, err)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, repo.updates[SettingKeyOpenAIOAuthCompatMode])
+	require.Equal(t, "false", repo.updates[SettingKeyOpenAICockpitToolsCompat])
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, cfg.Gateway.OpenAIOAuthCompatMode)
+	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
+}
+
 func TestSettingService_UpdateSettings_GatewayRuntimeStabilityRefreshesConfig(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	cfg := &config.Config{}
@@ -408,6 +437,30 @@ func TestSettingService_ParseSettings_APIKeyACLTrustForwardedIPFallsBackToConfig
 	got := svc.parseSettings(map[string]string{})
 
 	require.True(t, got.APIKeyACLTrustForwardedIP)
+}
+
+func TestSettingService_ParseSettings_OpenAICockpitToolsCompatFallsBackToConfigWhenMissing(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAICockpitToolsCompat = true
+	svc := NewSettingService(&settingUpdateRepoStub{}, cfg)
+
+	got := svc.parseSettings(map[string]string{})
+
+	require.True(t, got.OpenAICockpitToolsCompat)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCockpitTools, got.OpenAIOAuthCompatMode)
+}
+
+func TestSettingService_ParseSettings_OpenAIOAuthCompatModeTakesPrecedence(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAICockpitToolsCompat = true
+	svc := NewSettingService(&settingUpdateRepoStub{}, cfg)
+
+	got := svc.parseSettings(map[string]string{
+		SettingKeyOpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect,
+	})
+
+	require.False(t, got.OpenAICockpitToolsCompat)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, got.OpenAIOAuthCompatMode)
 }
 
 func TestSettingService_GetAntigravityUserAgentVersion_Precedence(t *testing.T) {

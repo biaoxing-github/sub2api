@@ -835,6 +835,12 @@ export interface BatchAccountProbeRunsResponse {
   accepted_count: number
 }
 
+export interface DeleteAccountProbeRunsResponse {
+  requested_count: number
+  deleted_count: number
+  skipped_running_count: number
+}
+
 export interface CreateGroupRequest {
   name: string
   description?: string | null

@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -71,6 +72,13 @@ func (r *accountProbeRepoStub) ListAccountProbeReportRuns(ctx context.Context, f
 
 func (r *accountProbeRepoStub) GetAccountProbeReportRun(ctx context.Context, runID int64) (*AccountProbeReportItem, error) {
 	return nil, ErrAccountNotFound
+}
+
+func (r *accountProbeRepoStub) DeleteAccountProbeReportRuns(ctx context.Context, runIDs []int64) (AccountProbeReportDeleteResult, error) {
+	return AccountProbeReportDeleteResult{
+		RequestedCount: len(runIDs),
+		DeletedCount:   len(runIDs),
+	}, nil
 }
 
 func (r *accountProbeRepoStub) ListAccountProbeSamples(ctx context.Context, runID int64) ([]AccountProbeSample, error) {
@@ -217,6 +225,22 @@ func TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples(t *testing.T) {
 	require.Equal(t, "sk-two", strings.TrimPrefix(client.requests[1].Header.Get("Authorization"), "Bearer "))
 	require.Contains(t, client.requests[0].URL.String(), "/v1/responses")
 	require.Contains(t, client.bodies[0], `"stream":false`)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(client.bodies[0]), &payload))
+	input, ok := payload["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, input, 1)
+	message, ok := input[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "user", message["role"])
+	content, ok := message["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	textPart, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "input_text", textPart["type"])
+	require.NotEmpty(t, textPart["text"])
+	require.NotEmpty(t, payload["instructions"])
 	require.NotEmpty(t, repo.samples[0].APIKeyFingerprint)
 	require.NotContains(t, repo.samples[0].APIKeyMasked, "sk-one")
 }
@@ -232,6 +256,7 @@ func (c *accountProbeStreamHTTPClientStub) Do(req *http.Request) (*http.Response
 		data, _ := io.ReadAll(req.Body)
 		c.bodies = append(c.bodies, string(data))
 	}
+	time.Sleep(2 * time.Millisecond)
 	body := strings.Join([]string{
 		`data: {"type":"response.created"}`,
 		``,

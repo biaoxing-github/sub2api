@@ -59,6 +59,16 @@
             <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
             <span class="ml-1.5 hidden sm:inline">{{ t('common.refresh') }}</span>
           </button>
+          <button
+            type="button"
+            data-test="delete-selected-probe-runs"
+            class="btn btn-danger px-3"
+            :disabled="selectedReportIds.length === 0 || deletingReports"
+            @click="deleteSelectedReports"
+          >
+            <Icon name="trash" size="sm" :class="deletingReports ? 'animate-pulse' : ''" />
+            <span class="ml-1.5">{{ t('admin.accountProbeReports.deleteSelected', { count: selectedReportIds.length }) }}</span>
+          </button>
           <button type="button" data-test="open-batch-probe-dialog" class="btn btn-primary px-3" @click="openBatchDialog">
             <Icon name="beaker" size="sm" />
             <span class="ml-1.5">{{ t('admin.accountProbeReports.batchProbe') }}</span>
@@ -81,6 +91,17 @@
           <table>
             <thead>
               <tr>
+                <th class="w-10">
+                  <input
+                    data-test="select-visible-probe-runs"
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    :checked="allVisibleReportsSelected"
+                    :disabled="selectableRuns.length === 0"
+                    :aria-label="t('admin.accountProbeReports.selectAllReports')"
+                    @change="handleToggleAllVisibleReports"
+                  />
+                </th>
                 <th>{{ t('admin.accountProbeReports.score') }}</th>
                 <th>{{ t('admin.accountProbeReports.grade') }}</th>
                 <th>{{ t('admin.accountProbeReports.account') }}</th>
@@ -98,16 +119,27 @@
             </thead>
             <tbody>
               <tr v-if="loading && runs.length === 0">
-                <td colspan="13" class="py-12 text-center text-gray-500 dark:text-gray-400">
+                <td colspan="14" class="py-12 text-center text-gray-500 dark:text-gray-400">
                   {{ t('common.loading') }}
                 </td>
               </tr>
               <tr v-else-if="!loading && runs.length === 0">
-                <td colspan="13" class="py-12 text-center text-gray-500 dark:text-gray-400">
+                <td colspan="14" class="py-12 text-center text-gray-500 dark:text-gray-400">
                   {{ t('admin.accountProbeReports.empty') }}
                 </td>
               </tr>
               <tr v-for="run in runs" :key="run.id" class="hover:bg-gray-50 dark:hover:bg-dark-700/40">
+                <td>
+                  <input
+                    data-test="probe-run-select"
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    :checked="selectedReportIdSet.has(run.id)"
+                    :disabled="run.status === 'running'"
+                    :aria-label="t('admin.accountProbeReports.selectReport', { id: run.id })"
+                    @change="handleToggleReport(run.id, $event)"
+                  />
+                </td>
                 <td>
                   <span class="font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(run.score) }}</span>
                 </td>
@@ -387,7 +419,7 @@ import Select from '@/components/common/Select.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { getConfiguredTablePageSizeOptions, normalizeTablePageSize } from '@/utils/tablePreferences'
-import { batchAccountProbeRuns, list as listAccounts, listAccountProbeRuns, getAccountProbeRun } from '@/api/admin/accounts'
+import { batchAccountProbeRuns, deleteAccountProbeRuns, list as listAccounts, listAccountProbeRuns, getAccountProbeRun } from '@/api/admin/accounts'
 import type { Account, AccountProbeRun, AccountProbeRunListFilters, AccountProbeRunSortBy, AccountProbeScoreBreakdownItem, SelectOption } from '@/types'
 
 const { t } = useI18n()
@@ -399,6 +431,8 @@ const detailOpen = ref(false)
 const detailLoading = ref(false)
 const detailError = ref('')
 const detailRun = ref<AccountProbeRun | null>(null)
+const selectedReportIds = ref<number[]>([])
+const deletingReports = ref(false)
 const selectedAccountIds = ref<number[]>([])
 const batchSubmitting = ref(false)
 const batchMessage = ref('')
@@ -440,6 +474,9 @@ const pagination = reactive({
 
 const scoreItems = computed<AccountProbeScoreBreakdownItem[]>(() => detailRun.value?.score_items || [])
 const penaltyItems = computed<AccountProbeScoreBreakdownItem[]>(() => detailRun.value?.penalty_items || [])
+const selectedReportIdSet = computed(() => new Set(selectedReportIds.value))
+const selectableRuns = computed(() => runs.value.filter(run => run.status !== 'running'))
+const allVisibleReportsSelected = computed(() => selectableRuns.value.length > 0 && selectableRuns.value.every(run => selectedReportIdSet.value.has(run.id)))
 const selectedAccountIdSet = computed(() => new Set(selectedAccountIds.value))
 const allBatchAccountsSelected = computed(() => batchAccounts.value.length > 0 && batchAccounts.value.every(account => selectedAccountIdSet.value.has(account.id)))
 
@@ -447,6 +484,7 @@ let listAbortController: AbortController | null = null
 let detailAbortController: AbortController | null = null
 let batchAbortController: AbortController | null = null
 let batchAccountsAbortController: AbortController | null = null
+let deleteAbortController: AbortController | null = null
 let keywordTimer: number | null = null
 let activeRunsTimer: number | null = null
 
@@ -515,6 +553,7 @@ async function loadRuns() {
     })
     if (controller.signal.aborted) return
     runs.value = response.items || []
+    pruneSelectedReports()
     pagination.total = response.total || 0
     pagination.page = response.page || pagination.page
     pagination.page_size = response.page_size || pagination.page_size
@@ -532,6 +571,11 @@ async function loadRuns() {
   }
 }
 
+function pruneSelectedReports() {
+  const visibleIDs = new Set(runs.value.map(run => run.id))
+  selectedReportIds.value = selectedReportIds.value.filter(id => visibleIDs.has(id))
+}
+
 function scheduleActiveRunRefresh() {
   if (activeRunsTimer) {
     window.clearTimeout(activeRunsTimer)
@@ -542,6 +586,68 @@ function scheduleActiveRunRefresh() {
     activeRunsTimer = null
     loadRuns()
   }, 3000)
+}
+
+function toggleReport(runId: number, checked: boolean) {
+  const ids = new Set(selectedReportIds.value)
+  if (checked) {
+    ids.add(runId)
+  } else {
+    ids.delete(runId)
+  }
+  selectedReportIds.value = Array.from(ids)
+}
+
+function handleToggleReport(runId: number, event: Event) {
+  toggleReport(runId, (event.target as HTMLInputElement).checked)
+}
+
+function toggleAllVisibleReports(checked: boolean) {
+  const ids = new Set(selectedReportIds.value)
+  for (const run of selectableRuns.value) {
+    if (checked) {
+      ids.add(run.id)
+    } else {
+      ids.delete(run.id)
+    }
+  }
+  selectedReportIds.value = Array.from(ids)
+}
+
+function handleToggleAllVisibleReports(event: Event) {
+  toggleAllVisibleReports((event.target as HTMLInputElement).checked)
+}
+
+async function deleteSelectedReports() {
+  if (selectedReportIds.value.length === 0 || deletingReports.value) return
+  if (!window.confirm(t('admin.accountProbeReports.deleteConfirm'))) return
+
+  deleteAbortController?.abort()
+  const controller = new AbortController()
+  deleteAbortController = controller
+  deletingReports.value = true
+  batchMessage.value = ''
+  error.value = ''
+  try {
+    const result = await deleteAccountProbeRuns(selectedReportIds.value, {
+      signal: controller.signal,
+    })
+    if (controller.signal.aborted) return
+    selectedReportIds.value = []
+    batchMessage.value = t('admin.accountProbeReports.deleteSucceeded', {
+      count: result.deleted_count,
+      skipped: result.skipped_running_count,
+    })
+    await loadRuns()
+  } catch (err: any) {
+    if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
+    error.value = err?.response?.data?.error || err?.message || t('admin.accountProbeReports.deleteFailed')
+  } finally {
+    if (deleteAbortController === controller) {
+      deletingReports.value = false
+      deleteAbortController = null
+    }
+  }
 }
 
 async function openDetail(run: AccountProbeRun) {
@@ -809,6 +915,7 @@ onUnmounted(() => {
   detailAbortController?.abort()
   batchAbortController?.abort()
   batchAccountsAbortController?.abort()
+  deleteAbortController?.abort()
   if (keywordTimer) window.clearTimeout(keywordTimer)
   if (activeRunsTimer) window.clearTimeout(activeRunsTimer)
 })

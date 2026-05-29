@@ -206,6 +206,44 @@ func TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults(t *tes
 	require.Equal(t, true, data["force_email_on_third_party_signup"])
 }
 
+func TestSettingHandler_UpdateSettings_PersistsOpenAIOAuthCompatMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerRepoStub{
+		values: map[string]string{
+			service.SettingKeyOpenAICockpitToolsCompat: "true",
+		},
+	}
+	cfg := &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}}
+	svc := service.NewSettingService(repo, cfg)
+	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
+
+	body := map[string]any{
+		"openai_oauth_compat_mode": config.GatewayOpenAIOAuthCompatModeCodexDirect,
+	}
+	rawBody, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", bytes.NewReader(rawBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.UpdateSettings(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, repo.values[service.SettingKeyOpenAIOAuthCompatMode])
+	require.Equal(t, "false", repo.values[service.SettingKeyOpenAICockpitToolsCompat])
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, cfg.Gateway.OpenAIOAuthCompatMode)
+	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
+
+	var resp response.Response
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	data, ok := resp.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, data["openai_oauth_compat_mode"])
+	require.Equal(t, false, data["openai_cockpit_tools_compat"])
+}
+
 func TestSettingHandler_UpdateSettings_PersistsPaymentVisibleMethodsAndAdvancedScheduler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &settingHandlerRepoStub{

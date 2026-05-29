@@ -88,6 +88,7 @@ type accountProbeRunner interface {
 	Get(ctx context.Context, accountID, runID int64) (*service.AccountProbeResult, error)
 	ListReports(ctx context.Context, filter service.AccountProbeReportFilter) (service.AccountProbeReportPage, error)
 	GetReport(ctx context.Context, runID int64) (*service.AccountProbeReportItem, error)
+	DeleteReports(ctx context.Context, runIDs []int64) (service.AccountProbeReportDeleteResult, error)
 }
 
 type accountPathHealthReader interface {
@@ -957,6 +958,10 @@ type BatchCreateAccountProbeRunsRequest struct {
 	RequestMode           string  `json:"request_mode"`
 }
 
+type DeleteAccountProbeRunsRequest struct {
+	RunIDs []int64 `json:"run_ids"`
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -1571,6 +1576,35 @@ func (h *AccountHandler) GetProbeReportRun(c *gin.Context) {
 		return
 	}
 	result, err := h.accountProbeService.GetReport(c.Request.Context(), runID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// DeleteProbeReportRuns deletes selected finished upstream probe reports.
+// DELETE /api/v1/admin/account-probe-runs
+func (h *AccountHandler) DeleteProbeReportRuns(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	var req DeleteAccountProbeRunsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	runIDs := uniquePositiveInt64s(req.RunIDs)
+	if len(runIDs) == 0 {
+		response.BadRequest(c, "run_ids is required")
+		return
+	}
+	if len(runIDs) > 200 {
+		response.BadRequest(c, "run_ids cannot exceed 200")
+		return
+	}
+	result, err := h.accountProbeService.DeleteReports(c.Request.Context(), runIDs)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

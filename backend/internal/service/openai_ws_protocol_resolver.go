@@ -45,8 +45,13 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 	if r == nil || r.cfg == nil {
 		return openAIWSHTTPDecision("config_missing")
 	}
-	if account.Type == AccountTypeOAuth && r.cfg.Gateway.OpenAICockpitToolsCompat {
-		return openAIWSHTTPDecision("cockpit_tools_compat")
+	if account.Type == AccountTypeOAuth {
+		switch normalizeOpenAIOAuthCompatMode(r.cfg.Gateway.OpenAIOAuthCompatMode, r.cfg.Gateway.OpenAICockpitToolsCompat) {
+		case config.GatewayOpenAIOAuthCompatModeCockpitTools:
+			return openAIWSHTTPDecision("cockpit_tools_compat")
+		case config.GatewayOpenAIOAuthCompatModeCodexDirect:
+			return openAIWSHTTPDecision("openai_oauth_compat_codex_direct")
+		}
 	}
 
 	wsCfg := r.cfg.Gateway.OpenAIWS

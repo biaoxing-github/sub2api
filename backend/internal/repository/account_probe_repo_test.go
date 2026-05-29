@@ -24,3 +24,30 @@ func TestAccountProbeRepositoryExpireStaleRuns(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestAccountProbeRepositoryDeleteReportRunsSkipsRunning(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM account_probe_runs").
+		WithArgs(sqlmock.AnyArg(), "running").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("DELETE FROM account_probe_samples").
+		WithArgs(sqlmock.AnyArg(), "running").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectExec("DELETE FROM account_probe_runs").
+		WithArgs(sqlmock.AnyArg(), "running").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+
+	repo := NewAccountProbeRepository(db)
+	result, err := repo.DeleteAccountProbeReportRuns(context.Background(), []int64{91, 92, 93})
+
+	require.NoError(t, err)
+	require.Equal(t, 3, result.RequestedCount)
+	require.Equal(t, 2, result.DeletedCount)
+	require.Equal(t, 1, result.SkippedRunningCount)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

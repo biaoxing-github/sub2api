@@ -4,7 +4,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +63,25 @@ func (r *apiKeyProbeSampleRepoStub) SaveSample(ctx context.Context, sample APIKe
 
 func (r *apiKeyProbeSampleRepoStub) ListProbeSamples(ctx context.Context, runID int64) ([]APIKeyProbeSample, error) {
 	return r.saved, nil
+}
+
+type apiKeyProbeHTTPClientCapture struct {
+	request *http.Request
+	body    string
+}
+
+func (c *apiKeyProbeHTTPClientCapture) Do(req *http.Request) (*http.Response, error) {
+	c.request = req
+	if req.Body != nil {
+		data, _ := io.ReadAll(req.Body)
+		c.body = string(data)
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Body:       io.NopCloser(strings.NewReader(`{"id":"resp-test"}`)),
+		Header:     make(http.Header),
+	}, nil
 }
 
 func TestAPIKeyProbeService_PlansStandardQuickAndOptionalSamples(t *testing.T) {
@@ -174,6 +197,44 @@ func TestAPIKeyProbeService_RunSavesSampleWhenUsageLogIsMissing(t *testing.T) {
 	require.Equal(t, APIKeyProbeUsageLogMissing, samples.saved[0].UsageLogStatus)
 	require.Contains(t, samples.saved[0].UsageLogMessage, "not persisted")
 	require.Equal(t, APIKeyProbeSampleWarning, samples.saved[0].Status)
+}
+
+func TestHTTPAPIKeyProbeRunner_RunSampleUsesResponsesListInput(t *testing.T) {
+	t.Parallel()
+
+	client := &apiKeyProbeHTTPClientCapture{}
+	runner := NewHTTPAPIKeyProbeRunner(client, nil)
+
+	result, err := runner.RunSample(context.Background(), APIKeyProbeSampleRequest{
+		APIKey:    &APIKey{ID: 7, Key: "sk-test"},
+		BaseURL:   "https://example.test/v1",
+		Model:     "gpt-test",
+		RequestID: "client:req-1",
+		Sample: APIKeyProbePlannedSample{
+			Prompt:          "hi",
+			Timeout:         time.Second,
+			MaxOutputTokens: 20,
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, APIKeyProbeUsageLogMissing, result.UsageLogStatus)
+	require.Equal(t, "https://example.test/v1/responses", client.request.URL.String())
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(client.body), &payload))
+	input, ok := payload["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, input, 1)
+	message, ok := input[0].(map[string]any)
+	require.True(t, ok)
+	content, ok := message["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	textPart, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "input_text", textPart["type"])
+	require.Equal(t, "hi", textPart["text"])
+	require.NotEmpty(t, payload["instructions"])
 }
 
 func TestAPIKeyProbeService_RunRejectsKeysOwnedByAnotherUser(t *testing.T) {

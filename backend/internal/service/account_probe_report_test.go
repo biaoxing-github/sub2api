@@ -54,6 +54,10 @@ func (r *accountProbeReportRepoStub) GetAccountProbeReportRun(ctx context.Contex
 	return &copy, nil
 }
 
+func (r *accountProbeReportRepoStub) DeleteAccountProbeReportRuns(ctx context.Context, runIDs []int64) (AccountProbeReportDeleteResult, error) {
+	return AccountProbeReportDeleteResult{RequestedCount: len(runIDs), DeletedCount: len(runIDs)}, nil
+}
+
 func (r *accountProbeReportRepoStub) ListAccountProbeSamples(ctx context.Context, runID int64) ([]AccountProbeSample, error) {
 	r.sampleRunID = runID
 	return r.samples, nil

@@ -69,6 +69,14 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 		require.Equal(t, "cockpit_tools_compat", decision.Reason)
 	})
 
+	t.Run("Codex直连兼容模式强制OAuth走HTTP", func(t *testing.T) {
+		cfg := *baseCfg
+		cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCodexDirect
+		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(openAIOAuthEnabled)
+		require.Equal(t, OpenAIUpstreamTransportHTTPSSE, decision.Transport)
+		require.Equal(t, "openai_oauth_compat_codex_direct", decision.Reason)
+	})
+
 	t.Run("全局关闭保持HTTP", func(t *testing.T) {
 		cfg := *baseCfg
 		cfg.Gateway.OpenAIWS.Enabled = false

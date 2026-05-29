@@ -18,6 +18,7 @@ type headerRaceHTTPUpstreamStub struct {
 	mu     sync.Mutex
 	calls  []string
 	delays map[string]time.Duration
+	tlsHit bool
 }
 
 func (u *headerRaceHTTPUpstreamStub) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
@@ -37,6 +38,9 @@ func (u *headerRaceHTTPUpstreamStub) Do(req *http.Request, _ string, _ int64, _ 
 }
 
 func (u *headerRaceHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	u.mu.Lock()
+	u.tlsHit = true
+	u.mu.Unlock()
 	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
@@ -44,6 +48,12 @@ func (u *headerRaceHTTPUpstreamStub) callCount() int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return len(u.calls)
+}
+
+func (u *headerRaceHTTPUpstreamStub) usedTLS() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.tlsHit
 }
 
 func TestOpenAIRequestHeaderTimeoutForBodyUsesContextSizeBuckets(t *testing.T) {
@@ -95,6 +105,25 @@ func TestOpenAIRequestHeaderTimeoutForBodyCanBeDisabled(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 
 	require.Equal(t, time.Duration(0), svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"hello"}`)))
+}
+
+func TestOpenAIUpstreamCodexDirectUsesTLSProfile(t *testing.T) {
+	upstream := &headerRaceHTTPUpstreamStub{}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect,
+		}},
+		httpUpstream: upstream,
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, chatgptCodexURL, strings.NewReader(`{}`))
+	require.NoError(t, err)
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	resp, err := svc.doOpenAIUpstreamWithHeaderTimeout(context.Background(), req, "", account, []byte(`{}`), openAICodexStabilityPolicy{}, "")
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.True(t, upstream.usedTLS())
 }
 
 func TestOpenAICodexStabilityPolicyResolvesByMode(t *testing.T) {

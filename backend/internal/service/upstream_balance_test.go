@@ -154,6 +154,7 @@ type upstreamBalanceRefreshOneHTTP struct {
 	requests  []*http.Request
 	body      string
 	responses map[string]string
+	statuses  map[string]int
 }
 
 func (h *upstreamBalanceRefreshOneHTTP) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
@@ -167,8 +168,14 @@ func (h *upstreamBalanceRefreshOneHTTP) Do(req *http.Request, _ string, _ int64,
 	if body == "" {
 		body = `{"total_granted":20,"total_used":7.5,"total_available":12.5}`
 	}
+	status := http.StatusOK
+	if h.statuses != nil {
+		if matched, ok := h.statuses[req.URL.Path]; ok {
+			status = matched
+		}
+	}
 	return &http.Response{
-		StatusCode: http.StatusOK,
+		StatusCode: status,
 		Header:     make(http.Header),
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}, nil
@@ -317,6 +324,148 @@ func TestUpstreamBalanceServiceRefreshOneSyncsUpstreamAuthMeConcurrency(t *testi
 	}
 	if repo.bulkUpdate.Concurrency == nil || *repo.bulkUpdate.Concurrency != 8 {
 		t.Fatalf("synced concurrency = %+v, want 8", repo.bulkUpdate.Concurrency)
+	}
+}
+
+func TestUpstreamBalanceServiceRefreshOnePrefersAuthenticatedSingleKeyBalance(t *testing.T) {
+	repo := &upstreamBalanceRefreshOneRepo{
+		account: &Account{
+			ID:       42,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":                         "sk-test",
+				UpstreamAuthUsernameCredentialKey: "alice@example.com",
+				UpstreamAuthPasswordCredentialKey: "secret",
+			},
+		},
+	}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{
+		responses: map[string]string{
+			"/api/user/login":        `{"success":true,"token":"login-token","data":{"id":99}}`,
+			"/api/v1/auth/me":        `{"success":false,"message":"Invalid URL"}`,
+			"/api/user/self":         `{"success":true,"data":{"quota":2452648,"used_quota":47352}}`,
+			"/api/subscription/self": `{"subscriptions":[]}`,
+		},
+	}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+
+	snapshot, err := svc.RefreshOne(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("RefreshOne() error = %v", err)
+	}
+	if len(snapshot.Keys) != 1 || snapshot.Keys[0].Endpoint != UpstreamBalanceAccountEndpoint {
+		t.Fatalf("key balance endpoint = %+v, want authenticated account balance", snapshot.Keys)
+	}
+	if snapshot.Available != 4.905296 || snapshot.Used != 0.094704 || snapshot.Total != 5 {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	for _, req := range httpUpstream.requests {
+		if req.URL.Path == "/v1/usage" {
+			t.Fatalf("authenticated single-key balance should not probe slow key endpoint; requests = %+v", httpUpstream.requests)
+		}
+	}
+}
+
+func TestUpstreamBalanceServiceRefreshOneUsesAuthenticatedAuthMeBalance(t *testing.T) {
+	repo := &upstreamBalanceRefreshOneRepo{
+		account: &Account{
+			ID:       42,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":                         "sk-test",
+				UpstreamAuthUsernameCredentialKey: "alice@example.com",
+				UpstreamAuthPasswordCredentialKey: "secret",
+			},
+		},
+	}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{
+		responses: map[string]string{
+			"/api/user/login":    `{"message":"not found"}`,
+			"/api/v1/auth/login": `{"code":0,"data":{"access_token":"login-token"}}`,
+			"/api/v1/auth/me":    `{"code":0,"data":{"email":"alice@example.com","balance":33.0083949,"concurrency":5}}`,
+		},
+		statuses: map[string]int{
+			"/api/user/login":        http.StatusNotFound,
+			"/api/user/self":         http.StatusNotFound,
+			"/api/subscription/self": http.StatusNotFound,
+		},
+	}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+
+	snapshot, err := svc.RefreshOne(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("RefreshOne() error = %v", err)
+	}
+	if snapshot.Available != 33.0083949 || snapshot.Used != 0 || snapshot.Total != 33.0083949 {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	if len(snapshot.Keys) != 1 || snapshot.Keys[0].Endpoint != UpstreamBalanceAccountEndpoint {
+		t.Fatalf("key balance endpoint = %+v, want authenticated account balance", snapshot.Keys)
+	}
+}
+
+func TestUpstreamBalanceServiceCachesAuthenticatedLoginSession(t *testing.T) {
+	repo := &upstreamBalanceRefreshOneRepo{
+		account: &Account{
+			ID:       42,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":                         "sk-test",
+				UpstreamAuthUsernameCredentialKey: "alice@example.com",
+				UpstreamAuthPasswordCredentialKey: "secret",
+			},
+		},
+	}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{
+		responses: map[string]string{
+			"/api/user/login":        `{"success":true,"token":"login-token","data":{"id":99}}`,
+			"/api/v1/auth/me":        `{"success":false,"message":"Invalid URL"}`,
+			"/api/user/self":         `{"success":true,"data":{"quota":2452648,"used_quota":47352}}`,
+			"/api/subscription/self": `{"subscriptions":[]}`,
+		},
+	}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+
+	if _, err := svc.RefreshOne(context.Background(), 42); err != nil {
+		t.Fatalf("first RefreshOne() error = %v", err)
+	}
+	if _, err := svc.RefreshOne(context.Background(), 42); err != nil {
+		t.Fatalf("second RefreshOne() error = %v", err)
+	}
+	loginRequests := 0
+	for _, req := range httpUpstream.requests {
+		if req.URL.Path == "/api/user/login" {
+			loginRequests++
+		}
+	}
+	if loginRequests != 1 {
+		t.Fatalf("login requests = %d, want 1; requests = %+v", loginRequests, httpUpstream.requests)
+	}
+}
+
+func TestLoginUpstreamStopsFallbackOnRateLimit(t *testing.T) {
+	account := &Account{ID: 42, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{
+		responses: map[string]string{
+			"/api/user/login":    `{"error":{"message":"too many requests"}}`,
+			"/api/v1/auth/login": `{"error":{"message":"unsupported"}}`,
+		},
+		statuses: map[string]int{
+			"/api/user/login":    http.StatusTooManyRequests,
+			"/api/v1/auth/login": http.StatusNotFound,
+		},
+	}
+	svc := NewUpstreamBalanceService(&upstreamBalanceRefreshOneRepo{}, httpUpstream, time.Minute)
+
+	_, _, _, err := svc.loginUpstream(context.Background(), account, "https://upstream.example", "alice@example.com", "secret")
+	if err == nil || !strings.Contains(err.Error(), "/api/user/login returned 429") {
+		t.Fatalf("loginUpstream() error = %v, want /api/user/login 429", err)
+	}
+	if len(httpUpstream.requests) != 1 || httpUpstream.requests[0].URL.Path != "/api/user/login" {
+		t.Fatalf("requests = %+v, want only /api/user/login", httpUpstream.requests)
 	}
 }
 
@@ -510,6 +659,30 @@ func TestParseNewAPIUserSelfResponse(t *testing.T) {
 	assertFloatPtr(t, got.Available, 9.5)
 	assertFloatPtr(t, got.Used, 0.5)
 	assertFloatPtr(t, got.Total, 10)
+}
+
+func TestParseNewAPIUserSelfResponseBalanceField(t *testing.T) {
+	got, err := parseNewAPIUserSelfResponse([]byte(`{"code":0,"data":{"id":99,"balance":33.0083949,"concurrency":5}}`))
+	if err != nil {
+		t.Fatalf("parseNewAPIUserSelfResponse() error = %v", err)
+	}
+	assertFloatPtr(t, got.Available, 33.0083949)
+	assertFloatPtr(t, got.Total, 33.0083949)
+	if got.Used != nil {
+		t.Fatalf("used = %v, want nil", *got.Used)
+	}
+}
+
+func TestParseNewAPIUserSelfResponseNestedUserBalance(t *testing.T) {
+	got, err := parseNewAPIUserSelfResponse([]byte(`{"code":0,"data":{"user":{"id":99,"balance":1001.7470938,"concurrency":5},"run_mode":"shared"}}`))
+	if err != nil {
+		t.Fatalf("parseNewAPIUserSelfResponse() error = %v", err)
+	}
+	assertFloatPtr(t, got.Available, 1001.7470938)
+	assertFloatPtr(t, got.Total, 1001.7470938)
+	if got.Used != nil {
+		t.Fatalf("used = %v, want nil", *got.Used)
+	}
 }
 
 func TestParseNewAPIUsageResponseUserBalance(t *testing.T) {

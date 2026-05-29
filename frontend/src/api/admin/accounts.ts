@@ -31,6 +31,7 @@ import type {
   AccountProbeRunsResponse,
   BatchAccountProbeRunsRequest,
   BatchAccountProbeRunsResponse,
+  DeleteAccountProbeRunsResponse,
   FetchOptions
 } from '@/types'
 
@@ -404,6 +405,17 @@ export async function batchAccountProbeRuns(
       signal: options?.signal,
     }
   )
+  return data
+}
+
+export async function deleteAccountProbeRuns(
+  runIds: number[],
+  options?: FetchOptions
+): Promise<DeleteAccountProbeRunsResponse> {
+  const { data } = await apiClient.delete<DeleteAccountProbeRunsResponse>('/admin/account-probe-runs', {
+    data: { run_ids: runIds },
+    signal: options?.signal,
+  })
   return data
 }
 

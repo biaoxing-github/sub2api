@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 type accountProbeRepository struct {
@@ -219,6 +220,49 @@ WHERE r.id = $1`, runID))
 		return nil, err
 	}
 	return item, nil
+}
+
+func (r *accountProbeRepository) DeleteAccountProbeReportRuns(ctx context.Context, runIDs []int64) (service.AccountProbeReportDeleteResult, error) {
+	result := service.AccountProbeReportDeleteResult{RequestedCount: len(runIDs)}
+	if len(runIDs) == 0 {
+		return result, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+
+	if err := tx.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM account_probe_runs
+WHERE id = ANY($1) AND status = $2`, pq.Array(runIDs), service.AccountProbeStatusRunning).Scan(&result.SkippedRunningCount); err != nil {
+		return result, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM account_probe_samples
+WHERE run_id IN (
+  SELECT id
+  FROM account_probe_runs
+  WHERE id = ANY($1) AND COALESCE(status,'') <> $2
+)`, pq.Array(runIDs), service.AccountProbeStatusRunning); err != nil {
+		return result, err
+	}
+	deleteResult, err := tx.ExecContext(ctx, `
+DELETE FROM account_probe_runs
+WHERE id = ANY($1) AND COALESCE(status,'') <> $2`, pq.Array(runIDs), service.AccountProbeStatusRunning)
+	if err != nil {
+		return result, err
+	}
+	deleted, err := deleteResult.RowsAffected()
+	if err != nil {
+		return result, err
+	}
+	result.DeletedCount = int(deleted)
+	if err := tx.Commit(); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func (r *accountProbeRepository) ListAccountProbeSamples(ctx context.Context, runID int64) ([]service.AccountProbeSample, error) {

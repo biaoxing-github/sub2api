@@ -2248,6 +2248,53 @@ func TestOpenAIPassthroughCockpitToolsCompatibilityHeaders(t *testing.T) {
 	require.Empty(t, req.Header.Get("Session_id"))
 }
 
+func TestOpenAIBuildUpstreamRequestCodexDirectCompatibilityHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+	c.Request.Header.Set("User-Agent", "Mozilla/5.0")
+	c.Request.Header.Set("Originator", "Codex Desktop")
+	c.Request.Header.Set("Session-Id", "codex-session")
+	c.Request.Header.Set("Thread-Id", "codex-thread")
+	c.Request.Header.Set("X-Client-Request-Id", "codex-request")
+	c.Request.Header.Set("X-Codex-Beta-Features", "terminal_resize_reflow,memories")
+	c.Request.Header.Set("X-Codex-Turn-Metadata", `{"thread_source":"user"}`)
+	c.Request.Header.Set("X-Forwarded-For", "203.0.113.8")
+	c.Request.Header.Set("Forwarded", "for=203.0.113.8")
+	c.Request.Header.Set("Via", "1.1 proxy")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{
+		Gateway: config.GatewayConfig{OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect},
+	}}
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+	}
+
+	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", true, "prompt-cache-key", false)
+	require.NoError(t, err)
+	require.Equal(t, chatgptCodexURL, req.URL.String())
+	require.Equal(t, "chatgpt.com", req.Host)
+	require.Equal(t, "Bearer token", req.Header.Get("Authorization"))
+	require.Equal(t, "application/json", req.Header.Get("Content-Type"))
+	require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
+	require.Equal(t, codexDesktopUserAgent, req.Header.Get("User-Agent"))
+	require.Equal(t, "Codex Desktop", req.Header.Get("Originator"))
+	require.Equal(t, "chatgpt-acc", req.Header.Get("Chatgpt-Account-Id"))
+	require.Equal(t, "codex-session", req.Header.Get("Session-Id"))
+	require.Equal(t, "codex-thread", req.Header.Get("Thread-Id"))
+	require.Equal(t, "codex-request", req.Header.Get("X-Client-Request-Id"))
+	require.Equal(t, "terminal_resize_reflow,memories", req.Header.Get("X-Codex-Beta-Features"))
+	require.Equal(t, `{"thread_source":"user"}`, req.Header.Get("X-Codex-Turn-Metadata"))
+	require.Empty(t, req.Header.Get("OpenAI-Beta"))
+	require.Empty(t, req.Header.Get("conversation_id"))
+	require.Empty(t, req.Header.Get("X-Forwarded-For"))
+	require.Empty(t, req.Header.Get("Forwarded"))
+	require.Empty(t, req.Header.Get("Via"))
+}
+
 // ==================== P1-08 修复：model 替换性能优化测试 ====================
 
 // ==================== P1-08 修复：model 替换性能优化测试 =============

@@ -71,6 +71,10 @@ func (s *blockingAccountProbeService) GetReport(ctx context.Context, runID int64
 	return nil, nil
 }
 
+func (s *blockingAccountProbeService) DeleteReports(ctx context.Context, runIDs []int64) (service.AccountProbeReportDeleteResult, error) {
+	return service.AccountProbeReportDeleteResult{}, nil
+}
+
 func TestAccountProbeCreateReturnsAcceptedAndRunsInBackground(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	probeSvc := newBlockingAccountProbeService()
