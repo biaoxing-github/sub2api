@@ -33,6 +33,20 @@ import (
 
 const accountProbeBatchConcurrency = 2
 
+const (
+	batchTestNonAPIKeyGlobalConcurrency = 10
+	batchTestNonAPIKeyGroupConcurrency  = 3
+	batchTestNonAPIKeyAdaptiveWindow    = 10 * time.Second
+	batchTestNonAPIKeyPauseDuration     = 30 * time.Second
+)
+
+var nonAPIKeyBatchTestLimiter = newAccountBatchTestLimiter(
+	batchTestNonAPIKeyGlobalConcurrency,
+	batchTestNonAPIKeyGroupConcurrency,
+	batchTestNonAPIKeyAdaptiveWindow,
+	batchTestNonAPIKeyPauseDuration,
+)
+
 // OAuthHandler handles OAuth-related operations for accounts
 type OAuthHandler struct {
 	oauthService *service.OAuthService
@@ -437,14 +451,18 @@ func (h *AccountHandler) List(c *gin.Context) {
 }
 
 func (h *AccountHandler) attachAccountLoadFactorAdvice(out *dto.Account, account *service.Account) {
-	if out == nil || account == nil || !account.IsOpenAI() {
+	if out == nil || account == nil {
 		return
 	}
 	var health service.OpenAIPathHealthRecord
-	if h.openAIPathHealthReader != nil {
+	if account.IsOpenAI() && h.openAIPathHealthReader != nil {
 		if snapshot, ok := h.openAIPathHealthReader.SnapshotOpenAIPathHealthForAccount(account, service.OpenAIUpstreamTransportHTTPSSE); ok {
 			health = snapshot
 		}
+	}
+	out.DerivedHealth = dto.AccountDerivedHealthFromService(service.DeriveAccountHealthState(account, health, time.Now()))
+	if !account.IsOpenAI() {
+		return
 	}
 	advice := service.NewAccountLoadFactorAdvisor(service.AccountLoadFactorAdvisorOptions{}).Advise(account, health)
 	out.LoadFactorAdvice = dto.AccountLoadFactorAdviceFromService(advice)
@@ -910,6 +928,7 @@ type BatchTestNonAPIKeyAccountsRequest struct {
 	Status      string  `json:"status"`
 	Search      string  `json:"search"`
 	Group       string  `json:"group"`
+	PlanType    string  `json:"plan_type"`
 	AccountIDs  []int64 `json:"account_ids"`
 	Concurrency int     `json:"concurrency"`
 	Limit       int     `json:"limit"`
@@ -1032,6 +1051,7 @@ func (h *AccountHandler) BatchTestNonAPIKey(c *gin.Context) {
 			AccountName: account.Name,
 			Platform:    account.Platform,
 			Type:        account.Type,
+			GroupID:     firstAccountGroupID(account),
 			Status:      service.AccountBatchTestItemStatusPending,
 			CreatedAt:   now,
 		}
@@ -1075,7 +1095,7 @@ func (h *AccountHandler) resolveBatchTestNonAPIKeyTargets(ctx context.Context, r
 		strings.TrimSpace(req.Search),
 		groupID,
 		"",
-		"",
+		strings.ToLower(strings.TrimSpace(req.PlanType)),
 		"name",
 		"asc",
 	)
@@ -1157,6 +1177,7 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 	concurrency := run.Concurrency
 	concurrency = normalizeBatchTestNonAPIKeyConcurrency(concurrency)
 	modelID := normalizeBatchTestNonAPIKeyModelID(run.ModelID)
+	limiter := h.accountBatchTestLimiter()
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	for i := range items {
@@ -1171,6 +1192,28 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 			items[i].StartedAt = &startedAt
 			_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
 
+			if pauseReason := h.batchTestLiveTrafficPauseReason(context.Background(), items[i]); pauseReason != "" {
+				finishedAt := time.Now()
+				items[i].FinishedAt = &finishedAt
+				items[i].Status = service.AccountBatchTestItemStatusFailed
+				items[i].Category = "batch_paused"
+				items[i].ErrorMessage = pauseReason
+				_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
+				return
+			}
+
+			release, acquireErr := limiter.Acquire(context.Background(), batchTestNonAPIKeyLimiterKey(items[i]))
+			if acquireErr != nil {
+				finishedAt := time.Now()
+				items[i].FinishedAt = &finishedAt
+				items[i].Status = service.AccountBatchTestItemStatusFailed
+				items[i].Category = "batch_paused"
+				items[i].ErrorMessage = acquireErr.Error()
+				_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
+				return
+			}
+			defer release()
+
 			result, runErr := h.batchAccountTester.RunTestBackground(context.Background(), items[i].AccountID, modelID)
 			finishedAt := time.Now()
 			items[i].FinishedAt = &finishedAt
@@ -1178,6 +1221,7 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 				items[i].Status = service.AccountBatchTestItemStatusFailed
 				items[i].Category = classifyAccountTestError(runErr.Error())
 				items[i].ErrorMessage = runErr.Error()
+				limiter.RecordResult(batchTestNonAPIKeyLimiterKey(items[i]), items[i].Category)
 				_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
 				return
 			}
@@ -1185,6 +1229,7 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 				items[i].Status = service.AccountBatchTestItemStatusFailed
 				items[i].Category = "error"
 				items[i].ErrorMessage = "empty test result"
+				limiter.RecordResult(batchTestNonAPIKeyLimiterKey(items[i]), items[i].Category)
 				_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
 				return
 			}
@@ -1193,12 +1238,14 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 				items[i].Status = service.AccountBatchTestItemStatusSuccess
 				items[i].Category = "ok"
 				items[i].Message = result.ResponseText
+				limiter.RecordResult(batchTestNonAPIKeyLimiterKey(items[i]), items[i].Category)
 				_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
 				return
 			}
 			items[i].Status = service.AccountBatchTestItemStatusFailed
 			items[i].Category = classifyAccountTestError(result.ErrorMessage)
 			items[i].ErrorMessage = result.ErrorMessage
+			limiter.RecordResult(batchTestNonAPIKeyLimiterKey(items[i]), items[i].Category)
 			_ = h.accountBatchTestRepo.UpdateAccountBatchTestItem(context.Background(), items[i])
 		}()
 	}
@@ -1228,6 +1275,60 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 	finishedAt := time.Now()
 	run.FinishedAt = &finishedAt
 	_ = h.accountBatchTestRepo.UpdateAccountBatchTestRun(context.Background(), &run)
+}
+
+func (h *AccountHandler) accountBatchTestLimiter() *accountBatchTestLimiter {
+	return nonAPIKeyBatchTestLimiter
+}
+
+func (h *AccountHandler) batchTestLiveTrafficPauseReason(ctx context.Context, item service.AccountBatchTestItem) string {
+	if h == nil || h.concurrencyService == nil || item.AccountID <= 0 {
+		return ""
+	}
+	loadMap, err := h.concurrencyService.GetAccountsLoadBatchFresh(ctx, []service.AccountWithConcurrency{
+		{ID: item.AccountID, MaxConcurrency: 1},
+	})
+	if err != nil {
+		slog.Warn("account_batch_test_live_pressure_check_failed", "account_id", item.AccountID, "err", err)
+		return ""
+	}
+	load := loadMap[item.AccountID]
+	if load == nil {
+		return ""
+	}
+	if load.CurrentConcurrency <= 0 && load.WaitingCount <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("batch test paused because live traffic is using account %d (active=%d waiting=%d)", item.AccountID, load.CurrentConcurrency, load.WaitingCount)
+}
+
+func batchTestNonAPIKeyLimiterKey(item service.AccountBatchTestItem) string {
+	platform := strings.ToLower(strings.TrimSpace(item.Platform))
+	if platform == "" {
+		platform = "unknown"
+	}
+	accountType := strings.ToLower(strings.TrimSpace(item.Type))
+	if accountType == "" {
+		accountType = "unknown"
+	}
+	group := "ungrouped"
+	if item.GroupID > 0 {
+		group = strconv.FormatInt(item.GroupID, 10)
+	}
+	return platform + ":" + accountType + ":group:" + group
+}
+
+func firstAccountGroupID(account service.Account) int64 {
+	if len(account.GroupIDs) > 0 {
+		return account.GroupIDs[0]
+	}
+	if len(account.AccountGroups) > 0 {
+		return account.AccountGroups[0].GroupID
+	}
+	if len(account.Groups) > 0 && account.Groups[0] != nil {
+		return account.Groups[0].ID
+	}
+	return 0
 }
 
 func (h *AccountHandler) ListBatchTestRuns(c *gin.Context) {
@@ -1279,20 +1380,11 @@ func (h *AccountHandler) GetBatchTestRun(c *gin.Context) {
 }
 
 func classifyAccountTestError(message string) string {
-	lower := strings.ToLower(message)
-	if strings.Contains(lower, "429") || strings.Contains(lower, "rate limit") || strings.Contains(lower, "rate_limited") || strings.Contains(lower, "too many requests") {
-		return "rate_limited"
+	classification := service.ClassifyUpstreamError(service.UpstreamErrorInput{Message: message})
+	if classification.Category == service.UpstreamErrorCategoryOK {
+		return "error"
 	}
-	if strings.Contains(lower, "401") || strings.Contains(lower, "unauthorized") || strings.Contains(lower, "authentication failed") || strings.Contains(lower, "token invalid") {
-		return "unauthorized"
-	}
-	if strings.Contains(lower, "context deadline exceeded") || strings.Contains(lower, "timeout") {
-		return "timeout"
-	}
-	if strings.Contains(lower, "no access token") || strings.Contains(lower, "no refresh token") || strings.Contains(lower, "token") {
-		return "reauth_required"
-	}
-	return "error"
+	return classification.Category
 }
 
 func accountBatchTestItemMatchesCategory(item service.AccountBatchTestItem, category string) bool {
@@ -1302,29 +1394,32 @@ func accountBatchTestItemMatchesCategory(item service.AccountBatchTestItem, cate
 	if category == "ok" && item.Category != "ok" && item.Status == service.AccountBatchTestItemStatusSuccess {
 		return true
 	}
-	if category == "rate_limited" && item.Category != "rate_limited" && accountBatchTestMessageIsRateLimited(item.ErrorMessage) {
+	if category == "rate_limited" && accountBatchTestItemIsRateLimited(item) {
 		return true
 	}
-	if category == "unauthorized" && item.Category != "unauthorized" && accountBatchTestMessageIsUnauthorized(item.ErrorMessage) {
+	if category == "unauthorized" && accountBatchTestItemIsUnauthorized(item) {
 		return true
 	}
 	return item.Category == category
 }
 
-func accountBatchTestMessageIsRateLimited(message string) bool {
-	lower := strings.ToLower(message)
-	return strings.Contains(lower, "429") ||
-		strings.Contains(lower, "rate limit") ||
-		strings.Contains(lower, "rate_limited") ||
-		strings.Contains(lower, "too many requests")
+func accountBatchTestItemIsRateLimited(item service.AccountBatchTestItem) bool {
+	classification := service.ClassifyUpstreamError(service.UpstreamErrorInput{Message: firstNonEmptyBatchTestMessage(item)})
+	return item.Category == service.UpstreamErrorCategoryRateLimited ||
+		item.Category == service.UpstreamErrorCategoryClientIPCircuitOpen ||
+		classification.RateLimited
 }
 
-func accountBatchTestMessageIsUnauthorized(message string) bool {
-	lower := strings.ToLower(message)
-	return strings.Contains(lower, "401") ||
-		strings.Contains(lower, "unauthorized") ||
-		strings.Contains(lower, "authentication failed") ||
-		strings.Contains(lower, "token invalid")
+func accountBatchTestItemIsUnauthorized(item service.AccountBatchTestItem) bool {
+	classification := service.ClassifyUpstreamError(service.UpstreamErrorInput{Message: firstNonEmptyBatchTestMessage(item)})
+	return item.Category == service.UpstreamErrorCategoryUnauthorized || classification.AccountInvalid
+}
+
+func firstNonEmptyBatchTestMessage(item service.AccountBatchTestItem) string {
+	if msg := strings.TrimSpace(item.ErrorMessage); msg != "" {
+		return msg
+	}
+	return strings.TrimSpace(item.Message)
 }
 
 // CreateProbeRun runs and persists an upstream account probe.

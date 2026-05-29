@@ -178,4 +178,31 @@ describe('AccountStatusIndicator', () => {
     // AICredits 积分耗尽状态应显示
     expect(wrapper.text()).toContain('admin.accounts.status.creditsExhausted')
   })
+
+  it('展示派生健康状态和诊断原因', () => {
+    const wrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({
+          id: 5,
+          name: 'openai-line-degraded',
+          derived_health: {
+            state: 'line_degraded',
+            label: '线路降级',
+            reason: 'header_timeout',
+            path_health_state: 'degraded',
+            last_failure_reason: 'header_timeout'
+          }
+        })
+      },
+      global: {
+        stubs: {
+          Icon: true
+        }
+      }
+    })
+
+    expect(wrapper.text()).toContain('线路降级')
+    expect(wrapper.text()).toContain('header_timeout')
+    expect(wrapper.text()).toContain('path=degraded')
+  })
 })

@@ -2287,6 +2287,29 @@ const handleBulkRefreshToken = async () => {
   }
 }
 
+const paidOpenAIPlanTypes = new Set(['plus', 'team'])
+const planTypeOfAccount = (account: Account) => {
+  const planType = account.credentials?.plan_type
+  return typeof planType === 'string' ? planType.trim().toLowerCase() : ''
+}
+
+const resolveBatchTestNonAPIKeyModelID = () => {
+  const selectedAccountIds = [...selIds.value]
+  if (selectedAccountIds.length > 0) {
+    const selectedAccounts = accounts.value.filter((account) => selectedAccountIds.includes(account.id))
+    if (
+      selectedAccounts.length > 0 &&
+      selectedAccounts.every((account) => account.platform === 'openai' && paidOpenAIPlanTypes.has(planTypeOfAccount(account)))
+    ) {
+      return 'gpt-5.4'
+    }
+    return 'gpt-5.5'
+  }
+
+  const planType = typeof params.plan_type === 'string' ? params.plan_type.trim().toLowerCase() : ''
+  return paidOpenAIPlanTypes.has(planType) ? 'gpt-5.4' : 'gpt-5.5'
+}
+
 const handleBatchTestNonAPIKey = async () => {
   showAccountToolsDropdown.value = false
   showBatchNonAPIKeyDialog.value = true
@@ -2297,19 +2320,21 @@ const handleBatchTestNonAPIKey = async () => {
   batchTestCategoryFilter.value = ''
   try {
     const selectedAccountIds = [...selIds.value]
+    const modelID = resolveBatchTestNonAPIKeyModelID()
     const request = selectedAccountIds.length > 0
       ? {
-          model_id: 'gpt-5.5',
+          model_id: modelID,
           account_ids: selectedAccountIds,
           concurrency: 5,
           limit: 500,
         }
       : {
-          model_id: 'gpt-5.5',
+          model_id: modelID,
           platform: params.platform || undefined,
           status: params.status || undefined,
           search: params.search || undefined,
           group: params.group || undefined,
+          plan_type: params.plan_type || undefined,
           concurrency: 5,
           limit: 500,
         }

@@ -370,6 +370,20 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 	return out
 }
 
+func AccountDerivedHealthFromService(state service.AccountDerivedHealthState) *AccountDerivedHealth {
+	if strings.TrimSpace(state.State) == "" {
+		return nil
+	}
+	return &AccountDerivedHealth{
+		State:             state.State,
+		Label:             state.Label,
+		Reason:            state.Reason,
+		Until:             state.Until,
+		PathHealthState:   state.PathHealthState,
+		LastFailureReason: state.LastFailureReason,
+	}
+}
+
 func upstreamBalanceSnapshotFromService(s *service.UpstreamBalanceSnapshot) *UpstreamBalanceSnapshot {
 	if s == nil {
 		return nil

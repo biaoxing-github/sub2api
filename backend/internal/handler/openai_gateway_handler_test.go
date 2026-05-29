@@ -228,6 +228,48 @@ func TestOpenAIEnsureForwardErrorResponse_DoesNotOverrideWrittenResponse(t *test
 	assert.Equal(t, "already written", w.Body.String())
 }
 
+func TestOpenAIResponses_RejectsOversizedUpstreamBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	largeText := strings.Repeat("x", int(openAIResponsesUpstreamRequestBodyMaxBytes)+1)
+	body := `{"model":"gpt-5.5","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"` + largeText + `"}]}]}`
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+
+	groupID := int64(2)
+	c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{
+		ID:      101,
+		GroupID: &groupID,
+		User:    &service.User{ID: 1},
+	})
+	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{
+		UserID:      1,
+		Concurrency: 1,
+	})
+
+	h := newOpenAIHandlerForPreviousResponseIDValidation(t, nil)
+	h.Responses(c)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+	require.Contains(t, w.Body.String(), "Request body is too large for upstream OpenAI Responses API")
+	require.Contains(t, w.Body.String(), "32MB")
+	rawDecision, ok := c.Get(service.OpsOpenAIScheduleDecisionKey)
+	require.True(t, ok)
+	decision, ok := rawDecision.(service.OpenAIAccountScheduleDecision)
+	require.True(t, ok)
+	require.Equal(t, service.OpenAIContextMigrationPortableFull, decision.ContextMigrationClass)
+	require.Equal(t, "request_body_too_large", decision.ContinuityReason)
+}
+
+func TestOpenAIMapUpstreamError_Maps413ToRequestEntityTooLarge(t *testing.T) {
+	h := &OpenAIGatewayHandler{}
+	status, errType, message := h.mapUpstreamError(http.StatusRequestEntityTooLarge)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, status)
+	require.Equal(t, "invalid_request_error", errType)
+	require.Contains(t, message, "Request body is too large")
+}
+
 func TestShouldLogOpenAIForwardFailureAsWarn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -334,7 +334,7 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 				}
 			case "duration_ms", "first_token_ms", "time_to_first_token_ms", "ttft_ms", "header_wait_ms", "auth_latency_ms", "routing_latency_ms", "upstream_latency_ms", "response_latency_ms":
 				diagnosis.Latency[key] = value
-			case "context_replay_reason", "context_continuity", "continuity", "continuity_state", "continuity_reason", "context_migration", "context_migration_class", "context_migration_reason", "has_previous_response_id", "previous_response_id_kind", "previous_response_id_len", "has_full_input", "input_item_count", "message_item_count", "function_call_output_count", "custom_tool_call_output_count", "reasoning_item_count", "request_body_bytes", "snapshot_available", "snapshot_id", "snapshot_replayable", "snapshot_replay_block_reason", "already_streamed_to_client", "input_type_counts", "journal_reason", "replay_safe", "protected", "reason", "context_from_account_id", "context_journal_backend", "context_journal_turn_count", "context_journal_session_bytes", "context_journal_max_session_bytes", "context_journal_overflow", "request_type", "session_hash", "prompt_cache_key":
+			case "context_replay_reason", "context_continuity", "continuity", "continuity_state", "continuity_reason", "context_migration", "context_migration_class", "context_migration_reason", "has_previous_response_id", "previous_response_id_kind", "previous_response_id_len", "has_full_input", "input_item_count", "message_item_count", "function_call_output_count", "custom_tool_call_output_count", "reasoning_item_count", "request_body_bytes", "snapshot_available", "snapshot_id", "snapshot_replayable", "snapshot_replay_block_reason", "already_streamed_to_client", "input_type_counts", "input_type_bytes", "largest_input_item_type", "largest_input_item_bytes", "journal_reason", "replay_safe", "protected", "reason", "context_from_account_id", "context_journal_backend", "context_journal_turn_count", "context_journal_session_bytes", "context_journal_max_session_bytes", "context_journal_overflow", "request_type", "session_hash", "prompt_cache_key":
 				diagnosis.Context[key] = value
 			case "requested_model", "upstream_endpoint", "user_id", "api_key_id", "group_id", "route", "route_mode", "route_reason", "selected_route", "candidate_accounts", "candidate_base_urls", "skipped_reasons", "selected_account_id", "selected_account_name", "selected_request_base_url", "account_score", "scheduler_profile", "balance_check_result", "failover_count", "account_failover_count", "switch_account_count":
 				diagnosis.Routing[key] = value
@@ -358,35 +358,54 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 			}
 		}
 	}
-	reason := strings.ToLower(lastReason)
-	switch {
-	case strings.Contains(reason, "timeout awaiting response headers") || strings.Contains(reason, "timed out waiting"):
+	classification := ClassifyUpstreamError(UpstreamErrorInput{Message: lastReason})
+	switch classification.Category {
+	case UpstreamErrorCategoryHeaderTimeout:
 		diagnosis.Status = "header_timeout"
 		diagnosis.Headline = "上游响应头等待超时"
 		diagnosis.SuggestedAction = "优先查看 path health 是否熔断该账号/代理/endpoint；未输出前可安全快速切号。"
-	case strings.Contains(reason, "context deadline exceeded"):
+	case UpstreamErrorCategoryTimeout:
 		diagnosis.Status = "upstream_timeout"
 		diagnosis.Headline = "上游请求超过等待窗口"
 		diagnosis.SuggestedAction = "优先检查 upstream latency/header wait 和该账号并发；这是网络/上游等待问题，不是上下文保护。"
-	case strings.Contains(reason, "context") || strings.Contains(reason, "replay") || strings.Contains(reason, "function_call_output") || strings.Contains(reason, "encrypted"):
-		diagnosis.Status = "protected"
-		diagnosis.Headline = "不可安全重放，已保护会话"
-		diagnosis.SuggestedAction = "继续原账号或新开会话；当前续链依赖上游状态，不能静默跨账号重放。"
-	case strings.Contains(reason, "unexpected eof") || strings.Contains(reason, "eof"):
+	case UpstreamErrorCategoryUnexpectedEOF:
 		diagnosis.Status = "unexpected_eof"
 		diagnosis.Headline = "上游连接提前断开"
 		diagnosis.SuggestedAction = "检查代理和 HTTP/2 线路；连续 EOF 应临时降权该 path。"
-	case strings.Contains(reason, "401") || strings.Contains(reason, "unauthorized"):
+	case UpstreamErrorCategoryUnauthorized:
 		diagnosis.Status = "unauthorized"
 		diagnosis.Headline = "账号认证失败"
 		diagnosis.SuggestedAction = "刷新账号凭据或暂停该账号，避免继续调度。"
-	case strings.Contains(reason, "429") || strings.Contains(reason, "rate limit"):
+	case UpstreamErrorCategoryRateLimited:
 		diagnosis.Status = "rate_limited"
 		diagnosis.Headline = "上游限流"
-		diagnosis.SuggestedAction = "等待 reset 时间或让调度器切到实时余额确认通过的候选账号。"
+		diagnosis.SuggestedAction = "等待 reset 时间，或让调度器切到本地快照仍可调度且未处于 429 冷却期的候选账号。"
+	case UpstreamErrorCategoryClientIPCircuitOpen:
+		diagnosis.Status = "client_ip_circuit_open"
+		diagnosis.Headline = "来源 IP 被上游短时熔断"
+		diagnosis.SuggestedAction = "暂停该组批量体检并降低同源并发，等待上游熔断窗口恢复。"
+	case UpstreamErrorCategoryCloudflareWAF:
+		diagnosis.Status = "cloudflare_waf"
+		diagnosis.Headline = "Cloudflare/WAF 拦截"
+		diagnosis.SuggestedAction = "优先检查代理出口、User-Agent 和请求节奏；连续出现时应降级该线路。"
+	case UpstreamErrorCategoryPreviousResponseNotFound:
+		diagnosis.Status = "previous_response_not_found"
+		diagnosis.Headline = "续链 previous_response_id 已失效"
+		diagnosis.SuggestedAction = "丢弃失效续链锚点后用完整上下文重放，或新开会话。"
+	case UpstreamErrorCategoryUpstream5xx:
+		diagnosis.Status = "upstream_5xx"
+		diagnosis.Headline = "上游 5xx/网关错误"
+		diagnosis.SuggestedAction = "优先切换 BaseURL 或等待上游恢复，不应直接误伤账号。"
 	default:
-		diagnosis.Headline = "请求已记录，可查看 timeline 细节"
-		diagnosis.SuggestedAction = "如果仍感觉卡顿，重点看 TTFT、upstream latency 和账号切换次数。"
+		reason := strings.ToLower(lastReason)
+		if strings.Contains(reason, "context") || strings.Contains(reason, "replay") || strings.Contains(reason, "function_call_output") || strings.Contains(reason, "encrypted") {
+			diagnosis.Status = "protected"
+			diagnosis.Headline = "不可安全重放，已保护会话"
+			diagnosis.SuggestedAction = "继续原账号或新开会话；当前续链依赖上游状态，不能静默跨账号重放。"
+		} else {
+			diagnosis.Headline = "请求已记录，可查看 timeline 细节"
+			diagnosis.SuggestedAction = "如果仍感觉卡顿，重点看 TTFT、upstream latency 和账号切换次数。"
+		}
 	}
 	return diagnosis, nil
 }

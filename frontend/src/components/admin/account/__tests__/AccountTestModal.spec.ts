@@ -193,4 +193,74 @@ describe('AccountTestModal', () => {
     expect(probeDialog.attributes('data-account-id')).toBe('128')
     expect(probeDialog.attributes('data-model-id')).toBe('gpt-5.4')
   })
+
+  it('free OpenAI accounts default to gpt-5.5 when testing', async () => {
+    getAvailableModels.mockResolvedValueOnce([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' },
+      { id: 'gpt-5.5', display_name: 'GPT-5.5' }
+    ])
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: {
+          id: 129,
+          name: 'free-oauth',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'active',
+          credentials: { plan_type: 'free' }
+        }
+      } as any,
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Select: { template: '<div class="select-stub"></div>' },
+          TextArea: true,
+          Icon: true,
+          AccountProbeDialog: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.5')
+  })
+
+  it('paid OpenAI accounts keep gpt-5.4 as the test default', async () => {
+    getAvailableModels.mockResolvedValueOnce([
+      { id: 'gpt-5.5', display_name: 'GPT-5.5' },
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' }
+    ])
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: {
+          id: 130,
+          name: 'team-oauth',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'active',
+          credentials: { plan_type: 'team' }
+        }
+      } as any,
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Select: { template: '<div class="select-stub"></div>' },
+          TextArea: true,
+          Icon: true,
+          AccountProbeDialog: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.4')
+  })
 })

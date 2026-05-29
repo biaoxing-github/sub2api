@@ -332,6 +332,16 @@ const sortTestModels = (models: ClaudeModel[]) => {
   })
 }
 
+const openAIPlanType = () => {
+  const value = props.account?.credentials?.plan_type
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+const selectOpenAITestModel = (models: ClaudeModel[]) => {
+  const preferredModelID = openAIPlanType() === 'free' ? 'gpt-5.5' : 'gpt-5.4'
+  return models.find((m) => m.id === preferredModelID)?.id || models[0]?.id || ''
+}
+
 // Load available models when modal opens
 watch(
   () => props.show,
@@ -369,8 +379,7 @@ const loadAvailableModels = async () => {
       if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
       } else if (props.account.platform === 'openai') {
-        const gpt54Model = availableModels.value.find((m) => m.id === 'gpt-5.4')
-        selectedModelId.value = gpt54Model?.id || availableModels.value[0].id
+        selectedModelId.value = selectOpenAITestModel(availableModels.value)
       } else {
         // Try to select Sonnet as default, otherwise use first model
         const sonnetModel = availableModels.value.find((m) => m.id.includes('sonnet'))

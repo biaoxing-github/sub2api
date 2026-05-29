@@ -1035,6 +1035,22 @@ export interface AccountLoadFactorAdvice {
   path_health_samples?: number
 }
 
+export interface AccountDerivedHealth {
+  state:
+    | 'normal'
+    | 'rate_limited_cooldown'
+    | 'unauthorized_invalid'
+    | 'line_degraded'
+    | 'upstream_abnormal'
+    | 'pending_retest'
+    | string
+  label: string
+  reason?: string
+  until?: string | null
+  path_health_state?: string
+  last_failure_reason?: string
+}
+
 export interface Account {
   id: number
   name: string
@@ -1064,6 +1080,7 @@ export interface Account {
   concurrency: number
   load_factor?: number | null
   load_factor_advice?: AccountLoadFactorAdvice | null
+  derived_health?: AccountDerivedHealth | null
   current_concurrency?: number // Real-time concurrency count from Redis
   priority: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)

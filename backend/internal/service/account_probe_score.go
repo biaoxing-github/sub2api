@@ -193,26 +193,26 @@ func accountProbeErrorMessages(run AccountProbeResult) []string {
 }
 
 func classifyAccountProbeError(message string) (string, string, int) {
-	lower := strings.ToLower(strings.TrimSpace(message))
-	switch {
-	case lower == "":
+	classification := ClassifyUpstreamError(UpstreamErrorInput{Message: message})
+	switch classification.Category {
+	case UpstreamErrorCategoryOK:
 		return "", "", 0
-	case strings.Contains(lower, "cloudflare") ||
-		strings.Contains(lower, "cf-ray") ||
-		strings.Contains(lower, "error 522") ||
-		strings.Contains(lower, "error 524") ||
-		strings.Contains(lower, "just a moment"):
-		return "cloudflare_waf", "Cloudflare/WAF 拦截", 15
-	case strings.Contains(lower, "context deadline exceeded"):
+	case UpstreamErrorCategoryCloudflareWAF:
+		return classification.Category, classification.Label, 15
+	case UpstreamErrorCategoryClientIPCircuitOpen:
+		return classification.Category, classification.Label, 12
+	case UpstreamErrorCategoryTimeout:
 		return "context_deadline", "context deadline exceeded", 15
-	case strings.Contains(lower, "timeout"):
-		return "timeout", "请求超时", 12
-	case strings.Contains(lower, "unexpected eof"):
-		return "unexpected_eof", "unexpected EOF", 10
-	case strings.Contains(lower, "401") || strings.Contains(lower, "unauthorized") || strings.Contains(lower, "invalid api key"):
-		return "auth", "认证失败/401", 15
-	case strings.Contains(lower, "quota") || strings.Contains(lower, "insufficient_quota") || strings.Contains(lower, "usage_limit"):
-		return "quota", "额度不足", 15
+	case UpstreamErrorCategoryHeaderTimeout:
+		return classification.Category, classification.Label, 12
+	case UpstreamErrorCategoryUnexpectedEOF:
+		return classification.Category, classification.Label, 10
+	case UpstreamErrorCategoryUnauthorized:
+		return "auth", classification.Label, 15
+	case UpstreamErrorCategoryQuota:
+		return classification.Category, classification.Label, 15
+	case UpstreamErrorCategoryUpstream5xx:
+		return classification.Category, classification.Label, 12
 	default:
 		return "upstream_error", "上游错误", 6
 	}

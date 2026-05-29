@@ -1,6 +1,12 @@
 package service
 
-import "testing"
+import (
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestParseDebugEnvBool(t *testing.T) {
 	t.Run("empty is false", func(t *testing.T) {
@@ -28,4 +34,34 @@ func TestParseDebugEnvBool(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestDebugLogGatewaySnapshotWritesLargeFullBody(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gateway_debug.log")
+	svc := &GatewayService{}
+	svc.initDebugGatewayBodyFile(path)
+	if f := svc.debugGatewayBodyFile.Load(); f != nil {
+		defer func() { _ = f.Close() }()
+	}
+
+	largeBody := []byte(`{"payload":"` + strings.Repeat("x", 300*1024) + `"}`)
+	svc.debugLogGatewaySnapshot("CLIENT_ORIGINAL", http.Header{"Authorization": []string{"Bearer secret"}}, largeBody, nil)
+	if f := svc.debugGatewayBodyFile.Load(); f != nil {
+		_ = f.Sync()
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read gateway debug log: %v", err)
+	}
+	logText := string(data)
+	if !strings.Contains(logText, strings.Repeat("x", 1024)) {
+		t.Fatal("expected explicit gateway debug log to include full large body")
+	}
+	if strings.Contains(logText, "body_omitted: true") {
+		t.Fatal("expected explicit gateway debug log to avoid omitting body")
+	}
+	if strings.Contains(logText, "Bearer secret") {
+		t.Fatal("expected authorization header to remain redacted")
+	}
 }

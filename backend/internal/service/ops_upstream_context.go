@@ -91,6 +91,42 @@ func setOpsUpstreamError(c *gin.Context, upstreamStatusCode int, upstreamMessage
 	}
 }
 
+func attachOpenAIContextMigrationToOpsDecision(c *gin.Context, obs OpenAIContextMigrationObservation) {
+	if c == nil {
+		return
+	}
+	detail := obs.DetailMap()
+	if len(detail) == 0 && strings.TrimSpace(obs.Class) == "" && strings.TrimSpace(obs.Reason) == "" {
+		return
+	}
+	decision := OpenAIAccountScheduleDecision{
+		ContextMigrationClass:  strings.TrimSpace(obs.Class),
+		ContextMigrationReason: strings.TrimSpace(obs.Reason),
+		ContextMigrationDetail: detail,
+	}
+	if raw, ok := c.Get(OpsOpenAIScheduleDecisionKey); ok {
+		if existing, ok := raw.(OpenAIAccountScheduleDecision); ok {
+			decision = existing
+			if decision.ContextMigrationClass == "" {
+				decision.ContextMigrationClass = strings.TrimSpace(obs.Class)
+			}
+			if decision.ContextMigrationReason == "" {
+				decision.ContextMigrationReason = strings.TrimSpace(obs.Reason)
+			}
+			if len(decision.ContextMigrationDetail) == 0 {
+				decision.ContextMigrationDetail = detail
+			} else {
+				for key, value := range detail {
+					if strings.TrimSpace(key) != "" {
+						decision.ContextMigrationDetail[key] = value
+					}
+				}
+			}
+		}
+	}
+	c.Set(OpsOpenAIScheduleDecisionKey, decision)
+}
+
 // OpsUpstreamErrorEvent describes one upstream error attempt during a single gateway request.
 // It is stored in ops_error_logs.upstream_errors as a JSON array.
 type OpsUpstreamErrorEvent struct {

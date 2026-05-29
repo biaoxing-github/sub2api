@@ -25,6 +25,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const openAIResponsesUpstreamRequestBodyMaxBytes int64 = 32 * 1024 * 1024
+
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
 	gatewayService           *service.OpenAIGatewayService
@@ -149,6 +151,24 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// 校验请求体 JSON 合法性
 	if !gjson.ValidBytes(body) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
+		return
+	}
+	if int64(len(body)) > openAIResponsesUpstreamRequestBodyMaxBytes {
+		obs := service.ClassifyOpenAIContextMigration(body, false)
+		diagnosis := service.DiagnoseOpenAIRequestBody(body)
+		if detail := obs.DetailMap(); len(detail) > 0 {
+			c.Set(service.OpsOpenAIScheduleDecisionKey, service.OpenAIAccountScheduleDecision{
+				ContextMigrationClass:  obs.Class,
+				ContextMigrationReason: obs.Reason,
+				ContextMigrationDetail: detail,
+				ContinuityAction:       service.OpenAIContinuityActionProtected,
+				ContinuityReason:       "request_body_too_large",
+				ContinuityDetail:       detail,
+			})
+		}
+		message := openAIResponsesRequestBodyTooLargeMessage(len(body), diagnosis)
+		service.SetOpsUpstreamError(c, http.StatusRequestEntityTooLarge, message, "")
+		h.handleStreamingAwareError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", message, streamStarted)
 		return
 	}
 
@@ -1832,6 +1852,8 @@ func (h *OpenAIGatewayHandler) mapUpstreamError(statusCode int) (int, string, st
 		return http.StatusBadGateway, "upstream_error", "Upstream authentication failed, please contact administrator"
 	case 403:
 		return http.StatusBadGateway, "upstream_error", "Upstream access forbidden, please contact administrator"
+	case 413:
+		return http.StatusRequestEntityTooLarge, "invalid_request_error", "Request body is too large for upstream, please compact or prune conversation context before retrying"
 	case 429:
 		return http.StatusTooManyRequests, "rate_limit_error", "Upstream rate limit exceeded, please retry later"
 	case 529:
@@ -1841,6 +1863,14 @@ func (h *OpenAIGatewayHandler) mapUpstreamError(statusCode int) (int, string, st
 	default:
 		return http.StatusBadGateway, "upstream_error", "Upstream request failed"
 	}
+}
+
+func openAIResponsesRequestBodyTooLargeMessage(bodyBytes int, diagnosis service.OpenAIRequestBodyDiagnosis) string {
+	prefix := fmt.Sprintf("Request body is too large for upstream OpenAI Responses API, body is %s and limit is %s.", formatBodyLimit(int64(bodyBytes)), formatBodyLimit(openAIResponsesUpstreamRequestBodyMaxBytes))
+	if msg := diagnosis.UserMessage(); msg != "" {
+		return prefix + " " + msg
+	}
+	return prefix + " Please compact or prune conversation context before retrying."
 }
 
 // handleStreamingAwareError handles errors that may occur after streaming has started

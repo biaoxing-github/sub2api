@@ -79,6 +79,30 @@ func (r stubOpenAIAccountRepo) ListSchedulableUngroupedByPlatform(ctx context.Co
 	return r.ListSchedulableByPlatform(ctx, platform)
 }
 
+func TestOpenAIGatewayServiceHandleErrorResponseMaps413ToClient413(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	svc := &OpenAIGatewayService{}
+	resp := &http.Response{
+		StatusCode: http.StatusRequestEntityTooLarge,
+		Header:     http.Header{"Content-Type": []string{"text/html"}},
+		Body: io.NopCloser(strings.NewReader(`<html>
+<head><title>413 Request Entity Too Large</title></head>
+<body><center><h1>413 Request Entity Too Large</h1></center><hr><center>openresty</center></body>
+</html>`)),
+	}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, &Account{ID: 300, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, []byte(`{"model":"gpt-5.5","input":"hello"}`))
+
+	require.Error(t, err)
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "Request body is too large")
+}
+
 type stubConcurrencyCache struct {
 	ConcurrencyCache
 	loadBatchErr    error

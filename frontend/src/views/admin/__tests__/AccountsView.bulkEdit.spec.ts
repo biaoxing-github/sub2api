@@ -490,6 +490,84 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(wrapper.text()).toContain('admin.accounts.batchTest.submitted')
   })
 
+  it('uses gpt-5.4 and carries the team plan filter for paid batch tests', async () => {
+    listAccounts.mockResolvedValueOnce({
+      items: [
+        {
+          id: 41,
+          name: 'team-one@example.com',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'active',
+          schedulable: true,
+          credentials: { plan_type: 'team' },
+          extra: {},
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          BaseDialog: { template: '<section data-test="base-dialog"><slot /><slot name="footer" /></section>' },
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: {
+            props: ['filters'],
+            emits: ['update:filters', 'change'],
+            template: '<button data-test="set-team-filter" @click="$emit(\'update:filters\', { ...filters, platform: \'openai\', plan_type: \'team\' }); $emit(\'change\')">team</button>'
+          },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.get('[data-test="set-team-filter"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('button[title="admin.accounts.moreActions"]').trigger('click')
+    await wrapper.get('[data-test="batch-test-non-apikey"]').trigger('click')
+    await flushPromises()
+
+    expect(batchTestNonAPIKeyAccounts).toHaveBeenCalledWith(expect.objectContaining({
+      model_id: 'gpt-5.4',
+      platform: 'openai',
+      plan_type: 'team',
+      concurrency: 5,
+      limit: 500,
+    }))
+  })
+
   it('runs batch connectivity tests only for selected non-api-key accounts', async () => {
     listAccounts.mockResolvedValueOnce({
       items: [

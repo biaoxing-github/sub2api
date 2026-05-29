@@ -28,6 +28,20 @@
       </span>
     </template>
 
+    <div v-if="showDerivedHealth" class="group/health relative">
+      <span :class="['inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium', derivedHealthClass]">
+        {{ account.derived_health?.label || account.derived_health?.state }}
+      </span>
+      <div
+        class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-60 -translate-x-1/2 whitespace-normal rounded bg-gray-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 transition-opacity group-hover/health:opacity-100 dark:bg-gray-700"
+      >
+        {{ derivedHealthTitle }}
+        <div
+          class="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"
+        ></div>
+      </div>
+    </div>
+
     <!-- Error Info Indicator -->
     <div v-if="hasError && account.error_message" class="group/error relative">
       <svg
@@ -294,6 +308,37 @@ const isQuotaExceeded = computed(() => {
     exceeded(props.account.quota_daily_used, props.account.quota_daily_limit) ||
     exceeded(props.account.quota_weekly_used, props.account.quota_weekly_limit)
   )
+})
+
+const showDerivedHealth = computed(() => {
+  const state = props.account.derived_health?.state
+  return !!state && state !== 'normal' && state !== 'rate_limited_cooldown'
+})
+
+const derivedHealthClass = computed(() => {
+  switch (props.account.derived_health?.state) {
+    case 'unauthorized_invalid':
+      return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+    case 'line_degraded':
+      return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'
+    case 'upstream_abnormal':
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+    case 'pending_retest':
+      return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
+    default:
+      return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
+  }
+})
+
+const derivedHealthTitle = computed(() => {
+  const health = props.account.derived_health
+  if (!health) return ''
+  const parts = [health.label || health.state]
+  if (health.reason) parts.push(health.reason)
+  if (health.path_health_state) parts.push(`path=${health.path_health_state}`)
+  if (health.last_failure_reason) parts.push(health.last_failure_reason)
+  if (health.until) parts.push(formatDateTime(health.until))
+  return parts.filter(Boolean).join(' · ')
 })
 
 // Computed: countdown text for rate limit (429)

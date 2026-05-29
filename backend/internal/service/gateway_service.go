@@ -9914,7 +9914,7 @@ func (s *GatewayService) debugLogGatewaySnapshot(tag string, headers http.Header
 		}
 	}
 
-	// 3. body（完整输出，格式化 JSON 便于 diff）
+	// 3. body（显式 debug 模式完整输出，格式化 JSON 便于 diff）
 	fmt.Fprint(&buf, "--- body ---\n")
 	if len(body) == 0 {
 		fmt.Fprint(&buf, "  (empty)\n")

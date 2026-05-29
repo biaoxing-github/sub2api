@@ -73,6 +73,31 @@ func TestClientRequestDebugLogger_EnabledLogsFullBodyAndPreservesBody(t *testing
 	require.True(t, sink.ContainsFieldValue("query", "trace=1"))
 }
 
+func TestClientRequestDebugLogger_EnabledLogsLargeFullBodyAndPreservesBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sink, restore := captureMiddlewareStructuredLog(t)
+	defer restore()
+
+	router := gin.New()
+	router.Use(ClientRequestDebugLogger(clientRequestDebugSettingGetter{enabled: true}))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		body, err := c.GetRawData()
+		require.NoError(t, err)
+		c.String(http.StatusOK, string(body))
+	})
+
+	raw := `{"model":"gpt-5.5","input":"` + strings.Repeat("z", 300*1024) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(raw))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, raw, rec.Body.String())
+	require.True(t, sink.ContainsMessage("client_request_debug.request_body"))
+	require.True(t, sink.ContainsFieldValue("request_body", strings.Repeat("z", 1024)))
+	require.False(t, sink.ContainsFieldValue("request_body_omitted", "true"))
+}
+
 type middlewareInMemoryLogSink struct {
 	events []*logger.LogEvent
 }

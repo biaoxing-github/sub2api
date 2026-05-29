@@ -165,17 +165,31 @@ ORDER BY id ASC`, runID)
 const accountBatchTestRunSelectSQL = `
 SELECT id, status, model_id, platform, status_filter, search, concurrency, limit_count,
        total_count, success_count, failed_count,
-       COALESCE((SELECT COUNT(*) FROM account_batch_test_items i WHERE i.run_id = account_batch_test_runs.id AND i.category = 'unauthorized'), unauthorized_count),
        COALESCE((
          SELECT COUNT(*)
          FROM account_batch_test_items i
          WHERE i.run_id = account_batch_test_runs.id
-           AND (i.category = 'rate_limited' OR (
-             i.category <> 'rate_limited' AND (
+           AND (i.category = 'unauthorized' OR (
+             i.category <> 'unauthorized' AND (
+               LOWER(COALESCE(i.error_message,'')) LIKE '%401%' OR
+               LOWER(COALESCE(i.error_message,'')) LIKE '%unauthorized%' OR
+               LOWER(COALESCE(i.error_message,'')) LIKE '%authentication failed%' OR
+               LOWER(COALESCE(i.error_message,'')) LIKE '%token invalid%' OR
+               LOWER(COALESCE(i.error_message,'')) LIKE '%invalid api key%'
+             )
+           ))
+       ), unauthorized_count),
+       COALESCE((
+         SELECT COUNT(*)
+         FROM account_batch_test_items i
+         WHERE i.run_id = account_batch_test_runs.id
+           AND (i.category IN ('rate_limited', 'client_ip_circuit_open') OR (
+             i.category NOT IN ('rate_limited', 'client_ip_circuit_open') AND (
                LOWER(COALESCE(i.error_message,'')) LIKE '%429%' OR
                LOWER(COALESCE(i.error_message,'')) LIKE '%rate limit%' OR
                LOWER(COALESCE(i.error_message,'')) LIKE '%rate_limited%' OR
-               LOWER(COALESCE(i.error_message,'')) LIKE '%too many requests%'
+               LOWER(COALESCE(i.error_message,'')) LIKE '%too many requests%' OR
+               LOWER(COALESCE(i.error_message,'')) LIKE '%client_ip_error_circuit_open%'
              )
            ))
        ), 0),

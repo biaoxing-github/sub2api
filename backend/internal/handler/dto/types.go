@@ -166,6 +166,7 @@ type Account struct {
 	Concurrency        int                      `json:"concurrency"`
 	LoadFactor         *int                     `json:"load_factor,omitempty"`
 	LoadFactorAdvice   *AccountLoadFactorAdvice `json:"load_factor_advice,omitempty"`
+	DerivedHealth      *AccountDerivedHealth    `json:"derived_health,omitempty"`
 	Priority           int                      `json:"priority"`
 	RateMultiplier     float64                  `json:"rate_multiplier"`
 	Status             string                   `json:"status"`
@@ -274,6 +275,15 @@ type AccountAvailabilityRadar struct {
 	Status  string   `json:"status"`
 	Label   string   `json:"label"`
 	Reasons []string `json:"reasons,omitempty"`
+}
+
+type AccountDerivedHealth struct {
+	State             string     `json:"state"`
+	Label             string     `json:"label"`
+	Reason            string     `json:"reason,omitempty"`
+	Until             *time.Time `json:"until,omitempty"`
+	PathHealthState   string     `json:"path_health_state,omitempty"`
+	LastFailureReason string     `json:"last_failure_reason,omitempty"`
 }
 
 type APIKeyItem struct {

@@ -44,6 +44,7 @@ type AccountBatchTestItem struct {
 	AccountName  string     `json:"account_name"`
 	Platform     string     `json:"platform"`
 	Type         string     `json:"type"`
+	GroupID      int64      `json:"group_id,omitempty"`
 	Status       string     `json:"status"`
 	Category     string     `json:"category"`
 	Message      string     `json:"message,omitempty"`

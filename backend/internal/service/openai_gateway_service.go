@@ -2609,6 +2609,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if c != nil {
 		c.Set("openai_context_migration", contextMigrationObservation)
 		c.Set("openai_context_migration_class", contextMigrationObservation.Class)
+		attachOpenAIContextMigrationToOpsDecision(c, contextMigrationObservation)
 	}
 	s.maybeSaveOpenAIRequestSnapshot(ctx, c, account, body, upstreamModel, promptCacheKey, contextMigrationObservation)
 
@@ -3223,6 +3224,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	if c != nil {
 		c.Set("openai_context_migration", contextMigrationObservation)
 		c.Set("openai_context_migration_class", contextMigrationObservation.Class)
+		attachOpenAIContextMigrationToOpsDecision(c, contextMigrationObservation)
 	}
 	s.maybeSaveOpenAIRequestSnapshot(ctx, c, account, body, firstNonEmptyString(upstreamPassthroughModel, policyModel, reqModel), strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()), contextMigrationObservation)
 
@@ -3818,24 +3820,10 @@ func isOpenAIRequestPhaseTransientError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
-		return true
-	}
-	msg := strings.ToLower(strings.TrimSpace(err.Error()))
-	if msg == "" {
-		return false
-	}
-	transientMarkers := []string{
-		"unexpected eof",
-		"timeout awaiting response headers",
-		"timed out waiting for openai upstream response headers",
-	}
-	for _, marker := range transientMarkers {
-		if strings.Contains(msg, marker) {
-			return true
-		}
-	}
-	return false
+	classification := ClassifyUpstreamError(UpstreamErrorInput{Err: err})
+	return classification.Category == UpstreamErrorCategoryUnexpectedEOF ||
+		classification.Category == UpstreamErrorCategoryHeaderTimeout ||
+		classification.Category == UpstreamErrorCategoryTimeout
 }
 
 func shouldFailoverOpenAIRequestPhaseError(policy openAICodexStabilityPolicy, err error) bool {
@@ -4009,11 +3997,14 @@ func rankOpenAIPathHealthState(state string) int {
 }
 
 func shouldFailoverOpenAIRequestBaseURLResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
-	switch statusCode {
-	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 520, 522, 523, 524, 529:
+	classification := ClassifyUpstreamError(UpstreamErrorInput{StatusCode: statusCode, Message: upstreamMsg, Body: upstreamBody})
+	switch classification.Category {
+	case UpstreamErrorCategoryUpstream5xx, UpstreamErrorCategoryCloudflareWAF:
 		return true
-	default:
+	case UpstreamErrorCategoryUpstreamError:
 		return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
+	default:
+		return false
 	}
 }
 
@@ -4326,25 +4317,22 @@ func (s *OpenAIGatewayService) recordOpenAIPathHealthFromUpstreamResult(key Open
 		return
 	}
 	if err != nil {
-		s.openaiPathHealth.RecordFailure(key, err.Error(), headerWaitMs)
+		classification := ClassifyUpstreamError(UpstreamErrorInput{Err: err})
+		s.openaiPathHealth.RecordFailure(key, firstNonEmptyString(classification.PathHealthReason, classification.Category, err.Error()), headerWaitMs)
 		return
 	}
 	if resp == nil {
 		s.openaiPathHealth.RecordFailure(key, "nil upstream response", headerWaitMs)
 		return
 	}
-	switch resp.StatusCode {
-	case http.StatusUnauthorized:
-		s.openaiPathHealth.RecordFailure(key, OpenAIPathFailureHTTP401, headerWaitMs)
-	case http.StatusTooManyRequests:
-		s.openaiPathHealth.RecordFailure(key, OpenAIPathFailureHTTP429, headerWaitMs)
-	default:
-		if resp.StatusCode >= 500 {
-			s.openaiPathHealth.RecordFailure(key, fmt.Sprintf("http_%d", resp.StatusCode), headerWaitMs)
+	if resp.StatusCode >= 400 {
+		classification := ClassifyUpstreamError(UpstreamErrorInput{StatusCode: resp.StatusCode})
+		if classification.PathHealthReason != "" || classification.LineDegraded || classification.AccountInvalid || classification.RateLimited {
+			s.openaiPathHealth.RecordFailure(key, firstNonEmptyString(classification.PathHealthReason, classification.Category, fmt.Sprintf("http_%d", resp.StatusCode)), headerWaitMs)
 			return
 		}
-		s.openaiPathHealth.RecordSuccess(key, nil, headerWaitMs)
 	}
+	s.openaiPathHealth.RecordSuccess(key, nil, headerWaitMs)
 }
 
 func (s *OpenAIGatewayService) recordOpenAIPathHealthFirstToken(account *Account, requestBaseURL string, firstTokenMs *int) {
@@ -5068,6 +5056,10 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		statusCode = http.StatusBadGateway
 		errType = "upstream_error"
 		errMsg = "Upstream access forbidden, please contact administrator"
+	case 413:
+		statusCode = http.StatusRequestEntityTooLarge
+		errType = "invalid_request_error"
+		errMsg = "Request body is too large for upstream, please compact or prune conversation context before retrying"
 	case 429:
 		statusCode = http.StatusTooManyRequests
 		errType = "rate_limit_error"

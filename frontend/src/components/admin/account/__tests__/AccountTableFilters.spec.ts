@@ -70,4 +70,45 @@ describe('AccountTableFilters', () => {
     ])
     expect(statusSelect?.options.find((option) => option.value === 'unschedulable')?.label).toBe('关闭调度')
   })
+
+  it('套餐筛选包含 Team', () => {
+    selectCalls.length = 0
+
+    mount(AccountTableFilters, {
+      props: {
+        searchQuery: '',
+        filters: {
+          platform: '',
+          type: '',
+          plan_type: '',
+          status: '',
+          privacy_mode: '',
+          group: '',
+        },
+        groups: [],
+      },
+      global: {
+        stubs: {
+          SearchInput: true,
+          Select: {
+            props: ['modelValue', 'options'],
+            setup(props) {
+              selectCalls.push({
+                modelValue: props.modelValue,
+                options: props.options,
+              })
+              return () => null
+            },
+          },
+        },
+      },
+    })
+
+    const planSelect = selectCalls.find((call) => call.options.some((option) => option.value === 'free'))
+
+    expect(planSelect).toBeTruthy()
+    expect(planSelect?.options).toEqual(expect.arrayContaining([
+      { value: 'team', label: 'Team' },
+    ]))
+  })
 })

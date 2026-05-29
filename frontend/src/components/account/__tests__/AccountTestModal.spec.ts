@@ -189,4 +189,62 @@ describe('AccountTestModal', () => {
 
     expect(wrapper.text()).toContain('已通过 /v1/chat/completions 验证')
   })
+
+  it('defaults free OpenAI accounts to gpt-5.5', async () => {
+    getAvailableModelsMock.mockResolvedValueOnce([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' },
+      { id: 'gpt-5.5', display_name: 'GPT-5.5' }
+    ])
+    const account = buildAccount()
+    account.credentials = { plan_type: 'free' }
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          Select: SelectStub,
+          TextArea: TextAreaStub,
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.5')
+  })
+
+  it('keeps gpt-5.4 as the default for paid OpenAI accounts', async () => {
+    getAvailableModelsMock.mockResolvedValueOnce([
+      { id: 'gpt-5.5', display_name: 'GPT-5.5' },
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' }
+    ])
+    const account = buildAccount()
+    account.credentials = { plan_type: 'plus' }
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          Select: SelectStub,
+          TextArea: TextAreaStub,
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.4')
+  })
 })

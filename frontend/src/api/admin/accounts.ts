@@ -43,6 +43,7 @@ export interface BatchTestNonAPIKeyAccountsRequest {
   status?: string
   search?: string
   group?: string
+  plan_type?: string
   account_ids?: number[]
   concurrency?: number
   limit?: number

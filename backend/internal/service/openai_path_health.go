@@ -300,20 +300,19 @@ func openAIPathFailureCountsForCircuit(reason string) bool {
 }
 
 func NormalizeOpenAIPathFailureReason(reason string) string {
-	msg := strings.ToLower(strings.TrimSpace(reason))
-	switch {
-	case strings.Contains(msg, "unexpected eof") || msg == "eof" || strings.Contains(msg, "stream error"):
+	msg := strings.TrimSpace(reason)
+	classification := ClassifyUpstreamError(UpstreamErrorInput{Message: msg})
+	switch classification.Category {
+	case UpstreamErrorCategoryUnexpectedEOF:
 		return OpenAIPathFailureEOF
-	case strings.Contains(msg, "timeout awaiting response headers") ||
-		strings.Contains(msg, "timed out waiting for openai upstream response headers") ||
-		strings.Contains(msg, "header timeout") ||
-		strings.Contains(msg, "context deadline exceeded"):
+	case UpstreamErrorCategoryHeaderTimeout, UpstreamErrorCategoryTimeout:
 		return OpenAIPathFailureHeaderTimeout
-	case strings.Contains(msg, "401") || strings.Contains(msg, "unauthorized"):
+	case UpstreamErrorCategoryUnauthorized:
 		return OpenAIPathFailureHTTP401
-	case strings.Contains(msg, "429") || strings.Contains(msg, "rate limit"):
+	case UpstreamErrorCategoryRateLimited, UpstreamErrorCategoryClientIPCircuitOpen:
 		return OpenAIPathFailureHTTP429
 	default:
+		msg = strings.ToLower(msg)
 		if msg == "" {
 			return OpenAIPathFailureOther
 		}

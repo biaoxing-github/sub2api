@@ -16,6 +16,8 @@ import (
 const (
 	openAIRequestSnapshotDefaultRetentionHours = 72
 	openAIRequestSnapshotCleanupInterval       = time.Hour
+	openAIRequestSnapshotCleanupBatchSize      = 1000
+	openAIRequestSnapshotMaxPersistedBodyBytes = 2 * 1024 * 1024
 )
 
 // OpenAIRequestSnapshotRepository 定义 OpenAI 请求快照的持久化能力。
@@ -127,6 +129,7 @@ func (s *OpenAIRequestSnapshotService) loop() {
 	defer close(s.doneCh)
 	cleanupTicker := time.NewTicker(openAIRequestSnapshotCleanupInterval)
 	defer cleanupTicker.Stop()
+	s.cleanupExpired()
 	for {
 		select {
 		case snapshot := <-s.queue:
@@ -150,12 +153,12 @@ func (s *OpenAIRequestSnapshotService) cleanupExpired() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for {
-		deleted, err := s.repo.DeleteExpiredOpenAIRequestSnapshots(ctx, time.Now(), 1000)
+		deleted, err := s.repo.DeleteExpiredOpenAIRequestSnapshots(ctx, time.Now(), openAIRequestSnapshotCleanupBatchSize)
 		if err != nil {
 			logger.LegacyPrintf("service.openai_request_snapshot", "[OpenAI] cleanup expired request snapshots failed err=%v", err)
 			return
 		}
-		if deleted < 1000 {
+		if deleted < openAIRequestSnapshotCleanupBatchSize {
 			return
 		}
 	}
@@ -177,6 +180,14 @@ func buildOpenAIRequestSnapshotFromGin(c *gin.Context, account *Account, body []
 	if requestID == "" {
 		requestID = hex.EncodeToString(sum[:8])
 	}
+	requestBodySHA256 := hex.EncodeToString(sum[:])
+	requestBody, bodyOmitted := openAIRequestSnapshotPersistedBody(body, requestBodySHA256)
+	snapshotReplayable := obs.IsPortable()
+	replayBlockReason := openAIRequestSnapshotReplayBlockReason(obs)
+	if bodyOmitted {
+		snapshotReplayable = false
+		replayBlockReason = "request_body_omitted_for_snapshot_size"
+	}
 	var accountID *int64
 	if account != nil && account.ID > 0 {
 		id := account.ID
@@ -192,13 +203,13 @@ func buildOpenAIRequestSnapshotFromGin(c *gin.Context, account *Account, body []
 		AccountID:               accountID,
 		GroupID:                 ginInt64Ptr(c, "group_id"),
 		Model:                   strings.TrimSpace(model),
-		RequestBodySHA256:       hex.EncodeToString(sum[:]),
+		RequestBodySHA256:       requestBodySHA256,
 		RequestBodyBytes:        len(body),
-		RequestBody:             append(json.RawMessage(nil), body...),
+		RequestBody:             requestBody,
 		ContextMigrationClass:   strings.TrimSpace(obs.Class),
 		ContextMigrationReason:  strings.TrimSpace(obs.Reason),
-		SnapshotReplayable:      obs.IsPortable(),
-		ReplayBlockReason:       openAIRequestSnapshotReplayBlockReason(obs),
+		SnapshotReplayable:      snapshotReplayable,
+		ReplayBlockReason:       replayBlockReason,
 		HasPreviousResponseID:   obs.HasPreviousResponseID,
 		PreviousResponseIDKind:  strings.TrimSpace(obs.PreviousResponseIDKind),
 		PreviousResponseIDLen:   obs.PreviousResponseIDLen,
@@ -211,6 +222,24 @@ func buildOpenAIRequestSnapshotFromGin(c *gin.Context, account *Account, body []
 		CreatedAt:               now,
 		ExpiresAt:               now.Add(time.Duration(retentionHours) * time.Hour),
 	}, true
+}
+
+func openAIRequestSnapshotPersistedBody(body []byte, requestBodySHA256 string) (json.RawMessage, bool) {
+	if len(body) <= openAIRequestSnapshotMaxPersistedBodyBytes {
+		return append(json.RawMessage(nil), body...), false
+	}
+	summary := map[string]any{
+		"omitted":                  true,
+		"reason":                   "request_body_too_large_for_snapshot",
+		"request_body_bytes":       len(body),
+		"request_body_sha256":      requestBodySHA256,
+		"max_persisted_body_bytes": openAIRequestSnapshotMaxPersistedBodyBytes,
+	}
+	data, err := json.Marshal(summary)
+	if err != nil {
+		return json.RawMessage(`{"omitted":true,"reason":"request_body_too_large_for_snapshot"}`), true
+	}
+	return json.RawMessage(data), true
 }
 
 func openAIRequestSnapshotReplayBlockReason(obs OpenAIContextMigrationObservation) string {

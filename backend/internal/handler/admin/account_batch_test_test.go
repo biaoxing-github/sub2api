@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -129,6 +130,12 @@ func TestAccountBatchTestNonAPIKeyClassifiesAndCounts429(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestAccountBatchTestNonAPIKeyUsesUnifiedClassifierForCloudflareAndCircuit(t *testing.T) {
+	require.Equal(t, "cloudflare_waf", classifyAccountTestError("<html><title>Just a moment...</title>cloudflare</html>"))
+	require.Equal(t, "client_ip_circuit_open", classifyAccountTestError(`API returned 429: {"error":{"code":"client_ip_error_circuit_open"}}`))
+	require.Equal(t, "header_timeout", classifyAccountTestError("timed out waiting for OpenAI upstream response headers"))
+}
+
 func TestAccountBatchTestNonAPIKeyUsesSelectedAccountsAndSkipsAPIKeys(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	now := time.Now()
@@ -204,6 +211,78 @@ func TestAccountBatchTestNonAPIKeyUsesGroupFilterAndDefaultConcurrency(t *testin
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, 5, body.Data.Concurrency)
+	require.Eventually(t, func() bool {
+		models := tester.calledModelsSnapshot()
+		return len(models) == 1 && models[0] == "gpt-5.5"
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestAccountBatchTestNonAPIKeyPausesWhenLiveTrafficUsesAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := time.Now()
+	adminSvc := &stubAdminService{
+		accounts: []service.Account{
+			{ID: 46, Name: "busy-openai-oauth", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	tester := &stubBatchAccountTester{results: map[int64]*service.ScheduledTestResult{
+		46: {Status: "success", ResponseText: "should not run", LatencyMs: 80},
+	}}
+	repo := newStubAccountBatchTestRepository()
+	h := &AccountHandler{
+		adminService:         adminSvc,
+		batchAccountTester:   tester,
+		accountBatchTestRepo: repo,
+		concurrencyService:   service.NewConcurrencyService(&stubBatchConcurrencyCache{loadMap: map[int64]*service.AccountLoadInfo{46: {AccountID: 46, CurrentConcurrency: 1, WaitingCount: 2}}}),
+	}
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/batch-test-non-apikey", h.BatchTestNonAPIKey)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/batch-test-non-apikey", bytes.NewBufferString(`{"concurrency":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.Eventually(t, func() bool {
+		run, items, err := repo.GetAccountBatchTestRun(context.Background(), 1001)
+		if err != nil || len(items) != 1 {
+			return false
+		}
+		return run.Status == service.AccountBatchTestStatusFailed &&
+			run.SuccessCount == 0 &&
+			run.FailedCount == 1 &&
+			items[0].Status == service.AccountBatchTestItemStatusFailed &&
+			items[0].Category == "batch_paused" &&
+			strings.Contains(items[0].ErrorMessage, "live traffic")
+	}, time.Second, 10*time.Millisecond)
+	require.Empty(t, tester.calledIDsSnapshot())
+}
+
+func TestAccountBatchTestNonAPIKeyPassesPlanTypeFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := time.Now()
+	adminSvc := &stubAdminService{
+		accounts: []service.Account{
+			{ID: 51, Name: "free-oauth", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, CreatedAt: now, UpdatedAt: now, Credentials: map[string]any{"plan_type": "free"}},
+		},
+	}
+	tester := &stubBatchAccountTester{results: map[int64]*service.ScheduledTestResult{
+		51: {Status: "success", ResponseText: "ok", LatencyMs: 80},
+	}}
+	repo := newStubAccountBatchTestRepository()
+	h := &AccountHandler{adminService: adminSvc, batchAccountTester: tester, accountBatchTestRepo: repo}
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/batch-test-non-apikey", h.BatchTestNonAPIKey)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/batch-test-non-apikey", bytes.NewBufferString(`{"plan_type":"free"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.Equal(t, 1, adminSvc.lastListAccounts.calls)
+	require.Equal(t, "free", adminSvc.lastListAccounts.planType)
 	require.Eventually(t, func() bool {
 		models := tester.calledModelsSnapshot()
 		return len(models) == 1 && models[0] == "gpt-5.5"
@@ -306,6 +385,89 @@ type stubAccountBatchTestRepository struct {
 	nextID int64
 	runs   map[int64]service.AccountBatchTestRun
 	items  map[int64][]service.AccountBatchTestItem
+}
+
+type stubBatchConcurrencyCache struct {
+	loadMap map[int64]*service.AccountLoadInfo
+}
+
+func (c *stubBatchConcurrencyCache) AcquireAccountSlot(context.Context, int64, int, string) (bool, error) {
+	return true, nil
+}
+
+func (c *stubBatchConcurrencyCache) ReleaseAccountSlot(context.Context, int64, string) error {
+	return nil
+}
+
+func (c *stubBatchConcurrencyCache) GetAccountConcurrency(context.Context, int64) (int, error) {
+	return 0, nil
+}
+
+func (c *stubBatchConcurrencyCache) GetAccountConcurrencyBatch(_ context.Context, accountIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(accountIDs))
+	for _, id := range accountIDs {
+		if load := c.loadMap[id]; load != nil {
+			out[id] = load.CurrentConcurrency
+		}
+	}
+	return out, nil
+}
+
+func (c *stubBatchConcurrencyCache) IncrementAccountWaitCount(context.Context, int64, int) (bool, error) {
+	return true, nil
+}
+
+func (c *stubBatchConcurrencyCache) DecrementAccountWaitCount(context.Context, int64) error {
+	return nil
+}
+
+func (c *stubBatchConcurrencyCache) GetAccountWaitingCount(context.Context, int64) (int, error) {
+	return 0, nil
+}
+
+func (c *stubBatchConcurrencyCache) AcquireUserSlot(context.Context, int64, int, string) (bool, error) {
+	return true, nil
+}
+
+func (c *stubBatchConcurrencyCache) ReleaseUserSlot(context.Context, int64, string) error {
+	return nil
+}
+
+func (c *stubBatchConcurrencyCache) GetUserConcurrency(context.Context, int64) (int, error) {
+	return 0, nil
+}
+
+func (c *stubBatchConcurrencyCache) IncrementWaitCount(context.Context, int64, int) (bool, error) {
+	return true, nil
+}
+
+func (c *stubBatchConcurrencyCache) DecrementWaitCount(context.Context, int64) error {
+	return nil
+}
+
+func (c *stubBatchConcurrencyCache) GetAccountsLoadBatch(_ context.Context, accounts []service.AccountWithConcurrency) (map[int64]*service.AccountLoadInfo, error) {
+	out := make(map[int64]*service.AccountLoadInfo, len(accounts))
+	for _, account := range accounts {
+		if load := c.loadMap[account.ID]; load != nil {
+			cp := *load
+			out[account.ID] = &cp
+			continue
+		}
+		out[account.ID] = &service.AccountLoadInfo{AccountID: account.ID}
+	}
+	return out, nil
+}
+
+func (c *stubBatchConcurrencyCache) GetUsersLoadBatch(context.Context, []service.UserWithConcurrency) (map[int64]*service.UserLoadInfo, error) {
+	return map[int64]*service.UserLoadInfo{}, nil
+}
+
+func (c *stubBatchConcurrencyCache) CleanupExpiredAccountSlots(context.Context, int64) error {
+	return nil
+}
+
+func (c *stubBatchConcurrencyCache) CleanupStaleProcessSlots(context.Context, string) error {
+	return nil
 }
 
 func newStubAccountBatchTestRepository() *stubAccountBatchTestRepository {
