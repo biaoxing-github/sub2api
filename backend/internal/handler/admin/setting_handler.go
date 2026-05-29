@@ -258,6 +258,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		OpenAICodexUserAgent:                       settings.OpenAICodexUserAgent,
 		OpenAICockpitToolsCompat:                   settings.OpenAICockpitToolsCompat,
 		OpenAIOAuthCompatMode:                      settings.OpenAIOAuthCompatMode,
+		OpenAICodexDirectForceWS:                   settings.OpenAICodexDirectForceWS,
 		ClientRequestDebugLogEnabled:               settings.ClientRequestDebugLogEnabled,
 		CodexStabilityMode:                         settings.CodexStabilityMode,
 		CodexStabilityDynamicHeaderTimeoutEnabled:  settings.CodexStabilityDynamicHeaderTimeoutEnabled,
@@ -625,6 +626,7 @@ type UpdateSettingsRequest struct {
 	OpenAICodexUserAgent                       *string  `json:"openai_codex_user_agent"`
 	OpenAICockpitToolsCompat                   *bool    `json:"openai_cockpit_tools_compat"`
 	OpenAIOAuthCompatMode                      *string  `json:"openai_oauth_compat_mode"`
+	OpenAICodexDirectForceWS                   *bool    `json:"openai_codex_direct_force_ws"`
 	ClientRequestDebugLogEnabled               *bool    `json:"client_request_debug_log_enabled"`
 	CodexStabilityMode                         *string  `json:"codex_stability_mode"`
 	CodexStabilityDynamicHeaderTimeoutEnabled  *bool    `json:"codex_stability_dynamic_header_timeout_enabled"`
@@ -1775,6 +1777,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAIOAuthCompatMode
 		}(),
+		OpenAICodexDirectForceWS:     boolValueOrDefault(req.OpenAICodexDirectForceWS, previousSettings.OpenAICodexDirectForceWS),
 		ClientRequestDebugLogEnabled: boolValueOrDefault(req.ClientRequestDebugLogEnabled, previousSettings.ClientRequestDebugLogEnabled),
 		CodexStabilityMode: func() string {
 			if req.CodexStabilityMode != nil {
@@ -2198,6 +2201,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexUserAgent:                       updatedSettings.OpenAICodexUserAgent,
 		OpenAICockpitToolsCompat:                   updatedSettings.OpenAICockpitToolsCompat,
 		OpenAIOAuthCompatMode:                      updatedSettings.OpenAIOAuthCompatMode,
+		OpenAICodexDirectForceWS:                   updatedSettings.OpenAICodexDirectForceWS,
 		ClientRequestDebugLogEnabled:               updatedSettings.ClientRequestDebugLogEnabled,
 		CodexStabilityMode:                         updatedSettings.CodexStabilityMode,
 		CodexStabilityDynamicHeaderTimeoutEnabled:  updatedSettings.CodexStabilityDynamicHeaderTimeoutEnabled,
@@ -2709,6 +2713,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.OpenAIOAuthCompatMode != after.OpenAIOAuthCompatMode {
 		changed = append(changed, "openai_oauth_compat_mode")
+	}
+	if before.OpenAICodexDirectForceWS != after.OpenAICodexDirectForceWS {
+		changed = append(changed, "openai_codex_direct_force_ws")
 	}
 	if before.ClientRequestDebugLogEnabled != after.ClientRequestDebugLogEnabled {
 		changed = append(changed, "client_request_debug_log_enabled")

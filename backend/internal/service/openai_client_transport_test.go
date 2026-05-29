@@ -99,6 +99,11 @@ func TestResolveOpenAIWSDecisionByClientTransport(t *testing.T) {
 	require.Equal(t, OpenAIUpstreamTransportHTTPSSE, httpDecision.Transport)
 	require.Equal(t, "client_protocol_http", httpDecision.Reason)
 
+	allowHTTPToWS := base
+	allowHTTPToWS.AllowHTTPToWS = true
+	httpForceWSDecision := resolveOpenAIWSDecisionByClientTransport(allowHTTPToWS, OpenAIClientTransportHTTP)
+	require.Equal(t, allowHTTPToWS, httpForceWSDecision)
+
 	wsDecision := resolveOpenAIWSDecisionByClientTransport(base, OpenAIClientTransportWS)
 	require.Equal(t, base, wsDecision)
 

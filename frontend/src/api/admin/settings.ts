@@ -521,6 +521,7 @@ export interface SystemSettings {
   openai_codex_user_agent: string;
   openai_oauth_compat_mode: OpenAIOAuthCompatMode;
   openai_cockpit_tools_compat: boolean;
+  openai_codex_direct_force_ws: boolean;
   client_request_debug_log_enabled: boolean;
   codex_stability_mode: "off" | "codex" | "all_openai_responses" | string;
   codex_stability_dynamic_header_timeout_enabled: boolean;
@@ -765,6 +766,7 @@ export interface UpdateSettingsRequest {
   openai_codex_user_agent?: string;
   openai_oauth_compat_mode?: OpenAIOAuthCompatMode;
   openai_cockpit_tools_compat?: boolean;
+  openai_codex_direct_force_ws?: boolean;
   client_request_debug_log_enabled?: boolean;
   codex_stability_mode?: "off" | "codex" | "all_openai_responses" | string;
   codex_stability_dynamic_header_timeout_enabled?: boolean;

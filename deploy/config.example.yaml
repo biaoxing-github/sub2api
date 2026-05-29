@@ -216,6 +216,9 @@ gateway:
   # Legacy boolean kept for old deployments. Prefer openai_oauth_compat_mode.
   # 旧布尔配置保留给旧部署；新部署优先使用 openai_oauth_compat_mode。
   openai_cockpit_tools_compat: false
+  # When Codex Direct is selected, optionally force OAuth upstream requests to use WSv2.
+  # 选择 Codex 直连时，可选地强制 OAuth 上游请求走 WSv2。
+  openai_codex_direct_force_ws: false
   # Enable Codex image-generation bridge injection for /openai/v1/responses.
   # 是否为 Codex /responses 请求自动注入 image_generation 工具与桥接指令。
   #

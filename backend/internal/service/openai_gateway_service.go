@@ -1308,6 +1308,13 @@ func (s *OpenAIGatewayService) isOpenAICodexDirectCompatEnabled() bool {
 	return s.openAIOAuthCompatMode() == config.GatewayOpenAIOAuthCompatModeCodexDirect
 }
 
+func (s *OpenAIGatewayService) isOpenAICodexDirectForceWSEnabled() bool {
+	return s != nil &&
+		s.cfg != nil &&
+		s.isOpenAICodexDirectCompatEnabled() &&
+		s.cfg.Gateway.OpenAICodexDirectForceWS
+}
+
 func (s *OpenAIGatewayService) openAIOAuthCompatMode() string {
 	if s == nil || s.cfg == nil {
 		return config.GatewayOpenAIOAuthCompatModeOff

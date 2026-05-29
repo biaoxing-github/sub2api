@@ -5931,6 +5931,8 @@ export default {
         openaiOAuthCompatModeOff: 'Off',
         openaiOAuthCompatModeCockpitTools: 'Cockpit Tools',
         openaiOAuthCompatModeCodexDirect: 'Codex Direct',
+        openaiCodexDirectForceWS: 'Force Upstream WebSocket for Codex Direct',
+        openaiCodexDirectForceWSHint: 'When enabled, Codex still connects to sub2api over HTTP/SSE, while OAuth non-API_KEY upstream requests are forced through WSv2. Global OpenAI WS disable or force-HTTP settings still fall back to HTTP.',
         clientRequestDebug: 'Client Request Debug Log',
         clientRequestDebugHint: 'When enabled, writes the full body of every client request reaching this service to local server logs. Authorization, Cookie, and similar headers are redacted.',
         codexStability: {

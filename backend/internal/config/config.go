@@ -786,6 +786,9 @@ type GatewayConfig struct {
 	// OpenAIOAuthCompatMode: OpenAI OAuth 上游兼容模式。
 	// off=默认路径，cockpit_tools=按 cockpit-tools HTTP executor，codex_direct=按 Codex Desktop 直连形态。
 	OpenAIOAuthCompatMode string `mapstructure:"openai_oauth_compat_mode"`
+	// OpenAICodexDirectForceWS: Codex 直连模式下允许 HTTP/SSE 入站请求强制转为上游 WSv2。
+	// 默认关闭，开启后仍受 gateway.openai_ws.enabled/oauth_enabled/force_http 约束。
+	OpenAICodexDirectForceWS bool `mapstructure:"openai_codex_direct_force_ws"`
 	// CodexImageGenerationBridgeEnabled: 是否为 Codex `/v1/responses` 自动注入 image_generation 工具和桥接指令。
 	// 默认关闭，避免纯文本 Codex 请求被意外改写；显式携带 image_generation 工具的请求仍按分组能力转发。
 	CodexImageGenerationBridgeEnabled bool `mapstructure:"codex_image_generation_bridge_enabled"`
@@ -1850,6 +1853,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.force_codex_cli", false)
 	viper.SetDefault("gateway.openai_oauth_compat_mode", GatewayOpenAIOAuthCompatModeOff)
 	viper.SetDefault("gateway.openai_cockpit_tools_compat", false)
+	viper.SetDefault("gateway.openai_codex_direct_force_ws", false)
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）

@@ -662,6 +662,43 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 	}
 }
 
+func TestOpenAIGatewayService_BuildOpenAIWSHeadersCodexDirectForceWS(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "Mozilla/5.0")
+	c.Request.Header.Set("Originator", "Codex Desktop")
+	c.Request.Header.Set("Session-Id", "codex-session")
+	c.Request.Header.Set("Thread-Id", "codex-thread")
+	c.Request.Header.Set("X-Codex-Turn-Metadata", `{"thread_source":"user"}`)
+
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCodexDirect
+	cfg.Gateway.OpenAICodexDirectForceWS = true
+	svc := &OpenAIGatewayService{cfg: cfg}
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+	}
+	decision := OpenAIWSProtocolDecision{
+		Transport:     OpenAIUpstreamTransportResponsesWebsocketV2,
+		Reason:        "codex_direct_force_ws_v2",
+		AllowHTTPToWS: true,
+	}
+
+	headers, sessionResolution := svc.buildOpenAIWSHeaders(c, account, "token", decision, false, "", "", "")
+	require.Equal(t, "Bearer token", headers.Get("authorization"))
+	require.Equal(t, codexDesktopUserAgent, headers.Get("user-agent"))
+	require.Equal(t, "Codex Desktop", headers.Get("originator"))
+	require.Equal(t, "chatgpt-acc", headers.Get("chatgpt-account-id"))
+	require.Equal(t, isolateOpenAISessionID(0, "codex-session"), headers.Get("session_id"))
+	require.Equal(t, isolateOpenAISessionID(0, "codex-thread"), headers.Get("conversation_id"))
+	require.Equal(t, "header_session_id", sessionResolution.SessionSource)
+	require.Equal(t, "header_conversation_id", sessionResolution.ConversationSource)
+}
+
 func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

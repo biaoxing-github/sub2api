@@ -110,10 +110,12 @@ func TestLoadOpenAICockpitToolsCompatConfig(t *testing.T) {
 
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_OPENAI_OAUTH_COMPAT_MODE", GatewayOpenAIOAuthCompatModeCodexDirect)
+	t.Setenv("GATEWAY_OPENAI_CODEX_DIRECT_FORCE_WS", "true")
 	cfg, err = Load()
 	require.NoError(t, err)
 	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
 	require.Equal(t, GatewayOpenAIOAuthCompatModeCodexDirect, cfg.Gateway.OpenAIOAuthCompatMode)
+	require.True(t, cfg.Gateway.OpenAICodexDirectForceWS)
 }
 
 func TestLoadDefaultCodexStabilityConfig(t *testing.T) {

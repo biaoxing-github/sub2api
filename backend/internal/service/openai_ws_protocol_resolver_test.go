@@ -77,6 +77,66 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 		require.Equal(t, "openai_oauth_compat_codex_direct", decision.Reason)
 	})
 
+	t.Run("Codex直连开启强制WS时OAuth走WSv2", func(t *testing.T) {
+		cfg := *baseCfg
+		cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCodexDirect
+		cfg.Gateway.OpenAICodexDirectForceWS = true
+		account := *openAIOAuthEnabled
+		account.Extra = map[string]any{}
+		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(&account)
+		require.Equal(t, OpenAIUpstreamTransportResponsesWebsocketV2, decision.Transport)
+		require.Equal(t, "codex_direct_force_ws_v2", decision.Reason)
+	})
+
+	t.Run("Codex直连强制WS不影响API Key账号", func(t *testing.T) {
+		cfg := *baseCfg
+		cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCodexDirect
+		cfg.Gateway.OpenAICodexDirectForceWS = true
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Extra: map[string]any{
+				"openai_apikey_responses_websockets_v2_enabled": true,
+			},
+		}
+
+		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(account)
+
+		require.Equal(t, OpenAIUpstreamTransportResponsesWebsocketV2, decision.Transport)
+		require.Equal(t, "ws_v2_enabled", decision.Reason)
+		require.False(t, decision.AllowHTTPToWS)
+	})
+
+	t.Run("Codex直连强制WS仍服从全局强制HTTP", func(t *testing.T) {
+		cfg := *baseCfg
+		cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCodexDirect
+		cfg.Gateway.OpenAICodexDirectForceWS = true
+		cfg.Gateway.OpenAIWS.ForceHTTP = true
+		account := *openAIOAuthEnabled
+		account.Extra = map[string]any{}
+
+		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(&account)
+
+		require.Equal(t, OpenAIUpstreamTransportHTTPSSE, decision.Transport)
+		require.Equal(t, "global_force_http", decision.Reason)
+		require.False(t, decision.AllowHTTPToWS)
+	})
+
+	t.Run("Codex直连强制WS仍服从全局WS关闭", func(t *testing.T) {
+		cfg := *baseCfg
+		cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCodexDirect
+		cfg.Gateway.OpenAICodexDirectForceWS = true
+		cfg.Gateway.OpenAIWS.Enabled = false
+		account := *openAIOAuthEnabled
+		account.Extra = map[string]any{}
+
+		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(&account)
+
+		require.Equal(t, OpenAIUpstreamTransportHTTPSSE, decision.Transport)
+		require.Equal(t, "global_disabled", decision.Reason)
+		require.False(t, decision.AllowHTTPToWS)
+	})
+
 	t.Run("全局关闭保持HTTP", func(t *testing.T) {
 		cfg := *baseCfg
 		cfg.Gateway.OpenAIWS.Enabled = false

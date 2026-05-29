@@ -14,8 +14,9 @@ const (
 
 // OpenAIWSProtocolDecision 表示协议决策结果。
 type OpenAIWSProtocolDecision struct {
-	Transport OpenAIUpstreamTransport
-	Reason    string
+	Transport     OpenAIUpstreamTransport
+	Reason        string
+	AllowHTTPToWS bool
 }
 
 // OpenAIWSProtocolResolver 定义 OpenAI 上游协议决策。
@@ -50,7 +51,9 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 		case config.GatewayOpenAIOAuthCompatModeCockpitTools:
 			return openAIWSHTTPDecision("cockpit_tools_compat")
 		case config.GatewayOpenAIOAuthCompatModeCodexDirect:
-			return openAIWSHTTPDecision("openai_oauth_compat_codex_direct")
+			if !r.cfg.Gateway.OpenAICodexDirectForceWS {
+				return openAIWSHTTPDecision("openai_oauth_compat_codex_direct")
+			}
 		}
 	}
 
@@ -61,6 +64,9 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 	if !wsCfg.Enabled {
 		return openAIWSHTTPDecision("global_disabled")
 	}
+	codexDirectForceWS := account.Type == AccountTypeOAuth &&
+		normalizeOpenAIOAuthCompatMode(r.cfg.Gateway.OpenAIOAuthCompatMode, r.cfg.Gateway.OpenAICockpitToolsCompat) == config.GatewayOpenAIOAuthCompatModeCodexDirect &&
+		r.cfg.Gateway.OpenAICodexDirectForceWS
 	if account.IsOpenAIOAuth() {
 		if !wsCfg.OAuthEnabled {
 			return openAIWSHTTPDecision("oauth_disabled")
@@ -71,6 +77,16 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 		}
 	} else {
 		return openAIWSHTTPDecision("unknown_auth_type")
+	}
+	if codexDirectForceWS {
+		if wsCfg.ResponsesWebsocketsV2 {
+			return OpenAIWSProtocolDecision{
+				Transport:     OpenAIUpstreamTransportResponsesWebsocketV2,
+				Reason:        "codex_direct_force_ws_v2",
+				AllowHTTPToWS: true,
+			}
+		}
+		return openAIWSHTTPDecision("feature_disabled")
 	}
 	if wsCfg.ModeRouterV2Enabled {
 		mode := account.ResolveOpenAIResponsesWebSocketV2Mode(wsCfg.IngressModeDefault)

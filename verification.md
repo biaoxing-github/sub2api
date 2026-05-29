@@ -253,3 +253,34 @@ Codex 直连模式只能控制 sub2api 发往上游的 HTTP 请求头和 TLS 指
 ## 开关位置
 
 登录后台后进入 `管理后台 -> 系统设置 -> 网关转发 -> OpenAI OAuth 兼容模式`，可选择 `关闭`、`Cockpit Tools`、`Codex 直连`。保存后会写入后台设置并立即刷新运行时配置；也可以在部署配置中使用 `GATEWAY_OPENAI_OAUTH_COMPAT_MODE=codex_direct` 或 `gateway.openai_oauth_compat_mode: codex_direct` 作为启动默认值。
+
+---
+
+日期：2026-05-29
+执行者：Devil
+
+## 结果
+
+Codex 直连模式新增独立开关 `openai_codex_direct_force_ws`。开启后，Codex Desktop 到 sub2api 仍是 HTTP/SSE 入站，sub2api 转发 OpenAI OAuth 非 API_KEY 账号时才允许从 HTTP 入站强制改走上游 WSv2；API_KEY 账号不会被该开关允许 HTTP 入站转 WS。全局 `openai_ws.force_http`、全局 WS disabled、账号级 force_http 仍优先回退 HTTP。
+
+WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Agent` 使用 `codexDesktopUserAgent`，`originator` 继承客户端或回退 `Codex Desktop`，`Session-Id` / `Thread-Id` 兼容映射到 WS 的 `session_id` / `conversation_id`，并保留 `chatgpt-account-id`。
+
+## 校验方式
+
+- `go test ./internal/config -run TestLoadOpenAICockpitToolsCompatConfig -count=1`
+- `go test ./internal/service -run "TestOpenAIWSProtocolResolver|TestResolveOpenAIWSDecisionByClientTransport|TestOpenAIGatewayService_BuildOpenAIWSHeadersCodexDirectForceWS|TestOpenAIBuildUpstreamRequestCodexDirectCompatibilityHeaders" -count=1`
+- `go test ./internal/handler/admin -run TestSettingHandler_UpdateSettings_PersistsOpenAIOAuthCompatMode -count=1`
+- `go test -tags unit ./internal/service -run "TestSettingService_UpdateSettings_OpenAIOAuthCompatModeRefreshesGatewayConfig|TestSettingService_ParseSettings_OpenAIOAuthCompatModeTakesPrecedence" -count=1`
+- `npm run typecheck`
+- `npm run test:run -- SettingsView`
+- `npm run build`
+- JSONL 解析 `docs/feature_list.jsonl` 与 `docs/process_list.jsonl`
+- `git diff --check`
+
+## 校验结果
+
+以上后端聚焦测试、前端类型检查、SettingsView Vitest、前端生产构建和 JSONL 解析均通过。`npm run build` 保留项目既有 dynamic import / chunk size 警告；`git diff --check` 无空白错误，仅提示 `deploy/.env.example`、`docs/*.jsonl` 和 `verification.md` 在当前 Windows 工作树里会发生 LF 到 CRLF 转换。
+
+## 开关位置
+
+登录后台后进入 `管理后台 -> 系统设置 -> 网关转发 -> OpenAI OAuth 兼容模式`，先选择 `Codex 直连`，下方会出现 `Codex 直连强制上游 WebSocket` 开关。保存后运行时立即生效。部署默认值也可用 `GATEWAY_OPENAI_CODEX_DIRECT_FORCE_WS=true` 或 `gateway.openai_codex_direct_force_ws: true`。

@@ -218,7 +218,8 @@ func TestSettingHandler_UpdateSettings_PersistsOpenAIOAuthCompatMode(t *testing.
 	handler := NewSettingHandler(svc, nil, nil, nil, nil, nil, nil)
 
 	body := map[string]any{
-		"openai_oauth_compat_mode": config.GatewayOpenAIOAuthCompatModeCodexDirect,
+		"openai_oauth_compat_mode":     config.GatewayOpenAIOAuthCompatModeCodexDirect,
+		"openai_codex_direct_force_ws": true,
 	}
 	rawBody, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -233,8 +234,10 @@ func TestSettingHandler_UpdateSettings_PersistsOpenAIOAuthCompatMode(t *testing.
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, repo.values[service.SettingKeyOpenAIOAuthCompatMode])
 	require.Equal(t, "false", repo.values[service.SettingKeyOpenAICockpitToolsCompat])
+	require.Equal(t, "true", repo.values[service.SettingKeyOpenAICodexDirectForceWS])
 	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, cfg.Gateway.OpenAIOAuthCompatMode)
 	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
+	require.True(t, cfg.Gateway.OpenAICodexDirectForceWS)
 
 	var resp response.Response
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -242,6 +245,7 @@ func TestSettingHandler_UpdateSettings_PersistsOpenAIOAuthCompatMode(t *testing.
 	require.True(t, ok)
 	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, data["openai_oauth_compat_mode"])
 	require.Equal(t, false, data["openai_cockpit_tools_compat"])
+	require.Equal(t, true, data["openai_codex_direct_force_ws"])
 }
 
 func TestSettingHandler_UpdateSettings_PersistsPaymentVisibleMethodsAndAdvancedScheduler(t *testing.T) {

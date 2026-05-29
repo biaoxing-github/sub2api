@@ -322,11 +322,11 @@ func resolveOpenAIWSSessionHeaders(c *gin.Context, promptCacheKey string) openAI
 		ConversationSource: "none",
 	}
 	if c != nil && c.Request != nil {
-		if sessionID := strings.TrimSpace(c.Request.Header.Get("session_id")); sessionID != "" {
+		if sessionID := firstHeaderValue(c.Request.Header, "session_id", "Session-Id", "Session_id", "thread_session_id"); sessionID != "" {
 			resolution.SessionID = sessionID
 			resolution.SessionSource = "header_session_id"
 		}
-		if conversationID := strings.TrimSpace(c.Request.Header.Get("conversation_id")); conversationID != "" {
+		if conversationID := firstHeaderValue(c.Request.Header, "conversation_id", "Thread-Id", "thread_id", "Conversation_id"); conversationID != "" {
 			resolution.ConversationID = conversationID
 			resolution.ConversationSource = "header_conversation_id"
 			if resolution.SessionID == "" {
@@ -1164,6 +1164,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 ) (http.Header, openAIWSSessionHeaderResolution) {
 	headers := make(http.Header)
 	headers.Set("authorization", "Bearer "+token)
+	codexDirectForceWS := account != nil && account.Type == AccountTypeOAuth && s.isOpenAICodexDirectForceWSEnabled()
 
 	sessionResolution := resolveOpenAIWSSessionHeaders(c, promptCacheKey)
 	if c != nil && c.Request != nil {
@@ -1199,7 +1200,15 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		if chatgptAccountID := account.GetChatGPTAccountID(); chatgptAccountID != "" {
 			headers.Set("chatgpt-account-id", chatgptAccountID)
 		}
-		headers.Set("originator", resolveOpenAIUpstreamOriginator(c, isCodexCLI))
+		if codexDirectForceWS {
+			source := http.Header(nil)
+			if c != nil && c.Request != nil {
+				source = c.Request.Header
+			}
+			setOpenAICockpitHeaderFromSourceOrFallback(headers, source, "originator", "Codex Desktop")
+		} else {
+			headers.Set("originator", resolveOpenAIUpstreamOriginator(c, isCodexCLI))
+		}
 	}
 
 	betaValue := openAIWSBetaV2Value
@@ -1214,6 +1223,8 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	}
 	if strings.TrimSpace(customUA) != "" {
 		headers.Set("user-agent", customUA)
+	} else if codexDirectForceWS {
+		headers.Set("user-agent", codexDesktopUserAgent)
 	} else if c != nil {
 		if ua := strings.TrimSpace(c.GetHeader("User-Agent")); ua != "" {
 			headers.Set("user-agent", ua)
@@ -1222,7 +1233,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
 		headers.Set("user-agent", codexCLIUserAgent)
 	}
-	if account != nil && account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(headers.Get("user-agent")) {
+	if account != nil && account.Type == AccountTypeOAuth && !codexDirectForceWS && !openai.IsCodexCLIRequest(headers.Get("user-agent")) {
 		headers.Set("user-agent", codexCLIUserAgent)
 	}
 

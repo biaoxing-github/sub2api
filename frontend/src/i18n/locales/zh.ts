@@ -6088,6 +6088,8 @@ export default {
         openaiOAuthCompatModeOff: '关闭',
         openaiOAuthCompatModeCockpitTools: 'Cockpit Tools',
         openaiOAuthCompatModeCodexDirect: 'Codex 直连',
+        openaiCodexDirectForceWS: 'Codex 直连强制上游 WebSocket',
+        openaiCodexDirectForceWSHint: '开启后，Codex 仍以 HTTP/SSE 连接 sub2api，但 OAuth 非 API_KEY 账号转发到 OpenAI 上游时会强制使用 WSv2。全局 OpenAI WS 关闭或强制 HTTP 时仍回退 HTTP。',
         clientRequestDebug: '客户端请求 Debug 日志',
         clientRequestDebugHint: '开启后把客户端打到本服务的所有请求完整 Body 写入本地服务日志；关闭后不记录。Authorization、Cookie 等请求头会脱敏。',
         codexStability: {

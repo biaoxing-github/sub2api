@@ -3889,6 +3889,31 @@
                 </p>
               </div>
 
+              <div
+                v-if="form.openai_oauth_compat_mode === 'codex_direct'"
+                class="flex items-center justify-between gap-4"
+              >
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.openaiCodexDirectForceWS",
+                      )
+                    }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.openaiCodexDirectForceWSHint",
+                      )
+                    }}
+                  </p>
+                </div>
+                <Toggle v-model="form.openai_codex_direct_force_ws" />
+              </div>
+
               <div class="flex items-center justify-between">
                 <div>
                   <label
@@ -7173,6 +7198,8 @@ type SettingsForm = Omit<
   // OpenAI OAuth 上游兼容模式：关闭、Cockpit Tools 或 Codex Desktop 直连形态。
   openai_oauth_compat_mode: OpenAIOAuthCompatMode;
   openai_cockpit_tools_compat: boolean;
+  // Codex 直连模式下允许把 Codex HTTP/SSE 入站强制转为上游 WSv2。
+  openai_codex_direct_force_ws: boolean;
   client_request_debug_log_enabled: boolean;
   codex_stability_mode: "off" | "codex" | "all_openai_responses" | string;
   codex_stability_dynamic_header_timeout_enabled: boolean;
@@ -7388,6 +7415,7 @@ const form = reactive<SettingsForm>({
   openai_codex_user_agent: "",
   openai_oauth_compat_mode: "off",
   openai_cockpit_tools_compat: false,
+  openai_codex_direct_force_ws: false,
   client_request_debug_log_enabled: false,
   codex_stability_mode: "codex",
   codex_stability_dynamic_header_timeout_enabled: true,
@@ -8029,6 +8057,8 @@ async function loadSettings() {
       (settings.openai_cockpit_tools_compat ? "cockpit_tools" : "off");
     form.openai_cockpit_tools_compat =
       form.openai_oauth_compat_mode === "cockpit_tools";
+    form.openai_codex_direct_force_ws =
+      settings.openai_codex_direct_force_ws === true;
     form.login_agreement_mode =
       settings.login_agreement_mode === "checkbox" ? "checkbox" : "modal";
     form.login_agreement_updated_at =
@@ -8520,6 +8550,9 @@ async function saveSettings() {
       openai_oauth_compat_mode: form.openai_oauth_compat_mode || "off",
       openai_cockpit_tools_compat:
         form.openai_oauth_compat_mode === "cockpit_tools",
+      openai_codex_direct_force_ws:
+        form.openai_oauth_compat_mode === "codex_direct" &&
+        form.openai_codex_direct_force_ws,
       client_request_debug_log_enabled: form.client_request_debug_log_enabled,
       codex_stability_mode: form.codex_stability_mode || "codex",
       codex_stability_dynamic_header_timeout_enabled:
@@ -8655,6 +8688,8 @@ async function saveSettings() {
       (updated.openai_cockpit_tools_compat ? "cockpit_tools" : "off");
     form.openai_cockpit_tools_compat =
       form.openai_oauth_compat_mode === "cockpit_tools";
+    form.openai_codex_direct_force_ws =
+      updated.openai_codex_direct_force_ws === true;
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     registrationEmailSuffixWhitelistTags.value =
       normalizeRegistrationEmailSuffixDomains(
