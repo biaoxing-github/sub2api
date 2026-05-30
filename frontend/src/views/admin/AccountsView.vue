@@ -829,7 +829,7 @@
             </button>
           </div>
           <div class="max-h-[58vh] overflow-auto border border-gray-200 dark:border-gray-700">
-          <table class="w-full min-w-[760px] text-sm">
+          <table class="w-full min-w-[840px] text-sm">
             <thead class="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">
               <tr>
                 <th class="px-3 py-2">{{ t('admin.accounts.account') }}</th>
@@ -837,15 +837,16 @@
                 <th class="px-3 py-2">{{ t('admin.accounts.columns.status') }}</th>
                 <th class="px-3 py-2">{{ t('admin.accounts.batchTest.category') }}</th>
                 <th class="px-3 py-2">{{ t('admin.accounts.batchTest.latency') }}</th>
+                <th class="px-3 py-2">{{ t('admin.accounts.batchTest.firstToken') }}</th>
                 <th class="px-3 py-2">{{ t('admin.accounts.batchTest.message') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="batchTestDetailLoading">
-                <td colspan="6" class="px-3 py-8 text-center text-gray-500">{{ t('common.loading') }}</td>
+                <td colspan="7" class="px-3 py-8 text-center text-gray-500">{{ t('common.loading') }}</td>
               </tr>
               <tr v-else-if="!selectedBatchRun?.items.length">
-                <td colspan="6" class="px-3 py-8 text-center text-gray-500">{{ t('admin.accounts.batchTest.empty') }}</td>
+                <td colspan="7" class="px-3 py-8 text-center text-gray-500">{{ t('admin.accounts.batchTest.empty') }}</td>
               </tr>
               <tr v-for="item in selectedBatchRun?.items || []" :key="item.account_id" class="border-t border-gray-100 dark:border-gray-700">
                 <td class="px-3 py-2">
@@ -864,6 +865,7 @@
                   </span>
                 </td>
                 <td class="px-3 py-2">{{ item.latency_ms ? `${item.latency_ms}ms` : '-' }}</td>
+                <td class="px-3 py-2">{{ item.first_token_ms != null ? `${item.first_token_ms}ms` : '-' }}</td>
                 <td class="max-w-md px-3 py-2 text-gray-600 dark:text-gray-300">
                   <span class="line-clamp-2" :title="item.error_message || item.message || ''">{{ item.error_message || item.message || '-' }}</span>
                 </td>

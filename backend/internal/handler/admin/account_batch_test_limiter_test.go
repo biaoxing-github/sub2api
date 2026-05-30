@@ -36,20 +36,20 @@ func TestAccountBatchTestLimiterAllowsDifferentGroups(t *testing.T) {
 	secondRelease()
 }
 
-func TestAccountBatchTestLimiterPausesAfterRiskyBurst(t *testing.T) {
-	base := time.Unix(1000, 0)
-	limiter := newAccountBatchTestLimiter(10, 3, 10*time.Second, time.Minute)
-	limiter.now = func() time.Time { return base }
+func TestAccountBatchTestLimiterWaitsAfterRiskyBurst(t *testing.T) {
+	limiter := newAccountBatchTestLimiter(10, 3, 10*time.Second, 20*time.Millisecond)
 	key := "openai:oauth:group:1"
+	start := time.Now()
 
 	limiter.RecordResult(key, "rate_limited")
 	limiter.RecordResult(key, "unexpected_eof")
 	limiter.RecordResult(key, "header_timeout")
 
 	release, err := limiter.Acquire(context.Background(), key)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "paused")
-	require.Nil(t, release)
+	require.NoError(t, err)
+	require.NotNil(t, release)
+	require.GreaterOrEqual(t, time.Since(start), 15*time.Millisecond)
+	release()
 }
 
 func TestAccountBatchTestLimiterRecoversAfterPauseWindow(t *testing.T) {
@@ -68,4 +68,22 @@ func TestAccountBatchTestLimiterRecoversAfterPauseWindow(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, release)
 	release()
+}
+
+func TestAccountBatchTestLimiterReturnsPauseErrorWhenContextCanceled(t *testing.T) {
+	base := time.Unix(1000, 0)
+	limiter := newAccountBatchTestLimiter(10, 3, 10*time.Second, time.Minute)
+	limiter.now = func() time.Time { return base }
+	key := "openai:oauth:group:1"
+
+	limiter.RecordResult(key, "rate_limited")
+	limiter.RecordResult(key, "unexpected_eof")
+	limiter.RecordResult(key, "header_timeout")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	release, err := limiter.Acquire(ctx, key)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Contains(t, err.Error(), "paused")
+	require.Nil(t, release)
 }

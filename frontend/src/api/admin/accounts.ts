@@ -62,6 +62,7 @@ export interface BatchTestNonAPIKeyAccountItem {
   message?: string
   error_message?: string
   latency_ms?: number
+  first_token_ms?: number | null
   created_at?: string
   started_at?: string
   finished_at?: string

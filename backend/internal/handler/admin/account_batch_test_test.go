@@ -88,6 +88,43 @@ func TestAccountBatchTestNonAPIKeySkipsAPIKeyAndClassifies401(t *testing.T) {
 	require.ElementsMatch(t, []int64{11, 13}, tester.calledIDsSnapshot())
 }
 
+func TestAccountBatchTestNonAPIKeyPersistsFirstTokenMs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := time.Now()
+	firstTokenMs := 345
+	adminSvc := &stubAdminService{
+		accounts: []service.Account{
+			{ID: 14, Name: "openai-oauth-ttft", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Status: service.StatusActive, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+	tester := &stubBatchAccountTester{
+		results: map[int64]*service.ScheduledTestResult{
+			14: {Status: "success", ResponseText: "ok", LatencyMs: 900, FirstTokenMs: &firstTokenMs},
+		},
+	}
+	repo := newStubAccountBatchTestRepository()
+	h := &AccountHandler{adminService: adminSvc, batchAccountTester: tester, accountBatchTestRepo: repo}
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/batch-test-non-apikey", h.BatchTestNonAPIKey)
+	router.GET("/api/v1/admin/accounts/batch-test-runs/:run_id", h.GetBatchTestRun)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/batch-test-non-apikey", bytes.NewBufferString(`{"model_id":"gpt-5.5","concurrency":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	require.Eventually(t, func() bool {
+		_, items, err := repo.GetAccountBatchTestRun(context.Background(), 1001)
+		return err == nil && len(items) == 1 && items[0].FirstTokenMs != nil && *items[0].FirstTokenMs == firstTokenMs
+	}, time.Second, 10*time.Millisecond)
+
+	detailRec := httptest.NewRecorder()
+	router.ServeHTTP(detailRec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/batch-test-runs/1001", nil))
+	require.Equal(t, http.StatusOK, detailRec.Code)
+	require.Contains(t, detailRec.Body.String(), `"first_token_ms":345`)
+}
+
 func TestAccountBatchTestNonAPIKeyClassifiesAndCounts429(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	now := time.Now()

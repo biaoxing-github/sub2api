@@ -15,6 +15,7 @@ import (
 
 type settingUpdateRepoStub struct {
 	updates map[string]string
+	values  map[string]string
 }
 
 func (s *settingUpdateRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
@@ -42,7 +43,11 @@ func (s *settingUpdateRepoStub) SetMultiple(ctx context.Context, settings map[st
 }
 
 func (s *settingUpdateRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
-	panic("unexpected GetAll call")
+	result := make(map[string]string, len(s.values))
+	for k, v := range s.values {
+		result[k] = v
+	}
+	return result, nil
 }
 
 func (s *settingUpdateRepoStub) Delete(ctx context.Context, key string) error {
@@ -467,6 +472,46 @@ func TestSettingService_ParseSettings_OpenAIOAuthCompatModeTakesPrecedence(t *te
 	require.False(t, got.OpenAICockpitToolsCompat)
 	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, got.OpenAIOAuthCompatMode)
 	require.False(t, got.OpenAICodexDirectForceWS)
+}
+
+func TestSettingService_LoadRuntimeSettingsRefreshesGatewayConfig(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Security.TrustForwardedIPForAPIKeyACL = false
+	cfg.Gateway.OpenAICockpitToolsCompat = true
+	cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCockpitTools
+	cfg.Gateway.OpenAICodexDirectForceWS = false
+	cfg.Gateway.CodexStability.Mode = config.GatewayCodexStabilityModeOff
+	cfg.Gateway.CodexStability.DynamicHeaderTimeoutEnabled = false
+	cfg.Gateway.OpenAIPathHealth.Enabled = false
+	cfg.Gateway.OpenAIFastLane.Enabled = false
+	cfg.Gateway.RealtimeBalanceConfirmTopN = 1
+	cfg.Gateway.RealtimeBalanceConfirmTimeoutMs = 100
+	repo := &settingUpdateRepoStub{values: map[string]string{
+		SettingKeyAPIKeyACLTrustForwardedIP:                 "true",
+		SettingKeyOpenAIOAuthCompatMode:                     config.GatewayOpenAIOAuthCompatModeCodexDirect,
+		SettingKeyOpenAICockpitToolsCompat:                  "false",
+		SettingKeyOpenAICodexDirectForceWS:                  "true",
+		SettingKeyCodexStabilityMode:                        config.GatewayCodexStabilityModeCodex,
+		SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled: "true",
+		SettingKeyOpenAIPathHealthEnabled:                   "true",
+		SettingKeyOpenAIFastLaneEnabled:                     "true",
+		SettingKeyRealtimeBalanceConfirmTopN:                "4",
+		SettingKeyRealtimeBalanceConfirmTimeoutMs:           "2500",
+	}}
+	svc := NewSettingService(repo, cfg)
+
+	require.NoError(t, svc.LoadRuntimeSettings(context.Background()))
+
+	require.True(t, cfg.TrustForwardedIPForAPIKeyACL())
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, cfg.Gateway.OpenAIOAuthCompatMode)
+	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
+	require.True(t, cfg.Gateway.OpenAICodexDirectForceWS)
+	require.Equal(t, config.GatewayCodexStabilityModeCodex, cfg.Gateway.CodexStability.Mode)
+	require.True(t, cfg.Gateway.CodexStability.DynamicHeaderTimeoutEnabled)
+	require.True(t, cfg.Gateway.OpenAIPathHealth.Enabled)
+	require.True(t, cfg.Gateway.OpenAIFastLane.Enabled)
+	require.Equal(t, 4, cfg.Gateway.RealtimeBalanceConfirmTopN)
+	require.Equal(t, 2500, cfg.Gateway.RealtimeBalanceConfirmTimeoutMs)
 }
 
 func TestSettingService_GetAntigravityUserAgentVersion_Precedence(t *testing.T) {

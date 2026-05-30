@@ -625,6 +625,20 @@ func (s *SettingService) LoadAPIKeyACLTrustForwardedIPSetting(ctx context.Contex
 	return nil
 }
 
+// LoadRuntimeSettings 从数据库加载会影响运行时行为的后台设置。
+// 这些设置保存后会即时刷新 cfg；服务重启时也必须执行同一套刷新逻辑，避免页面开关与实际转发行为不一致。
+func (s *SettingService) LoadRuntimeSettings(ctx context.Context) error {
+	if s == nil || s.settingRepo == nil {
+		return nil
+	}
+	settings, err := s.settingRepo.GetAll(ctx)
+	if err != nil {
+		return fmt.Errorf("get runtime settings: %w", err)
+	}
+	s.refreshCachedSettings(s.parseSettings(settings))
+	return nil
+}
+
 // GetAllSettings 获取所有系统设置
 func (s *SettingService) GetAllSettings(ctx context.Context) (*SystemSettings, error) {
 	settings, err := s.settingRepo.GetAll(ctx)

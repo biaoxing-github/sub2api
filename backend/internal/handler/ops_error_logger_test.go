@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -236,6 +237,42 @@ func TestClassifyOpsRoutingCapacityMarkerExcludesMaskedSelectionFailureFromSLA(t
 	require.True(t, isBusinessLimited)
 	require.Equal(t, "platform", errorOwner)
 	require.Equal(t, "gateway", errorSource)
+}
+
+func TestApplyOpenAIScheduleDecisionToOpsEntryAddsDetailedRouteTrace(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Set(service.OpsOpenAIScheduleDecisionKey, service.OpenAIAccountScheduleDecision{
+		Layer:                 "load_balance",
+		StickyPreviousHit:     true,
+		StickySessionHit:      false,
+		CandidateCount:        7,
+		TopK:                  3,
+		LatencyMs:             12,
+		LoadSkew:              0.42,
+		SelectedAccountID:     391,
+		SelectedAccountType:   service.AccountTypeOAuth,
+		ContinuityAction:      "sticky",
+		ContinuityReason:      "previous_response_id",
+		ContextMigrationClass: "portable_full",
+		BalanceConfirmSource:  "remote",
+	})
+	entry := &service.OpsInsertErrorLogInput{}
+
+	applyOpenAIScheduleDecisionToOpsEntry(c, entry)
+
+	require.NotNil(t, entry.UpstreamErrorDetail)
+	var detail map[string]any
+	require.NoError(t, json.Unmarshal([]byte(*entry.UpstreamErrorDetail), &detail))
+	require.Equal(t, "load_balance", detail["schedule_layer"])
+	require.Equal(t, float64(7), detail["candidate_count"])
+	require.Equal(t, float64(3), detail["top_k"])
+	require.Equal(t, float64(12), detail["schedule_latency_ms"])
+	require.Equal(t, 0.42, detail["load_skew"])
+	require.Equal(t, float64(391), detail["selected_account_id"])
+	require.Equal(t, service.AccountTypeOAuth, detail["selected_account_type"])
+	require.Equal(t, true, detail["sticky_previous_hit"])
 }
 
 func TestClassifyOpsAuthClientErrorsExcludedFromSLA(t *testing.T) {

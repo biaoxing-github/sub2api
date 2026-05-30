@@ -50,6 +50,7 @@ type AccountBatchTestItem struct {
 	Message      string     `json:"message,omitempty"`
 	ErrorMessage string     `json:"error_message,omitempty"`
 	LatencyMs    int        `json:"latency_ms,omitempty"`
+	FirstTokenMs *int       `json:"first_token_ms,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	StartedAt    *time.Time `json:"started_at,omitempty"`
 	FinishedAt   *time.Time `json:"finished_at,omitempty"`

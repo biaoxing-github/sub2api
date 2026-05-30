@@ -279,6 +279,7 @@ const status = ref<'idle' | 'connecting' | 'success' | 'error'>('idle')
 const outputLines = ref<OutputLine[]>([])
 const streamingContent = ref('')
 const errorMessage = ref('')
+const firstTokenMs = ref<number | null>(null)
 const availableModels = ref<ClaudeModel[]>([])
 const selectedModelId = ref('')
 const testPrompt = ref('')
@@ -387,6 +388,7 @@ const resetState = () => {
   outputLines.value = []
   streamingContent.value = ''
   errorMessage.value = ''
+  firstTokenMs.value = null
   generatedImages.value = []
   previewImageUrl.value = ''
 }
@@ -501,6 +503,7 @@ const handleEvent = (event: {
   error?: string
   image_url?: string
   mime_type?: string
+  first_token_ms?: number | null
 }) => {
   switch (event.type) {
     case 'test_start':
@@ -519,6 +522,10 @@ const handleEvent = (event: {
       break
 
     case 'content':
+      if (event.first_token_ms != null && firstTokenMs.value == null) {
+        firstTokenMs.value = event.first_token_ms
+        addLine(t('admin.accounts.firstTokenLatency', { ms: event.first_token_ms }), 'text-cyan-300')
+      }
       if (event.text) {
         streamingContent.value += event.text
         scrollToBottom()

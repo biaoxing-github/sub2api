@@ -718,12 +718,12 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		require.Less(t, elapsed, 100*time.Millisecond, "应立即返回")
 	})
 
-	t.Run("503且SwitchCount等于MaxSwitches_仍可重试", func(t *testing.T) {
+	t.Run("503且SwitchCount等于MaxSwitches_返回Exhausted", func(t *testing.T) {
 		fs := NewFailoverState(2, false)
 		fs.LastFailoverErr = newTestFailoverErr(503, false, false)
-		fs.SwitchCount = 2 // == MaxSwitches，条件是 <=，仍可重试
+		fs.SwitchCount = 2 // == MaxSwitches 时没有可切换额度，应结束本轮会话。
 
 		action := fs.HandleSelectionExhausted(context.Background())
-		require.Equal(t, FailoverContinue, action)
+		require.Equal(t, FailoverExhausted, action)
 	})
 }

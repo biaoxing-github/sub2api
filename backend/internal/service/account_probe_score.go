@@ -14,6 +14,12 @@ const (
 	AccountProbeGradePoor      = "poor"
 )
 
+const (
+	// OpenAI 兼容上游会附带较厚的系统上下文，按请求数缩放阈值避免标准 9 次体检因总量误扣分。
+	accountProbeTokenFullCreditPerRequest = 4000
+	accountProbeTokenPenaltyPerRequest    = 8000
+)
+
 type AccountProbeScore struct {
 	Score        int      `json:"score"`
 	Grade        string   `json:"grade"`
@@ -167,13 +173,24 @@ func accountProbeTokenScore(run AccountProbeResult) (int, []string) {
 	switch {
 	case run.TotalTokens <= 0:
 		return 4, nil
-	case run.TotalTokens > 6000:
+	case run.TotalTokens > accountProbeTokenLimit(run, accountProbeTokenPenaltyPerRequest):
 		return 2, []string{fmt.Sprintf("Token 消耗 %d，-3", run.TotalTokens)}
-	case run.TotalTokens > 3000:
+	case run.TotalTokens > accountProbeTokenLimit(run, accountProbeTokenFullCreditPerRequest):
 		return 3, []string{fmt.Sprintf("Token 消耗 %d，-2", run.TotalTokens)}
 	default:
 		return 5, nil
 	}
+}
+
+func accountProbeTokenLimit(run AccountProbeResult, perRequest int) int {
+	requestCount := run.RequestCount
+	if requestCount <= 0 {
+		requestCount = run.SuccessCount + run.FailureCount
+	}
+	if requestCount <= 0 {
+		requestCount = 1
+	}
+	return requestCount * perRequest
 }
 
 func accountProbeErrorMessages(run AccountProbeResult) []string {

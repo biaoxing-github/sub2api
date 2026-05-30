@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -16,6 +17,14 @@ const (
 // ImageGenerationPermissionMessage returns the stable end-user error text for disabled groups.
 func ImageGenerationPermissionMessage() string {
 	return imageGenerationPermissionMessage
+}
+
+func IsOpenAIImageGenerationNotEnabledError(statusCode int, message string, body []byte) bool {
+	if statusCode != http.StatusForbidden {
+		return false
+	}
+	combined := strings.ToLower(strings.TrimSpace(message + " " + extractUpstreamErrorMessage(body) + " " + string(body)))
+	return strings.Contains(combined, strings.ToLower(imageGenerationPermissionMessage))
 }
 
 // GroupAllowsImageGeneration preserves ungrouped-key behavior and enforces the flag when a group is present.

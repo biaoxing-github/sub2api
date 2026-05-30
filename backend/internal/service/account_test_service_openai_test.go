@@ -174,6 +174,44 @@ func TestAccountTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
+func TestAccountTestService_OpenAIResponsesStreamEmitsFirstTokenMs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+
+	stream := strings.NewReader(`data: {"type":"response.output_text.delta","delta":"hi"}
+
+data: {"type":"response.completed"}
+
+`)
+	err := svc.processOpenAIStream(ctx, stream)
+	require.NoError(t, err)
+
+	_, _, firstTokenMs := parseTestSSEOutput(recorder.Body.String())
+	require.NotNil(t, firstTokenMs)
+	require.GreaterOrEqual(t, *firstTokenMs, 0)
+	require.Contains(t, recorder.Body.String(), `"first_token_ms"`)
+}
+
+func TestAccountTestService_OpenAIChatCompletionsStreamEmitsFirstTokenMs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+
+	stream := strings.NewReader(`data: {"choices":[{"delta":{"content":"hi"}}]}
+
+data: [DONE]
+
+`)
+	err := svc.processOpenAIChatCompletionsStream(ctx, stream)
+	require.NoError(t, err)
+
+	_, _, firstTokenMs := parseTestSSEOutput(recorder.Body.String())
+	require.NotNil(t, firstTokenMs)
+	require.GreaterOrEqual(t, *firstTokenMs, 0)
+	require.Contains(t, recorder.Body.String(), `"first_token_ms"`)
+}
+
 func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()

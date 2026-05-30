@@ -1239,6 +1239,7 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 				return
 			}
 			items[i].LatencyMs = int(result.LatencyMs)
+			items[i].FirstTokenMs = result.FirstTokenMs
 			if result.Status == service.AccountBatchTestItemStatusSuccess {
 				items[i].Status = service.AccountBatchTestItemStatusSuccess
 				items[i].Category = "ok"

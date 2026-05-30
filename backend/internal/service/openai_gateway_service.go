@@ -811,6 +811,167 @@ func (s *OpenAIGatewayService) writeOpenAIWSFallbackErrorResponse(c *gin.Context
 	return true
 }
 
+func (s *OpenAIGatewayService) newOpenAIWSFallbackFailoverError(ctx context.Context, c *gin.Context, account *Account, wsErr error) *UpstreamFailoverError {
+	if failoverErr := openAIWSFailoverErrorFromError(wsErr); failoverErr != nil {
+		return failoverErr
+	}
+	if c != nil && c.Writer != nil && c.Writer.Written() {
+		return nil
+	}
+
+	var fallbackErr *openAIWSFallbackError
+	if !errors.As(wsErr, &fallbackErr) || fallbackErr == nil {
+		return nil
+	}
+
+	reason := strings.TrimPrefix(strings.TrimSpace(fallbackErr.Reason), "prewarm_")
+	if reason == "" {
+		return nil
+	}
+
+	statusCode, errType, _, upstreamMessage, resolved := resolveOpenAIWSFallbackErrorResponse(wsErr)
+	var responseHeaders http.Header
+	var dialErr *openAIWSDialError
+	if fallbackErr.Err != nil && errors.As(fallbackErr.Err, &dialErr) && dialErr != nil {
+		responseHeaders = cloneHeader(dialErr.ResponseHeaders)
+		if statusCode == 0 && dialErr.StatusCode > 0 {
+			statusCode = dialErr.StatusCode
+		}
+	}
+	if !resolved || statusCode == 0 {
+		statusCode = openAIWSFallbackFailoverStatus(reason)
+	}
+	if statusCode == 0 || !shouldFailoverOpenAIWSFallback(reason, statusCode) {
+		return nil
+	}
+
+	if upstreamMessage == "" {
+		upstreamMessage = openAIWSFallbackFailoverMessage(reason, statusCode, fallbackErr.Err)
+	}
+	upstreamMessage = sanitizeUpstreamErrorMessage(strings.TrimSpace(upstreamMessage))
+	if upstreamMessage == "" {
+		upstreamMessage = "OpenAI websocket upstream failed before response"
+	}
+	if errType == "" {
+		errType = "upstream_error"
+		if statusCode == http.StatusTooManyRequests {
+			errType = "rate_limit_error"
+		}
+	}
+
+	responseBody := openAIWSFallbackFailoverBody(errType, upstreamMessage)
+	if shouldHandleOpenAIWSFallbackAccountState(statusCode) {
+		s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, responseHeaders, responseBody)
+	}
+	setOpsUpstreamError(c, statusCode, upstreamMessage, "")
+	if account != nil {
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: statusCode,
+			UpstreamRequestID:  responseHeaders.Get("x-request-id"),
+			Kind:               "ws_failover",
+			Message:            upstreamMessage,
+		})
+	}
+	return &UpstreamFailoverError{
+		StatusCode:             statusCode,
+		ResponseBody:           responseBody,
+		ResponseHeaders:        responseHeaders,
+		RetryableOnSameAccount: account != nil && account.IsPoolMode() && isPoolModeRetryableStatus(statusCode),
+	}
+}
+
+func openAIWSFallbackFailoverStatus(reason string) int {
+	switch strings.TrimSpace(reason) {
+	case "auth_failed":
+		return http.StatusUnauthorized
+	case "upstream_rate_limited":
+		return http.StatusTooManyRequests
+	case "read_event",
+		"write_request",
+		"write",
+		"acquire_timeout",
+		"acquire_conn",
+		"conn_queue_full",
+		"dial_failed",
+		"upstream_5xx",
+		"event_error",
+		"error_event",
+		"upstream_error_event",
+		"ws_connection_limit_reached",
+		"missing_final_response",
+		"retry_backoff_canceled":
+		return http.StatusBadGateway
+	default:
+		return 0
+	}
+}
+
+func shouldFailoverOpenAIWSFallback(reason string, statusCode int) bool {
+	switch strings.TrimSpace(reason) {
+	case "invalid_encrypted_content", "previous_response_not_found", "policy_violation", "message_too_big", "upgrade_required", "ws_unsupported":
+		return false
+	}
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
+		return true
+	default:
+		return statusCode >= http.StatusInternalServerError
+	}
+}
+
+func shouldHandleOpenAIWSFallbackAccountState(statusCode int) bool {
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
+		return true
+	default:
+		return false
+	}
+}
+
+func openAIWSFallbackFailoverMessage(reason string, statusCode int, err error) string {
+	switch statusCode {
+	case http.StatusUnauthorized:
+		return "upstream authentication failed"
+	case http.StatusForbidden:
+		return "upstream access forbidden"
+	case http.StatusTooManyRequests:
+		return "upstream rate limit exceeded, please retry later"
+	}
+	if err != nil {
+		if msg := sanitizeUpstreamErrorMessage(strings.TrimSpace(err.Error())); msg != "" {
+			return msg
+		}
+	}
+	switch strings.TrimSpace(reason) {
+	case "read_event":
+		return "upstream websocket closed before sending a response"
+	case "write_request", "write":
+		return "upstream websocket request write failed"
+	case "acquire_timeout", "acquire_conn", "conn_queue_full":
+		return "upstream websocket connection unavailable"
+	case "missing_final_response":
+		return "upstream websocket finished without final response"
+	default:
+		return "OpenAI websocket upstream failed before response"
+	}
+}
+
+func openAIWSFallbackFailoverBody(errType, message string) []byte {
+	body, err := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"type":    strings.TrimSpace(errType),
+			"message": strings.TrimSpace(message),
+		},
+	})
+	if err != nil {
+		return []byte(`{"error":{"type":"upstream_error","message":"OpenAI websocket upstream failed before response"}}`)
+	}
+	return body
+}
+
 func (s *OpenAIGatewayService) openAIWSRetryBackoff(attempt int) time.Duration {
 	if attempt <= 0 {
 		return 0
@@ -2471,7 +2632,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		markPatchSet("instructions", "You are a helpful coding assistant.")
 	}
 
+	codexImageGenerationBridgeInjected := false
 	if codexImageGenerationBridgeEnabled && ensureOpenAIResponsesImageGenerationTool(reqBody) {
+		codexImageGenerationBridgeInjected = true
 		bodyModified = true
 		disablePatch()
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Injected /responses image_generation tool for Codex client")
@@ -3011,7 +3174,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			return wsResult, nil
 		}
-		if failoverErr := openAIWSFailoverErrorFromError(wsErr); failoverErr != nil {
+		if failoverErr := s.newOpenAIWSFallbackFailoverError(ctx, c, account, wsErr); failoverErr != nil {
 			return nil, failoverErr
 		}
 		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
@@ -3135,6 +3298,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				}
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
 			}
+			if codexImageGenerationBridgeInjected && IsOpenAIImageGenerationNotEnabledError(resp.StatusCode, upstreamMsg, respBody) {
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "codex_image_bridge_disabled_retry",
+					Message:            upstreamMsg,
+					Detail:             "retry_without_image_generation_bridge",
+				})
+				s.disableCodexImageGenerationBridgeForAccount(ctx, account, upstreamMsg)
+				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying without Codex image_generation bridge after upstream permission denial (account: %s)", account.Name)
+				return s.Forward(ctx, c, account, originalBody)
+			}
 			if shouldFailoverOpenAIRequestBaseURLResponse(resp.StatusCode, upstreamMsg, respBody) && urlIdx+1 < len(requestBaseURLs) {
 				upstreamDetail := ""
 				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
@@ -3211,6 +3389,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				return nil, err
 			}
 			usage = nonStreamResult.usage
+			firstTokenMs = nonStreamResult.firstTokenMs
+			if firstTokenMs == nil {
+				ms := int(time.Since(startTime).Milliseconds())
+				firstTokenMs = &ms
+			}
 			imageCount = nonStreamResult.imageCount
 			imageOutputSizes = nonStreamResult.imageOutputSizes
 		}
@@ -3225,7 +3408,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if usage == nil {
 			usage = &OpenAIUsage{}
 		}
-		if firstTokenMs != nil {
+		if reqStream && firstTokenMs != nil {
 			s.recordOpenAIPathHealthFirstToken(account, requestBaseURL, firstTokenMs)
 		}
 
@@ -3574,6 +3757,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			return nil, err
 		}
 		usage = result.usage
+		firstTokenMs = result.firstTokenMs
+		if firstTokenMs == nil {
+			ms := int(time.Since(startTime).Milliseconds())
+			firstTokenMs = &ms
+		}
 		imageCount = result.imageCount
 		imageOutputSizes = result.imageOutputSizes
 	}
@@ -3585,7 +3773,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	if usage == nil {
 		usage = &OpenAIUsage{}
 	}
-	if firstTokenMs != nil {
+	if reqStream && firstTokenMs != nil {
 		s.recordOpenAIPathHealthFirstToken(account, selectedRequestBaseURL, firstTokenMs)
 	}
 
@@ -3934,6 +4122,7 @@ type openaiStreamingResultPassthrough struct {
 type openaiNonStreamingResultPassthrough struct {
 	*OpenAIUsage
 	usage            *OpenAIUsage
+	firstTokenMs     *int
 	imageCount       int
 	imageOutputSizes []string
 }
@@ -5405,6 +5594,7 @@ type openaiStreamingResult struct {
 type openaiNonStreamingResult struct {
 	*OpenAIUsage
 	usage            *OpenAIUsage
+	firstTokenMs     *int
 	imageCount       int
 	imageOutputSizes []string
 }

@@ -55,6 +55,51 @@ func TestScoreAccountProbeRunExplainsLatencyAndFirstTokenPenalties(t *testing.T)
 	require.Contains(t, strings.Join(score.PenaltyItems, " "), "首 Token")
 }
 
+func TestScoreAccountProbeRunDoesNotPenalizeCurrentStandardTokenVolume(t *testing.T) {
+	firstToken := 900
+	run := AccountProbeResult{
+		Status:           AccountProbeStatusSuccess,
+		RequestCount:     9,
+		SuccessCount:     9,
+		FailureCount:     0,
+		TotalTokens:      24036,
+		FirstTokenMillis: &firstToken,
+		Latency: AccountProbeLatencyStats{
+			AvgMillis: 1900,
+			P95Millis: 2400,
+			MaxMillis: 2600,
+		},
+	}
+
+	score := ScoreAccountProbeRun(run)
+
+	require.NotContains(t, strings.Join(score.PenaltyItems, " "), "Token 消耗")
+	require.Contains(t, strings.Join(score.ScoreItems, " "), "Token 消耗 24036，+5")
+	require.GreaterOrEqual(t, score.Score, 90)
+}
+
+func TestScoreAccountProbeRunStillPenalizesRunawayTokenVolume(t *testing.T) {
+	firstToken := 900
+	run := AccountProbeResult{
+		Status:           AccountProbeStatusSuccess,
+		RequestCount:     9,
+		SuccessCount:     9,
+		FailureCount:     0,
+		TotalTokens:      100000,
+		FirstTokenMillis: &firstToken,
+		Latency: AccountProbeLatencyStats{
+			AvgMillis: 1900,
+			P95Millis: 2400,
+			MaxMillis: 2600,
+		},
+	}
+
+	score := ScoreAccountProbeRun(run)
+
+	require.Contains(t, strings.Join(score.PenaltyItems, " "), "Token 消耗 100000，-3")
+	require.NotContains(t, strings.Join(score.ScoreItems, " "), "Token 消耗 100000，+5")
+}
+
 func TestScoreAccountProbeRunPenalizesFailuresAndTimeouts(t *testing.T) {
 	run := AccountProbeResult{
 		Status:       AccountProbeStatusPartial,

@@ -21,6 +21,8 @@ type openAIWSRateLimitSignalRepo struct {
 	stubOpenAIAccountRepo
 	rateLimitCalls []time.Time
 	updateExtra    []map[string]any
+	setErrorCalls  int
+	lastErrorMsg   string
 }
 
 type openAICodexSnapshotAsyncRepo struct {
@@ -36,6 +38,12 @@ type openAICodexExtraListRepo struct {
 
 func (r *openAIWSRateLimitSignalRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
 	r.rateLimitCalls = append(r.rateLimitCalls, resetAt)
+	return nil
+}
+
+func (r *openAIWSRateLimitSignalRepo) SetError(_ context.Context, _ int64, errorMsg string) error {
+	r.setErrorCalls++
+	r.lastErrorMsg = errorMsg
 	return nil
 }
 
@@ -316,6 +324,127 @@ func TestOpenAIGatewayService_Forward_WSv2Handshake429ReturnsFailover(t *testing
 	require.Len(t, repo.rateLimitCalls, 1)
 }
 
+func TestOpenAIGatewayService_Forward_WSv2Handshake401ReturnsFailoverBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("x-request-id", "req_ws_401")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"detail":"Unauthorized"}`))
+	}))
+	defer server.Close()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
+
+	cfg := newOpenAIWSV2TestConfig()
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+
+	account := Account{
+		ID:          515,
+		Name:        "openai-ws-auth-handshake-failover",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": server.URL,
+		},
+		Extra: map[string]any{
+			"responses_websockets_v2_enabled": true,
+		},
+	}
+	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+	svc := &OpenAIGatewayService{
+		accountRepo:      repo,
+		rateLimitService: &RateLimitService{accountRepo: repo},
+		httpUpstream:     &httpUpstreamRecorder{},
+		cache:            &stubGatewayCache{},
+		cfg:              cfg,
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+	}
+
+	result, err := svc.Forward(context.Background(), c, &account, []byte(`{"model":"gpt-5.1","input":[{"type":"input_text","text":"hello"}]}`))
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusUnauthorized, failoverErr.StatusCode)
+	require.False(t, rec.Result().Header.Get("Content-Type") != "" || rec.Code != http.StatusOK, "WS 401 应交给 handler 切账号，不能提前写客户端响应")
+	require.Equal(t, 1, repo.setErrorCalls)
+	require.Contains(t, strings.ToLower(repo.lastErrorMsg), "authentication")
+}
+
+func TestOpenAIGatewayService_Forward_WSv2EarlyReadEOFReturnsFailoverBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket failed: %v", err)
+			return
+		}
+		var req map[string]any
+		_ = conn.ReadJSON(&req)
+		_ = conn.Close()
+	}))
+	defer wsServer.Close()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
+
+	cfg := newOpenAIWSV2TestConfig()
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	cfg.Gateway.OpenAIWS.RetryTotalBudgetMS = 0
+
+	account := Account{
+		ID:          516,
+		Name:        "openai-ws-early-eof-failover",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": wsServer.URL,
+		},
+		Extra: map[string]any{
+			"responses_websockets_v2_enabled": true,
+		},
+	}
+	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+	svc := &OpenAIGatewayService{
+		accountRepo:      repo,
+		rateLimitService: &RateLimitService{accountRepo: repo},
+		httpUpstream:     &httpUpstreamRecorder{},
+		cache:            &stubGatewayCache{},
+		cfg:              cfg,
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+	}
+
+	result, err := svc.Forward(context.Background(), c, &account, []byte(`{"model":"gpt-5.1","stream":true,"input":[{"type":"input_text","text":"hello"}]}`))
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.False(t, rec.Result().Header.Get("Content-Type") != "" || rec.Code != http.StatusOK, "WS 首帧前 EOF 应交给 handler 切账号，不能提前写客户端响应")
+	require.Equal(t, 0, repo.setErrorCalls, "首帧前 EOF 是线路/连接失败，不应直接把账号置为失效")
+}
+
 func TestOpenAIGatewayService_Forward_WSv2UsageLimitEventReturnsFailoverBeforeWrite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -386,6 +515,92 @@ func TestOpenAIGatewayService_Forward_WSv2UsageLimitEventReturnsFailoverBeforeWr
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 	require.False(t, rec.Result().Header.Get("Content-Type") != "" || rec.Code != http.StatusOK, "failover path must not write client response before handler can switch accounts")
+	require.Len(t, repo.rateLimitCalls, 1)
+}
+
+func TestOpenAIGatewayService_Forward_WSv2CodexRateLimitsEventReturnsFailoverBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket failed: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		var req map[string]any
+		if err := conn.ReadJSON(&req); err != nil {
+			t.Errorf("read ws request failed: %v", err)
+			return
+		}
+		_ = conn.WriteJSON(map[string]any{
+			"type": "codex.rate_limits",
+			"rate_limits": map[string]any{
+				"primary": map[string]any{
+					"used_percent":        100,
+					"reset_after_seconds": 3600,
+					"window_minutes":      10080,
+				},
+				"secondary": map[string]any{
+					"used_percent":        12,
+					"reset_after_seconds": 1200,
+					"window_minutes":      300,
+				},
+			},
+		})
+		select {
+		case <-r.Context().Done():
+		case <-time.After(3 * time.Second):
+		}
+	}))
+	defer wsServer.Close()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
+
+	cfg := newOpenAIWSV2TestConfig()
+	cfg.Security.URLAllowlist.Enabled = false
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+
+	account := Account{
+		ID:          514,
+		Name:        "openai-ws-codex-rate-limits-failover",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": wsServer.URL,
+		},
+		Extra: map[string]any{
+			"responses_websockets_v2_enabled": true,
+		},
+	}
+	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+	svc := &OpenAIGatewayService{
+		accountRepo:      repo,
+		rateLimitService: &RateLimitService{accountRepo: repo},
+		httpUpstream:     &httpUpstreamRecorder{},
+		cache:            &stubGatewayCache{},
+		cfg:              cfg,
+		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+		toolCorrector:    NewCodexToolCorrector(),
+	}
+
+	result, err := svc.Forward(context.Background(), c, &account, []byte(`{"model":"gpt-5.5","stream":true,"input":[{"type":"input_text","text":"hello"}]}`))
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.False(t, rec.Result().Header.Get("Content-Type") != "" || rec.Code != http.StatusOK, "failover path must not write client response before handler can switch accounts")
+	require.NotEmpty(t, repo.updateExtra, "codex.rate_limits 事件应落库额度快照")
+	require.Contains(t, repo.updateExtra[0], "codex_usage_updated_at")
 	require.Len(t, repo.rateLimitCalls, 1)
 }
 

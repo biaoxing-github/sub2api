@@ -250,17 +250,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 				shouldDisable = true
 				break
 			}
-			// 2. 设置 expires_at 为当前时间，强制下次请求刷新 token
-			if account.Credentials == nil {
-				account.Credentials = make(map[string]any)
-			}
-			account.Credentials["expires_at"] = time.Now().Format(time.RFC3339)
-			if err := persistAccountCredentials(ctx, s.accountRepo, account, account.Credentials); err != nil {
-				slog.Warn("oauth_401_force_refresh_update_failed", "account_id", account.ID, "error", err)
-			} else {
-				slog.Info("oauth_401_force_refresh_set", "account_id", account.ID, "platform", account.Platform)
-			}
-			// 3. 临时不可调度，替代 SetError（保持 status=active 让刷新服务能拾取）
+			// 2. 临时不可调度，替代 SetError（保持 status=active 让刷新服务能拾取）。
+			// 注意：这里不能回写 account.Credentials/expires_at。account 是请求开始时的快照，
+			// 如果另一个 worker 刚刷新出新 refresh_token，整列覆盖 credentials 会把 DB 回滚到旧 token。
+			// 冷却结束后由 token_provider / token_refresh_service 通过带锁刷新路径重新获取可用 token。
 			msg := "Authentication failed (401): invalid or expired credentials"
 			if upstreamMsg != "" {
 				msg = "OAuth 401: " + upstreamMsg
@@ -307,6 +300,11 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	case 403:
 		if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey && isInsufficientBalanceBody(responseBody) {
 			s.apply429FallbackRateLimit(ctx, account, "insufficient_balance")
+			shouldDisable = false
+			break
+		}
+		if account.Platform == PlatformOpenAI && IsOpenAIImageGenerationNotEnabledError(statusCode, upstreamMsg, responseBody) {
+			slog.Info("openai_image_generation_permission_skipped", "account_id", account.ID, "status_code", statusCode)
 			shouldDisable = false
 			break
 		}

@@ -1,6 +1,10 @@
 package service
 
-import "strings"
+import (
+	"context"
+	"log/slog"
+	"strings"
+)
 
 const featureKeyCodexImageGenerationBridge = "codex_image_generation_bridge"
 
@@ -61,4 +65,26 @@ func (a *Account) CodexImageGenerationBridgeOverride() *bool {
 	}
 	openaiConfig, _ := a.Extra[PlatformOpenAI].(map[string]any)
 	return boolOverrideFromMap(openaiConfig, featureKeyCodexImageGenerationBridge, "codex_image_generation_bridge_enabled")
+}
+
+func (s *OpenAIGatewayService) disableCodexImageGenerationBridgeForAccount(ctx context.Context, account *Account, reason string) {
+	if s == nil || account == nil || account.Platform != PlatformOpenAI {
+		return
+	}
+	if account.Extra == nil {
+		account.Extra = make(map[string]any)
+	}
+	account.Extra[featureKeyCodexImageGenerationBridge] = false
+	if s.accountRepo == nil {
+		return
+	}
+	persistCtx := context.Background()
+	if ctx != nil {
+		persistCtx = context.WithoutCancel(ctx)
+	}
+	if err := s.accountRepo.UpdateExtra(persistCtx, account.ID, map[string]any{featureKeyCodexImageGenerationBridge: false}); err != nil {
+		slog.Warn("codex_image_generation_bridge_disable_failed", "account_id", account.ID, "reason", reason, "error", err)
+		return
+	}
+	slog.Info("codex_image_generation_bridge_disabled", "account_id", account.ID, "reason", reason)
 }

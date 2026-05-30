@@ -284,3 +284,153 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 ## 开关位置
 
 登录后台后进入 `管理后台 -> 系统设置 -> 网关转发 -> OpenAI OAuth 兼容模式`，先选择 `Codex 直连`，下方会出现 `Codex 直连强制上游 WebSocket` 开关。保存后运行时立即生效。部署默认值也可用 `GATEWAY_OPENAI_CODEX_DIRECT_FORCE_WS=true` 或 `gateway.openai_codex_direct_force_ws: true`。
+---
+
+日期：2026-05-30
+执行者：Devil
+
+## 结果
+
+已修复 Codex 直连强制上游 WSv2 后早期失败不切号的问题。问题根因是 `forwardOpenAIWSV2` 在握手 401 或首帧前 EOF/read_event 这类“尚未写下游响应”的失败中返回普通 `openAIWSFallbackError`，`Forward` 随后调用 `writeOpenAIWSFallbackErrorResponse` 写给客户端，handler 无法继续调度下一个账号。
+
+现在 `Forward` 会先调用 service 侧 `newOpenAIWSFallbackFailoverError`：握手 401/403/429 和连接类 502 会在未写下游前转换为 `UpstreamFailoverError`。401/403/429 会同步走账号状态处理；首帧前 EOF 仅作为线路/连接失败切号，不直接把账号标记失效。`invalid_encrypted_content`、`previous_response_not_found`、`upgrade_required` 等保留原有写回语义，不扩大切号范围。
+
+已构建并部署到本地 Docker 容器。当前运行版本：
+
+- `Sub2API 0.1.130 (commit: ws-early-failover-local, built: 2026-05-30T01:13:56Z)`
+
+## 校验方式
+
+- `go test ./internal/service -run "TestOpenAIGatewayService_Forward_WSv2(Handshake401ReturnsFailoverBeforeWrite|EarlyReadEOFReturnsFailoverBeforeWrite)" -count=1`
+- `go test ./internal/service -run "TestOpenAIGatewayService_Forward_WSv2.*(Handshake401|Handshake429|UsageLimit|CodexRateLimits|EarlyReadEOF)|TestOpenAIWSProtocolResolver|TestResolveOpenAIWSDecisionByClientTransport|TestOpenAIGatewayService_BuildOpenAIWSHeadersCodexDirectForceWS" -count=1`
+- `go test -tags unit ./internal/service -run "TestSettingService_LoadRuntimeSettingsRefreshesGatewayConfig|TestSettingService_ParseSettings_OpenAIOAuthCompatModeTakesPrecedence|TestSettingService_UpdateSettings_OpenAIOAuthCompatModeRefreshesGatewayConfig" -count=1`
+- `go test ./internal/service ./internal/handler -run "^$" -count=1`
+- `git diff --check`
+- `docker build --pull=false --build-arg COMMIT=ws-early-failover-local --build-arg DATE=<UTC> -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml --env-file D:\sub2api-deploy\.env up -d --no-deps --force-recreate sub2api`
+- `docker exec sub2api /app/sub2api --version`
+- `Invoke-RestMethod http://127.0.0.1:8080/health`
+- `docker ps --format "{{.Names}} {{.Image}} {{.Status}}"`
+- `docker logs --since 10m sub2api`
+
+## 校验结果
+
+上述 Go 聚焦测试、编译切片和 `git diff --check` 均通过。Docker 镜像构建成功并已重建本地 `sub2api` 服务；`/health` 返回 `{"status":"ok"}`，`docker ps` 显示 `sub2api` healthy。部署后最近日志没有匹配 `panic`、`fatal`、`migration failed`、`listen tcp`、`fallback_error_response_written`、`handshake response status code 101 but got 401` 或 `read frame header: EOF`。
+
+## 风险
+
+本次修的是“上游 WS 早期失败后是否允许 handler 切换账号”。如果所有可用账号本身都没有额度或都返回 401，最终仍会由 handler 汇总后失败；但不会再被某一个 WS 早期失败账号卡住不切号。
+
+---
+
+日期：2026-05-30
+执行者：Devil
+
+## 结果
+
+复核用户反馈的 WebSocket 握手 401。当前运行容器版本为 `Sub2API 0.1.130 (commit: ws-early-failover-local, built: 2026-05-30T01:13:56Z)`，设置表中 `openai_oauth_compat_mode=codex_direct` 且 `openai_codex_direct_force_ws=true`。
+
+历史 `failed to WebSocket dial: expected handshake response status code 101 but got 401` 记录来自 2026-05-30 08:49-08:51，集中在 OpenAI OAuth 账号 295。该账号当前状态为 `error`、`schedulable=false`，错误信息是 `Token revoked (401): Encountered invalidated oauth token for user, failing request`，不再参与调度。
+
+09:15 新容器启动后，`ops_error_logs` 中 OpenAI 401/WS 错误计数为 0。本地真实 `/responses` 烟测返回 200，`usage_logs` 显示当前请求调度到账号 293，`openai_ws_mode=true`、`request_type=3`，证明当前强制 WS 路径已生效并能正常返回。
+
+## 校验方式
+
+- 查询 `settings` 表确认 `codex_direct` 与强制 WS 开关。
+- 查询 `ops_error_logs` 最近 OpenAI 401/WS 错误。
+- 查询账号 293/295 的状态与调度可用性。
+- 使用数据库中的本地 `codex` API key 调用 `http://localhost:8080/responses`，只输出状态与响应摘要。
+- 查询 `usage_logs` 最近请求的 `openai_ws_mode`、`request_type`、`account_id`。
+
+## 校验结果
+
+本地 `/responses` 烟测返回 200；最近 WS 请求使用账号 293，`openai_ws_mode=true`。账号 295 已因上游撤销 token 置为不可调度。当前没有复现 raw WebSocket handshake 401 透给客户端。
+
+---
+
+日期：2026-05-30
+执行者：Devil
+
+## 结果
+
+已修复非 API_KEY 批量体检里 `batch_paused` 直接把未测试账号写成失败的问题。
+
+本次用户反馈账号 `MatthewThornton7001@outlook.com` / `#391`。数据库证据显示它在 run 9、run 10 被标为 `batch_paused`，原因不是账号 391 自己请求上游失败，而是同一批 `openai:oauth:group:2` 里先出现 3 个 429 usage_limit，触发了批量体检分组保护暂停。旧逻辑在暂停窗口内直接返回错误，导致后续账号未实际测试就被写成失败。
+
+现在 limiter 在遇到上游错误爆发导致的分组暂停时，会等待暂停窗口结束后继续获取分组槽位并执行测试；只有上下文取消时才返回 `batch_paused` 错误。真实流量正在占用账号的保护分支仍保持原行为，避免后台体检抢真实请求。
+
+已构建并部署到本地 Docker 容器。当前运行版本：
+
+- `Sub2API 0.1.130 (commit: batch-limiter-wait-local, built: 2026-05-30T03:22:16Z)`
+
+## 校验方式
+
+- 查询 `account_batch_test_runs` 最近批量体检 run。
+- 查询账号 391 在 `account_batch_test_items` 的历史 item。
+- 查询 run 9、run 10 的全部 item 和 category 分布。
+- `go test -tags unit ./internal/handler/admin -run "TestAccountBatchTestLimiter|TestAccountBatchTestNonAPIKey" -count=1`
+- `go test ./internal/handler/admin -run "^$" -count=1`
+- `go test -tags unit ./internal/handler/admin -count=1`
+- `git diff --check`
+- `docker build --pull=false --build-arg COMMIT=batch-limiter-wait-local --build-arg DATE=<UTC> -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml --env-file D:\sub2api-deploy\.env up -d --no-deps --force-recreate sub2api`
+- `docker exec sub2api /app/sub2api --version`
+- `Invoke-RestMethod http://127.0.0.1:8080/health`
+- `docker ps --format "{{.Names}} {{.Image}} {{.Status}}"`
+- `docker logs --since 2m sub2api`
+
+## 校验结果
+
+数据库证据：run 10 分布为 `ok=1`、`rate_limited=3`、`unauthorized=1`、`batch_paused=5`；run 9 分布为 `ok=1`、`rate_limited=3`、`batch_paused=6`。账号 391 的 run 10 item 为 `batch_paused`，错误信息是 `batch test group openai:oauth:group:2 paused until 2026-05-30T10:53:30+08:00 after upstream error burst`。
+
+上述 Go 聚焦测试、admin unit 测试和 `git diff --check` 均通过。Docker 镜像构建成功并已重建本地 `sub2api` 服务；`/health` 返回 `{"status":"ok"}`，`docker ps` 显示 `sub2api` healthy。最近 2 分钟启动日志没有匹配 `panic`、`fatal`、`migration failed`、`listen tcp`、`error`、`batch_paused` 或 `upstream error burst`。
+
+---
+
+日期：2026-05-30
+执行者：Devil
+
+## 结果
+
+已修复账号上游体检报告的 token 扣分阈值过低问题。当前标准 9 次体检的总 token 已稳定在 23k-26k，例如 okcodex 的 run 113 为 9/9 成功、总 token 24,036。旧逻辑按整次 run 的固定 3k/6k 总量阈值扣分，会把正常体检误判为 token 过高。
+
+现在 token 评分按 `request_count` 缩放：24,036 tokens 的标准 9 次体检不再出现 `Token 消耗` 扣分项，同时 100,000 tokens 这类异常膨胀仍保留扣分。
+
+## 校验方式
+
+- `go test ./internal/service -run "TestScoreAccountProbeRun|TestAccountProbe" -count=1`
+- `go test ./internal/service ./internal/handler -run "^$" -count=1`
+- `git diff --check -- backend/internal/service/account_probe_score.go backend/internal/service/account_probe_score_test.go`
+
+## 校验结果
+
+上述 Go 聚焦测试、service/handler 空跑编译和本次变更文件的 diff check 均通过。
+
+---
+
+日期：2026-05-30
+执行者：Devil
+
+## 结果
+
+已按“HTTP 的请求也一样”补齐 OpenAI 首 Token 观测：
+
+- 单次 OpenAI OAuth/APIKey HTTP SSE 测试会在首个内容事件返回 `first_token_ms`，账号测试弹窗直接展示首 Token。
+- 非 API_KEY 批量测试从同一份 SSE 输出解析 `first_token_ms`，保存到批量测试 item，并在批量记录详情表展示。
+- OpenAI HTTP 非流式请求成功时也会把首次可用响应耗时写入 `FirstTokenMs`，便于 ops 侧用同一个字段观察 HTTP/WS 两种路径。
+- OpenAI 路由追踪新增 `schedule_layer`、`candidate_count`、`top_k`、`load_skew`、`sticky_previous_hit`、`sticky_session_hit`、`selected_account_type`、`continuity_action/reason` 和余额确认字段。
+- `HandleSelectionExhausted` 在切换额度耗尽时直接返回，不再清空失败账号列表后额外退避重试。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestAccountTestService_OpenAIResponsesStreamEmitsFirstTokenMs|TestAccountTestService_OpenAIChatCompletionsStreamEmitsFirstTokenMs" -count=1`
+- `go test -tags unit ./internal/handler/admin -run "TestAccountBatchTestNonAPIKeyPersistsFirstTokenMs" -count=1`
+- `go test ./internal/handler -run "TestApplyOpenAIScheduleDecisionToOpsEntryAddsDetailedRouteTrace|TestHandleSelectionExhausted" -count=1`
+- `go test ./internal/repository -run "^$" -count=1`
+- `go test -tags unit ./internal/service -run "TestOpenAINonStreamingContentTypePassThrough|TestOpenAINonStreamingContentTypeDefault|TestOpenAIGatewayServiceHandleResponsesImageOutputs_NonStreaming|TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsFirstTokenMs" -count=1`
+- `npm run typecheck`
+- `go test ./internal/service ./internal/handler ./internal/handler/admin ./internal/repository -run "^$" -count=1`
+
+## 校验结果
+
+上述验证均通过。

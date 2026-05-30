@@ -38,16 +38,17 @@ const (
 
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Code     string `json:"code,omitempty"`
-	ImageURL string `json:"image_url,omitempty"`
-	MimeType string `json:"mime_type,omitempty"`
-	Data     any    `json:"data,omitempty"`
-	Success  bool   `json:"success,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Type         string `json:"type"`
+	Text         string `json:"text,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Code         string `json:"code,omitempty"`
+	ImageURL     string `json:"image_url,omitempty"`
+	MimeType     string `json:"mime_type,omitempty"`
+	Data         any    `json:"data,omitempty"`
+	Success      bool   `json:"success,omitempty"`
+	Error        string `json:"error,omitempty"`
+	FirstTokenMs *int   `json:"first_token_ms,omitempty"`
 }
 
 const (
@@ -645,6 +646,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 				}
 			}
 
+			requestStartedAt := time.Now()
 			resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 			if err != nil {
 				if account.Type == AccountTypeAPIKey && isOpenAIRequestPhaseTransientError(err) && urlIdx+1 < len(urlsForAttempt) {
@@ -686,7 +688,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 
 			// Process SSE stream
-			return s.processOpenAIStream(c, resp.Body)
+			return s.processOpenAIStreamWithStart(c, resp.Body, requestStartedAt)
 		}
 	}
 
@@ -731,6 +733,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		proxyURL = account.Proxy.URL()
 	}
 
+	requestStartedAt := time.Now()
 	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) request failed: %s", err.Error()))
@@ -749,7 +752,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	return s.processOpenAIChatCompletionsStream(c, resp.Body)
+	return s.processOpenAIChatCompletionsStreamWithStart(c, resp.Body, requestStartedAt)
 }
 
 // testOpenAICompactConnection probes /responses/compact and persists the
@@ -1404,9 +1407,14 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 // processOpenAIChatCompletionsStream processes SSE chunks from the
 // OpenAI-compatible Chat Completions API.
 func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, body io.Reader) error {
+	return s.processOpenAIChatCompletionsStreamWithStart(c, body, time.Now())
+}
+
+func (s *AccountTestService) processOpenAIChatCompletionsStreamWithStart(c *gin.Context, body io.Reader, startedAt time.Time) error {
 	reader := bufio.NewReader(body)
 	seenJSON := false
 	seenFinish := false
+	var firstTokenMs *int
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -1462,12 +1470,12 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 			}
 			if delta, ok := choice["delta"].(map[string]any); ok {
 				if text, ok := delta["content"].(string); ok && text != "" {
-					s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					s.sendEvent(c, TestEvent{Type: "content", Text: text, FirstTokenMs: recordTestFirstTokenMs(&firstTokenMs, startedAt)})
 				}
 			}
 			if message, ok := choice["message"].(map[string]any); ok {
 				if text, ok := message["content"].(string); ok && text != "" {
-					s.sendEvent(c, TestEvent{Type: "content", Text: text})
+					s.sendEvent(c, TestEvent{Type: "content", Text: text, FirstTokenMs: recordTestFirstTokenMs(&firstTokenMs, startedAt)})
 				}
 			}
 			if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
@@ -1479,8 +1487,13 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 
 // processOpenAIStream processes the SSE stream from OpenAI Responses API
 func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader) error {
+	return s.processOpenAIStreamWithStart(c, body, time.Now())
+}
+
+func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body io.Reader, startedAt time.Time) error {
 	reader := bufio.NewReader(body)
 	seenCompleted := false
+	var firstTokenMs *int
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -1520,7 +1533,7 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 		case "response.output_text.delta":
 			// OpenAI Responses API uses "delta" field for text content
 			if delta, ok := data["delta"].(string); ok && delta != "" {
-				s.sendEvent(c, TestEvent{Type: "content", Text: delta})
+				s.sendEvent(c, TestEvent{Type: "content", Text: delta, FirstTokenMs: recordTestFirstTokenMs(&firstTokenMs, startedAt)})
 			}
 		case "response.completed", "response.done":
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
@@ -1768,7 +1781,7 @@ func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID in
 
 	finishedAt := time.Now()
 	body := w.Body.String()
-	responseText, errMsg := parseTestSSEOutput(body)
+	responseText, errMsg, firstTokenMs := parseTestSSEOutput(body)
 
 	status := "success"
 	if testErr != nil || errMsg != "" {
@@ -1783,13 +1796,14 @@ func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID in
 		ResponseText: responseText,
 		ErrorMessage: errMsg,
 		LatencyMs:    finishedAt.Sub(startedAt).Milliseconds(),
+		FirstTokenMs: firstTokenMs,
 		StartedAt:    startedAt,
 		FinishedAt:   finishedAt,
 	}, nil
 }
 
 // parseTestSSEOutput extracts response text and error message from captured SSE output.
-func parseTestSSEOutput(body string) (responseText, errMsg string) {
+func parseTestSSEOutput(body string) (responseText, errMsg string, firstTokenMs *int) {
 	var texts []string
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
@@ -1806,10 +1820,28 @@ func parseTestSSEOutput(body string) (responseText, errMsg string) {
 			if event.Text != "" {
 				texts = append(texts, event.Text)
 			}
+			if firstTokenMs == nil && event.FirstTokenMs != nil {
+				firstTokenMs = event.FirstTokenMs
+			}
 		case "error":
 			errMsg = event.Error
 		}
 	}
 	responseText = strings.Join(texts, "")
 	return
+}
+
+func recordTestFirstTokenMs(slot **int, startedAt time.Time) *int {
+	if slot == nil {
+		return nil
+	}
+	if *slot != nil {
+		return nil
+	}
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	ms := int(time.Since(startedAt).Milliseconds())
+	*slot = &ms
+	return *slot
 }

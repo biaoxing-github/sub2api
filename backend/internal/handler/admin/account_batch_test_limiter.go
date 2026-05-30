@@ -58,9 +58,8 @@ func (l *accountBatchTestLimiter) Acquire(ctx context.Context, groupKey string) 
 		return func() {}, nil
 	}
 	groupKey = normalizeAccountBatchTestLimiterKey(groupKey)
-	now := l.now()
-	if pausedUntil, paused := l.groupPausedUntil(groupKey, now); paused {
-		return nil, fmt.Errorf("batch test group %s paused until %s after upstream error burst", groupKey, pausedUntil.Format(time.RFC3339))
+	if err := l.waitForGroupPause(ctx, groupKey); err != nil {
+		return nil, err
 	}
 
 	select {
@@ -91,6 +90,32 @@ func (l *accountBatchTestLimiter) Acquire(ctx context.Context, groupKey string) 
 	}, nil
 }
 
+func (l *accountBatchTestLimiter) waitForGroupPause(ctx context.Context, groupKey string) error {
+	for {
+		now := l.now()
+		pausedUntil, paused := l.groupPausedUntil(groupKey, now)
+		if !paused {
+			return nil
+		}
+		wait := pausedUntil.Sub(now)
+		if wait <= 0 {
+			return nil
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return fmt.Errorf("batch test group %s paused until %s after upstream error burst: %w", groupKey, pausedUntil.Format(time.RFC3339), ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
 func (l *accountBatchTestLimiter) RecordResult(groupKey, category string) {
 	if l == nil || !accountBatchTestLimiterRiskyCategory(category) {
 		return
@@ -118,9 +143,11 @@ func (l *accountBatchTestLimiter) acquireGroup(ctx context.Context, groupKey str
 		l.mu.Lock()
 		group := l.groupLocked(groupKey)
 		if group.pauseUntil.After(now) {
-			pauseUntil := group.pauseUntil
 			l.mu.Unlock()
-			return fmt.Errorf("batch test group %s paused until %s after upstream error burst", groupKey, pauseUntil.Format(time.RFC3339))
+			if err := l.waitForGroupPause(ctx, groupKey); err != nil {
+				return err
+			}
+			continue
 		}
 		if !group.windowStart.IsZero() && now.Sub(group.windowStart) > l.window {
 			group.windowStart = time.Time{}

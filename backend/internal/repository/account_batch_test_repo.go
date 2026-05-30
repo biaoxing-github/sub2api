@@ -45,8 +45,8 @@ func (r *accountBatchTestRepository) CreateAccountBatchTestItems(ctx context.Con
 	const query = `
 INSERT INTO account_batch_test_items (
   run_id, account_id, account_name, platform, account_type, status, category,
-  message, error_message, latency_ms, created_at, started_at, finished_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),NULLIF($9,''),$10,$11,$12,$13)`
+  message, error_message, latency_ms, first_token_ms, created_at, started_at, finished_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),NULLIF($9,''),$10,$11,$12,$13,$14)`
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -55,7 +55,7 @@ INSERT INTO account_batch_test_items (
 	for _, item := range items {
 		_, err := tx.ExecContext(ctx, query,
 			runID, item.AccountID, item.AccountName, item.Platform, item.Type, item.Status, item.Category,
-			item.Message, item.ErrorMessage, item.LatencyMs, item.CreatedAt, item.StartedAt, item.FinishedAt,
+			item.Message, item.ErrorMessage, item.LatencyMs, nullableInt(item.FirstTokenMs), item.CreatedAt, item.StartedAt, item.FinishedAt,
 		)
 		if err != nil {
 			return err
@@ -72,10 +72,11 @@ UPDATE account_batch_test_items SET
   message = NULLIF($5,''),
   error_message = NULLIF($6,''),
   latency_ms = $7,
-  started_at = $8,
-  finished_at = $9
+  first_token_ms = $8,
+  started_at = $9,
+  finished_at = $10
 WHERE run_id = $1 AND account_id = $2`,
-		item.RunID, item.AccountID, item.Status, item.Category, item.Message, item.ErrorMessage, item.LatencyMs, item.StartedAt, item.FinishedAt,
+		item.RunID, item.AccountID, item.Status, item.Category, item.Message, item.ErrorMessage, item.LatencyMs, nullableInt(item.FirstTokenMs), item.StartedAt, item.FinishedAt,
 	)
 	return err
 }
@@ -142,7 +143,7 @@ WHERE id = $1`, runID))
 	}
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, run_id, account_id, account_name, platform, account_type, status, category,
-       COALESCE(message,''), COALESCE(error_message,''), latency_ms, created_at, started_at, finished_at
+       COALESCE(message,''), COALESCE(error_message,''), latency_ms, first_token_ms, created_at, started_at, finished_at
 FROM account_batch_test_items
 WHERE run_id = $1
 ORDER BY id ASC`, runID)
@@ -247,11 +248,16 @@ func scanAccountBatchTestRun(scanner interface{ Scan(...any) error }) (*service.
 func scanAccountBatchTestItem(scanner interface{ Scan(...any) error }) (*service.AccountBatchTestItem, error) {
 	var item service.AccountBatchTestItem
 	var startedAt, finishedAt sql.NullTime
+	var firstTokenMs sql.NullInt64
 	if err := scanner.Scan(
 		&item.ID, &item.RunID, &item.AccountID, &item.AccountName, &item.Platform, &item.Type, &item.Status, &item.Category,
-		&item.Message, &item.ErrorMessage, &item.LatencyMs, &item.CreatedAt, &startedAt, &finishedAt,
+		&item.Message, &item.ErrorMessage, &item.LatencyMs, &firstTokenMs, &item.CreatedAt, &startedAt, &finishedAt,
 	); err != nil {
 		return nil, err
+	}
+	if firstTokenMs.Valid {
+		value := int(firstTokenMs.Int64)
+		item.FirstTokenMs = &value
 	}
 	if startedAt.Valid {
 		item.StartedAt = &startedAt.Time
@@ -260,6 +266,13 @@ func scanAccountBatchTestItem(scanner interface{ Scan(...any) error }) (*service
 		item.FinishedAt = &finishedAt.Time
 	}
 	return &item, nil
+}
+
+func nullableInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 var _ service.AccountBatchTestRepository = (*accountBatchTestRepository)(nil)

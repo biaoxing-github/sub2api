@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -451,6 +452,131 @@ func parseOpenAIWSResponseUsageFromCompletedEvent(message []byte, usage *OpenAIU
 	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(message); ok {
 		*usage = parsedUsage
 	}
+}
+
+func parseOpenAIWSJSONFloat(value gjson.Result) (*float64, bool) {
+	if !value.Exists() {
+		return nil, false
+	}
+	if value.Type == gjson.Number {
+		parsed := value.Float()
+		return &parsed, true
+	}
+	raw := strings.TrimSpace(value.String())
+	if raw == "" {
+		return nil, false
+	}
+	parsed, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil, false
+	}
+	return &parsed, true
+}
+
+func parseOpenAIWSJSONInt(value gjson.Result) (*int, bool) {
+	if !value.Exists() {
+		return nil, false
+	}
+	if value.Type == gjson.Number {
+		parsed := int(value.Int())
+		return &parsed, true
+	}
+	raw := strings.TrimSpace(value.String())
+	if raw == "" {
+		return nil, false
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil, false
+	}
+	return &parsed, true
+}
+
+func firstOpenAIWSJSONFloat(message []byte, paths ...string) (*float64, bool) {
+	for _, path := range paths {
+		if parsed, ok := parseOpenAIWSJSONFloat(gjson.GetBytes(message, path)); ok {
+			return parsed, true
+		}
+	}
+	return nil, false
+}
+
+func firstOpenAIWSJSONInt(message []byte, paths ...string) (*int, bool) {
+	for _, path := range paths {
+		if parsed, ok := parseOpenAIWSJSONInt(gjson.GetBytes(message, path)); ok {
+			return parsed, true
+		}
+	}
+	return nil, false
+}
+
+func parseOpenAIWSCodexRateLimitsSnapshot(message []byte) *OpenAICodexUsageSnapshot {
+	if len(message) == 0 {
+		return nil
+	}
+	snapshot := &OpenAICodexUsageSnapshot{}
+	hasData := false
+
+	if value, ok := firstOpenAIWSJSONFloat(message, "rate_limits.primary.used_percent", "rate_limits.primary.usedPercent"); ok {
+		snapshot.PrimaryUsedPercent = value
+		hasData = true
+	}
+	if value, ok := firstOpenAIWSJSONInt(message, "rate_limits.primary.reset_after_seconds", "rate_limits.primary.resetAfterSeconds"); ok {
+		snapshot.PrimaryResetAfterSeconds = value
+		hasData = true
+	}
+	if value, ok := firstOpenAIWSJSONInt(message, "rate_limits.primary.window_minutes", "rate_limits.primary.windowMinutes"); ok {
+		snapshot.PrimaryWindowMinutes = value
+		hasData = true
+	}
+	if value, ok := firstOpenAIWSJSONFloat(message, "rate_limits.secondary.used_percent", "rate_limits.secondary.usedPercent"); ok {
+		snapshot.SecondaryUsedPercent = value
+		hasData = true
+	}
+	if value, ok := firstOpenAIWSJSONInt(message, "rate_limits.secondary.reset_after_seconds", "rate_limits.secondary.resetAfterSeconds"); ok {
+		snapshot.SecondaryResetAfterSeconds = value
+		hasData = true
+	}
+	if value, ok := firstOpenAIWSJSONInt(message, "rate_limits.secondary.window_minutes", "rate_limits.secondary.windowMinutes"); ok {
+		snapshot.SecondaryWindowMinutes = value
+		hasData = true
+	}
+	if value, ok := firstOpenAIWSJSONFloat(message, "rate_limits.primary_over_secondary_limit_percent", "rate_limits.primaryOverSecondaryLimitPercent"); ok {
+		snapshot.PrimaryOverSecondaryPercent = value
+		hasData = true
+	}
+	if !hasData {
+		return nil
+	}
+	snapshot.UpdatedAt = time.Now().Format(time.RFC3339)
+	return snapshot
+}
+
+func (s *OpenAIGatewayService) persistOpenAIWSCodexRateLimitsSnapshot(ctx context.Context, account *Account, snapshot *OpenAICodexUsageSnapshot) *time.Time {
+	if s == nil || s.accountRepo == nil || account == nil || snapshot == nil {
+		return nil
+	}
+	now := time.Now()
+	updates := buildCodexUsageExtraUpdates(snapshot, now)
+	if len(updates) == 0 {
+		return nil
+	}
+
+	stateCtx, cancel := openAIAccountStateContext(ctx)
+	defer cancel()
+	if s.getCodexSnapshotThrottle().Allow(account.ID, now) {
+		_ = s.accountRepo.UpdateExtra(stateCtx, account.ID, updates)
+	}
+
+	resetAt := codexSnapshotRateLimitResetAt(updates, now)
+	if resetAt == nil {
+		return nil
+	}
+	_ = s.accountRepo.SetRateLimited(stateCtx, account.ID, *resetAt)
+	account.RateLimitedAt = &now
+	account.RateLimitResetAt = resetAt
+	s.BlockAccountScheduling(account, *resetAt, "codex_rate_limits")
+	return resetAt
 }
 
 func parseOpenAIWSErrorEventFields(message []byte) (code string, errType string, errMessage string) {
@@ -2075,7 +2201,11 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	lastEventType := ""
 
 	var flusher http.Flusher
-	if reqStream {
+	streamHeadersWritten := false
+	ensureStreamHeaders := func() {
+		if streamHeadersWritten || c == nil || c.Writer == nil {
+			return
+		}
 		if s.responseHeaderFilter != nil {
 			responseheaders.WriteFilteredHeaders(c.Writer.Header(), http.Header{}, s.responseHeaderFilter)
 		}
@@ -2083,6 +2213,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
 		c.Header("X-Accel-Buffering", "no")
+		streamHeadersWritten = true
+	}
+	if reqStream {
 		f, ok := c.Writer.(http.Flusher)
 		if !ok {
 			lease.MarkBroken()
@@ -2117,6 +2250,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		frame = append(frame, "data: "...)
 		frame = append(frame, message...)
 		frame = append(frame, '\n', '\n')
+		ensureStreamHeaders()
 		_, wErr := c.Writer.Write(frame)
 		if wErr == nil {
 			wroteDownstream = true
@@ -2238,6 +2372,33 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			parseOpenAIWSResponseUsageFromCompletedEvent(message, usage)
 		}
 		imageCounter.AddSSEData(message)
+
+		if eventType == "codex.rate_limits" {
+			snapshot := parseOpenAIWSCodexRateLimitsSnapshot(message)
+			resetAt := s.persistOpenAIWSCodexRateLimitsSnapshot(ctx, account, snapshot)
+			exhausted := resetAt != nil
+			resetAtLog := "-"
+			if resetAt != nil {
+				resetAtLog = resetAt.UTC().Format(time.RFC3339)
+			}
+			logOpenAIWSModeInfo(
+				"codex_rate_limits_event account_id=%d conn_id=%s idx=%d exhausted=%v reset_at=%s",
+				account.ID,
+				connID,
+				eventCount,
+				exhausted,
+				resetAtLog,
+			)
+			if exhausted {
+				lease.MarkBroken()
+				errMsg := "Codex rate limit exhausted"
+				if !wroteDownstream {
+					return nil, newOpenAIWSRateLimitFailoverSignal(lease.HandshakeHeaders(), message, errors.New(errMsg))
+				}
+				setOpsUpstreamError(c, http.StatusTooManyRequests, errMsg, "")
+				return nil, fmt.Errorf("openai ws codex rate limits exhausted: reset_at=%s", resetAtLog)
+			}
+		}
 
 		if eventType == "error" {
 			errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(message)
@@ -3952,7 +4113,9 @@ func isOpenAIWSTokenEvent(eventType string) bool {
 	if strings.HasPrefix(eventType, "response.output") {
 		return true
 	}
-	return eventType == "response.completed" || eventType == "response.done"
+	// 终止事件由 isOpenAIWSTerminalEvent 单独处理，不能参与首 token 统计。
+	// 否则无 delta 的响应会把总耗时误报为首 token 延迟，影响速度诊断。
+	return false
 }
 
 func replaceOpenAIWSMessageModel(message []byte, fromModel, toModel string) []byte {

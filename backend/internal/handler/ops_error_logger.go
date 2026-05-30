@@ -971,10 +971,35 @@ func applyOpenAIScheduleDecisionToOpsEntry(c *gin.Context, entry *service.OpsIns
 	}
 	addString("context_continuity", decision.ContinuityAction)
 	addString("context_replay_reason", decision.ContinuityReason)
+	addString("continuity_action", decision.ContinuityAction)
+	addString("continuity_reason", decision.ContinuityReason)
 	addString("context_migration_class", decision.ContextMigrationClass)
 	addString("context_migration_reason", decision.ContextMigrationReason)
+	addString("schedule_layer", decision.Layer)
+	addString("selected_account_type", decision.SelectedAccountType)
 	addString("balance_confirm_source", decision.BalanceConfirmSource)
 	addString("balance_confirm_reason", decision.BalanceConfirmReason)
+	if decision.StickyPreviousHit {
+		details["sticky_previous_hit"] = true
+	}
+	if decision.StickySessionHit {
+		details["sticky_session_hit"] = true
+	}
+	if decision.CandidateCount > 0 {
+		details["candidate_count"] = decision.CandidateCount
+	}
+	if decision.TopK > 0 {
+		details["top_k"] = decision.TopK
+	}
+	if decision.LatencyMs >= 0 {
+		details["schedule_latency_ms"] = decision.LatencyMs
+	}
+	if decision.LoadSkew >= 0 {
+		details["load_skew"] = decision.LoadSkew
+	}
+	if decision.SelectedAccountID > 0 {
+		details["selected_account_id"] = decision.SelectedAccountID
+	}
 	if decision.ContinuityFromAccountID > 0 {
 		details["context_from_account_id"] = decision.ContinuityFromAccountID
 	}

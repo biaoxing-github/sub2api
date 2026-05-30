@@ -19,7 +19,9 @@ type rateLimitAccountRepoStub struct {
 	tempCalls              int
 	rateLimitedCalls       int
 	updateCredentialsCalls int
+	updateExtraCalls       int
 	lastCredentials        map[string]any
+	lastExtraUpdates       map[string]any
 	lastErrorMsg           string
 	lastTempReason         string
 	lastRateLimitedUntil   *time.Time
@@ -46,6 +48,12 @@ func (r *rateLimitAccountRepoStub) SetRateLimited(ctx context.Context, id int64,
 func (r *rateLimitAccountRepoStub) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
 	r.updateCredentialsCalls++
 	r.lastCredentials = cloneCredentials(credentials)
+	return nil
+}
+
+func (r *rateLimitAccountRepoStub) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
+	r.updateExtraCalls++
+	r.lastExtraUpdates = cloneCredentials(updates)
 	return nil
 }
 
@@ -137,7 +145,8 @@ func TestRateLimitService_HandleUpstreamError_OAuth401SetsTempUnschedulable(t *t
 }
 
 // TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError
-// OpenAI OAuth 401 缓存失效出错时仍走 temp_unschedulable
+// OpenAI OAuth 401 缓存失效出错时仍走 temp_unschedulable。
+// 401 handler 不再回写 credentials，避免请求开始时的快照覆盖 DB 中刚刷新的 refresh_token。
 func TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	invalidator := &tokenCacheInvalidatorRecorder{err: errors.New("boom")}
@@ -157,7 +166,7 @@ func TestRateLimitService_HandleUpstreamError_OAuth401InvalidatorError(t *testin
 	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.setErrorCalls)
 	require.Equal(t, 1, repo.tempCalls)
-	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.Equal(t, 0, repo.updateCredentialsCalls)
 	require.Len(t, invalidator.accounts, 1)
 }
 
@@ -179,7 +188,9 @@ func TestRateLimitService_HandleUpstreamError_NonOAuth401(t *testing.T) {
 	require.Empty(t, invalidator.accounts)
 }
 
-func TestRateLimitService_HandleUpstreamError_OAuth401UsesCredentialsUpdater(t *testing.T) {
+// TestRateLimitService_HandleUpstreamError_OAuth401DoesNotOverwriteCredentials
+// 回归测试：确保 401 handler 不再用请求开始时的 account 快照整列覆盖 credentials JSONB。
+func TestRateLimitService_HandleUpstreamError_OAuth401DoesNotOverwriteCredentials(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	account := &Account{
@@ -195,8 +206,9 @@ func TestRateLimitService_HandleUpstreamError_OAuth401UsesCredentialsUpdater(t *
 	shouldDisable := service.HandleUpstreamError(context.Background(), account, 401, http.Header{}, []byte("unauthorized"))
 
 	require.True(t, shouldDisable)
-	require.Equal(t, 1, repo.updateCredentialsCalls)
-	require.NotEmpty(t, repo.lastCredentials["expires_at"])
+	require.Equal(t, 0, repo.updateCredentialsCalls, "401 handler must not write credentials back from the request-start snapshot")
+	require.Equal(t, 1, repo.tempCalls, "401 handler should still set temp-unschedulable cooldown")
+	require.Nil(t, repo.lastCredentials)
 }
 
 // 缺少 refresh_token 的 OAuth 账号 401 应直接 SetError 永久禁用，
