@@ -480,6 +480,33 @@ func TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA(t *testing.T) {
 			wantErrType: "api_error",
 			wantPhase:   "request",
 		},
+		{
+			name:        "count tokens platform gate",
+			errType:     "api_error",
+			message:     "count_tokens is not enabled for this group",
+			code:        "403",
+			status:      http.StatusForbidden,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "model whitelist denial",
+			errType:     "api_error",
+			message:     "model claude-opus is not in whitelist",
+			code:        "403",
+			status:      http.StatusForbidden,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
+		{
+			name:        "local policy denial",
+			errType:     "api_error",
+			message:     "request denied by local policy",
+			code:        "403",
+			status:      http.StatusForbidden,
+			wantErrType: "api_error",
+			wantPhase:   "request",
+		},
 	}
 
 	for _, tt := range tests {
@@ -511,6 +538,52 @@ func TestClassifyOpsIPRestrictionAccessDeniedExcludedFromSLA(t *testing.T) {
 
 	require.Equal(t, "api_error", errType)
 	require.Equal(t, "auth", phase)
+	require.True(t, isBusinessLimited)
+	require.Equal(t, "client", errorOwner)
+	require.Equal(t, "client_request", errorSource)
+}
+
+func TestClassifyOpsUpstreamFailuresAreNotMaskedAsBusinessLimit(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		message string
+		code    string
+		errType string
+	}{
+		{name: "upstream unauthorized", status: http.StatusUnauthorized, message: "invalid api key", code: "401", errType: "authentication_error"},
+		{name: "upstream rate limit", status: http.StatusTooManyRequests, message: "daily usage limit exceeded", code: "429", errType: "rate_limit_error"},
+		{name: "upstream 5xx", status: http.StatusBadGateway, message: "request denied by local policy", code: "502", errType: "upstream_error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			service.SetOpsUpstreamError(c, tt.status, tt.message, "")
+
+			errType := normalizeOpsErrorType(tt.errType, tt.code)
+			phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, errType, tt.message, tt.code, tt.status)
+
+			require.Equal(t, "upstream", phase)
+			require.False(t, isBusinessLimited)
+			require.Equal(t, "provider", errorOwner)
+			require.Equal(t, "upstream_http", errorSource)
+		})
+	}
+}
+
+func TestClassifyOpsUpstreamBusinessGateExcludedFromSLA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	service.SetOpsUpstreamError(c, http.StatusForbidden, "count_tokens is not enabled for this group", "")
+
+	errType := normalizeOpsErrorType("api_error", "403")
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, errType, "count_tokens is not enabled for this group", "403", http.StatusForbidden)
+
+	require.Equal(t, "request", phase)
 	require.True(t, isBusinessLimited)
 	require.Equal(t, "client", errorOwner)
 	require.Equal(t, "client_request", errorSource)
@@ -577,48 +650,73 @@ func TestClassifyOpsUnmarkedNoAvailableTextStillCountsForSLA(t *testing.T) {
 	require.Equal(t, "gateway", errorSource)
 }
 
-func TestClassifyOpsUpstreamAuthTextStillCountsForSLA(t *testing.T) {
+func TestClassifyOpsUpstreamContextSeparatesProviderFailuresAndBusinessGates(t *testing.T) {
 	tests := []struct {
-		name    string
-		message string
-		code    string
-		status  int
+		name                string
+		message             string
+		code                string
+		status              int
+		wantPhase           string
+		wantBusinessLimited bool
+		wantOwner           string
+		wantSource          string
 	}{
 		{
-			name:    "invalid API key",
-			message: "Invalid API key",
-			code:    "401",
-			status:  http.StatusUnauthorized,
+			name:       "invalid API key",
+			message:    "Invalid API key",
+			code:       "401",
+			status:     http.StatusUnauthorized,
+			wantPhase:  "upstream",
+			wantOwner:  "provider",
+			wantSource: "upstream_http",
 		},
 		{
-			name:    "disabled API key",
-			message: "API key is disabled",
-			code:    "API_KEY_DISABLED",
-			status:  http.StatusUnauthorized,
+			name:       "disabled API key",
+			message:    "API key is disabled",
+			code:       "API_KEY_DISABLED",
+			status:     http.StatusUnauthorized,
+			wantPhase:  "upstream",
+			wantOwner:  "provider",
+			wantSource: "upstream_http",
 		},
 		{
-			name:    "gemini group platform mismatch",
-			message: "API key group platform is not gemini",
-			code:    "400",
-			status:  http.StatusBadRequest,
+			name:                "gemini group platform mismatch",
+			message:             "API key group platform is not gemini",
+			code:                "400",
+			status:              http.StatusBadRequest,
+			wantPhase:           "request",
+			wantBusinessLimited: true,
+			wantOwner:           "client",
+			wantSource:          "client_request",
 		},
 		{
-			name:    "provider balance error",
-			message: "Insufficient account balance",
-			code:    "INSUFFICIENT_BALANCE",
-			status:  http.StatusForbidden,
+			name:                "provider balance error",
+			message:             "Insufficient account balance",
+			code:                "INSUFFICIENT_BALANCE",
+			status:              http.StatusForbidden,
+			wantPhase:           "request",
+			wantBusinessLimited: true,
+			wantOwner:           "client",
+			wantSource:          "client_request",
 		},
 		{
-			name:    "provider subscription error",
-			message: "No active subscription found for this group",
-			code:    "SUBSCRIPTION_NOT_FOUND",
-			status:  http.StatusForbidden,
+			name:                "provider subscription error",
+			message:             "No active subscription found for this group",
+			code:                "SUBSCRIPTION_NOT_FOUND",
+			status:              http.StatusForbidden,
+			wantPhase:           "request",
+			wantBusinessLimited: true,
+			wantOwner:           "client",
+			wantSource:          "client_request",
 		},
 		{
-			name:    "provider quota error",
-			message: "api key 额度已用完",
-			code:    "API_KEY_QUOTA_EXHAUSTED",
-			status:  http.StatusTooManyRequests,
+			name:       "provider quota error",
+			message:    "api key 额度已用完",
+			code:       "API_KEY_QUOTA_EXHAUSTED",
+			status:     http.StatusTooManyRequests,
+			wantPhase:  "upstream",
+			wantOwner:  "provider",
+			wantSource: "upstream_http",
 		},
 	}
 
@@ -637,10 +735,10 @@ func TestClassifyOpsUpstreamAuthTextStillCountsForSLA(t *testing.T) {
 				tt.status,
 			)
 
-			require.Equal(t, "upstream", phase)
-			require.False(t, isBusinessLimited)
-			require.Equal(t, "provider", errorOwner)
-			require.Equal(t, "upstream_http", errorSource)
+			require.Equal(t, tt.wantPhase, phase)
+			require.Equal(t, tt.wantBusinessLimited, isBusinessLimited)
+			require.Equal(t, tt.wantOwner, errorOwner)
+			require.Equal(t, tt.wantSource, errorSource)
 		})
 	}
 }

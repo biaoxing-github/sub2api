@@ -59,3 +59,56 @@ func TestClassifyUpstreamErrorCoversSharedCategories(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyUpstreamErrorBusinessLimitsDoNotPollutePathHealth(t *testing.T) {
+	cases := []struct {
+		name    string
+		message string
+		want    string
+	}{
+		{name: "quota", message: "insufficient_quota", want: UpstreamErrorCategoryQuota},
+		{name: "balance", message: "Insufficient account balance", want: UpstreamErrorCategoryQuota},
+		{name: "subscription gate", message: "No active subscription found for this group", want: UpstreamErrorCategoryBusinessLimited},
+		{name: "platform gate", message: "API key group platform is not gemini", want: UpstreamErrorCategoryBusinessLimited},
+		{name: "whitelist denial", message: "model claude-opus is not in whitelist", want: UpstreamErrorCategoryBusinessLimited},
+		{name: "count tokens gate", message: "count_tokens is not enabled for this group", want: UpstreamErrorCategoryBusinessLimited},
+		{name: "local policy denial", message: "request denied by local policy", want: UpstreamErrorCategoryBusinessLimited},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ClassifyUpstreamError(UpstreamErrorInput{Message: tc.message})
+			if got.Category != tc.want {
+				t.Fatalf("Category = %q, want %q; got=%+v", got.Category, tc.want, got)
+			}
+			if got.PathHealthReason != "" {
+				t.Fatalf("PathHealthReason = %q, want empty; got=%+v", got.PathHealthReason, got)
+			}
+			if got.Retryable || got.LineDegraded || got.AccountInvalid || got.RateLimited {
+				t.Fatalf("business limit should not look like upstream health/account failure; got=%+v", got)
+			}
+		})
+	}
+}
+
+func TestClassifyUpstreamErrorDoesNotMaskRealUpstreamFailuresAsBusinessLimit(t *testing.T) {
+	cases := []struct {
+		name       string
+		statusCode int
+		message    string
+		want       string
+	}{
+		{name: "401 stays unauthorized", statusCode: http.StatusUnauthorized, message: "invalid api key", want: UpstreamErrorCategoryUnauthorized},
+		{name: "429 stays rate limited", statusCode: http.StatusTooManyRequests, message: "daily usage limit exceeded", want: UpstreamErrorCategoryRateLimited},
+		{name: "5xx stays upstream", statusCode: http.StatusBadGateway, message: "request denied by local policy", want: UpstreamErrorCategoryUpstream5xx},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ClassifyUpstreamError(UpstreamErrorInput{StatusCode: tc.statusCode, Message: tc.message})
+			if got.Category != tc.want {
+				t.Fatalf("Category = %q, want %q; got=%+v", got.Category, tc.want, got)
+			}
+		})
+	}
+}

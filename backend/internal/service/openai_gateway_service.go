@@ -4380,8 +4380,9 @@ func shouldFailoverOpenAIRequestBaseURLResponse(statusCode int, upstreamMsg stri
 }
 
 type openAIUpstreamDoResult struct {
-	resp *http.Response
-	err  error
+	resp        *http.Response
+	err         error
+	attemptInfo *HTTPUpstreamAttemptInfo
 }
 
 type openAICodexStabilityPolicy struct {
@@ -4504,7 +4505,18 @@ func openAIRequestContextRawBytes(value gjson.Result) int {
 	return total
 }
 
-func (s *OpenAIGatewayService) doOpenAIUpstreamHTTPRequest(req *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+func (s *OpenAIGatewayService) doOpenAIUpstreamHTTPRequest(req *http.Request, proxyURL string, account *Account, requestBaseURL string, attemptInfo *HTTPUpstreamAttemptInfo) (*http.Response, error) {
+	if req == nil {
+		return nil, errors.New("upstream request is nil")
+	}
+	if attemptInfo == nil {
+		attemptInfo = &HTTPUpstreamAttemptInfo{}
+	}
+	attemptInfo.RequestBaseURL = strings.TrimSpace(requestBaseURL)
+	reqCtx := WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI)
+	reqCtx = WithHTTPUpstreamAttemptInfo(reqCtx, attemptInfo)
+	req = req.WithContext(reqCtx)
+
 	accountID, accountConcurrency := openAIRequestAccountParams(account)
 	if profile := s.openAIUpstreamTLSProfile(account); profile != nil {
 		return s.httpUpstream.DoWithTLS(req, proxyURL, accountID, accountConcurrency, profile)
@@ -4541,9 +4553,10 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	upstreamStart := time.Now()
 	pathKey := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), requestBaseURL)
 	if timeout <= 0 {
-		resp, err := s.doOpenAIUpstreamHTTPRequest(req, proxyURL, account)
+		attemptInfo := &HTTPUpstreamAttemptInfo{RequestBaseURL: requestBaseURL}
+		resp, err := s.doOpenAIUpstreamHTTPRequest(req, proxyURL, account, requestBaseURL, attemptInfo)
 		headerWait := time.Since(upstreamStart).Milliseconds()
-		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, resp, err, &headerWait)
+		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, resp, err, &headerWait, attemptInfo)
 		return resp, err
 	}
 	if parent == nil {
@@ -4553,9 +4566,10 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	req = req.WithContext(reqCtx)
 
 	resultCh := make(chan openAIUpstreamDoResult, 1)
+	attemptInfo := &HTTPUpstreamAttemptInfo{RequestBaseURL: requestBaseURL}
 	go func() {
-		resp, err := s.doOpenAIUpstreamHTTPRequest(req, proxyURL, account)
-		resultCh <- openAIUpstreamDoResult{resp: resp, err: err}
+		resp, err := s.doOpenAIUpstreamHTTPRequest(req, proxyURL, account, requestBaseURL, attemptInfo)
+		resultCh <- openAIUpstreamDoResult{resp: resp, err: err, attemptInfo: attemptInfo}
 	}()
 
 	timer := time.NewTimer(timeout)
@@ -4564,7 +4578,7 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	select {
 	case result := <-resultCh:
 		headerWait := time.Since(upstreamStart).Milliseconds()
-		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, result.resp, result.err, &headerWait)
+		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, result.resp, result.err, &headerWait, result.attemptInfo)
 		if result.err != nil {
 			cancel()
 			return nil, result.err
@@ -4585,12 +4599,12 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	case <-timer.C:
 		cancel()
 		headerWait := time.Since(upstreamStart).Milliseconds()
-		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, nil, errors.New("timed out waiting for OpenAI upstream response headers"), &headerWait)
+		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, nil, errors.New("timed out waiting for OpenAI upstream response headers"), &headerWait, attemptInfo)
 		return nil, fmt.Errorf("timed out waiting for OpenAI upstream response headers after %s", timeout)
 	case <-parent.Done():
 		cancel()
 		headerWait := time.Since(upstreamStart).Milliseconds()
-		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, nil, parent.Err(), &headerWait)
+		s.recordOpenAIPathHealthFromUpstreamResult(pathKey, nil, parent.Err(), &headerWait, attemptInfo)
 		return nil, parent.Err()
 	}
 }
@@ -4699,13 +4713,15 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderRace(
 	return openAIHeaderRaceResult{err: errors.New("OpenAI header race exhausted"), requestBaseURL: primaryBaseURL, backupStarted: backupStarted, budgetExhausted: budgetExhausted, budgetRemaining: budgetRemaining}
 }
 
-func (s *OpenAIGatewayService) recordOpenAIPathHealthFromUpstreamResult(key OpenAIPathHealthKey, resp *http.Response, err error, headerWaitMs *int64) {
+func (s *OpenAIGatewayService) recordOpenAIPathHealthFromUpstreamResult(key OpenAIPathHealthKey, resp *http.Response, err error, headerWaitMs *int64, attemptInfo *HTTPUpstreamAttemptInfo) {
 	if s == nil || s.openaiPathHealth == nil {
 		return
 	}
 	if err != nil {
 		classification := ClassifyUpstreamError(UpstreamErrorInput{Err: err})
-		s.openaiPathHealth.RecordFailure(key, firstNonEmptyString(classification.PathHealthReason, classification.Category, err.Error()), headerWaitMs)
+		reason := firstNonEmptyString(classification.PathHealthReason, classification.Category, err.Error())
+		reason = openAIPathHealthReasonForHTTPAttempt(reason, err, attemptInfo)
+		s.openaiPathHealth.RecordFailure(key, reason, headerWaitMs)
 		return
 	}
 	if resp == nil {
@@ -4719,7 +4735,33 @@ func (s *OpenAIGatewayService) recordOpenAIPathHealthFromUpstreamResult(key Open
 			return
 		}
 	}
+	if attemptInfo != nil && attemptInfo.ProtocolMode == HTTPUpstreamProtocolModeOpenAIH1Fallback {
+		s.openaiPathHealth.RecordSignal(key, OpenAIPathSignalHTTP1FallbackHit, headerWaitMs)
+	}
 	s.openaiPathHealth.RecordSuccess(key, nil, headerWaitMs)
+}
+
+func openAIPathHealthReasonForHTTPAttempt(reason string, err error, attemptInfo *HTTPUpstreamAttemptInfo) string {
+	if attemptInfo == nil || attemptInfo.ProtocolMode != HTTPUpstreamProtocolModeOpenAIH2 {
+		return reason
+	}
+	msg := strings.ToLower(strings.TrimSpace(reason))
+	if err != nil {
+		msg = strings.TrimSpace(msg + " " + strings.ToLower(err.Error()))
+	}
+	if strings.Contains(msg, "timeout awaiting response headers") ||
+		strings.Contains(msg, "timed out waiting for openai upstream response headers") ||
+		strings.Contains(msg, "header timeout") {
+		return OpenAIPathFailureHTTP2HeaderTimeout
+	}
+	if strings.Contains(msg, "http2") ||
+		strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "stream error") ||
+		strings.Contains(msg, "protocol error") ||
+		strings.Contains(msg, "goaway") {
+		return OpenAIPathFailureHTTP2ProtocolError
+	}
+	return reason
 }
 
 func (s *OpenAIGatewayService) recordOpenAIPathHealthFirstToken(account *Account, requestBaseURL string, firstTokenMs *int) {
@@ -6184,6 +6226,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	if err != nil {
 		return nil, err
 	}
+	bodyLooksLikeSSE := openAIResponseBodyLooksLikeSSE(body)
 
 	// Detect SSE responses for ALL account types via Content-Type header.
 	// Some OpenAI-compatible upstreams (including other sub2api instances)
@@ -6193,18 +6236,17 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	}
 	// For OAuth accounts, also fall back to a body-content heuristic because
 	// the upstream may omit the Content-Type header while still sending SSE.
-	// This heuristic is NOT applied to API-key accounts to avoid false
-	// positives on JSON responses that coincidentally contain "data:" or
-	// "event:" in their text content.
-	if account.Type == AccountTypeOAuth {
-		bodyLooksLikeSSE := bytes.Contains(body, []byte("data:")) || bytes.Contains(body, []byte("event:"))
-		if bodyLooksLikeSSE {
-			return s.handleSSEToJSON(resp, c, body, originalModel, mappedModel)
-		}
+	// This heuristic is also reused after JSON parse failure for API-key
+	// accounts whose upstream mislabels SSE as application/json.
+	if account != nil && account.Type == AccountTypeOAuth && bodyLooksLikeSSE {
+		return s.handleSSEToJSON(resp, c, body, originalModel, mappedModel)
 	}
 
 	usageValue, usageOK := extractOpenAIUsageFromJSONBytes(body)
 	if !usageOK {
+		if bodyLooksLikeSSE {
+			return s.handleSSEToJSON(resp, c, body, originalModel, mappedModel)
+		}
 		return nil, fmt.Errorf("parse response: invalid json response")
 	}
 	usage := &usageValue
@@ -6236,6 +6278,20 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 func isEventStreamResponse(header http.Header) bool {
 	contentType := strings.ToLower(header.Get("Content-Type"))
 	return strings.Contains(contentType, "text/event-stream")
+}
+
+func openAIResponseBodyLooksLikeSSE(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	for _, line := range strings.Split(string(bytes.TrimSpace(body)), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		return strings.HasPrefix(trimmed, "data:") || strings.HasPrefix(trimmed, "event:")
+	}
+	return false
 }
 
 func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Context, body []byte, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {

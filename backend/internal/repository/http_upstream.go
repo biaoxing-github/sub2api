@@ -3,6 +3,7 @@ package repository
 import (
 	"compress/flate"
 	"compress/gzip"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +50,19 @@ const (
 	defaultMaxUpstreamClients = 5000
 	// defaultClientIdleTTLSeconds: 默认客户端空闲回收阈值（15分钟）
 	defaultClientIdleTTLSeconds = 900
+	// defaultOpenAIHTTP2FallbackErrorThreshold: OpenAI HTTP/2 兼容错误触发 HTTP/1.1 回退的默认阈值。
+	defaultOpenAIHTTP2FallbackErrorThreshold = 2
+	// defaultOpenAIHTTP2FallbackWindow: OpenAI HTTP/2 兼容错误统计窗口。
+	defaultOpenAIHTTP2FallbackWindow = 60 * time.Second
+	// defaultOpenAIHTTP2FallbackTTL: OpenAI HTTP/1.1 回退状态默认保持时长。
+	defaultOpenAIHTTP2FallbackTTL = 10 * time.Minute
+)
+
+const (
+	upstreamProtocolModeDefault          = service.HTTPUpstreamProtocolModeDefault
+	upstreamProtocolModeOpenAIH1         = service.HTTPUpstreamProtocolModeOpenAIH1
+	upstreamProtocolModeOpenAIH2         = service.HTTPUpstreamProtocolModeOpenAIH2
+	upstreamProtocolModeOpenAIH1Fallback = service.HTTPUpstreamProtocolModeOpenAIH1Fallback
 )
 
 var errUpstreamClientLimitReached = errors.New("upstream client cache limit reached")
@@ -63,14 +77,33 @@ type poolSettings struct {
 	responseHeaderTimeout time.Duration // 等待响应头超时时间
 }
 
+// openAIHTTP2Settings OpenAI HTTP/2 协议策略。
+type openAIHTTP2Settings struct {
+	enabled                   bool
+	allowProxyFallbackToHTTP1 bool
+	fallbackErrorThreshold    int
+	fallbackWindow            time.Duration
+	fallbackTTL               time.Duration
+}
+
+// openAIHTTP2FallbackState 记录 OpenAI HTTP/2 在单个回退键上的失败窗口。
+type openAIHTTP2FallbackState struct {
+	mu            sync.Mutex
+	windowStart   time.Time
+	errorCount    int
+	fallbackUntil time.Time
+}
+
 // upstreamClientEntry 上游客户端缓存条目
 // 记录客户端实例及其元数据，用于连接池管理和淘汰策略
 type upstreamClientEntry struct {
-	client   *http.Client // HTTP 客户端实例
-	proxyKey string       // 代理标识（用于检测代理变更）
-	poolKey  string       // 连接池配置标识（用于检测配置变更）
-	lastUsed int64        // 最后使用时间戳（纳秒），用于 LRU 淘汰
-	inFlight int64        // 当前进行中的请求数，>0 时不可淘汰
+	client       *http.Client // HTTP 客户端实例
+	proxyKey     string       // 代理标识（用于检测代理变更）
+	poolKey      string       // 连接池配置标识（用于检测配置变更）
+	protocolMode string       // 协议模式（用于 OpenAI HTTP/2/H1 回退隔离）
+	fallbackKey  string       // OpenAI HTTP/2 回退隔离键（账号+代理+request_base_url）
+	lastUsed     int64        // 最后使用时间戳（纳秒），用于 LRU 淘汰
+	inFlight     int64        // 当前进行中的请求数，>0 时不可淘汰
 }
 
 // httpUpstreamService 通用 HTTP 上游服务
@@ -91,9 +124,10 @@ type upstreamClientEntry struct {
 // 7. 代理变更时清空旧连接池，避免复用错误代理
 // 8. 账号并发数与连接池上限对应（账号隔离策略下）
 type httpUpstreamService struct {
-	cfg     *config.Config                  // 全局配置
-	mu      sync.RWMutex                    // 保护 clients map 的读写锁
-	clients map[string]*upstreamClientEntry // 客户端缓存池，key 由隔离策略决定
+	cfg                  *config.Config                  // 全局配置
+	mu                   sync.RWMutex                    // 保护 clients map 的读写锁
+	clients              map[string]*upstreamClientEntry // 客户端缓存池，key 由隔离策略决定
+	openAIHTTP2Fallbacks sync.Map                        // OpenAI HTTP/2 兼容性回退状态，key=账号+代理+baseURL
 }
 
 // NewHTTPUpstream 创建通用 HTTP 上游服务
@@ -130,6 +164,9 @@ func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
 func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	if err := s.validateRequestHost(req); err != nil {
 		return nil, err
+	}
+	if service.HTTPUpstreamProfileFromContext(req.Context()) == service.HTTPUpstreamProfileOpenAI {
+		return s.doOpenAIProfile(req, proxyURL, accountID, accountConcurrency, nil)
 	}
 
 	// 获取或创建对应的客户端，并标记请求占用
@@ -168,6 +205,12 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	if profile == nil {
 		return s.Do(req, proxyURL, accountID, accountConcurrency)
 	}
+	if err := s.validateRequestHost(req); err != nil {
+		return nil, err
+	}
+	if service.HTTPUpstreamProfileFromContext(req.Context()) == service.HTTPUpstreamProfileOpenAI {
+		return s.doOpenAIProfile(req, proxyURL, accountID, accountConcurrency, profile)
+	}
 
 	targetHost := ""
 	if req != nil && req.URL != nil {
@@ -205,6 +248,373 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	})
 
 	return resp, nil
+}
+
+func (s *httpUpstreamService) doOpenAIProfile(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, tlsProfile *tlsfingerprint.Profile) (*http.Response, error) {
+	if req == nil {
+		return nil, errors.New("request is nil")
+	}
+	if err := s.validateRequestHost(req); err != nil {
+		return nil, err
+	}
+
+	attemptInfo := service.HTTPUpstreamAttemptInfoFromContext(req.Context())
+	requestBaseURL := ""
+	if attemptInfo != nil {
+		requestBaseURL = attemptInfo.RequestBaseURL
+	}
+	proxyKey, parsedProxy, err := normalizeProxyURL(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	settings := s.resolveOpenAIPoolSettings()
+	fallbackKey := buildOpenAIHTTP2FallbackKey(accountID, proxyKey, requestBaseURL)
+	protocolMode := s.resolveOpenAIProtocolMode(parsedProxy, fallbackKey, tlsProfile)
+	cacheKey := buildOpenAICacheKey(buildCacheKey(s.getIsolationMode(), proxyKey, accountID), requestBaseURL, protocolMode)
+	poolKey := s.buildOpenAIPoolKey(accountConcurrency, protocolMode, settings)
+
+	entry, err := s.getOrCreateOpenAIClient(cacheKey, poolKey, proxyKey, fallbackKey, accountConcurrency, parsedProxy, tlsProfile, protocolMode, settings)
+	if err != nil {
+		return nil, err
+	}
+	if attemptInfo != nil {
+		attemptInfo.ProtocolMode = protocolMode
+		attemptInfo.FallbackKey = fallbackKey
+	}
+
+	resp, err := entry.client.Do(req)
+	if err != nil {
+		s.recordOpenAIHTTP2Failure(protocolMode, fallbackKey, err)
+		atomic.AddInt64(&entry.inFlight, -1)
+		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+		return nil, err
+	}
+
+	s.recordOpenAIHTTP2Success(protocolMode, fallbackKey)
+	decompressResponseBody(resp)
+	resp.Body = wrapTrackedBody(resp.Body, func() {
+		atomic.AddInt64(&entry.inFlight, -1)
+		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+	})
+	return resp, nil
+}
+
+func (s *httpUpstreamService) getOrCreateOpenAIClient(cacheKey, poolKey, proxyKey, fallbackKey string, accountConcurrency int, parsedProxy *url.URL, profile *tlsfingerprint.Profile, protocolMode string, settings poolSettings) (*upstreamClientEntry, error) {
+	now := time.Now()
+	nowUnix := now.UnixNano()
+	isolation := s.getIsolationMode()
+
+	s.mu.RLock()
+	if entry, ok := s.clients[cacheKey]; ok && s.shouldReuseOpenAIEntry(entry, isolation, proxyKey, poolKey, protocolMode, fallbackKey) {
+		atomic.StoreInt64(&entry.lastUsed, nowUnix)
+		atomic.AddInt64(&entry.inFlight, 1)
+		s.mu.RUnlock()
+		return entry, nil
+	}
+	s.mu.RUnlock()
+
+	s.mu.Lock()
+	if entry, ok := s.clients[cacheKey]; ok {
+		if s.shouldReuseOpenAIEntry(entry, isolation, proxyKey, poolKey, protocolMode, fallbackKey) {
+			atomic.StoreInt64(&entry.lastUsed, nowUnix)
+			atomic.AddInt64(&entry.inFlight, 1)
+			s.mu.Unlock()
+			return entry, nil
+		}
+		s.removeClientLocked(cacheKey, entry)
+	}
+
+	if s.maxUpstreamClients() > 0 {
+		s.evictIdleLocked(now)
+		if len(s.clients) >= s.maxUpstreamClients() {
+			if !s.evictOldestIdleLocked() {
+				s.mu.Unlock()
+				return nil, errUpstreamClientLimitReached
+			}
+		}
+	}
+
+	transport, err := buildOpenAIUpstreamTransport(settings, parsedProxy, profile, protocolMode)
+	if err != nil {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("build openai transport: %w", err)
+	}
+	client := &http.Client{Transport: transport}
+	if s.shouldValidateResolvedIP() {
+		client.CheckRedirect = s.redirectChecker
+	}
+	entry := &upstreamClientEntry{
+		client:       client,
+		proxyKey:     proxyKey,
+		poolKey:      poolKey,
+		protocolMode: protocolMode,
+		fallbackKey:  fallbackKey,
+	}
+	atomic.StoreInt64(&entry.lastUsed, nowUnix)
+	atomic.StoreInt64(&entry.inFlight, 1)
+	s.clients[cacheKey] = entry
+	s.evictIdleLocked(now)
+	s.evictOverLimitLocked()
+	s.mu.Unlock()
+	return entry, nil
+}
+
+func (s *httpUpstreamService) shouldReuseOpenAIEntry(entry *upstreamClientEntry, isolation, proxyKey, poolKey, protocolMode, fallbackKey string) bool {
+	if !s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
+		return false
+	}
+	if entry.protocolMode != protocolMode {
+		return false
+	}
+	if entry.fallbackKey != fallbackKey {
+		return false
+	}
+	return true
+}
+
+func (s *httpUpstreamService) resolveOpenAIPoolSettings() poolSettings {
+	settings := defaultPoolSettings(s.cfg)
+	settings.responseHeaderTimeout = 0
+	return settings
+}
+
+func (s *httpUpstreamService) buildOpenAIPoolKey(accountConcurrency int, protocolMode string, settings poolSettings) string {
+	base := fmt.Sprintf(
+		"idle:%d|idle_host:%d|max:%d|idle_timeout:%s|header_timeout:%s|proto:%s",
+		settings.maxIdleConns,
+		settings.maxIdleConnsPerHost,
+		settings.maxConnsPerHost,
+		settings.idleConnTimeout,
+		settings.responseHeaderTimeout,
+		protocolMode,
+	)
+	if accountConcurrency > 0 {
+		return fmt.Sprintf("%s|account:%d", base, accountConcurrency)
+	}
+	return base
+}
+
+func buildOpenAICacheKey(baseCacheKey, requestBaseURL, protocolMode string) string {
+	base := strings.TrimSpace(baseCacheKey)
+	if base == "" {
+		base = "openai"
+	}
+	baseURL := normalizeOpenAIHTTP2RequestBaseURL(requestBaseURL)
+	if baseURL == "" {
+		baseURL = "default"
+	}
+	proto := strings.TrimSpace(protocolMode)
+	if proto == "" {
+		proto = upstreamProtocolModeDefault
+	}
+	return fmt.Sprintf("%s|openai_base:%s|openai_proto:%s", base, baseURL, proto)
+}
+
+func buildOpenAIHTTP2FallbackKey(accountID int64, proxyKey, requestBaseURL string) string {
+	return fmt.Sprintf("account:%d|proxy:%s|base:%s", accountID, strings.TrimSpace(proxyKey), normalizeOpenAIHTTP2RequestBaseURL(requestBaseURL))
+}
+
+func normalizeOpenAIHTTP2RequestBaseURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = strings.TrimRight(trimmed, "/")
+	trimmed = strings.TrimSuffix(trimmed, "/responses")
+	trimmed = strings.TrimSuffix(trimmed, "/codex")
+	return strings.ToLower(trimmed)
+}
+
+func (s *httpUpstreamService) resolveOpenAIProtocolMode(parsedProxy *url.URL, fallbackKey string, tlsProfile *tlsfingerprint.Profile) string {
+	if tlsProfile != nil {
+		return upstreamProtocolModeOpenAIH1
+	}
+	settings := s.resolveOpenAIHTTP2Settings()
+	if !settings.enabled {
+		return upstreamProtocolModeOpenAIH1
+	}
+	if parsedProxy == nil {
+		return upstreamProtocolModeOpenAIH2
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsedProxy.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return upstreamProtocolModeOpenAIH2
+	}
+	if settings.allowProxyFallbackToHTTP1 && s.isOpenAIHTTP2FallbackActive(fallbackKey) {
+		return upstreamProtocolModeOpenAIH1Fallback
+	}
+	return upstreamProtocolModeOpenAIH2
+}
+
+func (s *httpUpstreamService) resolveOpenAIHTTP2Settings() openAIHTTP2Settings {
+	settings := openAIHTTP2Settings{
+		enabled:                   false,
+		allowProxyFallbackToHTTP1: true,
+		fallbackErrorThreshold:    defaultOpenAIHTTP2FallbackErrorThreshold,
+		fallbackWindow:            defaultOpenAIHTTP2FallbackWindow,
+		fallbackTTL:               defaultOpenAIHTTP2FallbackTTL,
+	}
+	if s == nil || s.cfg == nil {
+		return settings
+	}
+	cfg := s.cfg.Gateway.OpenAIHTTP2
+	settings.enabled = cfg.Enabled
+	settings.allowProxyFallbackToHTTP1 = cfg.AllowProxyFallbackToHTTP1
+	if cfg.FallbackErrorThreshold > 0 {
+		settings.fallbackErrorThreshold = cfg.FallbackErrorThreshold
+	}
+	if cfg.FallbackWindowSeconds > 0 {
+		settings.fallbackWindow = time.Duration(cfg.FallbackWindowSeconds) * time.Second
+	}
+	if cfg.FallbackTTLSeconds > 0 {
+		settings.fallbackTTL = time.Duration(cfg.FallbackTTLSeconds) * time.Second
+	}
+	return settings
+}
+
+func (s *httpUpstreamService) isOpenAIHTTP2FallbackActive(fallbackKey string) bool {
+	raw, ok := s.openAIHTTP2Fallbacks.Load(fallbackKey)
+	if !ok {
+		return false
+	}
+	state, ok := raw.(*openAIHTTP2FallbackState)
+	if !ok || state == nil {
+		return false
+	}
+	return state.isFallbackActive(time.Now())
+}
+
+func (s *httpUpstreamService) getOrCreateOpenAIHTTP2FallbackState(fallbackKey string) *openAIHTTP2FallbackState {
+	state := &openAIHTTP2FallbackState{}
+	actual, _ := s.openAIHTTP2Fallbacks.LoadOrStore(fallbackKey, state)
+	cached, ok := actual.(*openAIHTTP2FallbackState)
+	if !ok || cached == nil {
+		return state
+	}
+	return cached
+}
+
+func isOpenAIHTTP2CompatibilityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if msg == "" {
+		return false
+	}
+	if strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "stream error") ||
+		strings.Contains(msg, "http2: transport") ||
+		strings.Contains(msg, "http2: no cached connection") ||
+		strings.Contains(msg, "http2: timeout awaiting response headers") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "protocol error") ||
+		strings.Contains(msg, "goaway") {
+		return true
+	}
+	return false
+}
+
+func (s *httpUpstreamService) recordOpenAIHTTP2Failure(protocolMode, fallbackKey string, err error) {
+	if s == nil {
+		return
+	}
+	if protocolMode != upstreamProtocolModeOpenAIH2 {
+		return
+	}
+	if !isOpenAIHTTP2CompatibilityError(err) {
+		return
+	}
+	settings := s.resolveOpenAIHTTP2Settings()
+	if !settings.enabled || !settings.allowProxyFallbackToHTTP1 {
+		return
+	}
+	state := s.getOrCreateOpenAIHTTP2FallbackState(fallbackKey)
+	activated, until := state.recordFailure(time.Now(), settings.fallbackErrorThreshold, settings.fallbackWindow, settings.fallbackTTL)
+	if activated {
+		slog.Warn("openai_http2_proxy_fallback_activated", "fallback_key", fallbackKey, "fallback_until", until.Format(time.RFC3339))
+	}
+}
+
+func (s *httpUpstreamService) recordOpenAIHTTP2Success(protocolMode, fallbackKey string) {
+	if s == nil {
+		return
+	}
+	if protocolMode == upstreamProtocolModeOpenAIH1Fallback {
+		slog.Debug("openai_http1_fallback_hit", "fallback_key", fallbackKey)
+	}
+	if protocolMode != upstreamProtocolModeOpenAIH2 {
+		return
+	}
+	raw, ok := s.openAIHTTP2Fallbacks.Load(fallbackKey)
+	if !ok {
+		return
+	}
+	state, ok := raw.(*openAIHTTP2FallbackState)
+	if !ok || state == nil {
+		return
+	}
+	state.resetErrorWindow()
+}
+
+func (s *openAIHTTP2FallbackState) isFallbackActive(now time.Time) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fallbackUntil.IsZero() {
+		return false
+	}
+	if now.Before(s.fallbackUntil) {
+		return true
+	}
+	s.fallbackUntil = time.Time{}
+	return false
+}
+
+func (s *openAIHTTP2FallbackState) resetErrorWindow() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.windowStart = time.Time{}
+	s.errorCount = 0
+}
+
+func (s *openAIHTTP2FallbackState) recordFailure(now time.Time, threshold int, window, ttl time.Duration) (bool, time.Time) {
+	if s == nil {
+		return false, time.Time{}
+	}
+	if threshold <= 0 {
+		threshold = defaultOpenAIHTTP2FallbackErrorThreshold
+	}
+	if window <= 0 {
+		window = defaultOpenAIHTTP2FallbackWindow
+	}
+	if ttl <= 0 {
+		ttl = defaultOpenAIHTTP2FallbackTTL
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.fallbackUntil.IsZero() && now.Before(s.fallbackUntil) {
+		return false, s.fallbackUntil
+	}
+	if s.windowStart.IsZero() || now.Sub(s.windowStart) > window {
+		s.windowStart = now
+		s.errorCount = 0
+	}
+	s.errorCount++
+	if s.errorCount < threshold {
+		return false, time.Time{}
+	}
+	s.fallbackUntil = now.Add(ttl)
+	s.windowStart = time.Time{}
+	s.errorCount = 0
+	return true, s.fallbackUntil
 }
 
 // acquireClientWithTLS 获取或创建带 TLS 指纹的客户端
@@ -769,6 +1179,24 @@ func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL) (*http.Tra
 	}
 	if err := proxyutil.ConfigureTransportProxy(transport, proxyURL); err != nil {
 		return nil, err
+	}
+	return transport, nil
+}
+
+func buildOpenAIUpstreamTransport(settings poolSettings, proxyURL *url.URL, profile *tlsfingerprint.Profile, protocolMode string) (*http.Transport, error) {
+	if profile != nil {
+		return buildUpstreamTransportWithTLSFingerprint(settings, proxyURL, profile)
+	}
+	transport, err := buildUpstreamTransport(settings, proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	switch protocolMode {
+	case upstreamProtocolModeOpenAIH2:
+		transport.ForceAttemptHTTP2 = true
+	case upstreamProtocolModeOpenAIH1, upstreamProtocolModeOpenAIH1Fallback:
+		transport.ForceAttemptHTTP2 = false
+		transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
 	}
 	return transport, nil
 }

@@ -720,6 +720,19 @@ type GatewayOpenAIPathHealthConfig struct {
 	HalfOpenMaxProbes     int  `mapstructure:"half_open_max_probes"`
 }
 
+type GatewayOpenAIHTTP2Config struct {
+	// Enabled: 是否启用 OpenAI HTTP/2 优先策略。
+	Enabled bool `mapstructure:"enabled"`
+	// AllowProxyFallbackToHTTP1: HTTP/HTTPS 代理出现明确 HTTP/2 兼容问题时，是否允许临时回退到 HTTP/1.1。
+	AllowProxyFallbackToHTTP1 bool `mapstructure:"allow_proxy_fallback_to_http1"`
+	// FallbackErrorThreshold: 在统计窗口内累计多少次兼容性错误后触发回退。
+	FallbackErrorThreshold int `mapstructure:"fallback_error_threshold"`
+	// FallbackWindowSeconds: 统计兼容性错误的时间窗口（秒）。
+	FallbackWindowSeconds int `mapstructure:"fallback_window_seconds"`
+	// FallbackTTLSeconds: 回退状态保持时长（秒）。
+	FallbackTTLSeconds int `mapstructure:"fallback_ttl_seconds"`
+}
+
 type GatewayOpenAIFastLaneConfig struct {
 	Enabled          bool    `mapstructure:"enabled"`
 	NewSessionOnly   bool    `mapstructure:"new_session_only"`
@@ -758,9 +771,11 @@ type GatewayConfig struct {
 	// 比全局 response_header_timeout 更短，用于快速切换卡在思考前的账号；0 表示不启用额外保护。
 	OpenAIRequestHeaderTimeoutSeconds int `mapstructure:"openai_request_header_timeout_seconds"`
 	// CodexStability: Codex/OpenAI Responses 稳定模式总开关与策略细项。
-	CodexStability                  GatewayCodexStabilityConfig         `mapstructure:"codex_stability"`
-	CodexAutopilot                  GatewayCodexAutopilotConfig         `mapstructure:"codex_autopilot"`
-	OpenAIPathHealth                GatewayOpenAIPathHealthConfig       `mapstructure:"openai_path_health"`
+	CodexStability   GatewayCodexStabilityConfig   `mapstructure:"codex_stability"`
+	CodexAutopilot   GatewayCodexAutopilotConfig   `mapstructure:"codex_autopilot"`
+	OpenAIPathHealth GatewayOpenAIPathHealthConfig `mapstructure:"openai_path_health"`
+	// OpenAIHTTP2: OpenAI HTTP 上游协议策略（默认启用 HTTP/2，可按代理能力回退 HTTP/1.1）。
+	OpenAIHTTP2                     GatewayOpenAIHTTP2Config            `mapstructure:"openai_http2"`
 	OpenAIFastLane                  GatewayOpenAIFastLaneConfig         `mapstructure:"openai_fast_lane"`
 	RealtimeBalancePrewarm          GatewayRealtimeBalancePrewarmConfig `mapstructure:"realtime_balance_prewarm"`
 	RealtimeBalanceConfirmTopN      int                                 `mapstructure:"realtime_balance_confirm_top_n"`
@@ -1903,6 +1918,11 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.error_rate", 0.8)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.ttft", 0.5)
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.balance", 0.4)
+	viper.SetDefault("gateway.openai_http2.enabled", true)
+	viper.SetDefault("gateway.openai_http2.allow_proxy_fallback_to_http1", true)
+	viper.SetDefault("gateway.openai_http2.fallback_error_threshold", 2)
+	viper.SetDefault("gateway.openai_http2.fallback_window_seconds", 60)
+	viper.SetDefault("gateway.openai_http2.fallback_ttl_seconds", 600)
 	viper.SetDefault("gateway.image_concurrency.enabled", false)
 	viper.SetDefault("gateway.image_concurrency.max_concurrent_requests", 0)
 	viper.SetDefault("gateway.image_concurrency.overflow_mode", ImageConcurrencyOverflowModeReject)
@@ -2581,6 +2601,11 @@ func (c *Config) Validate() error {
 		c.Gateway.OpenAIPathHealth.OpenFailures < 0 ||
 		c.Gateway.OpenAIPathHealth.HalfOpenMaxProbes < 0 {
 		return fmt.Errorf("gateway.openai_path_health values must be non-negative")
+	}
+	if c.Gateway.OpenAIHTTP2.FallbackErrorThreshold < 0 ||
+		c.Gateway.OpenAIHTTP2.FallbackWindowSeconds < 0 ||
+		c.Gateway.OpenAIHTTP2.FallbackTTLSeconds < 0 {
+		return fmt.Errorf("gateway.openai_http2 values must be non-negative")
 	}
 	if c.Gateway.OpenAIFastLane.TTFTWeight < 0 ||
 		c.Gateway.OpenAIFastLane.HeaderWaitWeight < 0 ||

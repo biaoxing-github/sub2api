@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -22,6 +23,43 @@ func newUsageRecordTestPool(t *testing.T) *service.UsageRecordWorkerPool {
 	})
 	t.Cleanup(pool.Stop)
 	return pool
+}
+
+func TestUsageRecordContext_PreservesRequestIDsAndDeadline(t *testing.T) {
+	parent := context.WithValue(context.Background(), ctxkey.RequestID, "req-usage-123")
+	parent = context.WithValue(parent, ctxkey.ClientRequestID, "client-usage-456")
+	base, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+
+	ctx := usageRecordContext(parent, base)
+
+	require.NotNil(t, ctx)
+	require.Equal(t, "req-usage-123", ctx.Value(ctxkey.RequestID))
+	require.Equal(t, "client-usage-456", ctx.Value(ctxkey.ClientRequestID))
+	deadline, ok := ctx.Deadline()
+	require.True(t, ok)
+	require.WithinDuration(t, time.Now().Add(time.Second), deadline, 200*time.Millisecond)
+}
+
+func TestWrapUsageRecordTaskContext_PreservesRequestIDs(t *testing.T) {
+	parent := context.WithValue(context.Background(), ctxkey.RequestID, "req-task-123")
+	parent = context.WithValue(parent, ctxkey.ClientRequestID, "client-task-456")
+	base, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+
+	var gotRequestID string
+	var gotClientRequestID string
+	wrapped := wrapUsageRecordTaskContext(parent, func(ctx context.Context) {
+		gotRequestID, _ = ctx.Value(ctxkey.RequestID).(string)
+		gotClientRequestID, _ = ctx.Value(ctxkey.ClientRequestID).(string)
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		require.WithinDuration(t, time.Now().Add(time.Second), deadline, 200*time.Millisecond)
+	})
+
+	wrapped(base)
+	require.Equal(t, "req-task-123", gotRequestID)
+	require.Equal(t, "client-task-456", gotClientRequestID)
 }
 
 func TestGatewayHandlerSubmitUsageRecordTask_WithPool(t *testing.T) {
@@ -48,6 +86,23 @@ func TestGatewayHandlerSubmitUsageRecordTask_WithoutPoolSyncFallback(t *testing.
 		if _, ok := ctx.Deadline(); !ok {
 			t.Fatal("expected deadline in fallback context")
 		}
+		called.Store(true)
+	})
+
+	require.True(t, called.Load())
+}
+
+func TestGatewayHandlerSubmitUsageRecordTaskWithContext_WithoutPoolPreservesRequestIDs(t *testing.T) {
+	parent := context.WithValue(context.Background(), ctxkey.RequestID, "req-handler-123")
+	parent = context.WithValue(parent, ctxkey.ClientRequestID, "client-handler-456")
+	h := &GatewayHandler{}
+	var called atomic.Bool
+
+	h.submitUsageRecordTaskWithContext(parent, func(ctx context.Context) {
+		require.Equal(t, "req-handler-123", ctx.Value(ctxkey.RequestID))
+		require.Equal(t, "client-handler-456", ctx.Value(ctxkey.ClientRequestID))
+		_, hasDeadline := ctx.Deadline()
+		require.True(t, hasDeadline)
 		called.Store(true)
 	})
 
@@ -101,6 +156,23 @@ func TestOpenAIGatewayHandlerSubmitUsageRecordTask_WithoutPoolSyncFallback(t *te
 		if _, ok := ctx.Deadline(); !ok {
 			t.Fatal("expected deadline in fallback context")
 		}
+		called.Store(true)
+	})
+
+	require.True(t, called.Load())
+}
+
+func TestOpenAIGatewayHandlerSubmitUsageRecordTaskWithContext_WithoutPoolPreservesRequestIDs(t *testing.T) {
+	parent := context.WithValue(context.Background(), ctxkey.RequestID, "req-openai-123")
+	parent = context.WithValue(parent, ctxkey.ClientRequestID, "client-openai-456")
+	h := &OpenAIGatewayHandler{}
+	var called atomic.Bool
+
+	h.submitUsageRecordTaskWithContext(parent, func(ctx context.Context) {
+		require.Equal(t, "req-openai-123", ctx.Value(ctxkey.RequestID))
+		require.Equal(t, "client-openai-456", ctx.Value(ctxkey.ClientRequestID))
+		_, hasDeadline := ctx.Deadline()
+		require.True(t, hasDeadline)
 		called.Store(true)
 	})
 
@@ -188,4 +260,21 @@ func TestOpenAIGatewayHandlerSubmitOpenAIUsageRecordTask_ImageResultUsesMandator
 	close(release)
 
 	require.True(t, called.Load(), "image usage task must be mandatory when async submit is dropped")
+}
+
+func TestOpenAIGatewayHandlerSubmitOpenAIUsageRecordTaskWithContext_ImageResultPreservesRequestIDs(t *testing.T) {
+	parent := context.WithValue(context.Background(), ctxkey.RequestID, "req-openai-image-123")
+	parent = context.WithValue(parent, ctxkey.ClientRequestID, "client-openai-image-456")
+	h := &OpenAIGatewayHandler{}
+	var called atomic.Bool
+
+	h.submitOpenAIUsageRecordTaskWithContext(&service.OpenAIForwardResult{ImageCount: 1}, parent, func(ctx context.Context) {
+		require.Equal(t, "req-openai-image-123", ctx.Value(ctxkey.RequestID))
+		require.Equal(t, "client-openai-image-456", ctx.Value(ctxkey.ClientRequestID))
+		_, hasDeadline := ctx.Deadline()
+		require.True(t, hasDeadline)
+		called.Store(true)
+	})
+
+	require.True(t, called.Load(), "image usage mandatory fallback must preserve request context")
 }

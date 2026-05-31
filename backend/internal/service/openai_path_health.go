@@ -12,11 +12,14 @@ const (
 	OpenAIPathHealthStateOpenCircuit = "open_circuit"
 	OpenAIPathHealthStateHalfOpen    = "half_open"
 
-	OpenAIPathFailureEOF           = "unexpected_eof"
-	OpenAIPathFailureHeaderTimeout = "header_timeout"
-	OpenAIPathFailureHTTP401       = "http_401"
-	OpenAIPathFailureHTTP429       = "http_429"
-	OpenAIPathFailureOther         = "other"
+	OpenAIPathFailureEOF                = "unexpected_eof"
+	OpenAIPathFailureHeaderTimeout      = "header_timeout"
+	OpenAIPathFailureHTTP2HeaderTimeout = "http2_header_timeout"
+	OpenAIPathFailureHTTP2ProtocolError = "http2_protocol_error"
+	OpenAIPathSignalHTTP1FallbackHit    = "http1_fallback_hit"
+	OpenAIPathFailureHTTP401            = "http_401"
+	OpenAIPathFailureHTTP429            = "http_429"
+	OpenAIPathFailureOther              = "other"
 )
 
 type OpenAIPathHealthKey struct {
@@ -27,24 +30,27 @@ type OpenAIPathHealthKey struct {
 }
 
 type OpenAIPathHealthRecord struct {
-	Key                  OpenAIPathHealthKey `json:"key"`
-	State                string              `json:"state"`
-	SuccessCount         int64               `json:"success_count"`
-	FailureCount         int64               `json:"failure_count"`
-	ConsecutiveFailures  int64               `json:"consecutive_failures"`
-	WindowFailures       int64               `json:"window_failures"`
-	FailureWindowStarted *time.Time          `json:"failure_window_started_at,omitempty"`
-	EOFCount             int64               `json:"eof_count"`
-	HeaderTimeoutCount   int64               `json:"header_timeout_count"`
-	Status401Count       int64               `json:"status_401_count"`
-	Status429Count       int64               `json:"status_429_count"`
-	TTFTEWMAMs           float64             `json:"ttft_ewma_ms,omitempty"`
-	HeaderWaitEWMAMs     float64             `json:"header_wait_ewma_ms,omitempty"`
-	Samples              int64               `json:"samples"`
-	LastFailureReason    string              `json:"last_failure_reason,omitempty"`
-	LastFailureAt        *time.Time          `json:"last_failure_at,omitempty"`
-	CooldownUntil        *time.Time          `json:"cooldown_until,omitempty"`
-	ConsecutiveSuccesses int64               `json:"consecutive_successes"`
+	Key                     OpenAIPathHealthKey `json:"key"`
+	State                   string              `json:"state"`
+	SuccessCount            int64               `json:"success_count"`
+	FailureCount            int64               `json:"failure_count"`
+	ConsecutiveFailures     int64               `json:"consecutive_failures"`
+	WindowFailures          int64               `json:"window_failures"`
+	FailureWindowStarted    *time.Time          `json:"failure_window_started_at,omitempty"`
+	EOFCount                int64               `json:"eof_count"`
+	HeaderTimeoutCount      int64               `json:"header_timeout_count"`
+	HTTP2HeaderTimeoutCount int64               `json:"http2_header_timeout_count"`
+	HTTP2ProtocolErrorCount int64               `json:"http2_protocol_error_count"`
+	HTTP1FallbackHitCount   int64               `json:"http1_fallback_hit_count"`
+	Status401Count          int64               `json:"status_401_count"`
+	Status429Count          int64               `json:"status_429_count"`
+	TTFTEWMAMs              float64             `json:"ttft_ewma_ms,omitempty"`
+	HeaderWaitEWMAMs        float64             `json:"header_wait_ewma_ms,omitempty"`
+	Samples                 int64               `json:"samples"`
+	LastFailureReason       string              `json:"last_failure_reason,omitempty"`
+	LastFailureAt           *time.Time          `json:"last_failure_at,omitempty"`
+	CooldownUntil           *time.Time          `json:"cooldown_until,omitempty"`
+	ConsecutiveSuccesses    int64               `json:"consecutive_successes"`
 }
 
 type OpenAIPathHealthOptions struct {
@@ -159,6 +165,9 @@ func (t *OpenAIPathHealthTracker) RecordFailure(key OpenAIPathHealthKey, reason 
 	}
 	key = normalizeOpenAIPathHealthKey(key)
 	reason = NormalizeOpenAIPathFailureReason(reason)
+	if reason == "" {
+		return
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	record := t.ensureLocked(key)
@@ -185,6 +194,10 @@ func (t *OpenAIPathHealthTracker) RecordFailure(key OpenAIPathHealthKey, reason 
 		record.EOFCount++
 	case OpenAIPathFailureHeaderTimeout:
 		record.HeaderTimeoutCount++
+	case OpenAIPathFailureHTTP2HeaderTimeout:
+		record.HTTP2HeaderTimeoutCount++
+	case OpenAIPathFailureHTTP2ProtocolError:
+		record.HTTP2ProtocolErrorCount++
 	case OpenAIPathFailureHTTP401:
 		record.Status401Count++
 	case OpenAIPathFailureHTTP429:
@@ -213,6 +226,22 @@ func (t *OpenAIPathHealthTracker) RecordFailure(key OpenAIPathHealthKey, reason 
 	}
 	if record.WindowFailures >= t.options.DegradedFailureThreshold {
 		record.State = OpenAIPathHealthStateDegraded
+	}
+}
+
+func (t *OpenAIPathHealthTracker) RecordSignal(key OpenAIPathHealthKey, signal string, headerWaitMs *int64) {
+	if t == nil || !t.options.Enabled {
+		return
+	}
+	key = normalizeOpenAIPathHealthKey(key)
+	signal = strings.ToLower(strings.TrimSpace(signal))
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	record := t.ensureLocked(key)
+	t.refreshStateLocked(record, t.now())
+	switch signal {
+	case OpenAIPathSignalHTTP1FallbackHit:
+		record.HTTP1FallbackHitCount++
 	}
 }
 
@@ -296,12 +325,27 @@ func (t *OpenAIPathHealthTracker) prepareFailureWindowLocked(record *OpenAIPathH
 }
 
 func openAIPathFailureCountsForCircuit(reason string) bool {
-	return reason != OpenAIPathFailureHTTP429
+	switch reason {
+	case OpenAIPathFailureHTTP429, OpenAIPathSignalHTTP1FallbackHit:
+		return false
+	default:
+		return true
+	}
 }
 
 func NormalizeOpenAIPathFailureReason(reason string) string {
 	msg := strings.TrimSpace(reason)
+	if msg == "" {
+		return ""
+	}
+	switch msg {
+	case OpenAIPathFailureHTTP2HeaderTimeout, OpenAIPathFailureHTTP2ProtocolError, OpenAIPathSignalHTTP1FallbackHit:
+		return msg
+	}
 	classification := ClassifyUpstreamError(UpstreamErrorInput{Message: msg})
+	if strings.TrimSpace(classification.PathHealthReason) == "" {
+		return ""
+	}
 	switch classification.Category {
 	case UpstreamErrorCategoryUnexpectedEOF:
 		return OpenAIPathFailureEOF

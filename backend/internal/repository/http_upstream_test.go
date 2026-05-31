@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -238,6 +239,76 @@ func (s *HTTPUpstreamSuite) TestAccountConcurrencyFallbackToDefault() {
 	require.Equal(s.T(), 55, transport.MaxIdleConnsPerHost, "MaxIdleConnsPerHost fallback mismatch")
 }
 
+// TestOpenAIProfileDirectUsesHTTP2 测试 OpenAI profile 默认直连优先 HTTP/2。
+// 这保证 OpenAI/Codex 热路径只在显式 profile 下启用专用 transport，不影响普通上游。
+func (s *HTTPUpstreamSuite) TestOpenAIProfileDirectUsesHTTP2() {
+	s.cfg.Gateway.OpenAIHTTP2 = config.GatewayOpenAIHTTP2Config{
+		Enabled:                   true,
+		AllowProxyFallbackToHTTP1: true,
+		FallbackErrorThreshold:    2,
+		FallbackWindowSeconds:     60,
+		FallbackTTLSeconds:        600,
+	}
+	svc := s.newService()
+
+	mode := svc.resolveOpenAIProtocolMode(nil, buildOpenAIHTTP2FallbackKey(1, directProxyKey, "https://api.example.com/v1"), nil)
+	require.Equal(s.T(), upstreamProtocolModeOpenAIH2, mode)
+
+	settings := svc.resolveOpenAIPoolSettings()
+	transport, err := buildOpenAIUpstreamTransport(settings, nil, nil, mode)
+	require.NoError(s.T(), err)
+	require.True(s.T(), transport.ForceAttemptHTTP2)
+	require.Zero(s.T(), transport.ResponseHeaderTimeout, "OpenAI profile 交给服务层 header timeout/race 控制")
+}
+
+// TestOpenAIProfileProxyFallbackActivatesAfterThreshold 测试代理 HTTP/2 兼容错误达到阈值后临时回退 HTTP/1.1。
+// 回退键包含账号、代理和 request_base_url，避免一条坏线路污染同账号其他线路。
+func (s *HTTPUpstreamSuite) TestOpenAIProfileProxyFallbackActivatesAfterThreshold() {
+	s.cfg.Gateway.OpenAIHTTP2 = config.GatewayOpenAIHTTP2Config{
+		Enabled:                   true,
+		AllowProxyFallbackToHTTP1: true,
+		FallbackErrorThreshold:    2,
+		FallbackWindowSeconds:     60,
+		FallbackTTLSeconds:        600,
+	}
+	svc := s.newService()
+	proxyKey, parsedProxy, err := normalizeProxyURL("http://proxy.local:8080")
+	require.NoError(s.T(), err)
+
+	fallbackKey := buildOpenAIHTTP2FallbackKey(7, proxyKey, "https://fast.example.com/v1/responses")
+	require.Equal(s.T(), upstreamProtocolModeOpenAIH2, svc.resolveOpenAIProtocolMode(parsedProxy, fallbackKey, nil))
+
+	svc.recordOpenAIHTTP2Failure(upstreamProtocolModeOpenAIH2, fallbackKey, io.ErrUnexpectedEOF)
+	require.Equal(s.T(), upstreamProtocolModeOpenAIH2, svc.resolveOpenAIProtocolMode(parsedProxy, fallbackKey, nil))
+
+	svc.recordOpenAIHTTP2Failure(upstreamProtocolModeOpenAIH2, fallbackKey, &http2CompatibilityTestError{message: "http2: timeout awaiting response headers"})
+	require.Equal(s.T(), upstreamProtocolModeOpenAIH1Fallback, svc.resolveOpenAIProtocolMode(parsedProxy, fallbackKey, nil))
+	require.Equal(s.T(), upstreamProtocolModeOpenAIH2, svc.resolveOpenAIProtocolMode(parsedProxy, buildOpenAIHTTP2FallbackKey(7, proxyKey, "https://other.example.com/v1"), nil))
+}
+
+// TestOpenAIProfileAttemptInfoIsFilled 测试 repository 会把实际协议和 fallback key 回填到请求诊断信息。
+func (s *HTTPUpstreamSuite) TestOpenAIProfileAttemptInfoIsFilled() {
+	s.cfg.Gateway.OpenAIHTTP2 = config.GatewayOpenAIHTTP2Config{Enabled: true, AllowProxyFallbackToHTTP1: true}
+	svc := s.newService()
+	upstream := newLocalTestServer(s.T(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	s.T().Cleanup(upstream.Close)
+
+	req, err := http.NewRequest(http.MethodGet, upstream.URL+"/v1/responses", nil)
+	require.NoError(s.T(), err)
+	attemptInfo := &service.HTTPUpstreamAttemptInfo{RequestBaseURL: "https://fast.example.com/v1/responses"}
+	ctx := service.WithHTTPUpstreamAttemptInfo(service.WithHTTPUpstreamProfile(req.Context(), service.HTTPUpstreamProfileOpenAI), attemptInfo)
+	resp, err := svc.Do(req.WithContext(ctx), "", 42, 3)
+	require.NoError(s.T(), err)
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(s.T(), upstreamProtocolModeOpenAIH2, attemptInfo.ProtocolMode)
+	require.Contains(s.T(), attemptInfo.FallbackKey, "account:42")
+	require.Contains(s.T(), attemptInfo.FallbackKey, "proxy:direct")
+	require.Contains(s.T(), attemptInfo.FallbackKey, "base:https://fast.example.com/v1")
+}
+
 // TestEvictOverLimitRemovesOldestIdle 测试超出数量限制时的 LRU 淘汰
 // 验证优先淘汰最久未使用的空闲客户端
 func (s *HTTPUpstreamSuite) TestEvictOverLimitRemovesOldestIdle() {
@@ -298,4 +369,12 @@ func hasEntry(svc *httpUpstreamService, target *upstreamClientEntry) bool {
 		}
 	}
 	return false
+}
+
+type http2CompatibilityTestError struct {
+	message string
+}
+
+func (e *http2CompatibilityTestError) Error() string {
+	return e.message
 }

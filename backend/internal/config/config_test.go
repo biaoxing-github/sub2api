@@ -93,6 +93,37 @@ func TestLoadDefaultOpenAIRequestHeaderTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultOpenAIHTTP2Config(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	require.True(t, cfg.Gateway.OpenAIHTTP2.Enabled)
+	require.True(t, cfg.Gateway.OpenAIHTTP2.AllowProxyFallbackToHTTP1)
+	require.Equal(t, 2, cfg.Gateway.OpenAIHTTP2.FallbackErrorThreshold)
+	require.Equal(t, 60, cfg.Gateway.OpenAIHTTP2.FallbackWindowSeconds)
+	require.Equal(t, 600, cfg.Gateway.OpenAIHTTP2.FallbackTTLSeconds)
+}
+
+func TestLoadOpenAIHTTP2ConfigFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_OPENAI_HTTP2_ENABLED", "false")
+	t.Setenv("GATEWAY_OPENAI_HTTP2_ALLOW_PROXY_FALLBACK_TO_HTTP1", "false")
+	t.Setenv("GATEWAY_OPENAI_HTTP2_FALLBACK_ERROR_THRESHOLD", "5")
+	t.Setenv("GATEWAY_OPENAI_HTTP2_FALLBACK_WINDOW_SECONDS", "30")
+	t.Setenv("GATEWAY_OPENAI_HTTP2_FALLBACK_TTL_SECONDS", "120")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	require.False(t, cfg.Gateway.OpenAIHTTP2.Enabled)
+	require.False(t, cfg.Gateway.OpenAIHTTP2.AllowProxyFallbackToHTTP1)
+	require.Equal(t, 5, cfg.Gateway.OpenAIHTTP2.FallbackErrorThreshold)
+	require.Equal(t, 30, cfg.Gateway.OpenAIHTTP2.FallbackWindowSeconds)
+	require.Equal(t, 120, cfg.Gateway.OpenAIHTTP2.FallbackTTLSeconds)
+}
+
 func TestLoadOpenAICockpitToolsCompatConfig(t *testing.T) {
 	resetViperWithJWTSecret(t)
 

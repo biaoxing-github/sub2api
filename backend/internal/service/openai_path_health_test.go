@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -150,6 +151,78 @@ func TestOpenAIPathHealth429DoesNotOpenCircuit(t *testing.T) {
 	}
 	if snapshot.WindowFailures != 0 {
 		t.Fatalf("WindowFailures = %d, want 0", snapshot.WindowFailures)
+	}
+}
+
+func TestOpenAIPathHealthHTTP2Counters(t *testing.T) {
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:                  true,
+		CircuitBreakerEnabled:    true,
+		DegradedFailureThreshold: 2,
+		OpenFailureThreshold:     3,
+	})
+	key := OpenAIPathHealthKey{AccountID: 14, Upstream: "https://fast.example.com/v1"}
+
+	tracker.RecordFailure(key, OpenAIPathFailureHTTP2HeaderTimeout, nil)
+	tracker.RecordFailure(key, OpenAIPathFailureHTTP2ProtocolError, nil)
+	tracker.RecordSignal(key, OpenAIPathSignalHTTP1FallbackHit, nil)
+	snapshot := tracker.Snapshot(key)
+
+	if snapshot.HTTP2HeaderTimeoutCount != 1 {
+		t.Fatalf("HTTP2HeaderTimeoutCount = %d, want 1", snapshot.HTTP2HeaderTimeoutCount)
+	}
+	if snapshot.HTTP2ProtocolErrorCount != 1 {
+		t.Fatalf("HTTP2ProtocolErrorCount = %d, want 1", snapshot.HTTP2ProtocolErrorCount)
+	}
+	if snapshot.HTTP1FallbackHitCount != 1 {
+		t.Fatalf("HTTP1FallbackHitCount = %d, want 1", snapshot.HTTP1FallbackHitCount)
+	}
+	if snapshot.WindowFailures != 2 {
+		t.Fatalf("WindowFailures = %d, want 2; fallback hit should not count as failure", snapshot.WindowFailures)
+	}
+}
+
+func TestOpenAIPathHealthReasonForHTTP2Attempt(t *testing.T) {
+	attempt := &HTTPUpstreamAttemptInfo{ProtocolMode: HTTPUpstreamProtocolModeOpenAIH2}
+
+	headerReason := openAIPathHealthReasonForHTTPAttempt("header timeout", errors.New("http2: timeout awaiting response headers"), attempt)
+	if headerReason != OpenAIPathFailureHTTP2HeaderTimeout {
+		t.Fatalf("header reason = %q, want %q", headerReason, OpenAIPathFailureHTTP2HeaderTimeout)
+	}
+
+	protocolReason := openAIPathHealthReasonForHTTPAttempt("unexpected_eof", errors.New("stream error: stream ID 1; INTERNAL_ERROR"), attempt)
+	if protocolReason != OpenAIPathFailureHTTP2ProtocolError {
+		t.Fatalf("protocol reason = %q, want %q", protocolReason, OpenAIPathFailureHTTP2ProtocolError)
+	}
+
+	plainReason := openAIPathHealthReasonForHTTPAttempt("header timeout", errors.New("http2: timeout awaiting response headers"), &HTTPUpstreamAttemptInfo{ProtocolMode: HTTPUpstreamProtocolModeOpenAIH1})
+	if plainReason != "header timeout" {
+		t.Fatalf("plain reason = %q, want original reason", plainReason)
+	}
+}
+
+func TestOpenAIPathHealthBusinessLimitsAreNotRecordedAsFailures(t *testing.T) {
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:                  true,
+		CircuitBreakerEnabled:    true,
+		DegradedFailureThreshold: 1,
+		OpenFailureThreshold:     1,
+	})
+	key := OpenAIPathHealthKey{AccountID: 13}
+
+	tracker.RecordFailure(key, "No active subscription found for this group", nil)
+	tracker.RecordFailure(key, "count_tokens is not enabled for this group", nil)
+	tracker.RecordFailure(key, "model claude-opus is not in whitelist", nil)
+	snapshot := tracker.Snapshot(key)
+
+	if snapshot.FailureCount != 0 {
+		t.Fatalf("FailureCount = %d, want 0", snapshot.FailureCount)
+	}
+	if snapshot.Samples != 0 {
+		t.Fatalf("Samples = %d, want 0", snapshot.Samples)
+	}
+	if snapshot.State != OpenAIPathHealthStateHealthy {
+		t.Fatalf("state = %q, want healthy", snapshot.State)
 	}
 }
 

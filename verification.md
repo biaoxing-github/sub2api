@@ -434,3 +434,81 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 ## 校验结果
 
 上述验证均通过。
+
+---
+
+日期：2026-05-31
+执行者：Devil
+
+## 结果
+
+已修复并部署 memo/Codex 文本调用被自动图片桥接误伤的问题。根因是 Codex 客户端普通 `/responses` 请求会被本地 Codex image bridge 自动注入 `image_generation` tool；账号 300 的上游分组不支持图片生成，返回 `Image generation is not enabled for this group`，旧逻辑把这个 403 当作账号鉴权/权限异常进入 `openai_403_temp_unschedulable`。
+
+现在该类 OpenAI 图片权限 403 不会触发账号冷却或禁用；如果错误来自自动桥接注入，网关会先禁用该账号的 `codex_image_generation_bridge`，再用原始文本请求重试一次。已清理账号 300 的旧误伤临时冷却状态，并持久设置 `extra.codex_image_generation_bridge=false`。
+
+当前本地 Docker 运行版本：
+
+- `Sub2API 0.1.130 (commit: codex-image-bridge-fallback-local, built: 2026-05-30T15:57:58Z)`
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestRateLimitService_HandleUpstreamError_OpenAIImageGenerationPermissionSkipsCooldown|TestOpenAIGatewayServiceForward_CodexBridgePermission403RetriesWithoutBridge" -count=1`
+- `go test ./internal/service -run "TestOpenAIGatewayServiceForward_(RejectsDisabledImageGenerationIntents|DisabledGroupAllowsTextOnlyResponses|CodexImageInjectionRespectsGroupCapability|ExplicitImageToolWorksWithBridgeDisabled|ChannelBridgeOverrideEnablesCodexInjection)|TestOpenAIGatewayService_CodexImageGenerationBridgeOverridePrecedence|TestIsImageGenerationIntent" -count=1`
+- `go test ./internal/service ./internal/handler -run "^$" -count=1`
+- `git diff --check -- backend/internal/service/image_generation_intent.go backend/internal/service/ratelimit_service.go backend/internal/service/codex_image_generation_bridge.go backend/internal/service/openai_gateway_service.go backend/internal/service/openai_image_generation_bridge_fallback_test.go backend/internal/service/ratelimit_service_403_test.go backend/internal/service/ratelimit_service_401_test.go`
+- `docker build --pull=false --build-arg COMMIT=codex-image-bridge-fallback-local --build-arg DATE=<UTC> -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml --env-file D:\sub2api-deploy\.env up -d --no-deps --force-recreate sub2api`
+- `docker exec sub2api /app/sub2api --version`
+- `Invoke-RestMethod http://127.0.0.1:8080/health`
+- 本地 `/v1/responses` 非流式真实请求。
+- `docker logs --since 3m sub2api` 检查 `Image generation is not enabled`、`openai_403_temp_unschedulable`、`account_disabled_auth_error`、`panic`、`fatal`。
+- 查询账号 300 的 `status`、`schedulable`、`temp_unschedulable_*` 和 `extra.codex_image_generation_bridge`。
+
+## 校验结果
+
+上述 Go 聚焦测试、service/handler 编译切片和 diff check 均通过。Docker 镜像构建成功并已重建本地 `sub2api` 服务；`/health` 返回 `{"status":"ok"}`。
+
+真实请求验证：本地 `/v1/responses` 非流式请求返回 HTTP 200，耗时约 4 秒；重启后的真实 Codex 风格大上下文 `/responses` 请求多次返回 HTTP 200，日志中账号 300 的请求延迟样本包括约 7.5 秒、16.8 秒、18.5 秒、23.2 秒和 46.8 秒。最近日志未再出现 `Image generation is not enabled`、`openai_403_temp_unschedulable` 或 `account_disabled_auth_error`。日志中仍有少量 `context journal session overflow` 告警，这是上下文记录容量告警，不是客户端调用阻断错误。
+
+数据库验证：账号 300 `status=active`、`schedulable=true`、`error_message` 为空、`temp_unschedulable_until` 为空、`temp_unschedulable_reason` 为空、`extra.codex_image_generation_bridge=false`。
+
+---
+
+日期：2026-05-31
+执行者：Devil
+
+## 结果
+
+已将 OpenAI 上游 HTTP/2 代理回退、上游错误分类、工具输出续链识别、API-key SSE 误标兼容等当前工作树修复构建并部署到本地 `sub2api` 容器。当前运行版本：
+
+- `Sub2API 0.1.130 (commit: openai-http2-fallback-local, built: 2026-05-31T03:17:37Z)`
+
+针对用户反馈的 `https://api.aisz.mom/api/v1/usage returned 404`，实测该接口仍返回 HTTP 404，属于 aisz 上游余额端点不兼容；部署后本地 `/v1/responses` 与 `/responses` 真实转发均返回 HTTP 200，说明该余额 404 未再阻断真实转发链路。
+
+## 校验方式
+
+- `go test ./internal/service -run "TestNeedsToolContinuationSignals|TestHasFunctionCallOutput|TestOpenAIWSRawPayloadHasToolCallOutput|TestAccount_SupportsOpenAIEndpointCapability|TestClassifyUpstreamError|TestOpenAIPathHealth|TestHandleSSEToJSON|TestHandleNonStreamingResponse_APIKeyFallsBackToSSEBodyWhenContentTypeIsWrong" -count=1`
+- `go test ./internal/repository -run "TestHTTPUpstream|TestOpenAI" -count=1`
+- `go test ./internal/config ./internal/handler -run "TestLoadOpenAIHTTP2|TestApplyOpenAIScheduleDecision|TestOpsErrorLogger|TestUsageRecordSubmitTask" -count=1`
+- `go test ./internal/service ./internal/repository ./internal/handler -run "^$" -count=1`
+- `docker build --pull=false --build-arg COMMIT=openai-http2-fallback-local --build-arg DATE=<UTC> -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml --env-file D:\sub2api-deploy\.env up -d --no-deps --force-recreate sub2api`
+- `docker exec sub2api /app/sub2api --version`
+- `Invoke-RestMethod http://127.0.0.1:8080/health`
+- 使用数据库中 `codex` 本地 API key 调用 `POST http://127.0.0.1:8080/v1/responses`，`model=gpt-5.5`，非流式。
+- 使用同一 API key 调用 `POST http://127.0.0.1:8080/responses`，`model=gpt-5.5`，流式。
+- 使用账号 408 的上游 API key 直接调用 `GET https://api.aisz.mom/api/v1/usage`。
+- 查询 `usage_logs` 和 `ops_error_logs` 验证真实请求落库与最近 OpenAI 错误。
+- `git diff --check`
+
+## 校验结果
+
+上述 Go 聚焦测试、编译切片、Docker 构建、compose 重建和 diff check 均通过；`/health` 返回 `{"status":"ok"}`。
+
+真实请求验证：
+
+- `/v1/responses` 非流式返回 HTTP 200，耗时 3438ms，`usage_logs` 写入账号 408，`duration_ms=2987`，`first_token_ms=2987`。
+- `/responses` 流式第一次返回 HTTP 200，耗时 33336ms，`usage_logs` 写入账号 408，`duration_ms=31162`，`first_token_ms=31120`。
+- `/responses` 流式短请求复测返回 HTTP 200，耗时 3103ms，`usage_logs` 写入账号 408，`duration_ms=2757`，`first_token_ms=2280`。
+- 最近 10 分钟 `ops_error_logs` 中 OpenAI 错误为 0，容器日志未出现 `panic`、`fatal`、`upstream_error`、`401 Unauthorized` 或 `Incorrect API key`。
+- `https://api.aisz.mom/api/v1/usage` 直接调用仍返回 HTTP 404，确认它是余额端点不兼容，不是当前 `/responses` 连接失败根因。

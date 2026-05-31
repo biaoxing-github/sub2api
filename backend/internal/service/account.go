@@ -1107,6 +1107,8 @@ const (
 	maxPoolModeRetryCount     = 10
 )
 
+var defaultPoolModeRetryableStatusCodes = []int{401, 403, 429}
+
 // GetPoolModeRetryCount 返回池模式同账号重试次数。
 // 未配置或配置非法时回退为默认值 3；小于 0 按 0 处理；过大则截断到 10。
 func (a *Account) GetPoolModeRetryCount() int {
@@ -1147,13 +1149,83 @@ func parsePoolModeRetryCount(value any) int {
 	return defaultPoolModeRetryCount
 }
 
-// isPoolModeRetryableStatus 池模式下应触发同账号重试的状态码
+// isPoolModeRetryableStatus 返回池模式默认的同账号重试状态码。
 func isPoolModeRetryableStatus(statusCode int) bool {
-	switch statusCode {
-	case 401, 403, 429:
-		return true
+	for _, code := range defaultPoolModeRetryableStatusCodes {
+		if statusCode == code {
+			return true
+		}
+	}
+	return false
+}
+
+// GetPoolModeRetryStatusCodes 返回账号自定义的池模式同账号重试状态码。
+// nil 表示未配置，调用方使用默认 401/403/429；空切片表示管理员显式关闭状态码重试。
+func (a *Account) GetPoolModeRetryStatusCodes() []int {
+	if a == nil || a.Credentials == nil {
+		return nil
+	}
+	raw, ok := a.Credentials["pool_mode_retry_status_codes"]
+	if !ok || raw == nil {
+		return nil
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(values))
+	codes := make([]int, 0, len(values))
+	for _, item := range values {
+		code, parsed := parseHTTPStatusCode(item)
+		if !parsed || code < 100 || code > 599 {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	sort.Ints(codes)
+	return codes
+}
+
+// IsPoolModeRetryableStatus 判断当前账号是否应对该上游状态码做同账号重试。
+func (a *Account) IsPoolModeRetryableStatus(statusCode int) bool {
+	codes := a.GetPoolModeRetryStatusCodes()
+	if codes == nil {
+		return isPoolModeRetryableStatus(statusCode)
+	}
+	for _, code := range codes {
+		if code == statusCode {
+			return true
+		}
+	}
+	return false
+}
+
+func parseHTTPStatusCode(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case json.Number:
+		i, err := v.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	case string:
+		i, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return 0, false
+		}
+		return i, true
 	default:
-		return false
+		return 0, false
 	}
 }
 
@@ -1233,6 +1305,19 @@ func (a *Account) IsOpenAIOAuth() bool {
 func (a *Account) IsOpenAIApiKey() bool {
 	return a.IsOpenAI() && a.Type == AccountTypeAPIKey
 }
+
+type OpenAIEndpointCapability string
+
+const (
+	// OpenAIEndpointCapabilityResponses 表示账号可承接 /v1/responses 类请求。
+	OpenAIEndpointCapabilityResponses OpenAIEndpointCapability = "responses"
+	// OpenAIEndpointCapabilityChatCompletions 表示账号可承接 /v1/chat/completions 类请求。
+	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
+	// OpenAIEndpointCapabilityEmbeddings 表示账号可承接 /v1/embeddings 类请求。
+	OpenAIEndpointCapabilityEmbeddings OpenAIEndpointCapability = "embeddings"
+)
+
+const openAIEndpointCapabilitiesCredentialKey = "openai_capabilities"
 
 func (a *Account) GetOpenAIBaseURL() string {
 	if !a.IsOpenAI() {
@@ -1382,6 +1467,91 @@ func (a *Account) GetChatGPTAccountID() string {
 		return ""
 	}
 	return a.GetCredential("chatgpt_account_id")
+}
+
+// SupportsOpenAIEndpointCapability 判断账号是否支持指定 OpenAI endpoint。
+// 字段缺失时保持兼容；数组形态作为严格白名单，map 形态作为稀疏能力覆盖。
+func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapability) bool {
+	if a == nil {
+		return false
+	}
+	if capability == "" {
+		return true
+	}
+	if !a.IsOpenAI() {
+		return false
+	}
+	switch capability {
+	case OpenAIEndpointCapabilityResponses, OpenAIEndpointCapabilityChatCompletions:
+	case OpenAIEndpointCapabilityEmbeddings:
+		if a.Type != AccountTypeAPIKey {
+			return false
+		}
+	default:
+		return false
+	}
+	configured, strict, found := a.openAIEndpointCapabilitySet()
+	if !found {
+		return true
+	}
+	if strict {
+		return configured[string(capability)]
+	}
+	if enabled, exists := configured[string(capability)]; exists {
+		return enabled
+	}
+	return true
+}
+
+func (a *Account) openAIEndpointCapabilitySet() (map[string]bool, bool, bool) {
+	if a == nil || a.Credentials == nil {
+		return nil, false, false
+	}
+	raw, found := a.Credentials[openAIEndpointCapabilitiesCredentialKey]
+	if !found || raw == nil {
+		return nil, false, false
+	}
+	result := make(map[string]bool)
+	add := func(value string) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "" {
+			result[value] = true
+		}
+	}
+	set := func(value string, enabled bool) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "" {
+			result[value] = enabled
+		}
+	}
+	switch capabilities := raw.(type) {
+	case []any:
+		for _, item := range capabilities {
+			if value, ok := item.(string); ok {
+				add(value)
+			}
+		}
+		return result, true, true
+	case []string:
+		for _, value := range capabilities {
+			add(value)
+		}
+		return result, true, true
+	case map[string]any:
+		for key, rawEnabled := range capabilities {
+			if enabled, ok := rawEnabled.(bool); ok {
+				set(key, enabled)
+			}
+		}
+		return result, false, true
+	case map[string]bool:
+		for key, enabled := range capabilities {
+			set(key, enabled)
+		}
+		return result, false, true
+	default:
+		return nil, false, false
+	}
 }
 
 func (a *Account) GetOpenAIDeviceID() string {

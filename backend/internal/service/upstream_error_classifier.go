@@ -20,6 +20,7 @@ const (
 	UpstreamErrorCategoryRequestTooLarge          = "request_too_large"
 	UpstreamErrorCategoryTimeout                  = "timeout"
 	UpstreamErrorCategoryQuota                    = "quota"
+	UpstreamErrorCategoryBusinessLimited          = "business_limited"
 	UpstreamErrorCategoryReauthRequired           = "reauth_required"
 	UpstreamErrorCategoryUpstreamError            = "upstream_error"
 )
@@ -96,13 +97,58 @@ func ClassifyUpstreamError(input UpstreamErrorInput) UpstreamErrorClass {
 		return upstreamErrorClass(UpstreamErrorCategoryTimeout, "请求超时", OpenAIPathFailureHeaderTimeout, true, false, false, true)
 	case input.StatusCode >= 500 || strings.Contains(lower, "upstream request failed"):
 		return upstreamErrorClass(UpstreamErrorCategoryUpstream5xx, "上游 5xx/网关错误", OpenAIPathFailureOther, true, false, false, true)
-	case strings.Contains(lower, "quota") || strings.Contains(lower, "insufficient_quota") || strings.Contains(lower, "usage_limit"):
-		return upstreamErrorClass(UpstreamErrorCategoryQuota, "额度不足", "", false, false, true, false)
+	case strings.Contains(lower, "quota") ||
+		strings.Contains(lower, "insufficient_quota") ||
+		strings.Contains(lower, "insufficient balance") ||
+		strings.Contains(lower, "insufficient account balance") ||
+		strings.Contains(lower, "usage_limit"):
+		return upstreamErrorClass(UpstreamErrorCategoryQuota, "额度不足", "", false, false, false, false)
+	case isUpstreamBusinessLimitMessage(lower):
+		return upstreamErrorClass(UpstreamErrorCategoryBusinessLimited, "业务限制/策略拒绝", "", false, false, false, false)
 	case strings.Contains(lower, "no access token") || strings.Contains(lower, "no refresh token") || strings.Contains(lower, "invalid_grant"):
 		return upstreamErrorClass(UpstreamErrorCategoryReauthRequired, "需要重新授权", "", false, true, false, false)
 	default:
 		return upstreamErrorClass(UpstreamErrorCategoryUpstreamError, "上游错误", OpenAIPathFailureOther, true, false, false, false)
 	}
+}
+
+func isUpstreamBusinessLimitMessage(lower string) bool {
+	lower = strings.TrimSpace(lower)
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "no active subscription found for this group") ||
+		strings.Contains(lower, "api key in query parameter is deprecated") ||
+		strings.Contains(lower, "query parameter api_key is deprecated") ||
+		strings.Contains(lower, "api key group platform is not") ||
+		strings.Contains(lower, "daily usage limit exceeded") ||
+		strings.Contains(lower, "weekly usage limit exceeded") ||
+		strings.Contains(lower, "monthly usage limit exceeded") ||
+		strings.Contains(lower, "requests-per-minute limit exceeded") {
+		return true
+	}
+	if strings.Contains(lower, "count_tokens") &&
+		containsAnyUpstreamErrorText(lower, "not enabled", "disabled", "not supported", "unsupported", "denied", "forbidden", "not allowed") {
+		return true
+	}
+	if (strings.Contains(lower, "whitelist") || strings.Contains(lower, "white list")) &&
+		containsAnyUpstreamErrorText(lower, "not in", "denied", "forbidden", "not allowed", "disallowed", "blocked") {
+		return true
+	}
+	if strings.Contains(lower, "policy") &&
+		containsAnyUpstreamErrorText(lower, "denied", "forbidden", "not allowed", "disallowed", "blocked") {
+		return true
+	}
+	return false
+}
+
+func containsAnyUpstreamErrorText(text string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func upstreamErrorClass(category, label, pathHealthReason string, retryable, accountInvalid, rateLimited, lineDegraded bool) UpstreamErrorClass {

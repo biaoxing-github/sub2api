@@ -73,13 +73,13 @@ func AnalyzeToolContinuationSignals(reqBody map[string]any) ToolContinuationSign
 			continue
 		}
 		itemType, _ := itemMap["type"].(string)
-		switch itemType {
-		case "tool_call", "function_call":
+		switch {
+		case isCodexToolCallContextItemType(itemType):
 			callID, _ := itemMap["call_id"].(string)
 			if strings.TrimSpace(callID) != "" {
 				signals.HasToolCallContext = true
 			}
-		case "function_call_output":
+		case isCodexToolOutputItemType(itemType):
 			signals.HasFunctionCallOutput = true
 			callID, _ := itemMap["call_id"].(string)
 			callID = strings.TrimSpace(callID)
@@ -91,7 +91,7 @@ func AnalyzeToolContinuationSignals(reqBody map[string]any) ToolContinuationSign
 				callIDs = make(map[string]struct{})
 			}
 			callIDs[callID] = struct{}{}
-		case "item_reference":
+		case strings.TrimSpace(itemType) == "item_reference":
 			signals.HasItemReference = true
 			idValue, _ := itemMap["id"].(string)
 			idValue = strings.TrimSpace(idValue)
@@ -142,10 +142,10 @@ func ValidateFunctionCallOutputContext(reqBody map[string]any) FunctionCallOutpu
 			continue
 		}
 		itemType, _ := itemMap["type"].(string)
-		switch itemType {
-		case "function_call_output":
+		switch {
+		case isCodexToolOutputItemType(itemType):
 			result.HasFunctionCallOutput = true
-		case "tool_call", "function_call":
+		case isCodexToolCallContextItemType(itemType):
 			callID, _ := itemMap["call_id"].(string)
 			if strings.TrimSpace(callID) != "" {
 				result.HasToolCallContext = true
@@ -168,8 +168,8 @@ func ValidateFunctionCallOutputContext(reqBody map[string]any) FunctionCallOutpu
 			continue
 		}
 		itemType, _ := itemMap["type"].(string)
-		switch itemType {
-		case "function_call_output":
+		switch {
+		case isCodexToolOutputItemType(itemType):
 			callID, _ := itemMap["call_id"].(string)
 			callID = strings.TrimSpace(callID)
 			if callID == "" {
@@ -177,7 +177,7 @@ func ValidateFunctionCallOutputContext(reqBody map[string]any) FunctionCallOutpu
 				continue
 			}
 			callIDs[callID] = struct{}{}
-		case "item_reference":
+		case itemType == "item_reference":
 			idValue, _ := itemMap["id"].(string)
 			idValue = strings.TrimSpace(idValue)
 			if idValue == "" {
@@ -199,6 +199,34 @@ func ValidateFunctionCallOutputContext(reqBody map[string]any) FunctionCallOutpu
 	}
 	result.HasItemReferenceForAllCallIDs = allReferenced
 	return result
+}
+
+// isCodexToolCallContextItemType 判断 input 项是否是可提供 call_id 上下文的工具调用。
+func isCodexToolCallContextItemType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "tool_call",
+		"function_call",
+		"local_shell_call",
+		"tool_search_call",
+		"custom_tool_call",
+		"mcp_tool_call":
+		return true
+	default:
+		return false
+	}
+}
+
+// isCodexToolOutputItemType 判断 input 项是否是工具调用输出。
+func isCodexToolOutputItemType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "function_call_output",
+		"tool_search_output",
+		"custom_tool_call_output",
+		"mcp_tool_call_output":
+		return true
+	default:
+		return false
+	}
 }
 
 // HasFunctionCallOutput 判断 input 是否包含 function_call_output，用于触发续链校验。

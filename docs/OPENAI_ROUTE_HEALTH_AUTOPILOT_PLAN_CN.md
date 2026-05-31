@@ -785,6 +785,408 @@ HTTP /v1/responses 携带 previous_response_id
 
 首包抢跑对速度提升最大，但有额外请求和 token 风险，所以必须放在健康分、路由追踪、连续性证据之后。
 
+## 2026-05-30 速度优化补充
+
+日期：2026-05-30
+执行者：Devil
+
+本节只记录下一批速度方向，不代表当前运行环境已经启用这些策略。当前运行态已经具备 `openai_path_health_enabled=true`、`openai_request_snapshot_enabled=true`、`openai_oauth_compat_mode=codex_direct`、`openai_codex_direct_force_ws=true`，但首包抢跑仍是关闭状态，且每日预算为 0。因此后续速度提升的重点应该从“继续补救失败”转向“请求前就选快路、首包慢就有限抢跑、常用连接保持热”。
+
+### 速度目标
+
+- 降低 Codex 流式请求的首字等待时间。
+- 减少慢 BaseURL、坏 BaseURL、冷连接导致的空等。
+- 保持上下文连续性优先级，不为了快破坏长会话。
+- 所有速度优化都必须可解释、可回滚、可限额。
+
+### 优化 8：首字抢跑真实启用策略
+
+现有 `openai_header_race_enabled` 已具备基础开关，但默认关闭且预算为 0。下一步不是直接全量打开，而是做成受控启用：
+
+- 仅对流式 `/responses` 请求启用。
+- 仅在尚未收到上游响应头、尚未向客户端输出时触发。
+- 默认延迟建议 2500-3500ms，先用 3500ms 保守启动。
+- 每日预算必须大于 0 才允许发起备用真实请求。
+- 备用请求优先同账号备用 BaseURL，其次才考虑同组健康账号。
+- `upstream_bound`、`unsafe_after_stream`、缺少安全重放证据的请求禁止跨账号抢跑。
+- 记录 `header_race_started`、`header_race_winner`、`header_race_canceled`、`header_race_budget_exhausted` 到路由追踪。
+
+预期收益：
+
+- 对“上游迟迟不回响应头”的 Codex 卡思考最直接。
+- 对稳定但慢的线路，能用备用路径提前拿到首包。
+
+风险和边界：
+
+- 会额外消耗真实请求 token，必须有预算和页面提示。
+- 如果两个请求都进入上游生成阶段，取消较慢请求也不一定完全免成本。
+- 不应默认给所有端开启，应优先绑定 Codex 稳定模式或首字速度优先策略。
+
+### 优化 9：BaseURL 请求前预选
+
+当前已经有 PathHealth 和 BaseURL 排序基础，但下一步要把“最近最快最稳”提升为明确调度目标，而不是失败后才切。
+
+预选输入：
+
+- `success_rate`
+- `ttft_ewma_ms`
+- `header_wait_ewma_ms`
+- `eof_count`
+- `header_timeout_count`
+- `upstream_5xx_count`
+- `cooldown_until`
+- `last_success_at`
+- `same_upstream_cluster`
+- `continuity_affinity`
+
+建议评分：
+
+```text
+base_url_score =
+  success_rate_weight
+  + freshness_weight
+  + continuity_affinity_weight
+  - ttft_penalty
+  - header_wait_penalty
+  - eof_penalty
+  - timeout_penalty
+  - cooldown_penalty
+```
+
+调度规则：
+
+- 新会话优先低 TTFT、低 header wait、成功率高的 URL。
+- 老会话优先同账号、同上游、同 BaseURL，再在候选中看速度。
+- `open_circuit` 默认不参与新请求。
+- `half_open` 只放少量探测请求。
+- 无样本的新 BaseURL 保留少量探索比例，避免永远没机会被验证。
+
+### 优化 10：主请求热路径瘦身
+
+速度优化最怕“为了观测把主请求拖慢”。后续要明确主请求同步路径只做必要决策，其他全部异步。
+
+必须同步做：
+
+- 鉴权和基础参数校验。
+- 调度账号和 BaseURL。
+- 读取内存 / Redis 里的健康快照。
+- 判断上下文迁移等级。
+- 发起上游请求并尽快透传响应头和首个 token。
+
+必须异步做：
+
+- 真实流量样本落库。
+- 请求快照落库。
+- 路由追踪详情落库。
+- 统计聚合。
+- 诊断详情补全。
+
+落地要求：
+
+- 所有异步队列满时允许丢弃低优先级样本，但要增加 dropped counter。
+- 路由追踪页面能看到样本是否因为队列满被丢弃。
+- 主请求路径不能等待快照写入、诊断写入、统计 flush。
+
+### 优化 11：连接和 WS 预热
+
+Codex 直连强制上游 WSv2 后，连接建立成本会影响首包。下一步应该对高频账号和高频 BaseURL 做轻量预热。
+
+预热对象：
+
+- 最近 10 分钟成功请求最多的账号。
+- 最近 TTFT 最低且失败率低的 BaseURL。
+- 当前策略模板为 Codex 稳定优先或首字速度优先时的主候选路径。
+
+预热方式：
+
+- 维护常用 BaseURL 的 DNS / TCP / TLS 热连接。
+- WSv2 池保持小数量可复用连接或可快速建连状态。
+- 对进入冷却的路径立即停止预热。
+- 对 401/403/429 高频账号停止预热，避免放大上游压力。
+
+验收标准：
+
+- 预热开启后，常用账号的 header wait EWMA 下降。
+- 冷门账号不会被大量预热。
+- 预热失败不会影响真实请求。
+
+### 优化 12：连续性优先的速度策略
+
+速度不能压过会话连续性。不同上下文迁移分类要有不同速度策略：
+
+```text
+portable_full
+  -> 可启用同账号 BaseURL 抢跑，必要时允许跨账号抢跑
+
+portable_summary
+  -> 可启用抢跑，但页面标记摘要连续
+
+upstream_bound
+  -> 优先原账号、原 BaseURL、同上游，不跨账号抢跑
+
+snapshot_replayable
+  -> 可用快照重建后抢跑或切号
+
+unsafe_after_stream
+  -> 禁止透明重放和抢跑
+```
+
+这条规则的目的不是提升极限速度，而是避免“为了快，把上下文弄断但客户端不知道”。
+
+### 优化 13：同上游集群识别
+
+很多中转 API Key 会配置多个加速域名，但背后可能是同一个上游账号池，也可能完全不同。BaseURL 调度要知道“哪些 URL 更可能认识同一个 response chain”。
+
+建议增加配置：
+
+- `same_upstream_cluster`
+- `cluster_name`
+- `continuity_affinity_level`
+
+用法：
+
+- 同账号同 cluster 的 BaseURL 在老会话里优先级高于陌生 BaseURL。
+- 新会话仍以速度分为主。
+- 报告页展示每个 BaseURL 的 cluster、连续性亲和度和速度得分。
+
+### 建议优先级
+
+P0：首字抢跑受控启用
+这是最直接改善 Codex 卡思考体感的功能，但必须带预算和开关。
+
+P0：BaseURL 请求前预选
+避免每次先撞慢 URL 或坏 URL，再进入 failover。
+
+P1：主请求热路径瘦身
+保证已经加上的观测、快照、追踪不会拖慢首字。
+
+P1：连接和 WS 预热
+对 Codex 直连强制 WSv2 的场景收益明显。
+
+P2：连续性优先速度策略
+让快和不断上下文同时成立，避免错误承诺。
+
+P2：同上游集群识别
+适合多 BaseURL、多加速域名继续扩展后再做精细调度。
+
+## 上游 v0.1.131-v0.1.133 剩余可合入清单
+
+更新日期：2026-05-30
+执行约束：本节只记录后续可合入项，不在本轮继续直接改业务代码。后续实施时逐项 review、逐项测试，避免把大功能一次性混入当前本地分支。
+
+### 已处理或本地已有覆盖
+
+- `5e5c2062` / `cff2f291` / `b34cc71b` / `53acde1e`：Responses 流式请求在已经开始输出后，失败时补 `response.failed` SSE 终止事件，避免客户端看到静默 EOF。
+- `8a999f43`：OpenAI WS 终止事件不再算 token event，避免把总耗时误报成首 token 延迟。
+- `6aec5050` / `be361359`：OAuth 401 不再用请求开始时的账号快照回写整列 `credentials`，避免覆盖刚刷新的 `refresh_token`。
+- `56e96fdd`：并发槽位获取失败区分真并发满、客户端取消和底层获取异常，避免错误归类为 429。
+- `08061717`：OpenAI WS 429 / usage limit failover，本地已有更完整的 WS failover、401、首帧前 EOF 和 `codex.rate_limits` 处理，后续只需对照补缺口。
+
+### P0：优先合入
+
+1. `33ac8eb2` OpenAI HTTP/2 response header timeout / HTTP1 fallback
+
+收益：
+
+- 针对代理或加速域名不兼容 HTTP/2 导致的 `timeout awaiting response headers`，给 OpenAI 上游单独建立 HTTP profile。
+- 对当前多 BaseURL、header timeout、首包抢跑和 PathHealth 很有价值，可以减少“先卡住再切”的概率。
+
+合入方式：
+
+- 不建议整 commit 直接 cherry-pick，因为它同时改 `config`、`repository/http_upstream`、多个 OpenAI service 和 deploy 配置，容易和本地多 BaseURL / header race / TLS 指纹逻辑冲突。
+- 建议抽取 `openai_http2` 配置、`http_upstream_profile`、代理 H2 兼容错误识别和回退 TTL。
+- 必须把结果接入本地 `request_base_url` 级健康分，避免只按 account 维度回退。
+
+验收：
+
+- 人为模拟 H2 header timeout 后，下一次同代理同 BaseURL 在 TTL 内走 HTTP/1.1 或备用 profile。
+- PathHealth 能记录 `http2_header_timeout`、`http1_fallback_hit`。
+- 不影响普通非 OpenAI 平台的 HTTP client。
+
+2. `2bd3125d` Preserve usage request context
+
+收益：
+
+- 异步 usage 记录保留 `request_id` / `client_request_id`，请求详情、usage、Ops trace 可以串起来。
+- 对“最近请求路由追踪”和测速反哺很关键，不然主请求成功了但异步记录丢上下文。
+
+合入方式：
+
+- 抽取 `usageRecordContext` / `wrapUsageRecordTaskContext` 思路。
+- 同步覆盖普通 gateway、OpenAI `/responses`、OpenAI WS、images、embeddings 等 usage 提交流程。
+- 本地 `client_request_id` middleware 已有自定义白名单逻辑，不能被上游实现覆盖掉。
+
+验收：
+
+- 异步 usage 任务里能读到同一个 `client_request_id`。
+- Ops 请求详情和 usage log 能按 request id 关联。
+- worker pool 满载或 mandatory fallback 时也保留上下文。
+
+3. `ed1b57c5` OpenAI endpoint capability gating
+
+收益：
+
+- 调度前按账号能力过滤 endpoint，避免把 `/responses`、`/chat/completions`、`/images`、`/embeddings` 发给不支持的账号。
+- 对速度有间接收益：减少一次失败后的账号切换。
+
+合入方式：
+
+- 复用本地账号能力字段和前端账号编辑模式，不能破坏现有 API Key 追加、多 BaseURL、`balance_base_url`。
+- 调度跳过原因写入 RouteDecisionTrace：`endpoint_not_supported`。
+- 前端筛选和账号详情展示“支持 endpoint”。
+
+验收：
+
+- 不支持 `/responses` 的账号不会进入候选。
+- 请求详情能看到被跳过账号和原因。
+- 能和 BaseURL 级调度、会话连续性分类同时工作。
+
+### P1：稳定性和速度增强
+
+4. `21033dce` configurable pool-mode same-account retry status codes
+
+收益：
+
+- 让同账号重试 / 换账号切换的状态码可配置。
+- 对自用多账号池有价值：有些 5xx 适合快速换账号，有些 409/425/529 更适合同账号短重试。
+
+合入方式：
+
+- 接入现有策略模板：Codex 稳定优先、首字速度优先、省额度优先。
+- 记录每次 retry 的 status、次数、耗时和是否最终换账号。
+
+5. `a31b5074` 模型 404 只冷却账号 + 模型组合
+
+收益：
+
+- 当前如果模型 404 导致整个账号冷却，会误伤同账号其他模型。
+- 精细到 account-model 后，减少可用账号被错误排除，提升调度成功率。
+
+合入方式：
+
+- 合入 `model_not_found_error` 类逻辑时，需要对齐本地账号健康、PathHealth 和后台测速结果。
+- 把跳过原因写成 `model_not_available_for_account`，不要污染账号全局健康分。
+
+6. `32ea9cfe` fallback to SSE body for API key responses
+
+收益：
+
+- 某些 API Key 上游返回 Responses SSE body 但 header / content-type 不标准时，可以减少误判失败。
+- 对多中转 BaseURL 场景有价值。
+
+合入方式：
+
+- 只在安全可解析的 SSE 响应体中启用。
+- 与本地 `response.failed` 终止事件、流式保护、首包抢跑互斥检查。
+
+7. `d7bed40d` / `fc66cd70` OpenAI WS 兼容性、usage 统计、Codex tool outputs continuation
+
+收益：
+
+- 上游 WS 协议细节和 Codex 工具调用续写兼容性增强。
+- 本地 WSv2 已经大幅扩展，不能直接覆盖；但值得逐项 diff，补 missing case。
+
+合入方式：
+
+- 只补缺口：事件类型、usage 提取、tool output continuation、response id sticky。
+- 每补一项都加 WS 协议回归测试。
+
+8. `89dffdd2` / `20f53407` / `f7ac5e59` / `b9509e82` / `ed2aac25` usage 与计费修复
+
+收益：
+
+- Anthropic <-> Responses / ChatCompletions 转换时，input_tokens、completion_tokens_details、cache read/create、long context multiplier 更准确。
+- 对测速报告、账号成本、真实流量反哺评分有价值。
+
+合入方式：
+
+- 只合计费和 usage 字段透传，不顺手改模型映射。
+- 与本地账号测速 token 评分按 request_count 缩放逻辑一起回归。
+
+9. `5c4101ac` 及相关 ops business limit 分类
+
+收益：
+
+- 把本地策略拒绝、白名单拒绝、count_tokens 等业务限制从 SLA / 上游错误中剥离。
+- 避免这些错误污染 BaseURL 健康分和账号稳定性评分。
+
+合入方式：
+
+- 与本地 `ClassifyUpstreamError`、`OpenAIPathHealthTracker`、Ops 诊断字段合并。
+- 路由健康只采集真实上游失败，不采集本地策略拒绝。
+
+### P2：可选合入
+
+10. `ead471d6` / `8b7a8227` / `c9caadb3` account usage threshold auto-pause
+
+收益：
+
+- 可按 5h / 7d 用量阈值自动暂停账号调度，避免账号快耗尽时还被选择。
+- 与“远端余额定时刷新 + 请求热路径查库”方向一致。
+
+合入方式：
+
+- 需要 migration、设置页、后台任务和账号状态展示，建议单独开任务。
+- 必须和现有 `schedulable=false` / 暂停筛选语义统一。
+
+11. `ccace69d` OpenAI embeddings gateway
+
+收益：
+
+- 如果本地客户端需要 `/v1/embeddings`，可以补齐 OpenAI API 聚合能力。
+- 也能和 endpoint capability gating 配合，避免 embeddings 请求误打到不支持账号。
+
+合入方式：
+
+- 低耦合新增 handler / service / route，但要补 usage 和 endpoint 能力。
+- 当前主目标是 Codex 稳定性，优先级低于 P0/P1。
+
+12. `f597c158` group custom `/v1/models` model list
+
+收益：
+
+- 方便给不同分组展示不同模型列表，降低客户端误选模型概率。
+
+合入方式：
+
+- 和本地模型映射、OpenAI/Anthropic/Gemini 多平台列表合并，不直接覆盖现有 `/v1/models`。
+
+13. `68901cbf` / `514ac5c6` pricing metadata / 新模型支持
+
+收益：
+
+- 更新模型价格和模型名，提升成本统计准确性。
+
+合入方式：
+
+- 只对比 `resources/model-pricing` 和 domain constants，不混入其他功能。
+
+14. `0a521f09` Gemini streaming tool_use block 修复
+
+收益：
+
+- 如果你也通过本地网关走 Gemini/Anthropic 兼容流式工具调用，这个能减少流格式异常。
+
+合入方式：
+
+- 与 OpenAI 路由无直接关系，可作为跨平台稳定性小修单独合。
+
+15. `b15375df` / `37044b83` / `b6a38dda` 管理端体验修复
+
+收益：
+
+- 已是最新提示处理、endpoint capability UI 文案、账号创建时间列。
+
+合入方式：
+
+- 作为前端体验优化单独合，不和调度核心一起合。
+
+### 暂不建议本轮合入
+
+- `6b39b344` 用户 × 平台 USD 配额：功能面大，涉及 ent schema、migration、管理端、用户端和 billing cache。自用场景收益不如账号级自动暂停直接。
+- `1b2d8873` 内容审计运行态：偏风控产品功能，不直接提升 Codex 稳定性和速度。
+- 大量 README / sponsor / CI / deploy 示例变更：容易制造噪音，不建议混入本地稳定性分支。
+
 ## 总体验收
 
 - 多 BaseURL 账号能优先走最近最快最稳的 URL。

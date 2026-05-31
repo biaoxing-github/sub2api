@@ -1233,19 +1233,26 @@ func classifyOpsErrorLog(c *gin.Context, errType, message, code string, status i
 	routingCapacityLimited := isOpsRoutingCapacityLimited(c)
 	clientBusinessLimited := service.HasOpsClientBusinessLimited(c)
 	upstreamError := hasOpsUpstreamErrorContext(c)
-	if upstreamError && !routingCapacityLimited {
+	upstreamBusinessLimited := false
+	if classification, ok := classifyOpsUpstreamErrorContext(c); ok {
+		upstreamBusinessLimited = isOpsBusinessLimitedUpstreamClass(classification)
+	}
+	if upstreamError && !routingCapacityLimited && !upstreamBusinessLimited {
 		phase = "upstream"
 	}
 	if clientBusinessLimited && !upstreamError && !routingCapacityLimited {
 		phase = "auth"
+	}
+	if upstreamBusinessLimited && !routingCapacityLimited {
+		phase = "request"
 	}
 	if routingCapacityLimited {
 		phase = "routing"
 	}
 	msg := strings.ToLower(message)
 	localClientAuthError := !upstreamError && phase == "auth" && isOpsClientAuthError(code, msg)
-	localBusinessLimited := !upstreamError && classifyOpsIsBusinessLimited(errType, phase, code, status, message, localClientAuthError)
-	isBusinessLimited = routingCapacityLimited || (clientBusinessLimited && !upstreamError) || localBusinessLimited
+	localBusinessLimited := (!upstreamError || upstreamBusinessLimited) && classifyOpsIsBusinessLimited(errType, phase, code, status, message, localClientAuthError)
+	isBusinessLimited = routingCapacityLimited || (clientBusinessLimited && (!upstreamError || upstreamBusinessLimited)) || upstreamBusinessLimited || localBusinessLimited
 	errorOwner = classifyOpsErrorOwner(phase, message)
 	errorSource = classifyOpsErrorSource(phase, message)
 	return phase, isBusinessLimited, errorOwner, errorSource
@@ -1255,7 +1262,7 @@ func classifyOpsIsBusinessLimited(errType, phase, code string, status int, messa
 	if len(localClientAuthError) > 0 && localClientAuthError[0] {
 		return true
 	}
-	if isOpsLocalBusinessLimitError(code, strings.ToLower(message)) {
+	if isOpsLocalBusinessLimitError(code, strings.ToLower(message), status) {
 		return true
 	}
 	if phase == "billing" || phase == "concurrency" {
@@ -1287,7 +1294,7 @@ func isOpsClientAuthError(code string, msg string) bool {
 		strings.Contains(msg, "user account is not active")
 }
 
-func isOpsLocalBusinessLimitError(code string, msg string) bool {
+func isOpsLocalBusinessLimitError(code string, msg string, status ...int) bool {
 	switch strings.TrimSpace(code) {
 	case opsCodeInsufficientBalance,
 		opsCodeUsageLimitExceeded,
@@ -1302,6 +1309,7 @@ func isOpsLocalBusinessLimitError(code string, msg string) bool {
 		strings.Contains(msg, "no active subscription found for this group") ||
 		strings.Contains(msg, opsErrInsufficientBalance) ||
 		strings.Contains(msg, "insufficient account balance") ||
+		strings.Contains(msg, opsErrInsufficientQuota) ||
 		strings.Contains(msg, "api key group platform is not gemini") ||
 		strings.Contains(msg, "api key 额度已用完") ||
 		strings.Contains(msg, "api key 5小时限额已用完") ||
@@ -1310,7 +1318,8 @@ func isOpsLocalBusinessLimitError(code string, msg string) bool {
 		strings.Contains(msg, "daily usage limit exceeded") ||
 		strings.Contains(msg, "weekly usage limit exceeded") ||
 		strings.Contains(msg, "monthly usage limit exceeded") ||
-		strings.Contains(msg, "requests-per-minute limit exceeded")
+		strings.Contains(msg, "requests-per-minute limit exceeded") ||
+		isOpsBusinessLimitedMessageBySharedClassifier(msg, status...)
 }
 
 func hasOpsUpstreamErrorContext(c *gin.Context) bool {
@@ -1335,6 +1344,85 @@ func hasOpsUpstreamErrorContext(c *gin.Context) bool {
 		}
 	}
 	return false
+}
+
+func classifyOpsUpstreamErrorContext(c *gin.Context) (service.UpstreamErrorClass, bool) {
+	input := service.UpstreamErrorInput{}
+	if c == nil {
+		return service.UpstreamErrorClass{}, false
+	}
+	if v, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
+		switch t := v.(type) {
+		case int:
+			if t > 0 {
+				input.StatusCode = t
+			}
+		case int64:
+			if t > 0 {
+				input.StatusCode = int(t)
+			}
+		}
+	}
+	if v, ok := c.Get(service.OpsUpstreamErrorMessageKey); ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			input.Message = strings.TrimSpace(s)
+		}
+	}
+	if v, ok := c.Get(service.OpsUpstreamErrorDetailKey); ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			input.Body = []byte(strings.TrimSpace(s))
+		}
+	}
+	if v, ok := c.Get(service.OpsUpstreamErrorsKey); ok {
+		if events, ok := v.([]*service.OpsUpstreamErrorEvent); ok && len(events) > 0 {
+			for i := len(events) - 1; i >= 0; i-- {
+				ev := events[i]
+				if ev == nil {
+					continue
+				}
+				if input.StatusCode == 0 && ev.UpstreamStatusCode > 0 {
+					input.StatusCode = ev.UpstreamStatusCode
+				}
+				if input.Message == "" {
+					if msg := strings.TrimSpace(ev.Message); msg != "" {
+						input.Message = msg
+					}
+				}
+				if len(input.Body) == 0 {
+					if detail := strings.TrimSpace(ev.Detail); detail != "" {
+						input.Body = []byte(detail)
+					} else if body := strings.TrimSpace(ev.UpstreamResponseBody); body != "" {
+						input.Body = []byte(body)
+					}
+				}
+				if input.StatusCode > 0 || input.Message != "" || len(input.Body) > 0 {
+					break
+				}
+			}
+		}
+	}
+	if input.StatusCode == 0 && input.Message == "" && len(input.Body) == 0 {
+		return service.UpstreamErrorClass{}, false
+	}
+	return service.ClassifyUpstreamError(input), true
+}
+
+func isOpsBusinessLimitedUpstreamClass(classification service.UpstreamErrorClass) bool {
+	switch classification.Category {
+	case service.UpstreamErrorCategoryQuota, service.UpstreamErrorCategoryBusinessLimited:
+		return true
+	default:
+		return false
+	}
+}
+
+func isOpsBusinessLimitedMessageBySharedClassifier(msg string, status ...int) bool {
+	input := service.UpstreamErrorInput{Message: strings.TrimSpace(msg)}
+	if len(status) > 0 && status[0] > 0 {
+		input.StatusCode = status[0]
+	}
+	classification := service.ClassifyUpstreamError(input)
+	return isOpsBusinessLimitedUpstreamClass(classification)
 }
 
 func isOpsNoAvailableAccountMessage(message string) bool {
