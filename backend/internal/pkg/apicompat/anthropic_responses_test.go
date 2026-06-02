@@ -394,6 +394,30 @@ func TestResponsesToAnthropic_Reasoning(t *testing.T) {
 	assert.Equal(t, "42", anth.Content[1].Text)
 }
 
+func TestResponsesToAnthropic_ReasoningOnlyAddsVisibleTextFallback(t *testing.T) {
+	resp := &ResponsesResponse{
+		ID:     "resp_reasoning_only",
+		Model:  "gpt-5.2",
+		Status: "completed",
+		Output: []ResponsesOutput{
+			{
+				Type: "reasoning",
+				Summary: []ResponsesSummary{
+					{Type: "summary_text", Text: "Reasoning without a final text block."},
+				},
+			},
+		},
+	}
+
+	anth := ResponsesToAnthropic(resp, "claude-opus-4-6")
+	require.Len(t, anth.Content, 2)
+	assert.Equal(t, "thinking", anth.Content[0].Type)
+	assert.Equal(t, "Reasoning without a final text block.", anth.Content[0].Thinking)
+	assert.Equal(t, "text", anth.Content[1].Type)
+	assert.Equal(t, "Reasoning without a final text block.", anth.Content[1].Text)
+	assert.Equal(t, "end_turn", anth.StopReason)
+}
+
 func TestResponsesToAnthropic_Incomplete(t *testing.T) {
 	resp := &ResponsesResponse{
 		ID:     "resp_inc",
@@ -765,6 +789,92 @@ func TestStreamingReasoning(t *testing.T) {
 	}, state)
 	require.Len(t, events, 1)
 	assert.Equal(t, "content_block_stop", events[0].Type)
+}
+
+func TestStreamingReasoningOnlyAddsVisibleTextFallback(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type:     "response.created",
+		Response: &ResponsesResponse{ID: "resp_reasoning_only_stream", Model: "gpt-5.2"},
+	}, state)
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type:        "response.output_item.added",
+		OutputIndex: 0,
+		Item:        &ResponsesOutput{Type: "reasoning"},
+	}, state)
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type:        "response.reasoning_summary_text.delta",
+		OutputIndex: 0,
+		Delta:       "Reasoning without streamed text.",
+	}, state)
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type: "response.reasoning_summary_text.done",
+	}, state)
+
+	events := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type: "response.completed",
+		Response: &ResponsesResponse{
+			Status: "completed",
+			Usage:  &ResponsesUsage{InputTokens: 8, OutputTokens: 12},
+		},
+	}, state)
+
+	require.Len(t, events, 5)
+	assert.Equal(t, "content_block_start", events[0].Type)
+	assert.Equal(t, "text", events[0].ContentBlock.Type)
+	assert.Equal(t, "content_block_delta", events[1].Type)
+	assert.Equal(t, "text_delta", events[1].Delta.Type)
+	assert.Equal(t, "Reasoning without streamed text.", events[1].Delta.Text)
+	assert.Equal(t, "content_block_stop", events[2].Type)
+	assert.Equal(t, "message_delta", events[3].Type)
+	assert.Equal(t, "message_stop", events[4].Type)
+}
+
+func TestStreamingReasoningWithServerToolDoesNotAddVisibleTextFallback(t *testing.T) {
+	state := NewResponsesEventToAnthropicState()
+
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type:     "response.created",
+		Response: &ResponsesResponse{ID: "resp_reasoning_server_tool_stream", Model: "gpt-5.2"},
+	}, state)
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type:        "response.output_item.added",
+		OutputIndex: 0,
+		Item:        &ResponsesOutput{Type: "reasoning"},
+	}, state)
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type:        "response.reasoning_summary_text.delta",
+		OutputIndex: 0,
+		Delta:       "Reasoning before server tool.",
+	}, state)
+	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type: "response.reasoning_summary_text.done",
+	}, state)
+
+	toolEvents := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type:        "response.output_item.done",
+		OutputIndex: 1,
+		Item: &ResponsesOutput{
+			ID:     "web_search_1",
+			Type:   "web_search_call",
+			Status: "completed",
+			Action: &WebSearchAction{Query: "sub2api"},
+		},
+	}, state)
+	require.Len(t, toolEvents, 4)
+
+	events := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
+		Type: "response.completed",
+		Response: &ResponsesResponse{
+			Status: "completed",
+			Usage:  &ResponsesUsage{InputTokens: 8, OutputTokens: 12},
+		},
+	}, state)
+
+	require.Len(t, events, 2)
+	assert.Equal(t, "message_delta", events[0].Type)
+	assert.Equal(t, "message_stop", events[1].Type)
 }
 
 func TestStreamingIncomplete(t *testing.T) {

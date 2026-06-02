@@ -3,6 +3,7 @@ package apicompat
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -76,6 +77,7 @@ func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicRespo
 		}
 	}
 
+	blocks = addReasoningVisibleTextFallback(blocks)
 	if len(blocks) == 0 {
 		blocks = append(blocks, AnthropicContentBlock{Type: "text", Text: ""})
 	}
@@ -88,6 +90,38 @@ func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicRespo
 	}
 
 	return out
+}
+
+func addReasoningVisibleTextFallback(blocks []AnthropicContentBlock) []AnthropicContentBlock {
+	hasVisibleText := false
+	hasToolUse := false
+	var reasoning strings.Builder
+
+	for _, block := range blocks {
+		switch block.Type {
+		case "text":
+			if block.Text != "" {
+				hasVisibleText = true
+			}
+		case "tool_use", "server_tool_use", "web_search_tool_result":
+			hasToolUse = true
+		case "thinking":
+			if block.Thinking != "" {
+				if reasoning.Len() > 0 {
+					reasoning.WriteString("\n\n")
+				}
+				reasoning.WriteString(block.Thinking)
+			}
+		}
+	}
+
+	if hasVisibleText || hasToolUse || reasoning.Len() == 0 {
+		return blocks
+	}
+	return append(blocks, AnthropicContentBlock{
+		Type: "text",
+		Text: reasoning.String(),
+	})
 }
 
 func anthropicUsageFromResponsesUsage(usage *ResponsesUsage) AnthropicUsage {
@@ -177,6 +211,9 @@ type ResponsesEventToAnthropicState struct {
 	CurrentToolArgs     string
 	CurrentToolHadDelta bool
 	HasToolCall         bool
+	HasServerToolOutput bool
+	HasTextOutput       bool
+	ReasoningText       strings.Builder
 
 	// OutputIndexToBlockIdx maps Responses output_index → Anthropic content block index.
 	OutputIndexToBlockIdx map[int]int
@@ -241,6 +278,7 @@ func FinalizeResponsesAnthropicStream(state *ResponsesEventToAnthropicState) []A
 
 	var events []AnthropicStreamEvent
 	events = append(events, closeCurrentBlock(state)...)
+	events = append(events, emitReasoningVisibleTextFallback(state)...)
 
 	stopReason := "end_turn"
 	if state.HasToolCall {
@@ -367,6 +405,7 @@ func resToAnthHandleTextDelta(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	if evt.Delta == "" {
 		return nil
 	}
+	state.HasTextOutput = true
 
 	var events []AnthropicStreamEvent
 
@@ -469,6 +508,7 @@ func resToAnthHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 	if !ok {
 		return nil
 	}
+	_, _ = state.ReasoningText.WriteString(evt.Delta)
 
 	return []AnthropicStreamEvent{{
 		Type:  "content_block_delta",
@@ -509,6 +549,7 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 func resToAnthHandleWebSearchDone(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
 	var events []AnthropicStreamEvent
 	events = append(events, closeCurrentBlock(state)...)
+	state.HasServerToolOutput = true
 
 	toolUseID := "srvtoolu_" + evt.Item.ID
 	query := ""
@@ -565,15 +606,12 @@ func resToAnthHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 
 	var events []AnthropicStreamEvent
 	events = append(events, closeCurrentBlock(state)...)
+	events = append(events, emitReasoningVisibleTextFallback(state)...)
 
 	stopReason := "end_turn"
+	var responseUsage *ResponsesUsage
 	if evt.Response != nil {
-		if evt.Response.Usage != nil {
-			usage := anthropicUsageFromResponsesUsage(evt.Response.Usage)
-			state.InputTokens = usage.InputTokens
-			state.OutputTokens = usage.OutputTokens
-			state.CacheReadInputTokens = usage.CacheReadInputTokens
-		}
+		responseUsage = evt.Response.Usage
 		switch evt.Response.Status {
 		case "incomplete":
 			if evt.Response.IncompleteDetails != nil && evt.Response.IncompleteDetails.Reason == "max_output_tokens" {
@@ -584,6 +622,15 @@ func resToAnthHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 				stopReason = "tool_use"
 			}
 		}
+	}
+	if responseUsage == nil {
+		responseUsage = evt.Usage
+	}
+	if responseUsage != nil {
+		usage := anthropicUsageFromResponsesUsage(responseUsage)
+		state.InputTokens = usage.InputTokens
+		state.OutputTokens = usage.OutputTokens
+		state.CacheReadInputTokens = usage.CacheReadInputTokens
 	}
 
 	events = append(events,
@@ -602,6 +649,40 @@ func resToAnthHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	)
 	state.MessageStopSent = true
 	return events
+}
+
+func emitReasoningVisibleTextFallback(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
+	if state == nil || state.HasTextOutput || state.HasToolCall || state.HasServerToolOutput || state.ReasoningText.Len() == 0 {
+		return nil
+	}
+
+	text := state.ReasoningText.String()
+	idx := state.ContentBlockIndex
+	state.ContentBlockIndex++
+	state.HasTextOutput = true
+
+	return []AnthropicStreamEvent{
+		{
+			Type:  "content_block_start",
+			Index: &idx,
+			ContentBlock: &AnthropicContentBlock{
+				Type: "text",
+				Text: "",
+			},
+		},
+		{
+			Type:  "content_block_delta",
+			Index: &idx,
+			Delta: &AnthropicDelta{
+				Type: "text_delta",
+				Text: text,
+			},
+		},
+		{
+			Type:  "content_block_stop",
+			Index: &idx,
+		},
+	}
 }
 
 func closeCurrentBlock(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {

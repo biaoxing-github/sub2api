@@ -82,20 +82,46 @@ func ResponsesToChatCompletions(resp *ResponsesResponse, model string) *ChatComp
 	}}
 
 	if resp.Usage != nil {
-		usage := &ChatUsage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
-		}
-		if resp.Usage.InputTokensDetails != nil && resp.Usage.InputTokensDetails.CachedTokens > 0 {
-			usage.PromptTokensDetails = &ChatTokenDetails{
-				CachedTokens: resp.Usage.InputTokensDetails.CachedTokens,
-			}
-		}
-		out.Usage = usage
+		out.Usage = chatUsageFromResponsesUsage(resp.Usage)
 	}
 
 	return out
+}
+
+func chatUsageFromResponsesUsage(u *ResponsesUsage) *ChatUsage {
+	if u == nil {
+		return nil
+	}
+	totalTokens := u.TotalTokens
+	if totalTokens == 0 {
+		totalTokens = u.InputTokens + u.OutputTokens
+	}
+	usage := &ChatUsage{
+		PromptTokens:     u.InputTokens,
+		CompletionTokens: u.OutputTokens,
+		TotalTokens:      totalTokens,
+	}
+	if u.InputTokensDetails != nil {
+		details := &ChatTokenDetails{
+			CachedTokens: u.InputTokensDetails.CachedTokens,
+			AudioTokens:  u.InputTokensDetails.AudioTokens,
+		}
+		if *details != (ChatTokenDetails{}) {
+			usage.PromptTokensDetails = details
+		}
+	}
+	if u.OutputTokensDetails != nil {
+		details := &ChatTokenDetails{
+			ReasoningTokens:          u.OutputTokensDetails.ReasoningTokens,
+			AudioTokens:              u.OutputTokensDetails.AudioTokens,
+			AcceptedPredictionTokens: u.OutputTokensDetails.AcceptedPredictionTokens,
+			RejectedPredictionTokens: u.OutputTokensDetails.RejectedPredictionTokens,
+		}
+		if *details != (ChatTokenDetails{}) {
+			usage.CompletionTokensDetails = details
+		}
+	}
+	return usage
 }
 
 func responsesStatusToChatFinishReason(status string, details *ResponsesIncompleteDetails, toolCalls []ChatToolCall) string {
@@ -293,21 +319,9 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	state.Finalized = true
 	finishReason := "stop"
 
+	var usage *ResponsesUsage
 	if evt.Response != nil {
-		if evt.Response.Usage != nil {
-			u := evt.Response.Usage
-			usage := &ChatUsage{
-				PromptTokens:     u.InputTokens,
-				CompletionTokens: u.OutputTokens,
-				TotalTokens:      u.InputTokens + u.OutputTokens,
-			}
-			if u.InputTokensDetails != nil && u.InputTokensDetails.CachedTokens > 0 {
-				usage.PromptTokensDetails = &ChatTokenDetails{
-					CachedTokens: u.InputTokensDetails.CachedTokens,
-				}
-			}
-			state.Usage = usage
-		}
+		usage = evt.Response.Usage
 
 		switch evt.Response.Status {
 		case "incomplete":
@@ -321,6 +335,12 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 		}
 	} else if state.SawToolCall {
 		finishReason = "tool_calls"
+	}
+	if usage == nil {
+		usage = evt.Usage
+	}
+	if usage != nil {
+		state.Usage = chatUsageFromResponsesUsage(usage)
 	}
 
 	var chunks []ChatCompletionsChunk

@@ -95,17 +95,23 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 	}
 
 	// Usage
-	out.Usage = &ResponsesUsage{
-		InputTokens:  resp.Usage.InputTokens,
-		OutputTokens: resp.Usage.OutputTokens,
-		TotalTokens:  resp.Usage.InputTokens + resp.Usage.OutputTokens,
+	out.Usage = responsesUsageFromAnthropicUsage(resp.Usage)
+
+	return out
+}
+
+func responsesUsageFromAnthropicUsage(usage AnthropicUsage) *ResponsesUsage {
+	inputTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+	out := &ResponsesUsage{
+		InputTokens:  inputTokens,
+		OutputTokens: usage.OutputTokens,
+		TotalTokens:  inputTokens + usage.OutputTokens,
 	}
-	if resp.Usage.CacheReadInputTokens > 0 {
-		out.Usage.InputTokensDetails = &ResponsesInputTokensDetails{
-			CachedTokens: resp.Usage.CacheReadInputTokens,
+	if usage.CacheReadInputTokens > 0 {
+		out.InputTokensDetails = &ResponsesInputTokensDetails{
+			CachedTokens: usage.CacheReadInputTokens,
 		}
 	}
-
 	return out
 }
 
@@ -151,9 +157,10 @@ type AnthropicEventToResponsesState struct {
 	CurrentName   string
 
 	// Usage from message_delta
-	InputTokens          int
-	OutputTokens         int
-	CacheReadInputTokens int
+	InputTokens              int
+	OutputTokens             int
+	CacheReadInputTokens     int
+	CacheCreationInputTokens int
 }
 
 // NewAnthropicEventToResponsesState returns an initialised stream state.
@@ -395,6 +402,9 @@ func anthToResHandleMessageDelta(evt *AnthropicStreamEvent, state *AnthropicEven
 		if evt.Usage.CacheReadInputTokens > 0 {
 			state.CacheReadInputTokens = evt.Usage.CacheReadInputTokens
 		}
+		if evt.Usage.CacheCreationInputTokens > 0 {
+			state.CacheCreationInputTokens = evt.Usage.CacheCreationInputTokens
+		}
 	}
 
 	return nil
@@ -472,10 +482,11 @@ func makeResponsesCompletedEvent(
 	seq := state.SequenceNumber
 	state.SequenceNumber++
 
+	inputTokens := state.InputTokens + state.CacheReadInputTokens + state.CacheCreationInputTokens
 	usage := &ResponsesUsage{
-		InputTokens:  state.InputTokens,
+		InputTokens:  inputTokens,
 		OutputTokens: state.OutputTokens,
-		TotalTokens:  state.InputTokens + state.OutputTokens,
+		TotalTokens:  inputTokens + state.OutputTokens,
 	}
 	if state.CacheReadInputTokens > 0 {
 		usage.InputTokensDetails = &ResponsesInputTokensDetails{

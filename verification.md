@@ -682,3 +682,102 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 新增 `thinking=false` 回归测试通过，确认 thinking start/delta/signature/stop 被过滤，text、usage、terminal 正常通过。
 - 相关 streaming/failover、Anthropic API key passthrough、DeepSeek OpenAI 原生 `reasoning_content` focused tests 通过。
 - 全量 `internal/service` 单测超过 90 秒无输出后中断；本次改动已由 focused tests 覆盖，未把既有慢测作为本次阻断项。
+
+---
+
+日期：2026-06-02
+执行者：Devil
+
+## Anthropic Messages reasoning-only 可见兜底验证
+
+本次排查针对 Claude Code 通过本地 sub2api 调用国产 reasoning 模型时反复出现空输出、长时间无正文或 `max_tokens` 的问题。
+
+当前源码链路为：Anthropic `/v1/messages` 请求在 `OpenAIGatewayService.ForwardAsAnthropic` 中转为 OpenAI Responses 请求，上游强制流式返回，再由 `apicompat.ResponsesToAnthropic` / `ResponsesEventToAnthropicEvents` 转回 Anthropic Messages。原转换会把 Responses `reasoning` 保真映射为 Anthropic `thinking` block；当上游没有生成最终 `output_text` 时，Claude Code 这类只消费 text 的客户端就表现为空输出。
+
+修复后，Responses 转 Anthropic 时仅在“没有可见 text、没有 tool_use/server tool，但存在 thinking/reasoning 摘要”时追加一个 text 兜底 block。已有 text 不重复，tool_use 不伪装成正文。
+
+## 校验方式
+
+- direct `/v1/models` 查看当前本地模型列表。
+- direct `/v1/messages` trivial smoke：`GLM-5.1`、`deepseek-v4-pro`、`deepseek-v4-flash`、`mimo-v2.5-pro`、`mimo-v2.5`。
+- direct `/v1/messages` medium smoke：`deepseek-v4-pro`、`GLM-5.1`、`mimo-v2.5-pro`。
+- 临时模块内 `go run .\.codex\apicompat-check` 编译生产 apicompat 包，并验证 reasoning-only JSON 与 SSE 兜底。
+- `go test ./internal/pkg/apicompat`
+
+## 校验结果
+
+- 当前本地 8080 模型列表只暴露 `GLM-5.1`、`deepseek-v4-flash`、`deepseek-v4-pro`、`mimo-v2.5`、`mimo-v2.5-pro`；旧 `glm-4.5`、`deepseek-v3-1-terminus`、`kimi-k2-0711-preview` 请求返回 503。
+- 当前三模型 trivial smoke 均返回 `OK`；DeepSeek/MiMo 同时返回 thinking 与 text，GLM 只返回 text。
+- 中等 smoke 结果：`deepseek-v4-pro` 返回 `stop=max_tokens`、`text_len=347`、`thinking_len=920`；`GLM-5.1` 返回 `stop=end_turn`、`text_len=699`；`mimo-v2.5-pro` 返回 `stop=max_tokens`、`text_len=598`、`thinking_len=591`。说明 DeepSeek/MiMo 在中等任务上仍需更高 token 预算或更小任务切分。
+- 临时 `go run` 检查通过，确认生产 apicompat 包会在 reasoning-only JSON/SSE 场景追加 Claude Code 可见 text。
+- `go test ./internal/pkg/apicompat` 被当前工作树既有测试字段不匹配阻塞，错误包括 `ResponsesStreamEvent.Usage`、`ResponsesInputTokensDetails.AudioTokens`、`ResponsesOutputTokensDetails.AudioTokens`、`ChatUsage.CompletionTokensDetails` 等字段不存在；这些错误与本次新增兜底逻辑无关。
+- 本次只修改源码和 skill，未重建/重启当前 `127.0.0.1:8080` 运行网关，因此线上本地进程尚未具备该兜底。
+
+---
+
+日期：2026-06-02
+执行者：Devil
+
+## Anthropic Messages server tool 兜底一致性验证
+
+本次修复代码审查发现的流式/非流式行为不一致：非流式 Responses 转 Anthropic 时，只要存在 `server_tool_use` 或 `web_search_tool_result` 就不会把 reasoning 复制成可见 text；流式路径此前只检查 function `tool_use`，因此 reasoning + web_search server tool + 无正文时仍会额外发 text fallback。
+
+## 校验方式
+
+- 新增 `TestStreamingReasoningWithServerToolDoesNotAddVisibleTextFallback`，先验证修复前 completion 事件多出 text fallback。
+- 修复后运行 reasoning fallback 聚焦测试。
+- 运行 `apicompat` 包测试。
+- 运行 `git diff --check`。
+
+## 校验结果
+
+- 红测先失败：`response.completed` 返回 5 个事件，而期望只有 `message_delta` 和 `message_stop`。
+- 修复后 `go test ./internal/pkg/apicompat -run "TestStreamingReasoningWithServerToolDoesNotAddVisibleTextFallback|TestStreamingReasoningOnlyAddsVisibleTextFallback|TestResponsesToAnthropic_ReasoningOnlyAddsVisibleTextFallback" -count=1` 通过。
+- `go test ./internal/pkg/apicompat -count=1` 通过。
+- `git diff --check` 通过，仅保留 Windows 工作区对文档文件的 LF/CRLF 提示。
+
+---
+
+日期：2026-06-02
+执行者：Devil
+
+## 本地 sub2api reasoning-only 可见兜底部署验证
+
+本轮验证承接前一节的源码修复，确认本地 Docker 运行镜像已经包含 Responses 转 Anthropic Messages 的 reasoning-only 可见 text 兜底，且 Claude Code 客户端可以看到国产 reasoning 模型的正文输出。
+
+## 校验方式
+
+- `go test ./internal/pkg/apicompat -count=1`
+- `docker ps --filter "name=sub2api" --format ...`
+- `docker exec sub2api /app/sub2api --version`
+- direct `GET /v1/models`
+- direct `POST /v1/messages` trivial smoke：`GLM-5.1`、`deepseek-v4-pro`、`mimo-v2.5-pro`
+- direct `POST /v1/messages` medium smoke：`deepseek-v4-pro`、`GLM-5.1`、`mimo-v2.5-pro`
+- Claude Code `--bare` trivial smoke：`GLM-5.1`、`deepseek-v4-pro`、`mimo-v2.5-pro`
+- Claude Code `--bare` medium smoke：`deepseek-v4-pro`
+
+## 校验结果
+
+- `go test ./internal/pkg/apicompat -count=1` 通过。
+- 当前 `sub2api` 容器运行 `sub2api:multi-key-local`，状态为 `healthy`。
+- 容器版本通过 `docker exec sub2api /app/sub2api --version` 校验，确认镜像内二进制使用本次提交号构建。
+- direct `/v1/models` 暴露 `deepseek-v4-flash`、`deepseek-v4-pro`、`GLM-5.1`、`mimo-v2.5`、`mimo-v2.5-pro`。
+- direct trivial smoke 均返回可见 text：`GLM-5.1 stop=end_turn text_len=2`，`deepseek-v4-pro stop=end_turn text_len=2 thinking_len=29`，`mimo-v2.5-pro stop=end_turn text_len=2 thinking_len=66`。
+- direct medium smoke 均返回可见 text：`deepseek-v4-pro stop=max_tokens text_len=766 thinking_len=1039`，`mimo-v2.5-pro stop=end_turn text_len=198 thinking_len=62`。DeepSeek 此处仍显示请求预算耗尽，但不再是空输出。
+- Claude Code `--bare` trivial smoke 均返回 `OK`，DeepSeek medium smoke 返回非空正文，`output_len=786`。
+
+## DeepSeek 输出预算诊断
+
+本次继续检查 `AnthropicToResponses` 请求转换路径：`max_tokens` 仅直接映射为 Responses `max_output_tokens`，低于 `minMaxOutputTokens=128` 时才抬高到 128；未发现 sub2api 在该路径设置 32k 或 384k 的本地硬上限。
+
+对同一个 DeepSeek 中等证明题进行预算对照：
+
+- `max_tokens=900`：`stop=max_tokens`，可见 text 非空。
+- `max_tokens=4096`：`stop=end_turn`，`text_len=654`，`thinking_len=777`。
+- `max_tokens=4096` 且 `output_config.effort=low`：`stop=end_turn`，`text_len=743`，`thinking_len=696`。
+
+结论：当前主要问题不再是 Claude Code 看不到 reasoning-only 输出，而是调度层需要先区分“小预算导致的 max_tokens”和“真实模型/网关失败”。复杂题评分时应先使用 direct API 明确提升 `max_tokens`，必要时把 DeepSeek 子任务拆到更小粒度，再由 GLM 聚合、Codex 校验。
+
+## 镜像构建备注
+
+标准 `docker build --pull=false --build-arg COMMIT=<commit> -t sub2api:multi-key-local .` 首次重试时被 Docker Desktop 当前 registry mirror 阻断，基础镜像 metadata 请求返回 403 或 TLS timeout。为避免改动宿主 Docker 配置，本轮使用本机 Go 对当前源码执行 Linux/amd64 静态编译，再基于上一版本地 `sub2api:multi-key-local` 运行时镜像替换 `/app/sub2api` 并重新打同名镜像。该镜像随后通过 compose recreate 部署，并用容器内 `--version`、direct API、Claude Code smoke 验证。
