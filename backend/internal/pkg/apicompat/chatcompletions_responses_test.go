@@ -1287,6 +1287,62 @@ func TestBufferedResponseAccumulator_NoSupplementWhenOutputExists(t *testing.T) 
 	assert.Equal(t, "from terminal event", resp.Output[0].Content[0].Text)
 }
 
+func TestBufferedResponseAccumulator_SupplementsIncompleteReasoningOutput(t *testing.T) {
+	acc := NewBufferedResponseAccumulator()
+	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.reasoning_summary_text.delta", Delta: "visible reasoning"})
+
+	resp := &ResponsesResponse{
+		ID:     "resp_reasoning_partial",
+		Status: "incomplete",
+		Output: []ResponsesOutput{
+			{
+				Type: "reasoning",
+			},
+		},
+	}
+
+	acc.SupplementResponseOutput(resp)
+
+	require.Len(t, resp.Output, 2)
+	assert.Equal(t, "reasoning", resp.Output[0].Type)
+	require.Len(t, resp.Output[0].Summary, 1)
+	assert.Equal(t, "summary_text", resp.Output[0].Summary[0].Type)
+	assert.Equal(t, "visible reasoning", resp.Output[0].Summary[0].Text)
+	assert.Equal(t, "reasoning", resp.Output[1].Type)
+}
+
+func TestBufferedResponseAccumulator_DoesNotOverrideExistingVisibleContent(t *testing.T) {
+	acc := NewBufferedResponseAccumulator()
+	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.reasoning_summary_text.delta", Delta: "from deltas"})
+	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.output_text.delta", Delta: "text from deltas"})
+
+	resp := &ResponsesResponse{
+		ID:     "resp_visible",
+		Status: "completed",
+		Output: []ResponsesOutput{
+			{
+				Type: "reasoning",
+				Summary: []ResponsesSummary{{
+					Type: "summary_text",
+					Text: "from terminal",
+				}},
+			},
+			{
+				Type: "message",
+				Content: []ResponsesContentPart{
+					{Type: "output_text", Text: "terminal text"},
+				},
+			},
+		},
+	}
+
+	acc.SupplementResponseOutput(resp)
+
+	require.Len(t, resp.Output, 2)
+	assert.Equal(t, "from terminal", resp.Output[0].Summary[0].Text)
+	assert.Equal(t, "terminal text", resp.Output[1].Content[0].Text)
+}
+
 func TestBufferedResponseAccumulator_EmptyDeltas(t *testing.T) {
 	acc := NewBufferedResponseAccumulator()
 

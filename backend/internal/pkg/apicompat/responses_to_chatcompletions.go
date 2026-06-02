@@ -500,14 +500,75 @@ func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
 }
 
 // SupplementResponseOutput fills resp.Output from accumulated delta content
-// when the terminal event delivered an empty output array. If resp.Output is
-// already populated, this is a no-op (preserves backward compatibility).
+// when the terminal event delivered an empty or structurally incomplete output
+// array. Existing visible text, tool calls, and reasoning summaries are
+// preserved; only missing content reconstructed from SSE deltas is appended.
 func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesResponse) {
-	if resp == nil || len(resp.Output) > 0 {
+	if resp == nil {
 		return
 	}
 	if !a.HasContent() {
 		return
 	}
-	resp.Output = a.BuildOutput()
+	if len(resp.Output) == 0 {
+		resp.Output = a.BuildOutput()
+		return
+	}
+
+	hasReasoningSummary := false
+	hasMessageText := false
+	hasFunctionCall := false
+
+	for _, item := range resp.Output {
+		switch item.Type {
+		case "reasoning":
+			for _, summary := range item.Summary {
+				if summary.Type == "summary_text" && strings.TrimSpace(summary.Text) != "" {
+					hasReasoningSummary = true
+					break
+				}
+			}
+		case "message":
+			for _, part := range item.Content {
+				if part.Type == "output_text" && part.Text != "" {
+					hasMessageText = true
+					break
+				}
+			}
+		case "function_call":
+			if item.Name != "" || item.Arguments != "" || item.CallID != "" {
+				hasFunctionCall = true
+			}
+		}
+	}
+
+	if a.reasoning.Len() > 0 && !hasReasoningSummary {
+		resp.Output = append([]ResponsesOutput{{
+			Type: "reasoning",
+			Summary: []ResponsesSummary{{
+				Type: "summary_text",
+				Text: a.reasoning.String(),
+			}},
+		}}, resp.Output...)
+	}
+	if a.text.Len() > 0 && !hasMessageText {
+		resp.Output = append(resp.Output, ResponsesOutput{
+			Type: "message",
+			Role: "assistant",
+			Content: []ResponsesContentPart{{
+				Type: "output_text",
+				Text: a.text.String(),
+			}},
+		})
+	}
+	if len(a.funcCalls) > 0 && !hasFunctionCall {
+		for i := range a.funcCalls {
+			resp.Output = append(resp.Output, ResponsesOutput{
+				Type:      "function_call",
+				CallID:    a.funcCalls[i].CallID,
+				Name:      a.funcCalls[i].Name,
+				Arguments: a.funcCalls[i].Args.String(),
+			})
+		}
+	}
 }
