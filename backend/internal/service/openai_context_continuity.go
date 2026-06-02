@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -16,6 +15,7 @@ const (
 	OpenAIContinuityReasonBalanceOK        = "balance_ok"
 	OpenAIContinuityReasonBalanceUnknown   = "balance_unknown"
 	OpenAIContinuityReasonBalanceExhausted = "balance_exhausted"
+	OpenAIContinuityReasonBalanceIgnored   = "balance_ignored_for_routing"
 	OpenAIContinuityReasonReplayNotSafe    = "replay_not_safe"
 	OpenAIContinuityReasonJournalMissing   = "journal_missing"
 )
@@ -54,8 +54,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 	requireCompact bool,
 	requestBody []byte,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	migration := ClassifyOpenAIContextMigration(requestBody, false)
-	selection, decision, err := s.SelectAccountWithScheduler(
+	return s.SelectAccountWithSchedulerAndContinuityForCapability(
 		ctx,
 		groupID,
 		previousResponseID,
@@ -63,6 +62,34 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 		requestedModel,
 		excludedIDs,
 		requiredTransport,
+		"",
+		requireCompact,
+		requestBody,
+	)
+}
+
+func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuityForCapability(
+	ctx context.Context,
+	groupID *int64,
+	previousResponseID string,
+	sessionHash string,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredTransport OpenAIUpstreamTransport,
+	requiredEndpoint OpenAIEndpointCapability,
+	requireCompact bool,
+	requestBody []byte,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	migration := ClassifyOpenAIContextMigration(requestBody, false)
+	selection, decision, err := s.SelectAccountWithSchedulerForCapability(
+		ctx,
+		groupID,
+		previousResponseID,
+		sessionHash,
+		requestedModel,
+		excludedIDs,
+		requiredTransport,
+		requiredEndpoint,
 		requireCompact,
 	)
 	applyOpenAIContextMigrationToDecision(&decision, migration)
@@ -156,7 +183,11 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 		replayExcludedIDs = make(map[int64]struct{}, 1)
 	}
 	replayExcludedIDs[account.ID] = struct{}{}
-	nextSelection, nextDecision, selectErr := s.SelectAccountWithScheduler(
+	if sessionHash != "" {
+		// 余额耗尽后重放必须重新选号，否则旧 sticky 会让调度器再次命中刚排除的账号。
+		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+	}
+	nextSelection, nextDecision, selectErr := s.SelectAccountWithSchedulerForCapability(
 		ctx,
 		groupID,
 		"",
@@ -164,6 +195,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerAndContinuity(
 		requestedModel,
 		replayExcludedIDs,
 		requiredTransport,
+		requiredEndpoint,
 		requireCompact,
 	)
 	if selectErr != nil || nextSelection == nil || nextSelection.Account == nil {
@@ -225,17 +257,15 @@ func (s *OpenAIGatewayService) checkRealtimeBalanceAvailableForContinuity(ctx co
 	}
 	decision, err := s.realtimeBalanceChecker.CheckAccountSnapshotFirst(ctx, account, RealtimeBalanceCheckOptions{SnapshotOnly: true})
 	detail = continuityBalanceDetail(decision, err)
-	if err != nil {
-		return false, true, detail, err
-	}
-	if decision != nil && decision.State == RealtimeBalanceStateUnknown {
-		reason := strings.TrimSpace(decision.Error)
-		if reason == "" {
-			reason = OpenAIContinuityReasonBalanceUnknown
+	if detail != nil {
+		if reason, ok := detail["reason"]; ok {
+			detail["balance_probe_reason"] = reason
 		}
-		return false, true, detail, errors.New(reason)
+		detail["balance_routing_ignored"] = true
+		detail["reason"] = OpenAIContinuityReasonBalanceIgnored
 	}
-	return decision != nil && decision.Available > 0, true, detail, nil
+	// 余额探测只是诊断信号；真实请求失败才允许触发换号或中断连续会话。
+	return true, false, detail, nil
 }
 
 func (s *OpenAIGatewayService) buildOpenAIContinuityReplayBody(

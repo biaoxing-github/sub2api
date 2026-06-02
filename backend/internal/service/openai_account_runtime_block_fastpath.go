@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -32,9 +33,16 @@ func isOpenAIAccount(account *Account) bool {
 }
 
 func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) bool {
+	return s.handleOpenAIAccountUpstreamErrorForModel(ctx, account, statusCode, headers, responseBody, "")
+}
+
+func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorForModel(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel string) bool {
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
 
+	if s.handleOpenAIModelNotFoundCooldown(stateCtx, account, statusCode, responseBody, requestedModel) {
+		return false
+	}
 	if statusCode == http.StatusTooManyRequests {
 		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
 	}
@@ -46,6 +54,43 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 		s.BlockAccountScheduling(account, time.Time{}, "upstream_disable")
 	}
 	return shouldDisable
+}
+
+func (s *OpenAIGatewayService) handleOpenAIModelNotFoundCooldown(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel string) bool {
+	if s == nil || account == nil || !account.IsOpenAI() || !isOpenAIModelNotFoundError(statusCode, responseBody) {
+		return false
+	}
+	modelKey := resolveOpenAIModelRateLimitKey(account, requestedModel)
+	if modelKey == "" {
+		return false
+	}
+	resetAt := time.Now().Add(openAIModelNotFoundCooldown)
+	if s.accountRepo != nil {
+		if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, modelKey, resetAt); err != nil {
+			slog.Warn("openai_model_not_found_cooldown_failed", "account_id", account.ID, "model", modelKey, "error", err)
+		}
+	}
+	updateAccountModelRateLimitExtra(account, modelKey, resetAt)
+	slog.Info("openai_model_not_found_cooldown", "account_id", account.ID, "model", modelKey, "reset_at", resetAt)
+	return true
+}
+
+func updateAccountModelRateLimitExtra(account *Account, modelKey string, resetAt time.Time) {
+	if account == nil || modelKey == "" {
+		return
+	}
+	if account.Extra == nil {
+		account.Extra = make(map[string]any)
+	}
+	limits, _ := account.Extra[modelRateLimitsKey].(map[string]any)
+	if limits == nil {
+		limits = make(map[string]any)
+	}
+	limits[modelKey] = map[string]any{
+		"rate_limited_at":     time.Now().UTC().Format(time.RFC3339),
+		"rate_limit_reset_at": resetAt.UTC().Format(time.RFC3339),
+	}
+	account.Extra[modelRateLimitsKey] = limits
 }
 
 func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context, account *Account, headers http.Header, responseBody []byte) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestOpenAIContextContinuityBalanceUnknownIncludesDiagnosticDetail(t *testing.T) {
+func TestOpenAIContextContinuityBalanceUnknownDoesNotAffectRouting(t *testing.T) {
 	checker := NewRealtimeBalanceChecker(realtimeBalanceRefresherFunc(func(ctx context.Context, account *Account) (*UpstreamBalanceSnapshot, error) {
 		t.Fatal("continuity balance check must not refresh remote balance on request path")
 		return nil, nil
@@ -18,11 +18,11 @@ func TestOpenAIContextContinuityBalanceUnknownIncludesDiagnosticDetail(t *testin
 		&Account{ID: 91, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
 	)
 
-	if err == nil || !strings.Contains(err.Error(), "realtime balance not verified") {
-		t.Fatalf("error = %v, want local snapshot not verified", err)
+	if err != nil {
+		t.Fatalf("error = %v, want balance probe ignored", err)
 	}
-	if available || !checked {
-		t.Fatalf("available=%v checked=%v, want checked unavailable", available, checked)
+	if !available || checked {
+		t.Fatalf("available=%v checked=%v, want unchecked available", available, checked)
 	}
 	if detail == nil {
 		t.Fatal("detail is nil")
@@ -30,11 +30,17 @@ func TestOpenAIContextContinuityBalanceUnknownIncludesDiagnosticDetail(t *testin
 	if detail["balance_confirm_source"] != RealtimeBalanceSourceError {
 		t.Fatalf("detail = %+v", detail)
 	}
+	if detail["balance_routing_ignored"] != true {
+		t.Fatalf("detail balance_routing_ignored = %v, want true", detail["balance_routing_ignored"])
+	}
+	if detail["reason"] != OpenAIContinuityReasonBalanceIgnored {
+		t.Fatalf("detail reason = %v, want %s", detail["reason"], OpenAIContinuityReasonBalanceIgnored)
+	}
 	if detail["replay_safe"] != false {
 		t.Fatalf("detail replay_safe = %v, want false", detail["replay_safe"])
 	}
-	if reason, _ := detail["reason"].(string); !strings.Contains(reason, "realtime balance not verified") {
-		t.Fatalf("reason = %q, want local snapshot not verified", reason)
+	if reason, _ := detail["balance_probe_reason"].(string); !strings.Contains(reason, "realtime balance not verified") {
+		t.Fatalf("balance_probe_reason = %q, want local snapshot not verified", reason)
 	}
 }
 

@@ -512,3 +512,150 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `/responses` 流式短请求复测返回 HTTP 200，耗时 3103ms，`usage_logs` 写入账号 408，`duration_ms=2757`，`first_token_ms=2280`。
 - 最近 10 分钟 `ops_error_logs` 中 OpenAI 错误为 0，容器日志未出现 `panic`、`fatal`、`upstream_error`、`401 Unauthorized` 或 `Incorrect API key`。
 - `https://api.aisz.mom/api/v1/usage` 直接调用仍返回 HTTP 404，确认它是余额端点不兼容，不是当前 `/responses` 连接失败根因。
+
+---
+
+日期：2026-05-31
+执行者：Devil
+
+## Codex 本地 sub2api 旁路配置验证
+
+保留当前 `C:\Users\27404\.codex\config.toml` 不变，新增：
+
+- `C:\Users\27404\.codex\sub2api-local.config.toml`
+- `C:\Users\27404\.codex\codex-sub2api-local.ps1`
+
+脚本运行时从本地 `sub2api-postgres` 读取 `api_keys.id=1`，只注入当前进程的 `SUB2API_API_KEY`，再使用 `sub2api-local` profile 指向 `http://127.0.0.1:8080/v1`。
+
+验证命令：
+
+- `C:\Users\27404\.codex\codex-sub2api-local.ps1 exec --skip-git-repo-check --sandbox read-only --output-last-message .codex\sub2api-local-script-smoke.txt '只回复 OK'`
+
+验证结果：
+
+- Codex CLI 使用 `provider: sub2api_local`，返回 `OK`。
+- sub2api 运行日志显示 `/v1/responses` 使用 `api_key_id=1`、`account_id=408` 并返回 HTTP 200。
+- `usage_logs` 写入 `first_token_ms=5158`。
+- 测试过程中使用 dummy key 触发过 401；该 401 是参数位置/旧版 CLI 验证时的人工测试，不是最终旁路配置失败。
+
+---
+
+日期：2026-05-31
+执行者：Devil
+
+## OpenAI 0.1.131-0.1.133 稳定性合并阶段验证
+
+本次完成 OpenAI 端点能力调度、账号级 pool mode 重试状态码、unknown-model 模型级冷却、连续性重放避开旧账号等本地实现收口。当前阶段只做代码实现和本地验证，尚未构建镜像、部署容器或提交 Git commit。
+
+## 校验方式
+
+- `go test ./internal/service -run "TestForwardAsChatCompletions_UnknownModelDoesNotUseDefaultMappedModel|TestForwardAsChatCompletions_APIKeyUnknownModelDoesNotFallbackRawChat|TestOpenAIGatewayService_ResponsesUnknownModelDoesNotFallbackToGPT54|TestIsOpenAIModelNotFoundError|TestHandleOpenAIAccountUpstreamErrorForModel_ModelNotFoundSetsModelCooldown|TestIsOpenAIPoolModeRetryableOnSameAccount_ModelNotFoundIsNeverSameAccountRetryable|TestOpenAIGatewayService_SelectAccountWithScheduler_StickyExhausted|TestOpenAIGatewayService_SelectAccountWithScheduler_PreviousResponseExhausted" -count=1`
+- `go test ./internal/service -run "TestOpenAI.*EndpointCapability|Test.*PoolModeRetryable|Test.*ModelNotFound|TestOpenAIContextContinuity.*|TestOpenAIGatewayService_SelectAccountWithScheduler.*|TestForwardAsChatCompletions_.*UnknownModel.*|TestOpenAIGatewayService_ResponsesUnknownModelDoesNotFallbackToGPT54" -count=1`
+- `go test ./internal/service ./internal/handler -run "^$" -count=1`
+- `git diff --check`
+
+## 校验结果
+
+上述聚焦回归、相关模式测试、service/handler 编译切片和 diff check 均通过。`git diff --check` 仅提示 `docs/feature_list.jsonl`、`docs/process_list.jsonl`、`verification.md` 后续由 Git 触碰时 LF 会变为 CRLF，不存在空白错误。
+
+---
+
+日期：2026-05-31
+执行者：Devil
+
+## OpenAI 余额探测不参与调度验证
+
+本次修复针对 `/api/v1/usage returned 404` 等上游余额探测失败：余额快照只保留为诊断，不再参与连续会话换号、protected 中断或候选账号过滤。真实上游请求错误仍按现有 failover 与账号健康逻辑处理。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "OpenAIContextContinuity|SelectAccountWithScheduler_(StickyBalanceExhausted|PreviousResponseBalanceExhausted|LoadBalanceDoesNotPrecheckRealtimeBalance|AllowsOnlyAPIKeyWhenRealtimeBalanceUnknown)" -count=1`
+
+## 校验结果
+
+聚焦测试通过。首次运行因默认 `C:\Users\27404\AppData\Local\go-build` 权限被拒失败，改用项目内 `backend/gocache` 作为 `GOCACHE` 后通过；临时缓存目录已清理。
+
+## 部署验证
+
+- `docker build --pull=false --build-arg COMMIT=openai-balance-routing-ignore-local -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml --env-file D:\sub2api-deploy\.env up -d --no-deps --force-recreate sub2api`
+- `docker exec sub2api /app/sub2api --version`
+- `Invoke-RestMethod http://127.0.0.1:8080/health`
+- 使用本地 `api_keys.id=1` 调用 `POST http://127.0.0.1:8080/v1/responses`，`model=gpt-5.5`，输入“只回复 OK”。
+- 扫描最近 5 分钟容器日志中的 `api/v1/usage returned 404`、`no available OpenAI accounts`、`context_replay_not_safe`、`upstream_error`、`502 Bad Gateway`。
+
+部署结果：
+
+- 当前运行版本：`Sub2API 0.1.133 (commit: openai-balance-routing-ignore-local, built: 2026-05-31T14:46:28Z)`。
+- `/health` 返回 `{"status":"ok"}`。
+- 真实 `/v1/responses` 返回 HTTP 200，耗时约 2264ms，输出 `OK`。
+- 最近 5 分钟日志关键错误扫描为空。
+
+---
+
+日期：2026-06-02
+执行者：Devil
+
+## 分组倍率修改与读取修复验证
+
+本次修复 admin 修改用户专属分组倍率、修改分组默认倍率、批量设置/清空分组倍率后，运行时 gateway 仍可能在缓存 TTL 内读取旧倍率的问题；同时修复清空分组倍率时误删同表 RPM override 的语义错误。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestAdminService_ClearGroupRateMultipliers|TestAdminService_BatchSetGroupRateMultipliers|TestUserGroupRateResolverResolve_VersionBumpBypassesStaleCache|TestAdminService_UpdateUserGroupRates_InvalidatesRuntimeCaches|TestAdminService_UpdateGroup_BumpsUserGroupRateCacheVersion" -count=1`
+- `go test -tags unit ./internal/service -run "TestAdminService_(ClearGroupRateMultipliers|BatchSetGroupRateMultipliers|UpdateUserGroupRates_InvalidatesRuntimeCaches|UpdateGroup_BumpsUserGroupRateCacheVersion)|TestUserGroupRateResolver|TestGatewayServiceGetUserGroupRateMultiplier|TestGetUserGroupRateMultiplier" -count=1`
+- `go test -tags unit ./internal/service -count=1`
+- `git diff --check`
+
+## 校验结果
+
+- 两组分组倍率聚焦回归均通过，覆盖清空分组倍率保留 RPM override、批量设置后缓存失效、用户专属倍率更新后运行时缓存版本推进、分组默认倍率更新后缓存版本推进，以及 resolver 版本推进绕开旧缓存。
+- `git diff --check` 仅提示 `backend/cmd/server/VERSION`、`docs/feature_list.jsonl`、`docs/process_list.jsonl`、`verification.md` 后续由 Git 触碰时 LF 会变为 CRLF，不存在空白错误。
+- `go test -tags unit ./internal/service -count=1` 运行约 600 秒后在既有 OpenAI/渠道相关用例中失败/卡住，失败点与本次分组倍率修改无关，未作为本次修复阻断项。
+
+---
+
+日期：2026-06-02
+执行者：Devil
+
+## OpenAI 单可用账号 failover 等待重试验证
+
+本次修复针对 OpenAI `/responses` 只有一个可用账号时，上游返回 `UpstreamFailoverError` 后被立即加入 `failedAccountIDs`，下一轮选号失败并进入 `handleFailoverExhausted`，最终把 5xx 映射成 `Upstream service temporarily unavailable` 的 502。
+
+修复后，handler 层在确认只有一个候选或排除失败账号后没有其他候选时，会释放账号槽位、清空本次排除列表并按 2 秒间隔重新进入调度；等待窗口最多 5 分钟，超过窗口后按原上游错误中断。多候选场景仍优先切换其他账号。
+
+## 校验方式
+
+- `go test ./internal/handler -run "TestOpenAISingleAccountFailoverWindow|TestOpenAIMapUpstreamError_Maps413ToRequestEntityTooLarge" -count=1`
+- `go test ./internal/handler -run "^$" -count=1`
+- `go test ./internal/service ./internal/handler -run "^$" -count=1`
+- `git diff --check -- .\backend\internal\handler\openai_gateway_handler.go .\backend\internal\handler\openai_gateway_handler_test.go`
+
+## 校验结果
+
+- 单账号等待窗口聚焦测试通过，覆盖窗口内继续重试、到达 5 分钟停止、多候选不进入单账号等待。
+- handler 编译切片通过。
+- service+handler 编译切片中 handler 通过；service 被当前工作树既有 `resetUserGroupRateCacheVersionForTest` 缺失阻塞，错误来自 `internal\service\user_group_rate_resolver_test.go`，不属于本次 OpenAI handler 改动。
+- diff check 通过。
+
+---
+
+日期：2026-06-02
+执行者：Devil
+
+## OpenAI /responses 候选池耗尽整体轮询验证
+
+本次在前一版“单可用账号等待重试”基础上继续扩展：OpenAI `/responses` 遇到上游 `UpstreamFailoverError` 时，多候选仍先切换其他账号；如果本轮可调度池都进入 `failedAccountIDs` 导致选号失败，或切换保护到达当前候选数量上限，则清空本轮排除列表并按 2 秒间隔重新进入调度，最多等待 5 分钟。超过窗口后才按最后一次上游错误中断客户端。
+
+## 校验方式
+
+- `go test ./internal/handler -run "TestOpenAIFailoverRetryWindow" -count=1`
+- `go test ./internal/handler -run "TestOpenAIFailoverRetryWindow|TestOpenAIMapUpstreamError_Maps413ToRequestEntityTooLarge" -count=1`
+- `go test ./internal/handler -run "^$" -count=1`
+
+## 校验结果
+
+- 红测先失败于 `openAIFailoverRetryWindow`、`openAIFailoverRetryDelay`、`openAIFailoverRetryMaxWait` 未实现，证明测试覆盖的是新行为。
+- 聚焦测试通过，覆盖单候选进入等待窗口、多候选不提前等待、池耗尽后清空排除列表并继续等待、到达 5 分钟窗口后停止。
+- handler 编译切片通过。
+- `go test ./internal/service ./internal/handler -run "^$" -count=1` 中 handler 通过；service 包仍被当前工作树既有 `resetUserGroupRateCacheVersionForTest` 缺失阻塞，错误来自 `internal\service\user_group_rate_resolver_test.go`，不属于本次 OpenAI handler 改动。

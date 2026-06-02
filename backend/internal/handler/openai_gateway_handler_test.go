@@ -270,6 +270,53 @@ func TestOpenAIMapUpstreamError_Maps413ToRequestEntityTooLarge(t *testing.T) {
 	require.Contains(t, message, "Request body is too large")
 }
 
+func TestOpenAIFailoverRetryWindow_SingleCandidate(t *testing.T) {
+	start := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	state := &openAIFailoverRetryWindow{}
+	failoverErr := &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}
+
+	action := state.NextSingleCandidate(start, failoverErr, 1)
+
+	require.True(t, action.Retry)
+	require.Equal(t, openAIFailoverRetryDelay, action.Delay)
+	require.Empty(t, action.ExcludedIDs)
+	require.Equal(t, start, state.StartedAt)
+
+	action = state.NextSingleCandidate(start.Add(openAIFailoverRetryMaxWait-time.Second), failoverErr, 1)
+	require.True(t, action.Retry)
+	require.Equal(t, openAIFailoverRetryDelay, action.Delay)
+
+	action = state.NextSingleCandidate(start.Add(openAIFailoverRetryMaxWait), failoverErr, 1)
+	require.False(t, action.Retry)
+	require.Equal(t, "failover_retry_deadline_exceeded", action.Reason)
+}
+
+func TestOpenAIFailoverRetryWindow_DoesNotDelayBeforeTryingOtherCandidates(t *testing.T) {
+	state := &openAIFailoverRetryWindow{}
+	action := state.NextSingleCandidate(time.Now(), &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}, 2)
+
+	require.False(t, action.Retry)
+	require.Equal(t, "multiple_candidates_available", action.Reason)
+}
+
+func TestOpenAIFailoverRetryWindow_PoolExhaustedRetriesMultipleCandidates(t *testing.T) {
+	start := time.Date(2026, 6, 2, 10, 5, 0, 0, time.UTC)
+	state := &openAIFailoverRetryWindow{}
+	failoverErr := &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}
+
+	action := state.NextPoolExhausted(start, failoverErr, 3)
+
+	require.True(t, action.Retry)
+	require.Equal(t, openAIFailoverRetryDelay, action.Delay)
+	require.Empty(t, action.ExcludedIDs)
+	require.Equal(t, "pool_exhausted_wait_retry", action.Reason)
+	require.Equal(t, start, state.StartedAt)
+
+	action = state.NextPoolExhausted(start.Add(openAIFailoverRetryMaxWait), failoverErr, 3)
+	require.False(t, action.Retry)
+	require.Equal(t, "failover_retry_deadline_exceeded", action.Reason)
+}
+
 func TestShouldLogOpenAIForwardFailureAsWarn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

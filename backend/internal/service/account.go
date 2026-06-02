@@ -1169,7 +1169,7 @@ func (a *Account) GetPoolModeRetryStatusCodes() []int {
 	if !ok || raw == nil {
 		return nil
 	}
-	values, ok := raw.([]any)
+	values, ok := normalizeHTTPStatusCodeList(raw)
 	if !ok {
 		return nil
 	}
@@ -1188,6 +1188,44 @@ func (a *Account) GetPoolModeRetryStatusCodes() []int {
 	}
 	sort.Ints(codes)
 	return codes
+}
+
+func normalizeHTTPStatusCodeList(raw any) ([]any, bool) {
+	switch v := raw.(type) {
+	case []any:
+		return v, true
+	case []int:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, item)
+		}
+		return out, true
+	case []string:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, item)
+		}
+		return out, true
+	case string:
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return []any{}, true
+		}
+		var parsed []any
+		if err := json.Unmarshal([]byte(v), &parsed); err == nil {
+			return parsed, true
+		}
+		parts := strings.FieldsFunc(v, func(r rune) bool {
+			return r == ',' || r == '\n' || r == '\r'
+		})
+		out := make([]any, 0, len(parts))
+		for _, part := range parts {
+			out = append(out, strings.TrimSpace(part))
+		}
+		return out, true
+	default:
+		return nil, false
+	}
 }
 
 // IsPoolModeRetryableStatus 判断当前账号是否应对该上游状态码做同账号重试。

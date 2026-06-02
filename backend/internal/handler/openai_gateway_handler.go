@@ -25,7 +25,61 @@ import (
 	"go.uber.org/zap"
 )
 
-const openAIResponsesUpstreamRequestBodyMaxBytes int64 = 32 * 1024 * 1024
+const (
+	openAIResponsesUpstreamRequestBodyMaxBytes int64 = 32 * 1024 * 1024
+	// openAIFailoverRetryMaxWait 是 OpenAI /responses 上游池持续失败时保持客户端等待的最长窗口。
+	openAIFailoverRetryMaxWait = 5 * time.Minute
+	// openAIFailoverRetryDelay 控制 handler 释放账号槽位后重新进入调度的间隔。
+	openAIFailoverRetryDelay = 2 * time.Second
+)
+
+type openAIFailoverRetryAction struct {
+	Retry       bool
+	Delay       time.Duration
+	ExcludedIDs map[int64]struct{}
+	Reason      string
+}
+
+type openAIFailoverRetryWindow struct {
+	StartedAt time.Time
+}
+
+func (w *openAIFailoverRetryWindow) Active() bool {
+	return w != nil && !w.StartedAt.IsZero()
+}
+
+func (w *openAIFailoverRetryWindow) NextSingleCandidate(now time.Time, failoverErr *service.UpstreamFailoverError, candidateCount int) openAIFailoverRetryAction {
+	if candidateCount > 1 {
+		return openAIFailoverRetryAction{Reason: "multiple_candidates_available"}
+	}
+	return w.next(now, failoverErr, "single_account_wait_retry")
+}
+
+func (w *openAIFailoverRetryWindow) NextPoolExhausted(now time.Time, failoverErr *service.UpstreamFailoverError, exhaustedCount int) openAIFailoverRetryAction {
+	if exhaustedCount <= 0 {
+		return openAIFailoverRetryAction{Reason: "no_exhausted_candidates"}
+	}
+	return w.next(now, failoverErr, "pool_exhausted_wait_retry")
+}
+
+func (w *openAIFailoverRetryWindow) next(now time.Time, failoverErr *service.UpstreamFailoverError, retryReason string) openAIFailoverRetryAction {
+	if w == nil || failoverErr == nil {
+		return openAIFailoverRetryAction{Reason: "missing_failover_error"}
+	}
+	if w.StartedAt.IsZero() {
+		w.StartedAt = now
+	}
+	deadline := w.StartedAt.Add(openAIFailoverRetryMaxWait)
+	if !now.Before(deadline) {
+		return openAIFailoverRetryAction{Reason: "failover_retry_deadline_exceeded"}
+	}
+	return openAIFailoverRetryAction{
+		Retry:       true,
+		Delay:       openAIFailoverRetryDelay,
+		ExcludedIDs: map[int64]struct{}{},
+		Reason:      retryReason,
+	}
+}
 
 // OpenAIGatewayHandler handles OpenAI API gateway requests
 type OpenAIGatewayHandler struct {
@@ -282,11 +336,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
+	lastCandidateCount := 0
+	failoverRetryWindow := &openAIFailoverRetryWindow{}
 
 	for {
 		// Select account supporting the requested model
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerAndContinuity(
+		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerAndContinuityForCapability(
 			c.Request.Context(),
 			apiKey.GroupID,
 			previousResponseID,
@@ -294,6 +350,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			reqModel,
 			failedAccountIDs,
 			service.OpenAIUpstreamTransportAny,
+			service.OpenAIEndpointCapabilityResponses,
 			requireCompact,
 			body,
 		)
@@ -302,6 +359,34 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
+			if lastFailoverErr != nil && (failoverRetryWindow.Active() || len(failedAccountIDs) > 0) {
+				action := failoverRetryWindow.NextPoolExhausted(time.Now(), lastFailoverErr, len(failedAccountIDs))
+				if action.Retry {
+					reqLog.Warn("openai.failover_pool_wait",
+						zap.Int("upstream_status", lastFailoverErr.StatusCode),
+						zap.Duration("retry_delay", action.Delay),
+						zap.Duration("max_wait", openAIFailoverRetryMaxWait),
+						zap.Time("started_at", failoverRetryWindow.StartedAt),
+						zap.Int("exhausted_account_count", len(failedAccountIDs)),
+						zap.Int("last_candidate_count", lastCandidateCount),
+					)
+					failedAccountIDs = action.ExcludedIDs
+					sameAccountRetryCount = make(map[int64]int)
+					switchCount = 0
+					if !sleepWithContext(c.Request.Context(), action.Delay) {
+						return
+					}
+					continue
+				}
+				reqLog.Warn("openai.failover_pool_stop",
+					zap.Int("upstream_status", lastFailoverErr.StatusCode),
+					zap.String("reason", action.Reason),
+					zap.Time("started_at", failoverRetryWindow.StartedAt),
+					zap.Duration("max_wait", openAIFailoverRetryMaxWait),
+					zap.Int("exhausted_account_count", len(failedAccountIDs)),
+					zap.Int("last_candidate_count", lastCandidateCount),
+				)
+			}
 			var continuityErr *service.OpenAIContextContinuityError
 			if errors.As(err, &continuityErr) {
 				h.handleOpenAIContextContinuityError(c, continuityErr, streamStarted)
@@ -341,6 +426,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			zap.Float64("load_skew", scheduleDecision.LoadSkew),
 		)
 		c.Set(service.OpsOpenAIScheduleDecisionKey, scheduleDecision)
+		if scheduleDecision.CandidateCount > 0 {
+			lastCandidateCount = scheduleDecision.CandidateCount
+		}
 		account := selection.Account
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
@@ -416,23 +504,78 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 							continue
 						}
 					}
+					if scheduleDecision.CandidateCount == 1 {
+						action := failoverRetryWindow.NextSingleCandidate(time.Now(), failoverErr, scheduleDecision.CandidateCount)
+						if action.Retry {
+							lastFailoverErr = failoverErr
+							failedAccountIDs = action.ExcludedIDs
+							reqLog.Warn("openai.failover_single_retry",
+								zap.Int64("account_id", account.ID),
+								zap.Int("upstream_status", failoverErr.StatusCode),
+								zap.Duration("retry_delay", action.Delay),
+								zap.Duration("max_wait", openAIFailoverRetryMaxWait),
+								zap.Time("started_at", failoverRetryWindow.StartedAt),
+							)
+							if !sleepWithContext(c.Request.Context(), action.Delay) {
+								return
+							}
+							continue
+						}
+						reqLog.Warn("openai.failover_single_stop",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.String("reason", action.Reason),
+							zap.Time("started_at", failoverRetryWindow.StartedAt),
+							zap.Duration("max_wait", openAIFailoverRetryMaxWait),
+						)
+					}
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
-					if switchCount >= maxAccountSwitches {
+					effectiveMaxAccountSwitches := maxAccountSwitches
+					if scheduleDecision.CandidateCount > effectiveMaxAccountSwitches {
+						effectiveMaxAccountSwitches = scheduleDecision.CandidateCount
+					}
+					if switchCount >= effectiveMaxAccountSwitches {
+						action := failoverRetryWindow.NextPoolExhausted(time.Now(), failoverErr, len(failedAccountIDs))
+						if action.Retry {
+							reqLog.Warn("openai.failover_pool_switch_limit_wait",
+								zap.Int("upstream_status", failoverErr.StatusCode),
+								zap.Duration("retry_delay", action.Delay),
+								zap.Duration("max_wait", openAIFailoverRetryMaxWait),
+								zap.Time("started_at", failoverRetryWindow.StartedAt),
+								zap.Int("exhausted_account_count", len(failedAccountIDs)),
+								zap.Int("last_candidate_count", lastCandidateCount),
+								zap.Int("switch_count", switchCount),
+								zap.Int("max_switches", effectiveMaxAccountSwitches),
+							)
+							failedAccountIDs = action.ExcludedIDs
+							sameAccountRetryCount = make(map[int64]int)
+							switchCount = 0
+							if !sleepWithContext(c.Request.Context(), action.Delay) {
+								return
+							}
+							continue
+						}
+						reqLog.Warn("openai.failover_pool_switch_limit_stop",
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.String("reason", action.Reason),
+							zap.Time("started_at", failoverRetryWindow.StartedAt),
+							zap.Duration("max_wait", openAIFailoverRetryMaxWait),
+							zap.Int("exhausted_account_count", len(failedAccountIDs)),
+							zap.Int("last_candidate_count", lastCandidateCount),
+							zap.Int("switch_count", switchCount),
+							zap.Int("max_switches", effectiveMaxAccountSwitches),
+						)
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
 					switchCount++
-					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount) {
-						h.handleFailoverExhausted(c, failoverErr, streamStarted)
-						return
-					}
 					reqLog.Warn("openai.upstream_failover_switching",
 						zap.Int64("account_id", account.ID),
 						zap.Int("upstream_status", failoverErr.StatusCode),
 						zap.Int("switch_count", switchCount),
-						zap.Int("max_switches", maxAccountSwitches),
+						zap.Int("max_switches", effectiveMaxAccountSwitches),
 					)
 					continue
 				}
@@ -721,7 +864,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			currentRoutingModel = effectiveMappedModel
 		}
 		reqLog.Debug("openai_messages.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
+		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			c.Request.Context(),
 			apiKey.GroupID,
 			"", // no previous_response_id
@@ -729,6 +872,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			currentRoutingModel,
 			failedAccountIDs,
 			service.OpenAIUpstreamTransportAny,
+			service.OpenAIEndpointCapabilityResponses,
 			false,
 		)
 		if err != nil {
@@ -1292,7 +1436,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		firstMessage,
 		openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
 	)
-	selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerAndContinuity(
+	selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerAndContinuityForCapability(
 		ctx,
 		apiKey.GroupID,
 		previousResponseID,
@@ -1300,6 +1444,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		reqModel,
 		nil,
 		service.OpenAIUpstreamTransportResponsesWebsocketV2,
+		service.OpenAIEndpointCapabilityResponses,
 		false,
 		firstMessage,
 	)

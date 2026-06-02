@@ -249,6 +249,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 		if account.Type == AccountTypeAPIKey &&
 			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
+			!isOpenAIModelNotFoundError(resp.StatusCode, respBody) &&
 			!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
 			logger.L().Info("openai chat_completions: /responses unsupported, falling back to raw chat completions",
 				zap.Int64("account_id", account.ID),
@@ -276,14 +277,14 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
 			})
-			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+			s.handleOpenAIAccountUpstreamErrorForModel(ctx, account, resp.StatusCode, resp.Header, respBody, originalModel)
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
-				RetryableOnSameAccount: account.IsPoolMode() && (isPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
+				RetryableOnSameAccount: isOpenAIPoolModeRetryableOnSameAccount(account, resp.StatusCode, upstreamMsg, respBody),
 			}
 		}
-		return s.handleChatCompletionsErrorResponse(resp, c, account)
+		return s.handleChatCompletionsErrorResponseForModel(resp, c, account, originalModel)
 	}
 
 	// 9. Handle normal response
@@ -359,7 +360,16 @@ func (s *OpenAIGatewayService) handleChatCompletionsErrorResponse(
 	c *gin.Context,
 	account *Account,
 ) (*OpenAIForwardResult, error) {
-	return s.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError)
+	return s.handleChatCompletionsErrorResponseForModel(resp, c, account, "")
+}
+
+func (s *OpenAIGatewayService) handleChatCompletionsErrorResponseForModel(
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	requestedModel string,
+) (*OpenAIForwardResult, error) {
+	return s.handleCompatErrorResponse(resp, c, account, requestedModel, writeChatCompletionsError)
 }
 
 // handleChatBufferedStreamingResponse reads all Responses SSE events from the

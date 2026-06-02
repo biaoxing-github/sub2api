@@ -147,6 +147,24 @@ func TestAccountHandlerUpdateMixedChannelConflictSimplifiedResponse(t *testing.T
 	require.False(t, hasRequireConfirmation)
 }
 
+func TestAccountHandlerUpdatePassesPlatform(t *testing.T) {
+	adminSvc := newStubAdminService()
+	router := setupAccountMixedChannelRouter(adminSvc)
+
+	body, _ := json.Marshal(map[string]any{
+		"name":     "meow",
+		"platform": "gemini",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/accounts/3", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, adminSvc.updatedAccounts, 1)
+	require.Equal(t, "gemini", adminSvc.updatedAccounts[0].Platform)
+}
+
 func TestAccountHandlerBulkUpdateMixedChannelConflict(t *testing.T) {
 	adminSvc := newStubAdminService()
 	adminSvc.bulkUpdateAccountErr = &service.MixedChannelError{
