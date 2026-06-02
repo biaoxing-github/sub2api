@@ -275,7 +275,7 @@ func TestGetUserGroupRateMultiplier_CacheHitAndNilRepo(t *testing.T) {
 		userGroupRateRepo:  repo,
 		userGroupRateCache: gocache.New(time.Minute, time.Minute),
 	}
-	key := "101:202"
+	key := userGroupRateCacheKey(101, 202)
 	svc.userGroupRateCache.Set(key, 2.3, time.Minute)
 
 	got := svc.getUserGroupRateMultiplier(context.Background(), 101, 202, 1.1)

@@ -141,6 +141,34 @@ func TestAdminService_ListGroups_PassesSortParams(t *testing.T) {
 	}, repo.listWithFiltersParams)
 }
 
+func TestAdminService_UpdateGroup_BumpsUserGroupRateCacheVersion(t *testing.T) {
+	resetUserGroupRateCacheVersionForTest()
+
+	rate := 2.5
+	repo := &groupRepoStubForAdmin{
+		getByID: &Group{
+			ID:               1,
+			Name:             "g1",
+			Platform:         PlatformAnthropic,
+			Status:           StatusActive,
+			SubscriptionType: SubscriptionTypeStandard,
+			RateMultiplier:   1.2,
+		},
+	}
+	invalidator := &authCacheInvalidatorStub{}
+	svc := &adminServiceImpl{groupRepo: repo, authCacheInvalidator: invalidator}
+
+	group, err := svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{
+		RateMultiplier: &rate,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.Equal(t, []int64{1}, invalidator.groupIDs)
+	require.Equal(t, uint64(1), currentUserGroupRateCacheVersion())
+	require.NotNil(t, repo.updated)
+	require.Equal(t, 2.5, repo.updated.RateMultiplier)
+}
+
 // TestAdminService_CreateGroup_WithImagePricing 测试创建分组时 ImagePrice 字段正确传递
 func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	repo := &groupRepoStubForAdmin{}

@@ -3,12 +3,15 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	gocache "github.com/patrickmn/go-cache"
 	"golang.org/x/sync/singleflight"
 )
+
+var userGroupRateCacheVersion atomic.Uint64
 
 type userGroupRateResolver struct {
 	repo         UserGroupRateRepository
@@ -41,12 +44,30 @@ func newUserGroupRateResolver(repo UserGroupRateRepository, cache *gocache.Cache
 	}
 }
 
+// currentUserGroupRateCacheVersion 返回用户专属分组倍率缓存的全局版本。
+func currentUserGroupRateCacheVersion() uint64 {
+	return userGroupRateCacheVersion.Load()
+}
+
+// bumpUserGroupRateCacheVersion 推进倍率缓存版本，让各 gateway resolver 自动绕开旧缓存键。
+func bumpUserGroupRateCacheVersion() uint64 {
+	return userGroupRateCacheVersion.Add(1)
+}
+
+func userGroupRateCacheKey(userID, groupID int64) string {
+	version := currentUserGroupRateCacheVersion()
+	if version == 0 {
+		return fmt.Sprintf("%d:%d", userID, groupID)
+	}
+	return fmt.Sprintf("%d:%d:v%d", userID, groupID, version)
+}
+
 func (r *userGroupRateResolver) Resolve(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) float64 {
 	if r == nil || userID <= 0 || groupID <= 0 {
 		return groupDefaultMultiplier
 	}
 
-	key := fmt.Sprintf("%d:%d", userID, groupID)
+	key := userGroupRateCacheKey(userID, groupID)
 	if r.cache != nil {
 		if cached, ok := r.cache.Get(key); ok {
 			if multiplier, castOK := cached.(float64); castOK {

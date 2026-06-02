@@ -46,11 +46,12 @@ func TestUserGroupRateResolverResolve_FallbackForNilResolverAndInvalidIDs(t *tes
 
 func TestUserGroupRateResolverResolve_InvalidCacheEntryLoadsRepoAndCaches(t *testing.T) {
 	resetGatewayHotpathStatsForTest()
+	resetUserGroupRateCacheVersionForTest()
 
 	rate := 1.7
 	repo := &userGroupRateResolverRepoStub{rate: &rate}
 	cache := gocache.New(time.Minute, time.Minute)
-	cache.Set("101:202", "bad-cache", time.Minute)
+	cache.Set(userGroupRateCacheKey(101, 202), "bad-cache", time.Minute)
 	resolver := newUserGroupRateResolver(repo, cache, time.Minute, nil, "service.test")
 
 	got := resolver.Resolve(context.Background(), 101, 202, 1.2)
@@ -68,7 +69,31 @@ func TestUserGroupRateResolverResolve_InvalidCacheEntryLoadsRepoAndCaches(t *tes
 	require.Equal(t, int64(0), fallback)
 }
 
+func TestUserGroupRateResolverResolve_VersionBumpBypassesStaleCache(t *testing.T) {
+	resetGatewayHotpathStatsForTest()
+	resetUserGroupRateCacheVersionForTest()
+
+	firstRate := 1.7
+	repo := &userGroupRateResolverRepoStub{rate: &firstRate}
+	resolver := newUserGroupRateResolver(repo, gocache.New(time.Minute, time.Minute), time.Minute, nil, "service.test")
+
+	require.Equal(t, 1.7, resolver.Resolve(context.Background(), 101, 202, 1.2))
+	require.Equal(t, 1, repo.calls)
+
+	secondRate := 2.4
+	repo.rate = &secondRate
+	require.Equal(t, 1.7, resolver.Resolve(context.Background(), 101, 202, 1.2))
+	require.Equal(t, 1, repo.calls)
+
+	bumpUserGroupRateCacheVersion()
+
+	require.Equal(t, 2.4, resolver.Resolve(context.Background(), 101, 202, 1.2))
+	require.Equal(t, 2, repo.calls)
+}
+
 func TestGatewayServiceGetUserGroupRateMultiplier_FallbacksAndUsesExistingResolver(t *testing.T) {
+	resetUserGroupRateCacheVersionForTest()
+
 	var nilSvc *GatewayService
 	require.Equal(t, 1.3, nilSvc.getUserGroupRateMultiplier(context.Background(), 101, 202, 1.3))
 
