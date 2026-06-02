@@ -1429,6 +1429,7 @@ export default {
       totalTokens: '总 Token',
       input: '输入',
       output: '输出',
+      cacheRead: '缓存读取',
       cacheToday: '今日缓存',
       performance: '性能指标',
       avgResponse: '平均响应',

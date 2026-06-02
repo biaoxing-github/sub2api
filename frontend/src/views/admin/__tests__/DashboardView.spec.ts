@@ -68,21 +68,39 @@ const createDashboardStats = (): DashboardStats => ({
   total_output_tokens: 0,
   total_cache_creation_tokens: 0,
   total_cache_read_tokens: 0,
+  total_cache_read_ratio: 0,
   total_tokens: 0,
   total_cost: 0,
   total_actual_cost: 0,
+  total_account_cost: 0,
   today_requests: 0,
   today_input_tokens: 0,
   today_output_tokens: 0,
   today_cache_creation_tokens: 0,
   today_cache_read_tokens: 0,
+  today_cache_read_ratio: 0,
   today_tokens: 0,
   today_cost: 0,
   today_actual_cost: 0,
+  today_account_cost: 0,
   average_duration_ms: 0,
   uptime: 0,
   rpm: 0,
   tpm: 0
+})
+
+const createDashboardStatsWithTokenBreakdown = (): DashboardStats => ({
+  ...createDashboardStats(),
+  total_input_tokens: 900,
+  total_output_tokens: 400,
+  total_cache_read_tokens: 100,
+  total_cache_read_ratio: 0.1,
+  total_tokens: 1400,
+  today_input_tokens: 120,
+  today_output_tokens: 60,
+  today_cache_read_tokens: 30,
+  today_cache_read_ratio: 0.2,
+  today_tokens: 210
 })
 
 describe('admin DashboardView', () => {
@@ -139,5 +157,40 @@ describe('admin DashboardView', () => {
       end_date: formatLocalDate(now),
       granularity: 'hour'
     }))
+  })
+
+  it('renders token input output cache read and cache read ratio', async () => {
+    getSnapshotV2.mockResolvedValueOnce({
+      stats: createDashboardStatsWithTokenBreakdown(),
+      trend: [],
+      models: []
+    })
+
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          LoadingSpinner: true,
+          Icon: true,
+          DateRangePicker: true,
+          Select: true,
+          ModelDistributionChart: true,
+          TokenUsageTrend: true,
+          Line: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('admin.dashboard.input: 120')
+    expect(text).toContain('admin.dashboard.output: 60')
+    expect(text).toContain('admin.dashboard.cacheRead: 30')
+    expect(text).toContain('20.0%')
+    expect(text).toContain('admin.dashboard.input: 900')
+    expect(text).toContain('admin.dashboard.output: 400')
+    expect(text).toContain('admin.dashboard.cacheRead: 100')
+    expect(text).toContain('10.0%')
   })
 })

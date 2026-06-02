@@ -2,6 +2,50 @@ package usagestats
 
 import "testing"
 
+func TestDashboardStatsRecalculateDerivedFields(t *testing.T) {
+	stats := &DashboardStats{
+		TotalInputTokens:     900,
+		TotalOutputTokens:    400,
+		TotalCacheReadTokens: 100,
+		TodayInputTokens:     120,
+		TodayOutputTokens:    60,
+		TodayCacheReadTokens: 30,
+	}
+
+	stats.RecalculateDerivedFields()
+
+	if stats.TotalTokens != 1400 {
+		t.Fatalf("TotalTokens=%d want 1400", stats.TotalTokens)
+	}
+	if stats.TodayTokens != 210 {
+		t.Fatalf("TodayTokens=%d want 210", stats.TodayTokens)
+	}
+	if stats.TotalCacheReadRatio != 0.1 {
+		t.Fatalf("TotalCacheReadRatio=%v want 0.1", stats.TotalCacheReadRatio)
+	}
+	if stats.TodayCacheReadRatio != 0.2 {
+		t.Fatalf("TodayCacheReadRatio=%v want 0.2", stats.TodayCacheReadRatio)
+	}
+}
+
+func TestDashboardStatsRecalculateDerivedFieldsZeroInputSide(t *testing.T) {
+	stats := &DashboardStats{
+		TotalOutputTokens:    300,
+		TotalCacheReadTokens: 0,
+		TodayOutputTokens:    100,
+		TodayCacheReadTokens: 0,
+	}
+
+	stats.RecalculateDerivedFields()
+
+	if stats.TotalCacheReadRatio != 0 {
+		t.Fatalf("TotalCacheReadRatio=%v want 0", stats.TotalCacheReadRatio)
+	}
+	if stats.TodayCacheReadRatio != 0 {
+		t.Fatalf("TodayCacheReadRatio=%v want 0", stats.TodayCacheReadRatio)
+	}
+}
+
 func TestIsValidModelSource(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -15,7 +15,7 @@
               <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30">
                 <Icon name="key" size="md" class="text-blue-600 dark:text-blue-400" :stroke-width="2" />
               </div>
-              <div>
+              <div class="min-w-0 flex-1">
                 <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
                   {{ t('admin.dashboard.apiKeys') }}
                 </p>
@@ -35,7 +35,7 @@
               <div class="rounded-lg bg-purple-100 p-2 dark:bg-purple-900/30">
                 <Icon name="server" size="md" class="text-purple-600 dark:text-purple-400" :stroke-width="2" />
               </div>
-              <div>
+              <div class="min-w-0 flex-1">
                 <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
                   {{ t('admin.dashboard.accounts') }}
                 </p>
@@ -103,7 +103,7 @@
               <div class="rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30">
                 <Icon name="cube" size="md" class="text-amber-600 dark:text-amber-400" :stroke-width="2" />
               </div>
-              <div>
+              <div class="min-w-0 flex-1">
                 <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
                   {{ t('admin.dashboard.todayTokens') }}
                 </p>
@@ -129,6 +129,16 @@
                     >${{ formatCost(stats.today_cost) }}</span
                   >
                 </p>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.dashboard.input') }}: {{ formatTokens(stats.today_input_tokens) }}
+                  <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
+                  {{ t('admin.dashboard.output') }}: {{ formatTokens(stats.today_output_tokens) }}
+                </p>
+                <p class="text-xs text-cyan-600 dark:text-cyan-400">
+                  {{ t('admin.dashboard.cacheRead') }}: {{ formatTokens(stats.today_cache_read_tokens) }}
+                  <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
+                  {{ formatPercent(stats.today_cache_read_ratio) }}
+                </p>
               </div>
             </div>
           </div>
@@ -139,7 +149,7 @@
               <div class="rounded-lg bg-indigo-100 p-2 dark:bg-indigo-900/30">
                 <Icon name="database" size="md" class="text-indigo-600 dark:text-indigo-400" :stroke-width="2" />
               </div>
-              <div>
+              <div class="min-w-0 flex-1">
                 <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
                   {{ t('admin.dashboard.totalTokens') }}
                 </p>
@@ -164,6 +174,16 @@
                     :title="t('admin.dashboard.standard')"
                     >${{ formatCost(stats.total_cost) }}</span
                   >
+                </p>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.dashboard.input') }}: {{ formatTokens(stats.total_input_tokens) }}
+                  <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
+                  {{ t('admin.dashboard.output') }}: {{ formatTokens(stats.total_output_tokens) }}
+                </p>
+                <p class="text-xs text-cyan-600 dark:text-cyan-400">
+                  {{ t('admin.dashboard.cacheRead') }}: {{ formatTokens(stats.total_cache_read_tokens) }}
+                  <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
+                  {{ formatPercent(stats.total_cache_read_ratio) }}
                 </p>
               </div>
             </div>
@@ -550,6 +570,14 @@ const formatCost = (value?: number): string => {
     return amount.toFixed(3)
   }
   return amount.toFixed(4)
+}
+
+const formatPercent = (value?: number): string => {
+  const ratio = Number(value)
+  if (!Number.isFinite(ratio)) {
+    return '0.0%'
+  }
+  return `${(ratio * 100).toFixed(1)}%`
 }
 
 const formatDuration = (ms: number): string => {

@@ -1794,6 +1794,7 @@ export interface DashboardStats {
   total_output_tokens: number
   total_cache_creation_tokens: number
   total_cache_read_tokens: number
+  total_cache_read_ratio: number
   total_tokens: number
   total_cost: number // 累计标准计费
   total_actual_cost: number // 累计实际扣除
@@ -1805,6 +1806,7 @@ export interface DashboardStats {
   today_output_tokens: number
   today_cache_creation_tokens: number
   today_cache_read_tokens: number
+  today_cache_read_ratio: number
   today_tokens: number
   today_cost: number // 今日标准计费
   today_actual_cost: number // 今日实际扣除

@@ -781,3 +781,60 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 ## 镜像构建备注
 
 标准 `docker build --pull=false --build-arg COMMIT=<commit> -t sub2api:multi-key-local .` 首次重试时被 Docker Desktop 当前 registry mirror 阻断，基础镜像 metadata 请求返回 403 或 TLS timeout。为避免改动宿主 Docker 配置，本轮使用本机 Go 对当前源码执行 Linux/amd64 静态编译，再基于上一版本地 `sub2api:multi-key-local` 运行时镜像替换 `/app/sub2api` 并重新打同名镜像。该镜像随后通过 compose recreate 部署，并用容器内 `--version`、direct API、Claude Code smoke 验证。
+
+---
+
+日期：2026-06-02
+执行者：Devil
+
+## DeepSeek 经 sub2api 长输出上限验证
+
+本轮根据用户要求检查当前 sub2api 调用 DeepSeek 的最大输出，并解析本地已生成的长输出响应文件。验证对象是 Anthropic Messages 兼容响应格式下的 `deepseek-v4-pro`。
+
+## 校验方式
+
+- 解析 `.codex/deepseek-long-output-4096.json`
+- 解析 `.codex/deepseek-long-output-8192.json`
+- 解析 `.codex/deepseek-long-output-16384.json`
+- 解析 `.codex/deepseek-long-output-32768.json`
+- 解析 `.codex/deepseek-long-output-65536.json`
+- 读取 `backend/resources/model-pricing/model_prices_and_context_window.json` 中 DeepSeek 条目
+- 未授权探测 `http://127.0.0.1:8080/v1/models`，确认本轮不猜测或输出任何密钥
+
+## 校验结果
+
+- `max_tokens=4096`：`usage.output_tokens=4096`，`stop_reason=max_tokens`
+- `max_tokens=8192`：`usage.output_tokens=8192`，`stop_reason=max_tokens`
+- `max_tokens=16384`：`usage.output_tokens=16384`，`stop_reason=max_tokens`
+- `max_tokens=32768`：`usage.output_tokens=31146`，`stop_reason=end_turn`
+- `max_tokens=65536`：`usage.output_tokens=57212`，`stop_reason=end_turn`，正文约 `167999` 字符，编号行数 `3000`
+- 模型价格表显示 `deepseek-chat` 的 `max_output_tokens=8192`，`deepseek-reasoner` 的 `max_output_tokens=65536`
+
+结论：当前 sub2api 调 DeepSeek 的长输出能力按模型区分；普通 `deepseek-chat` 是 8192，reasoner/当前 `deepseek-v4-pro` 路由可请求到 65536。本轮实测 65536 请求成功返回 57212 output tokens，但测试 prompt 自己在 3000 行结束，因此没有再次撞满 65536。
+
+---
+
+日期：2026-06-02
+执行者：Devil
+
+## 管理员 Dashboard Token 结构化统计验证
+
+本轮为管理员 Dashboard 统计接口和页面增加今日/累计输入 Token、输出 Token、缓存读取 Token 和缓存读取比例。缓存读取比例口径为 `cache_read_tokens / (input_tokens + cache_read_tokens)`，即输入侧缓存命中占比。
+
+## 校验方式
+
+- `go test ./internal/pkg/usagestats -count=1`
+- `npm run test:run -- src/views/admin/__tests__/DashboardView.spec.ts`
+- `npm run typecheck`
+- `npm run build`
+- `git diff --check`
+- `go test ./internal/handler/admin -run Dashboard -count=1`
+
+## 校验结果
+
+- `go test ./internal/pkg/usagestats -count=1` 通过。
+- `npm run test:run -- src/views/admin/__tests__/DashboardView.spec.ts` 通过，2 个 Dashboard 组件测试通过，覆盖默认时间范围和 Token 明细渲染。
+- `npm run typecheck` 通过。
+- `npm run build` 通过，保留 Vite 既有 chunk size / dynamic import 警告。
+- `git diff --check` 通过，仅提示 Windows 工作区将文档 LF 转 CRLF。
+- `go test ./internal/handler/admin -run Dashboard -count=1` 被当前包既有测试编译问题阻塞：`internal\handler\admin\account_handler_mixed_channel_test.go:165:57: adminSvc.updatedAccounts[0].Platform undefined (type *service.UpdateAccountInput has no field or method Platform)`。该失败点不在本轮修改文件内。

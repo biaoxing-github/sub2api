@@ -55,6 +55,7 @@ type DashboardStats struct {
 	TotalOutputTokens        int64   `json:"total_output_tokens"`
 	TotalCacheCreationTokens int64   `json:"total_cache_creation_tokens"`
 	TotalCacheReadTokens     int64   `json:"total_cache_read_tokens"`
+	TotalCacheReadRatio      float64 `json:"total_cache_read_ratio"` // 累计缓存读取占输入侧 Token 比例
 	TotalTokens              int64   `json:"total_tokens"`
 	TotalCost                float64 `json:"total_cost"`         // 累计标准计费
 	TotalActualCost          float64 `json:"total_actual_cost"`  // 累计实际扣除
@@ -66,6 +67,7 @@ type DashboardStats struct {
 	TodayOutputTokens        int64   `json:"today_output_tokens"`
 	TodayCacheCreationTokens int64   `json:"today_cache_creation_tokens"`
 	TodayCacheReadTokens     int64   `json:"today_cache_read_tokens"`
+	TodayCacheReadRatio      float64 `json:"today_cache_read_ratio"` // 今日缓存读取占输入侧 Token 比例
 	TodayTokens              int64   `json:"today_tokens"`
 	TodayCost                float64 `json:"today_cost"`         // 今日标准计费
 	TodayActualCost          float64 `json:"today_actual_cost"`  // 今日实际扣除
@@ -77,6 +79,25 @@ type DashboardStats struct {
 	// 性能指标
 	Rpm int64 `json:"rpm"` // 近5分钟平均每分钟请求数
 	Tpm int64 `json:"tpm"` // 近5分钟平均每分钟Token数
+}
+
+// RecalculateDerivedFields 统一刷新 Dashboard 派生字段，避免新增展示指标时各查询路径漏算。
+func (s *DashboardStats) RecalculateDerivedFields() {
+	if s == nil {
+		return
+	}
+	s.TotalTokens = s.TotalInputTokens + s.TotalOutputTokens + s.TotalCacheCreationTokens + s.TotalCacheReadTokens
+	s.TodayTokens = s.TodayInputTokens + s.TodayOutputTokens + s.TodayCacheCreationTokens + s.TodayCacheReadTokens
+	s.TotalCacheReadRatio = cacheReadRatio(s.TotalInputTokens, s.TotalCacheReadTokens)
+	s.TodayCacheReadRatio = cacheReadRatio(s.TodayInputTokens, s.TodayCacheReadTokens)
+}
+
+func cacheReadRatio(inputTokens, cacheReadTokens int64) float64 {
+	denominator := inputTokens + cacheReadTokens
+	if denominator <= 0 {
+		return 0
+	}
+	return float64(cacheReadTokens) / float64(denominator)
 }
 
 // TrendDataPoint represents a single point in trend data
