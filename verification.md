@@ -659,3 +659,26 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 聚焦测试通过，覆盖单候选进入等待窗口、多候选不提前等待、池耗尽后清空排除列表并继续等待、到达 5 分钟窗口后停止。
 - handler 编译切片通过。
 - `go test ./internal/service ./internal/handler -run "^$" -count=1` 中 handler 通过；service 包仍被当前工作树既有 `resetUserGroupRateCacheVersionForTest` 缺失阻塞，错误来自 `internal\service\user_group_rate_resolver_test.go`，不属于本次 OpenAI handler 改动。
+
+---
+
+日期：2026-06-02
+执行者：Devil
+
+## Claude Code 国产模型 thinking SSE 兼容验证
+
+本次修复针对 Claude Code 通过本地 sub2api 调用 `deepseek-v4-pro` 等国产模型时，普通 Anthropic `/v1/messages` 请求未显式开启 thinking，但上游仍先返回 `content_block_start(type=thinking)`、`thinking_delta` 和 `signature_delta` 的情况。Claude Code 的 text 输出会隐藏这些块，复杂提示会表现为长时间 0 字节或 `max turns` 异常。
+
+修复后，Gateway 通用流式响应在 request context 中读取 `ThinkingEnabled=false` 时，会丢弃 thinking block 及对应 delta/signature/stop，继续保留 `message_start`、text block、usage 和 `message_stop`。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestHandleStreamingResponse_(SuppressesThinkingWhenRequestDisabled|CacheTokens|ZeroUsageTerminalBeforeOutput|MissingTerminal|DataErrorBeforeOutput)" -count=1`
+- `go test -tags unit ./internal/service -run "TestHandleStreamingResponse|TestGatewayService_AnthropicAPIKeyPassthrough|TestForwardAsRawChatCompletions_PreservesDeepSeekReasoningContent" -count=1`
+- `go test -tags unit ./internal/service -count=1`
+
+## 校验结果
+
+- 新增 `thinking=false` 回归测试通过，确认 thinking start/delta/signature/stop 被过滤，text、usage、terminal 正常通过。
+- 相关 streaming/failover、Anthropic API key passthrough、DeepSeek OpenAI 原生 `reasoning_content` focused tests 通过。
+- 全量 `internal/service` 单测超过 90 秒无输出后中断；本次改动已由 focused tests 覆盖，未把既有慢测作为本次阻断项。

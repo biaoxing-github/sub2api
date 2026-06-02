@@ -205,6 +205,59 @@ func anthropicStreamDataHasUsefulOutput(data string) bool {
 	}
 }
 
+func shouldSuppressAnthropicThinkingOutput(ctx context.Context) bool {
+	enabled, ok := ThinkingEnabledFromContext(ctx)
+	return ok && !enabled
+}
+
+func anthropicEventIndex(parsed gjson.Result) (int, bool) {
+	index := parsed.Get("index")
+	if !index.Exists() {
+		return 0, false
+	}
+	return int(index.Int()), true
+}
+
+func shouldDropAnthropicThinkingData(data string, hiddenThinkingBlocks map[int]struct{}) bool {
+	trimmed := strings.TrimSpace(data)
+	if trimmed == "" || trimmed == "[DONE]" {
+		return false
+	}
+
+	parsed := gjson.Parse(trimmed)
+	index, hasIndex := anthropicEventIndex(parsed)
+	switch parsed.Get("type").String() {
+	case "content_block_start":
+		if parsed.Get("content_block.type").String() != "thinking" {
+			return false
+		}
+		if hasIndex {
+			hiddenThinkingBlocks[index] = struct{}{}
+		}
+		return true
+	case "content_block_delta":
+		deltaType := parsed.Get("delta.type").String()
+		if deltaType != "thinking_delta" && deltaType != "signature_delta" {
+			return false
+		}
+		if hasIndex {
+			hiddenThinkingBlocks[index] = struct{}{}
+		}
+		return true
+	case "content_block_stop":
+		if !hasIndex {
+			return false
+		}
+		if _, ok := hiddenThinkingBlocks[index]; !ok {
+			return false
+		}
+		delete(hiddenThinkingBlocks, index)
+		return true
+	default:
+		return false
+	}
+}
+
 func claudeUsageHasAnyTokens(usage *ClaudeUsage) bool {
 	return usage != nil &&
 		(usage.InputTokens > 0 ||
@@ -7548,6 +7601,8 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	clientOutputWritten := false
 	releasePendingOutput := false
 	pendingOutputBlocks := make([]string, 0, 8)
+	suppressThinkingOutput := shouldSuppressAnthropicThinkingOutput(ctx)
+	hiddenThinkingBlocks := make(map[int]struct{})
 
 	flushPendingOutput := func() bool {
 		if clientDisconnected || len(pendingOutputBlocks) == 0 {
@@ -7688,6 +7743,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		usagePatch := s.extractSSEUsagePatch(event)
 		if anthropicStreamEventIsTerminal(eventName, dataLine) {
 			sawTerminalEvent = true
+		}
+		if suppressThinkingOutput && shouldDropAnthropicThinkingData(dataLine, hiddenThinkingBlocks) {
+			return nil, dataLine, usagePatch, nil
 		}
 		if !eventChanged {
 			block := ""

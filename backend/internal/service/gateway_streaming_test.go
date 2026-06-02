@@ -319,6 +319,67 @@ func TestHandleStreamingResponse_ZeroUsageTerminalBeforeOutput_TriggersFailover(
 	require.Empty(t, rec.Body.String())
 }
 
+func TestHandleStreamingResponse_SuppressesThinkingWhenRequestDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	ctx := WithThinkingEnabled(context.Background(), false, false)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`event: message_start`,
+			`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"usage":{"input_tokens":7,"output_tokens":0}}}`,
+			"",
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+			"",
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hidden reasoning"}}`,
+			"",
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_hidden"}}`,
+			"",
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":0}`,
+			"",
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+			"",
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"visible answer"}}`,
+			"",
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":1}`,
+			"",
+			`event: message_delta`,
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":3}}`,
+			"",
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			"",
+		}, "\n"))),
+	}
+
+	result, err := svc.handleStreamingResponse(ctx, resp, c, &Account{ID: 1}, time.Now(), "deepseek-v4-pro", "deepseek-v4-pro", false)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 7, result.usage.InputTokens)
+	require.Equal(t, 3, result.usage.OutputTokens)
+
+	body := rec.Body.String()
+	require.NotContains(t, body, `"type":"thinking"`)
+	require.NotContains(t, body, "thinking_delta")
+	require.NotContains(t, body, "signature_delta")
+	require.NotContains(t, body, "hidden reasoning")
+	require.Contains(t, body, "visible answer")
+	require.Contains(t, body, "message_stop")
+}
+
 func TestHandleStreamingResponse_SpecialCharactersInJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newMinimalGatewayService()
