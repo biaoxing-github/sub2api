@@ -1165,3 +1165,34 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 
 - `AccountModelProbesView.spec.ts` 3 个测试通过，覆盖详情弹窗展示验证证据并可关闭。
 - `vue-tsc --noEmit` 通过。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针详情弹窗提交、构建、部署验证
+
+本轮将模型探针详情弹窗改动提交为 `e25826ba feat(account-probe): show model probe detail in dialog`，随后构建 `sub2api:multi-key-local` 镜像并使用 `D:\sub2api-deploy\docker-compose.yml` 重建本地 `sub2api` 容器。
+
+## 校验方式
+
+- `git diff --cached --check`
+- `docker build -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --no-deps --force-recreate sub2api`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml ps`
+- `curl.exe -s http://127.0.0.1:8080/health`
+- `docker exec sub2api /app/sub2api --version`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/model-probes`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/probe-reports`
+- `curl.exe -i -s -X POST http://127.0.0.1:8080/api/v1/admin/account-model-probe-runs/batch ...`
+- `curl.exe -i -s http://127.0.0.1:8080/api/v1/admin/account-probe-runs?page=1&page_size=1`
+
+## 校验结果
+
+- Docker build 通过，前端 production build 只出现既有 Browserslist/chunk 警告；镜像 ID 为 `sha256:131a9604ef2ff96364d8b6e96ddd5e97cb65a8acd452e0763907aa78fd958982`。
+- `docker compose ps` 显示 `sub2api`、PostgreSQL、Redis 均 `healthy`，`sub2api` 映射 `0.0.0.0:8080->8080/tcp`。
+- `/health` 返回 `{"status":"ok"}`。
+- 容器版本输出 `Sub2API 0.1.133 (commit: docker, built: 2026-06-03T07:17:34Z)`。
+- `/admin/model-probes` 与 `/admin/probe-reports` 返回 HTTP 200 前端 HTML。
+- `/api/v1/admin/account-model-probe-runs/batch` 与 `/api/v1/admin/account-probe-runs` 未登录访问均返回 HTTP 401 `UNAUTHORIZED`，确认路由存在并进入管理端认证拦截。
