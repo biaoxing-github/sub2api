@@ -252,9 +252,18 @@ describe('AccountModelProbesView', () => {
     await flushPromises()
 
     expect(getAccountProbeRun).toHaveBeenCalledWith(101, expect.any(Object))
-    expect(wrapper.text()).toContain('JSON 算术')
-    expect(wrapper.text()).toContain('{"sum":83,"code":"BETA"}')
-    expect(wrapper.text()).toContain('10 / 10')
+    const detailDialog = wrapper.findAll('[data-test="base-dialog"]').find(dialog =>
+      dialog.text().includes('admin.accountModelProbes.detailTitle')
+    )
+    expect(detailDialog?.exists()).toBe(true)
+    expect(detailDialog?.text()).toContain('JSON 算术')
+    expect(detailDialog?.text()).toContain('{"sum":83,"code":"BETA"}')
+    expect(detailDialog?.text()).toContain('10 / 10')
+
+    await detailDialog?.find('button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('JSON 算术')
   })
 
 })

@@ -105,14 +105,15 @@
         </div>
       </section>
 
-      <section v-if="detailRun || detailLoading || detailError" class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
-        <div class="flex items-center justify-between gap-3">
-          <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ t('admin.accountModelProbes.detailTitle') }}</div>
-          <button type="button" class="btn btn-ghost px-2 py-1 text-sm" @click="clearDetail">{{ t('common.close') }}</button>
-        </div>
-        <div v-if="detailLoading" class="mt-4 text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</div>
-        <div v-else-if="detailError" class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200">{{ detailError }}</div>
-        <div v-else-if="detailRun" class="mt-4 space-y-4">
+      <BaseDialog
+        :show="detailDialogOpen"
+        :title="t('admin.accountModelProbes.detailTitle')"
+        width="extra-wide"
+        @close="clearDetail"
+      >
+        <div v-if="detailLoading" class="text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</div>
+        <div v-else-if="detailError" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200">{{ detailError }}</div>
+        <div v-else-if="detailRun" class="space-y-4">
           <div class="grid gap-3 sm:grid-cols-3">
             <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-dark-800">
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.status') }}</div>
@@ -164,7 +165,10 @@
             </div>
           </div>
         </div>
-      </section>
+        <template #footer>
+          <button type="button" class="btn btn-secondary" @click="clearDetail">{{ t('common.close') }}</button>
+        </template>
+      </BaseDialog>
 
       <BaseDialog
         :show="batchDialogOpen"
@@ -279,6 +283,7 @@ const message = ref('')
 const detailRun = ref<AccountProbeRun | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
+const detailDialogOpen = ref(false)
 const batchDialogOpen = ref(false)
 const batchSubmitting = ref(false)
 const batchAccountsLoading = ref(false)
@@ -472,6 +477,7 @@ async function loadDetail(runId: number) {
   detailAbortController?.abort()
   const controller = new AbortController()
   detailAbortController = controller
+  detailDialogOpen.value = true
   detailLoading.value = true
   detailError.value = ''
   try {
@@ -491,6 +497,7 @@ async function loadDetail(runId: number) {
 
 function clearDetail() {
   detailAbortController?.abort()
+  detailDialogOpen.value = false
   detailRun.value = null
   detailLoading.value = false
   detailError.value = ''

@@ -1146,3 +1146,22 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 容器版本输出 `Sub2API 0.1.133 (commit: docker, built: 2026-06-03T06:45:01Z)`。
 - `/admin/model-probes` 与 `/admin/probe-reports` 返回 HTTP 200 前端 HTML。
 - `/api/v1/admin/account-model-probe-runs/batch`、`/api/v1/admin/account-probe-runs`、`/api/v1/admin/account-probe-runs/ranking` 未登录访问均返回 HTTP 401 `UNAUTHORIZED`，确认路由存在并进入管理端认证拦截。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针详情改为弹窗
+
+本轮将模型探针列表的“查看”详情从页面下方内联区域改为 `BaseDialog` 弹窗。点击查看时立即打开弹窗并加载详情；弹窗内展示状态、得分结论、时间、样本输出和验证证据；关闭弹窗时清空当前详情状态。
+
+## 校验方式
+
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+
+## 校验结果
+
+- `AccountModelProbesView.spec.ts` 3 个测试通过，覆盖详情弹窗展示验证证据并可关闭。
+- `vue-tsc --noEmit` 通过。
