@@ -159,6 +159,7 @@ describe('AccountProbeReportsView', () => {
           TablePageLayout: TablePageLayoutStub,
           Select: SelectStub,
           Pagination: PaginationStub,
+          BaseDialog: BaseDialogStub,
           Icon: true,
         },
       },
@@ -175,8 +176,62 @@ describe('AccountProbeReportsView', () => {
     expect(wrapper.text()).toContain('95.0%')
     expect(wrapper.text()).toContain('1,440ms')
     expect(wrapper.text()).toContain('admin.accountProbeReports.rankingTitle')
-    expect(wrapper.text()).toContain('rayapi-free')
-    expect(wrapper.text()).toContain('94')
+    expect(wrapper.find('[data-test="probe-ranking-item"]').exists()).toBe(false)
+  })
+
+  it('opens ranking in a dialog without occupying the report table area', async () => {
+    listAccountProbeRanking.mockResolvedValueOnce([
+      {
+        account_id: 12,
+        account_name: 'rayapi-free',
+        run_count: 2,
+        average_score: 94,
+        latest_score: 96,
+        grade: 'excellent',
+        grade_label: '优秀',
+        latest_run_id: 91,
+        latest_status: 'success',
+        latest_created_at: '2026-05-26T10:00:00Z',
+        latest_model: 'gpt-4.1-mini',
+        average_success_rate: 1,
+        average_latency_ms: 830,
+        score_history: [
+          { run_id: 90, score: 92, grade: 'excellent', grade_label: '优秀', status: 'success', model: 'gpt-4.1-mini', mode: 'standard', request_mode: 'stream', success_rate: 1, avg_latency_ms: 900, p95_ms: 1100, total_tokens: 2000, created_at: '2026-05-25T10:00:00Z' },
+          { run_id: 91, score: 96, grade: 'excellent', grade_label: '优秀', status: 'success', model: 'gpt-4.1-mini', mode: 'standard', request_mode: 'stream', success_rate: 1, avg_latency_ms: 830, p95_ms: 1000, total_tokens: 2048, created_at: '2026-05-26T10:00:00Z' },
+        ],
+      },
+    ])
+    listAccountProbeRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, summary: {} })
+
+    const wrapper = mount(AccountProbeReportsView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          Pagination: PaginationStub,
+          BaseDialog: BaseDialogStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="probe-ranking-item"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="base-dialog"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="open-ranking-dialog"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="base-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="probe-ranking-item"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="probe-ranking-item"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccountProbeRuns).toHaveBeenLastCalledWith(1, 20, expect.objectContaining({ account_id: '12' }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(wrapper.text()).toContain('admin.accountProbeReports.selectedRanking')
+    expect(wrapper.text()).toContain('96')
   })
 
   it('filters report list by ranking item and shows score history', async () => {
@@ -210,11 +265,17 @@ describe('AccountProbeReportsView', () => {
           TablePageLayout: TablePageLayoutStub,
           Select: SelectStub,
           Pagination: PaginationStub,
+          BaseDialog: BaseDialogStub,
           Icon: true,
         },
       },
     })
     await flushPromises()
+
+    await wrapper.find('[data-test="open-ranking-dialog"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="base-dialog"]').text()).toContain('admin.accountProbeReports.rankingDescription')
 
     await wrapper.find('[data-test="probe-ranking-item"]').trigger('click')
     await flushPromises()

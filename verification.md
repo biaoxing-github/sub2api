@@ -1035,3 +1035,29 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 模型探针单个/批量 POST 路由与排行榜 GET 路由未登录访问均返回 HTTP 401，确认路由存在并进入认证拦截。
 - 容器二进制 `--version` 输出包含构建提交、版本号和构建时间。
 - 启动日志显示 `ScheduledTestRunner started` 与 `Server started on 0.0.0.0:8080`；日志中的 `OpenAI upstream error ... insufficient_quota` 来自运行中 `/responses` 上游账号额度请求，不属于启动、迁移或监听失败。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 上游排行榜改为弹窗
+
+本轮将上游体检报告页的“上游排行榜”从报告表格上方的常驻区块改为操作区按钮触发的弹窗。排行榜列表、刷新按钮和选中上游后的每次得分历史仍保留在弹窗内；点击排行榜项继续筛选主报告列表，但排行榜不再占用或遮挡具体报告列表区域。
+
+## 校验方式
+
+- `rtk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts -t "ranking"`：先红后绿，红灯覆盖当前实现默认渲染排行榜项且没有弹窗入口。
+- `rtk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts`
+- `rtk npm run typecheck`
+- `git diff --check`
+- `rtk npm run dev -- --host 127.0.0.1 --port 5173`
+- Playwright 打开 `http://127.0.0.1:5173/admin/probe-reports`
+
+## 校验结果
+
+- 排行榜切片测试通过，覆盖默认不渲染排行榜项、点击按钮打开弹窗、在弹窗中点击上游后筛选报告列表并展示历史得分。
+- `AccountProbeReportsView.spec.ts` 10 个测试通过。
+- `vue-tsc --noEmit` 通过。
+- `git diff --check` 通过。
+- 浏览器可打开本地 dev server；未登录访问管理页按路由守卫跳转到登录页，因此实际管理页视觉烟测需要登录态。

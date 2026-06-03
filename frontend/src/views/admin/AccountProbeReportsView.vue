@@ -59,6 +59,10 @@
             <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
             <span class="ml-1.5 hidden sm:inline">{{ t('common.refresh') }}</span>
           </button>
+          <button type="button" data-test="open-ranking-dialog" class="btn btn-secondary px-3" @click="openRankingDialog">
+            <Icon name="chartBar" size="sm" />
+            <span class="ml-1.5">{{ t('admin.accountProbeReports.rankingTitle') }}</span>
+          </button>
           <button
             type="button"
             data-test="delete-selected-probe-runs"
@@ -95,80 +99,6 @@
       </template>
 
       <template #table>
-        <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ t('admin.accountProbeReports.rankingTitle') }}</h2>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.rankingDescription') }}</p>
-            </div>
-            <button type="button" class="btn btn-ghost px-2 py-1 text-sm" :disabled="rankingLoading" @click="loadRanking">
-              <Icon name="refresh" size="sm" :class="rankingLoading ? 'animate-spin' : ''" />
-            </button>
-          </div>
-          <div v-if="rankingError" class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200">{{ rankingError }}</div>
-          <div v-else-if="rankingLoading && rankings.length === 0" class="mt-4 text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</div>
-          <div v-else-if="rankings.length === 0" class="mt-4 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.rankingEmpty') }}</div>
-          <div v-else class="mt-4 grid gap-3 lg:grid-cols-3">
-            <button
-              v-for="(item, index) in rankings"
-              :key="item.account_id"
-              type="button"
-              data-test="probe-ranking-item"
-              class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-left transition hover:border-primary-300 hover:bg-primary-50 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-700 dark:hover:bg-primary-950/30"
-              @click="selectRankingAccount(item)"
-            >
-              <div class="flex items-start justify-between gap-3">
-                <div>
-                  <div class="text-xs font-medium text-gray-500 dark:text-gray-400">#{{ index + 1 }} · #{{ item.account_id }}</div>
-                  <div class="mt-1 font-semibold text-gray-900 dark:text-gray-100">{{ item.account_name || `#${item.account_id}` }}</div>
-                </div>
-                <span :class="gradeClass(item.grade)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold">{{ item.grade_label || formatGrade(item.grade) }}</span>
-              </div>
-              <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-600 dark:text-gray-300">
-                <div><span class="block text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.averageScore') }}</span><strong>{{ formatNumber(item.average_score) }}</strong></div>
-                <div><span class="block text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.latestScore') }}</span><strong>{{ formatNumber(item.latest_score) }}</strong></div>
-                <div><span class="block text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.runCount') }}</span><strong>{{ formatInteger(item.run_count) }}</strong></div>
-              </div>
-              <div class="mt-3 flex items-end gap-1 h-10" :aria-label="t('admin.accountProbeReports.scoreHistory')">
-                <span
-                  v-for="point in item.score_history.slice(-12)"
-                  :key="point.run_id"
-                  class="w-3 rounded-t bg-primary-500/75 dark:bg-primary-400/80"
-                  :style="{ height: `${Math.max(8, Math.min(40, point.score * 0.4))}px` }"
-                  :title="`${point.score} · ${formatDateTime(point.created_at)}`"
-                ></span>
-              </div>
-            </button>
-          </div>
-          <div v-if="selectedRanking" class="mt-4 rounded-lg border border-primary-200 bg-primary-50 p-3 dark:border-primary-900/60 dark:bg-primary-950/30">
-            <div class="flex items-center justify-between gap-3">
-              <div class="text-sm font-semibold text-primary-900 dark:text-primary-100">{{ t('admin.accountProbeReports.selectedRanking', { account: selectedRanking.account_name || `#${selectedRanking.account_id}` }) }}</div>
-              <button type="button" class="btn btn-ghost px-2 py-1 text-sm" @click="clearRankingSelection">{{ t('common.clear') }}</button>
-            </div>
-            <div class="mt-2 overflow-x-auto">
-              <table class="w-full min-w-[640px]">
-                <thead>
-                  <tr>
-                    <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.time') }}</th>
-                    <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.score') }}</th>
-                    <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.status') }}</th>
-                    <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.avgLatency') }}</th>
-                    <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.tokens') }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="point in selectedRanking.score_history.slice().reverse()" :key="point.run_id" class="border-t border-primary-100 dark:border-primary-900/50">
-                    <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(point.created_at) }}</td>
-                    <td class="px-2 py-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(point.score) }}</td>
-                    <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatStatus(point.status) }}</td>
-                    <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatMs(point.avg_latency_ms) }}</td>
-                    <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatInteger(point.total_tokens) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </section>
         <div class="table-wrapper">
           <table>
             <thead>
@@ -415,6 +345,92 @@
   </Teleport>
 
   <BaseDialog
+    :show="rankingDialogOpen"
+    :title="t('admin.accountProbeReports.rankingTitle')"
+    width="extra-wide"
+    @close="closeRankingDialog"
+  >
+    <div data-test="ranking-dialog" class="space-y-4">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.rankingDescription') }}</p>
+        <button type="button" class="btn btn-ghost px-2 py-1 text-sm" :disabled="rankingLoading" @click="loadRanking">
+          <Icon name="refresh" size="sm" :class="rankingLoading ? 'animate-spin' : ''" />
+          <span class="ml-1.5">{{ t('common.refresh') }}</span>
+        </button>
+      </div>
+
+      <div v-if="rankingError" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200">{{ rankingError }}</div>
+      <div v-else-if="rankingLoading && rankings.length === 0" class="text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</div>
+      <div v-else-if="rankings.length === 0" class="text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.rankingEmpty') }}</div>
+      <div v-else class="grid max-h-[420px] gap-3 overflow-y-auto pr-1 lg:grid-cols-3">
+        <button
+          v-for="(item, index) in rankings"
+          :key="item.account_id"
+          type="button"
+          data-test="probe-ranking-item"
+          class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-left transition hover:border-primary-300 hover:bg-primary-50 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-700 dark:hover:bg-primary-950/30"
+          @click="selectRankingAccount(item)"
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="text-xs font-medium text-gray-500 dark:text-gray-400">#{{ index + 1 }} · #{{ item.account_id }}</div>
+              <div class="mt-1 font-semibold text-gray-900 dark:text-gray-100">{{ item.account_name || `#${item.account_id}` }}</div>
+            </div>
+            <span :class="gradeClass(item.grade)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold">{{ item.grade_label || formatGrade(item.grade) }}</span>
+          </div>
+          <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-600 dark:text-gray-300">
+            <div><span class="block text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.averageScore') }}</span><strong>{{ formatNumber(item.average_score) }}</strong></div>
+            <div><span class="block text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.latestScore') }}</span><strong>{{ formatNumber(item.latest_score) }}</strong></div>
+            <div><span class="block text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.runCount') }}</span><strong>{{ formatInteger(item.run_count) }}</strong></div>
+          </div>
+          <div class="mt-3 flex h-10 items-end gap-1" :aria-label="t('admin.accountProbeReports.scoreHistory')">
+            <span
+              v-for="point in item.score_history.slice(-12)"
+              :key="point.run_id"
+              class="w-3 rounded-t bg-primary-500/75 dark:bg-primary-400/80"
+              :style="{ height: `${Math.max(8, Math.min(40, point.score * 0.4))}px` }"
+              :title="`${point.score} · ${formatDateTime(point.created_at)}`"
+            ></span>
+          </div>
+        </button>
+      </div>
+
+      <div v-if="selectedRanking" class="rounded-lg border border-primary-200 bg-primary-50 p-3 dark:border-primary-900/60 dark:bg-primary-950/30">
+        <div class="flex items-center justify-between gap-3">
+          <div class="text-sm font-semibold text-primary-900 dark:text-primary-100">{{ t('admin.accountProbeReports.selectedRanking', { account: selectedRanking.account_name || `#${selectedRanking.account_id}` }) }}</div>
+          <button type="button" class="btn btn-ghost px-2 py-1 text-sm" @click="clearRankingSelection">{{ t('common.clear') }}</button>
+        </div>
+        <div class="mt-2 overflow-x-auto">
+          <table class="w-full min-w-[640px]">
+            <thead>
+              <tr>
+                <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.time') }}</th>
+                <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.score') }}</th>
+                <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.status') }}</th>
+                <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.avgLatency') }}</th>
+                <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.tokens') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="point in selectedRanking.score_history.slice().reverse()" :key="point.run_id" class="border-t border-primary-100 dark:border-primary-900/50">
+                <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(point.created_at) }}</td>
+                <td class="px-2 py-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(point.score) }}</td>
+                <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatStatus(point.status) }}</td>
+                <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatMs(point.avg_latency_ms) }}</td>
+                <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatInteger(point.total_tokens) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <template #footer>
+      <button type="button" class="btn btn-secondary" @click="closeRankingDialog">{{ t('common.close') }}</button>
+    </template>
+  </BaseDialog>
+
+  <BaseDialog
     :show="batchDialogOpen"
     :title="batchDialogMode === 'model' ? t('admin.accountProbeReports.batchModelDialogTitle') : t('admin.accountProbeReports.batchDialogTitle')"
     width="extra-wide"
@@ -606,6 +622,7 @@ const rankings = ref<AccountProbeRankingItem[]>([])
 const rankingLoading = ref(false)
 const rankingError = ref('')
 const selectedRanking = ref<AccountProbeRankingItem | null>(null)
+const rankingDialogOpen = ref(false)
 const scheduleDialogOpen = ref(false)
 const scheduleSubmitting = ref(false)
 const scheduleError = ref('')
@@ -772,6 +789,17 @@ async function loadRanking() {
       rankingAbortController = null
     }
   }
+}
+
+function openRankingDialog() {
+  rankingDialogOpen.value = true
+  if (rankingError.value && !rankingLoading.value) {
+    loadRanking()
+  }
+}
+
+function closeRankingDialog() {
+  rankingDialogOpen.value = false
 }
 
 function selectRankingAccount(item: AccountProbeRankingItem) {
