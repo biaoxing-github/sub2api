@@ -1114,3 +1114,35 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - repository 聚焦测试通过，覆盖样本证据保存、空输出落库和报告默认排除模型验证记录。
 - 前端 Vitest 13 个测试通过，覆盖模型页批量默认全选 API_KEY 账号、批量提交、报告页移除批量模型入口和详情样本展示。
 - `vue-tsc --noEmit` 通过。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针拆分功能提交、构建、部署验证
+
+本轮将模型探针拆分功能提交为 `1c05fb68 feat(account-probe): split model probes from health reports`，随后构建 `sub2api:multi-key-local` 镜像并使用 `D:\sub2api-deploy\docker-compose.yml` 重建本地 `sub2api` 容器。
+
+## 校验方式
+
+- `git diff --cached --check`
+- `docker build -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --no-deps --force-recreate sub2api`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml ps`
+- `Invoke-WebRequest http://127.0.0.1:8080/health`
+- `docker exec sub2api /app/sub2api --version`
+- `curl.exe -i -s http://127.0.0.1:8080/admin/model-probes`
+- `curl.exe -i -s http://127.0.0.1:8080/admin/probe-reports`
+- `curl.exe -i -s -X POST http://127.0.0.1:8080/api/v1/admin/account-model-probe-runs/batch ...`
+- `curl.exe -i -s http://127.0.0.1:8080/api/v1/admin/account-probe-runs?page=1&page_size=1`
+- `curl.exe -i -s http://127.0.0.1:8080/api/v1/admin/account-probe-runs/ranking?limit=1`
+
+## 校验结果
+
+- Docker build 通过，前端 production build 只出现既有 Browserslist/chunk 警告；镜像 ID 为 `sha256:da602c21e66b961bca34d3796858db83b0a6b87dbcaccf7f49db1f348a73ef1b`。
+- `docker compose ps` 显示 `sub2api`、PostgreSQL、Redis 均 `healthy`，`sub2api` 映射 `0.0.0.0:8080->8080/tcp`。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- 容器版本输出 `Sub2API 0.1.133 (commit: docker, built: 2026-06-03T06:45:01Z)`。
+- `/admin/model-probes` 与 `/admin/probe-reports` 返回 HTTP 200 前端 HTML。
+- `/api/v1/admin/account-model-probe-runs/batch`、`/api/v1/admin/account-probe-runs`、`/api/v1/admin/account-probe-runs/ranking` 未登录访问均返回 HTTP 401 `UNAUTHORIZED`，确认路由存在并进入管理端认证拦截。
