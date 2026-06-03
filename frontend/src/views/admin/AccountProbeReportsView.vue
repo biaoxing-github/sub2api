@@ -1192,7 +1192,7 @@ function gradeClass(grade: string | null | undefined): string {
 
 function statusClass(status: string): string {
   if (status === 'success') return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200'
-  if (status === 'partial' || status === 'running') return 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
+  if (status === 'partial' || status === 'warning' || status === 'running') return 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
   if (status === 'failed') return 'bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200'
   return 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-200'
 }

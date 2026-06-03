@@ -54,16 +54,30 @@ type APIKeyProbePlan struct {
 }
 
 type APIKeyProbePlannedSample struct {
-	Type            string
-	Label           string
-	ValidationKey   string
-	Prompt          string
-	Timeout         time.Duration
-	MaxOutputTokens int
-	InputTokenMin   int
-	InputTokenMax   int
-	OutputTokenMin  int
-	OutputTokenMax  int
+	Type             string
+	Label            string
+	ValidationKey    string
+	RequestMode      string
+	Method           string
+	ExpectedModel    string
+	PairedModel      string
+	Category         string
+	StrictModel      bool
+	Structured       bool
+	ToolCalling      bool
+	ModelCatalog     bool
+	EvidenceIgnored  bool
+	DistributionKey  string
+	DistributionRole string
+	DistributionRun  int
+	EvidenceMaxScore int
+	Prompt           string
+	Timeout          time.Duration
+	MaxOutputTokens  int
+	InputTokenMin    int
+	InputTokenMax    int
+	OutputTokenMin   int
+	OutputTokenMax   int
 }
 
 type APIKeyProbeEstimate struct {

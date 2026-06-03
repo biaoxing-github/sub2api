@@ -32,7 +32,7 @@ import (
 )
 
 const accountProbeBatchConcurrency = 2
-const accountProbeRunTimeout = 12 * time.Minute
+const accountProbeRunTimeout = 45 * time.Minute
 
 const (
 	batchTestNonAPIKeyGlobalConcurrency = 10
@@ -961,15 +961,22 @@ type BatchCreateAccountProbeRunsRequest struct {
 }
 
 type CreateAccountModelProbeRunRequest struct {
-	AccountID   int64  `json:"account_id" binding:"required"`
-	Model       string `json:"model"`
-	RequestMode string `json:"request_mode"`
+	AccountID           int64  `json:"account_id" binding:"required"`
+	Model               string `json:"model"`
+	RequestMode         string `json:"request_mode"`
+	TrustedComparisonID int64  `json:"trusted_comparison_account_id"`
 }
 
 type BatchCreateAccountModelProbeRunsRequest struct {
-	AccountIDs  []int64 `json:"account_ids"`
-	Model       string  `json:"model"`
-	RequestMode string  `json:"request_mode"`
+	AccountIDs          []int64 `json:"account_ids"`
+	Model               string  `json:"model"`
+	RequestMode         string  `json:"request_mode"`
+	TrustedComparisonID int64   `json:"trusted_comparison_account_id"`
+}
+
+type batchAccountProbeSkip struct {
+	AccountID int64  `json:"account_id"`
+	Message   string `json:"message"`
 }
 
 type DeleteAccountProbeRunsRequest struct {
@@ -1496,6 +1503,7 @@ func (h *AccountHandler) CreateModelProbeRun(c *gin.Context) {
 		Profile:             service.AccountProbeProfileModelValidation,
 		Model:               req.Model,
 		RequestMode:         req.RequestMode,
+		TrustedComparisonID: req.TrustedComparisonID,
 		ModelValidationOnly: true,
 	}
 	result, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
@@ -1529,24 +1537,36 @@ func (h *AccountHandler) BatchCreateModelProbeRuns(c *gin.Context) {
 		return
 	}
 	runs := make([]service.AccountProbeResult, 0, len(accountIDs))
+	skipped := make([]batchAccountProbeSkip, 0)
 	for _, accountID := range accountIDs {
 		probeReq := service.AccountProbeRunRequest{
 			AccountID:           accountID,
 			Profile:             service.AccountProbeProfileModelValidation,
 			Model:               req.Model,
 			RequestMode:         req.RequestMode,
+			TrustedComparisonID: req.TrustedComparisonID,
 			ModelValidationOnly: true,
 		}
 		run, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
 		if err != nil {
-			response.ErrorFrom(c, err)
-			return
+			skipped = append(skipped, batchAccountProbeSkip{AccountID: accountID, Message: err.Error()})
+			continue
 		}
 		runs = append(runs, run)
+	}
+	if len(runs) == 0 {
+		if len(skipped) > 0 {
+			response.InternalError(c, skipped[0].Message)
+			return
+		}
+		response.BadRequest(c, "No account model probe runs accepted")
+		return
 	}
 	go h.runAccountModelProbeBatchBackground(runs, req)
 	response.Accepted(c, gin.H{
 		"accepted_count": len(runs),
+		"skipped_count":  len(skipped),
+		"skipped":        skipped,
 		"runs":           runs,
 	})
 }
@@ -1570,6 +1590,9 @@ func accountProbeBackgroundTimeout(req service.AccountProbeRunRequest) time.Dura
 	timeout := 2 * time.Minute
 	if req.ModelValidationOnly {
 		timeout = 6 * time.Minute
+	}
+	if req.ModelValidationOnly && req.TrustedComparisonID > 0 {
+		timeout = accountProbeRunTimeout
 	}
 	if strings.EqualFold(strings.TrimSpace(req.Profile), service.AccountProbeProfileStandard) {
 		timeout = 4 * time.Minute
@@ -1821,6 +1844,7 @@ func (h *AccountHandler) runAccountModelProbeBatchBackground(runs []service.Acco
 			Profile:             service.AccountProbeProfileModelValidation,
 			Model:               run.Model,
 			RequestMode:         run.RequestMode,
+			TrustedComparisonID: req.TrustedComparisonID,
 			ModelValidationOnly: true,
 		}
 		if strings.TrimSpace(probeReq.Model) == "" {

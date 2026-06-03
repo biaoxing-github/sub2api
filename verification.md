@@ -1250,3 +1250,86 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
 - `/admin/model-probes` 与 `/admin/probe-reports` 返回 HTTP 200 前端 HTML。
 - `/api/v1/admin/account-probe-runs?mode=model_validation&keyword=rayapi`、`/api/v1/admin/account-model-probe-runs/batch` 与 `/api/v1/admin/account-probe-runs/ranking` 未登录访问均返回 HTTP 401 `UNAUTHORIZED`，确认路由存在并进入管理端认证拦截。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 清空模型探针数据
+
+本轮按用户要求清空本地部署数据库中的模型探针数据。模型探针数据范围依据后端代码和页面查询条件界定为 `account_probe_runs.mode = 'model_validation'` 的运行记录，以及这些运行记录对应的 `account_probe_samples` 样本明细；普通上游体检报告 `mode = 'standard'` 不在本次删除范围内。
+
+## 校验方式
+
+- `docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml ps`
+- `docker exec sub2api-postgres psql -U sub2api -d sub2api ...`
+
+## 校验结果
+
+- 当前本地部署容器为 `sub2api`、`sub2api-postgres`、`sub2api-redis`，`sub2api` 显示 `Up ... (healthy)`，端口映射 `0.0.0.0:8080->8080/tcp`。
+- 删除前：`account_probe_runs` 中 `mode='model_validation'` 共 39 条；对应 `account_probe_samples` 共 40 条；状态分布为 failed 1、partial 3、running 29、success 6。
+- 已在 PostgreSQL 事务中删除 39 条模型探针 run 和 40 条模型探针 sample。
+- 删除后复查：`account_probe_runs` 中 `mode='model_validation'` 为 0；对应 sample 为 0。
+- 删除后剩余普通上游体检报告仍为 `standard`：failed 2、partial 3、success 20，确认未清理普通体检数据。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针批量接口 500 修复
+
+本轮按用户要求直接查看本地日志复现 `POST http://localhost:8080/api/v1/admin/account-model-probe-runs/batch` 报错。日志显示 2026-06-03 15:53:55 至 15:54:30 多次请求返回 500，失败位置为 `account_handler.go:1542`，错误为 `no api key available`；数据库中同时间段存在多条 `account_probe_runs.mode='model_validation'` 且 `status='running'` 的遗留记录。根因是批量 handler 顺序调用 `Start` 创建运行记录后，遇到后续账号启动失败就直接返回 500，导致前面已经创建的 running 记录没有进入后台 `RunExisting`。
+
+修复后，批量模型探针会收集启动失败账号并继续处理可接受账号；只要至少有一个账号成功创建运行记录，就启动后台任务并返回 202，响应包含 `accepted_count`、`skipped_count`、`skipped` 和 `runs`。前端同步响应类型、默认只拉取 active OpenAI API Key，并在部分跳过时展示跳过数量。
+
+## 校验方式
+
+- `go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeBatch|TestAccountProbeCreate|TestAccountModelProbeCreate" -count=1`
+- `go test -tags unit ./internal/handler/admin -run "Test.*Probe" -count=1`
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+- `git diff --check`
+- `docker build -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --no-deps --force-recreate sub2api`
+- `curl.exe --noproxy "*" http://localhost:8080/health`
+- `curl.exe --noproxy "*" http://localhost:8080/admin/model-probes`
+- `curl.exe --noproxy "*" -X POST http://localhost:8080/api/v1/admin/account-model-probe-runs/batch ...`
+
+## 校验结果
+
+- 后端 handler 聚焦测试通过；新增回归覆盖单个账号 `Start` 返回 `no api key available` 时仍返回 202，并继续启动已接受账号的后台任务。
+- 更宽的 `Test.*Probe` handler 切片通过。
+- `AccountModelProbesView.spec.ts` 4 个测试通过，覆盖 active 账号筛选和部分跳过提示。
+- `vue-tsc --noEmit` 通过。
+- `git diff --check` 通过，仅提示 Windows 工作区中 JSONL 文档后续可能 LF 转 CRLF。
+- Docker build 通过，镜像 ID 为 `sha256:f57350ea3378b16727928f1b0318eaf57abf4f449e4ae80cbb3bae430f8afa8c`，容器版本输出 `Sub2API 0.1.133 (commit: docker, built: 2026-06-03T08:17:24Z)`。
+- 本地 `sub2api` 容器重建后 healthy，`/health` 返回 HTTP 200 与 `{"status":"ok"}`，`/admin/model-probes` 返回 HTTP 200 HTML，未登录批量 API 返回 HTTP 401 `UNAUTHORIZED`，确认新容器路由正常进入管理端认证拦截。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 可信对比完整移植
+
+本轮将 juhe-ai `feature/20250602` 的模型检测可信对比完整移植进 sub2api 的模型探针：后端在 `AccountProbeService` 中补上可信账号核心 suite、可信对比核心摘要和 6 类分布相似度摘要，单个模型探针请求与批量请求继续透传 `trusted_comparison_account_id`；前端模型探针页面继续展示可信账号、相似度、覆盖率和目标/可信通过率，类型与文案同步保持一致。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "Test.*ModelValidation|TestScoreAccountModelValidation" -count=1`
+- `go test -tags unit ./internal/handler/admin -run "Test.*Probe" -count=1`
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+- `git diff --check`
+- `go test -tags unit ./internal/service ./internal/handler/admin -count=1 -timeout=15m`
+
+## 校验结果
+
+- 后端 `internal/service` 聚焦测试通过，覆盖模型验证评分、可信对比核心摘要和分布相似度摘要。
+- 后端 `internal/handler/admin` probe 切片通过，覆盖单跑、批跑和后台线程参数透传。
+- 前端 `AccountModelProbesView.spec.ts` 4 个测试通过，`vue-tsc --noEmit` 通过。
+- `git diff --check` 通过，仅提示 `docs/feature_list.jsonl`、`docs/process_list.jsonl` 会在 Windows 工作区下由 LF 转 CRLF。
+- 组合包 `go test -tags unit ./internal/service ./internal/handler/admin -count=1 -timeout=15m` 超时，按用户要求跳过更大包继续等待。

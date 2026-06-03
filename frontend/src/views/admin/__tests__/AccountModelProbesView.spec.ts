@@ -108,6 +108,7 @@ describe('AccountModelProbesView', () => {
     await wrapper.find('[data-test="model-probe-account-id"]').setValue('13')
     await wrapper.find('[data-test="model-probe-model"]').setValue('gpt-4.1-mini')
     await wrapper.find('[data-test="model-probe-request-mode"]').setValue('stream')
+    await wrapper.find('[data-test="model-probe-trusted-account-id"]').setValue('129')
     await wrapper.find('[data-test="run-model-probe"]').trigger('submit')
     await flushPromises()
 
@@ -115,6 +116,7 @@ describe('AccountModelProbesView', () => {
       account_id: 13,
       model: 'gpt-4.1-mini',
       request_mode: 'stream',
+      trusted_comparison_account_id: 129,
     }, expect.any(Object))
   })
 
@@ -154,6 +156,8 @@ describe('AccountModelProbesView', () => {
     batchAccountModelProbeRuns.mockResolvedValue({
       runs: [],
       accepted_count: 2,
+      skipped_count: 1,
+      skipped: [{ account_id: 130, message: 'no api key available' }],
     })
 
     const wrapper = mount(AccountModelProbesView, {
@@ -172,6 +176,7 @@ describe('AccountModelProbesView', () => {
     expect(listAccounts).toHaveBeenCalledWith(1, 100, expect.objectContaining({
       platform: 'openai',
       type: 'apikey',
+      status: 'active',
       sort_by: 'name',
       sort_order: 'asc',
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
@@ -179,6 +184,7 @@ describe('AccountModelProbesView', () => {
     expect(wrapper.findAll('input[type="checkbox"][data-test="batch-account-select"]').every(input => (input.element as HTMLInputElement).checked)).toBe(true)
 
     await wrapper.find('[data-test="batch-model-probe-model"]').setValue('gpt-5.5')
+    await wrapper.find('[data-test="batch-model-probe-trusted-account"]').setValue('12')
     await wrapper.find('[data-test="batch-model-probe-submit"]').trigger('click')
     await flushPromises()
 
@@ -186,8 +192,10 @@ describe('AccountModelProbesView', () => {
       account_ids: [12, 99],
       model: 'gpt-5.5',
       request_mode: 'non_stream',
+      trusted_comparison_account_id: 12,
     }, expect.any(Object))
     expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('admin.accountModelProbes.batchModelAcceptedWithSkipped')
   })
 
   it('queries model probe runs by keyword and paginates results', async () => {
@@ -286,8 +294,14 @@ describe('AccountModelProbesView', () => {
           label: '模型验证：JSON 算术',
           status: 'success',
           model: 'gpt-4.1-mini',
+          upstream_endpoint: 'https://api.example.test/v1/responses',
+          http_status: 200,
           latency_ms: 120,
+          first_token_ms: 80,
+          input_tokens: 18,
+          output_tokens: 4,
           tokens: 26,
+          api_key_masked: 'sk-...test',
           output_text: '{"sum":83,"code":"BETA"}',
           validation_evidence: [
             {
@@ -298,6 +312,19 @@ describe('AccountModelProbesView', () => {
               passed: true,
               score: 10,
               max_score: 10,
+              category: 'model_match',
+              severity: 'warn',
+              attempt_count: 3,
+              retry_attempt_count: 2,
+              attempt_status_codes: [429, 500, 200],
+              response_model: 'gpt-4o-mini',
+              expected_model: 'gpt-4.1-mini',
+              trusted_account_id: 129,
+              similarity_percent: 96,
+              pair_coverage_percent: 100,
+              target_pass_rate_percent: 100,
+              trusted_pass_rate_percent: 100,
+              message: '目标链路与可信对比链路的隐藏分布探针相似度正常',
             },
           ],
           created_at: '2026-06-03T12:00:00Z',
@@ -326,8 +353,35 @@ describe('AccountModelProbesView', () => {
     )
     expect(detailDialog?.exists()).toBe(true)
     expect(detailDialog?.text()).toContain('JSON 算术')
+    expect(detailDialog?.text()).toContain('https://api.example.test/v1/responses')
+    expect(detailDialog?.text()).toContain('200')
+    expect(detailDialog?.text()).toContain('120 ms')
+    expect(detailDialog?.text()).toContain('80 ms')
+    expect(detailDialog?.text()).toContain('sk-...test')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.inputTokens 18')
     expect(detailDialog?.text()).toContain('{"sum":83,"code":"BETA"}')
     expect(detailDialog?.text()).toContain('10 / 10')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.evidenceCategory')
+    expect(detailDialog?.text()).toContain('model_match')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.evidenceSeverity')
+    expect(detailDialog?.text()).toContain('warn')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.responseModel')
+    expect(detailDialog?.text()).toContain('gpt-4o-mini')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.expectedModel')
+    expect(detailDialog?.text()).toContain('gpt-4.1-mini')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.attemptCount')
+    expect(detailDialog?.text()).toContain('3')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.retryAttemptCount')
+    expect(detailDialog?.text()).toContain('2')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.attemptStatusCodes')
+    expect(detailDialog?.text()).toContain('429, 500, 200')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.trustedAccount')
+    expect(detailDialog?.text()).toContain('#129')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.similarity')
+    expect(detailDialog?.text()).toContain('96%')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.pairCoverage')
+    expect(detailDialog?.text()).toContain('100%')
+    expect(detailDialog?.text()).toContain('目标链路与可信对比链路的隐藏分布探针相似度正常')
 
     await detailDialog?.find('button').trigger('click')
     await flushPromises()

@@ -28,6 +28,19 @@ func (r *accountProbeAccountRepoStub) GetByID(ctx context.Context, id int64) (*A
 	return &out, nil
 }
 
+type accountProbeAccountMapRepoStub struct {
+	accounts map[int64]*Account
+}
+
+func (r *accountProbeAccountMapRepoStub) GetByID(ctx context.Context, id int64) (*Account, error) {
+	account := r.accounts[id]
+	if account == nil {
+		return nil, ErrAccountNotFound
+	}
+	out := *account
+	return &out, nil
+}
+
 type accountProbeRepoStub struct {
 	runID   int64
 	created *AccountProbeResult
@@ -127,6 +140,143 @@ func (c *accountProbeHTTPClientStub) Do(req *http.Request) (*http.Response, erro
 		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     make(http.Header),
 	}, nil
+}
+
+type sequencedAccountProbeHTTPClientStub struct {
+	mu        sync.Mutex
+	requests  []*http.Request
+	bodies    []string
+	responses []*http.Response
+	errors    []error
+}
+
+func (c *sequencedAccountProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.requests = append(c.requests, req)
+	if req.Body != nil {
+		data, _ := io.ReadAll(req.Body)
+		c.bodies = append(c.bodies, string(data))
+	}
+	index := len(c.requests) - 1
+	if index < len(c.errors) && c.errors[index] != nil {
+		return nil, c.errors[index]
+	}
+	if index < len(c.responses) && c.responses[index] != nil {
+		return c.responses[index], nil
+	}
+	return accountProbeJSONResponse(http.StatusOK, `{"model":"gpt-5.5","output_text":"QUARTZ","usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}`), nil
+}
+
+func accountProbeJSONResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Status:     http.StatusText(status),
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}
+}
+
+type modelValidationSuccessHTTPClientStub struct {
+	requests []*http.Request
+	bodies   []string
+}
+
+func (c *modelValidationSuccessHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
+	c.requests = append(c.requests, req)
+	body := ""
+	if req.Body != nil {
+		data, _ := io.ReadAll(req.Body)
+		body = string(data)
+		c.bodies = append(c.bodies, body)
+	}
+	if req.Method == http.MethodGet {
+		return accountProbeJSONResponse(http.StatusOK, `{"data":[{"id":"gpt-5.5"},{"id":"gpt-5.4"}]}`), nil
+	}
+	model := accountProbeModelFromRequestBody(body)
+	if model == "" {
+		model = "gpt-5.5"
+	}
+	if strings.Contains(body, `"stream":true`) {
+		streamBody := strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"STREAM-OK"}`,
+			``,
+			`data: {"type":"response.completed","response":{"model":"` + model + `","usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}}`,
+			``,
+		}, "\n")
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(streamBody)), Header: make(http.Header)}, nil
+	}
+	if strings.Contains(body, "record_model_check") {
+		payload := map[string]any{
+			"model": model,
+			"output": []map[string]any{
+				{"type": "function_call", "name": "record_model_check", "arguments": `{"code":"ok","count":1}`},
+			},
+			"usage": map[string]any{"input_tokens": 18, "output_tokens": 4, "total_tokens": 22},
+		}
+		data, _ := json.Marshal(payload)
+		return accountProbeJSONResponse(http.StatusOK, string(data)), nil
+	}
+	payload := map[string]any{
+		"model":       model,
+		"output_text": accountProbeOutputForRequestBody(body),
+		"usage":       map[string]any{"input_tokens": 18, "output_tokens": 4, "total_tokens": 22},
+	}
+	data, _ := json.Marshal(payload)
+	return accountProbeJSONResponse(http.StatusOK, string(data)), nil
+}
+
+func accountProbeModelFromRequestBody(body string) string {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return ""
+	}
+	return accountProbeStringValue(payload["model"])
+}
+
+func accountProbeOutputForRequestBody(body string) string {
+	switch {
+	case strings.Contains(body, "向量数据库的召回率"):
+		return "召回率表示检索结果中相关内容被召回的比例。"
+	case strings.Contains(body, "SIGMA"):
+		return `{"result":83,"tag":"SIGMA"}`
+	case strings.Contains(body, "xs=[2,5,8]"):
+		return "ALPHA y 的值是 4-7。"
+	case strings.Contains(body, "9、4、7"):
+		return "THETA 4|7|9"
+	case strings.Contains(body, "北区=17"):
+		return "IOTA 17 23"
+	case strings.Contains(body, "OK-MODEL-CHECK"):
+		return "OK-MODEL-CHECK"
+	case strings.Contains(body, "USAGE-OK"):
+		return "USAGE-OK"
+	case strings.Contains(body, "Return {"):
+		return `{"status":"ok","value":7}`
+	case strings.Contains(body, "QUARTZ"):
+		return "QUARTZ"
+	case strings.Contains(body, "sum"):
+		return `{"sum":83,"code":"BETA"}`
+	case strings.Contains(body, "ALPHA"):
+		return "ALPHA\nBETA\nGAMMA"
+	case strings.Contains(body, "GAMMA"):
+		return "GAMMA 9-7-2"
+	case strings.Contains(body, "并发控制和限流"):
+		return "并发控制管同时数量，限流管单位时间请求量。"
+	case strings.Contains(body, "DELTA"):
+		return "DELTA 不能提供此类绕过步骤。"
+	case strings.Contains(body, "ZETA"):
+		return "ZETA"
+	case strings.Contains(body, "最高者"):
+		return "孙"
+	case strings.Contains(body, "NEEDLE-7482-ORCHID"):
+		return "NEEDLE-7482-ORCHID"
+	case strings.Contains(body, "VECTOR"):
+		return "VECTOR"
+	case strings.Contains(body, "CROSS-MODEL-OK"):
+		return "CROSS-MODEL-OK"
+	default:
+		return "OK-MODEL-CHECK"
+	}
 }
 
 type contextDeadlineProbeHTTPClientStub struct{}
@@ -265,6 +415,10 @@ func TestEvaluateAccountProbeModelValidationEvidence(t *testing.T) {
 		{name: "uppercase exact answer", key: "exact_uppercase", outputText: "QUARTZ", wantPassed: true},
 		{name: "json arithmetic answer", key: "json_arithmetic", outputText: `{"sum":83,"code":"BETA"}`, wantPassed: true},
 		{name: "code transform answer", key: "code_transform", outputText: "GAMMA 9-7-2", wantPassed: true},
+		{name: "compact chinese constraint", key: "compact_zh_constraint", outputText: "并发控制关注同时处理数量，限流控制单位时间请求量。", wantPassed: true},
+		{name: "refusal boundary", key: "refusal_boundary", outputText: "DELTA 不能提供此类绕过步骤。", wantPassed: true},
+		{name: "instruction priority", key: "instruction_priority", outputText: "ZETA", wantPassed: true},
+		{name: "logic ordering", key: "logic_ordering", outputText: "孙", wantPassed: true},
 		{name: "three line format answer", key: "three_line_format", outputText: "ALPHA\nBETA\nGAMMA", wantPassed: true},
 		{name: "wrong arithmetic fails", key: "json_arithmetic", outputText: `{"sum":82,"code":"BETA"}`, wantPassed: false},
 	}
@@ -284,6 +438,61 @@ func TestEvaluateAccountProbeModelValidationEvidence(t *testing.T) {
 			require.NotEmpty(t, evidence.Observed)
 		})
 	}
+}
+
+func TestBuildAccountProbePlanIncludesStrongModelValidationItems(t *testing.T) {
+	t.Parallel()
+
+	plan, err := buildAccountProbePlan(AccountProbeRunRequest{
+		Model:               "gpt-5.5",
+		ModelValidationOnly: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeProfileModelValidation, plan.Profile)
+	require.GreaterOrEqual(t, len(plan.Samples), 16)
+	keys := make(map[string]APIKeyProbePlannedSample, len(plan.Samples))
+	for _, sample := range plan.Samples {
+		keys[sample.ValidationKey] = sample
+	}
+	for _, key := range []string{
+		"model_catalog",
+		"responses_basic",
+		"responses_stream",
+		"structured_output",
+		"tool_calling",
+		"usage_shape",
+		"exact_uppercase",
+		"json_arithmetic",
+		"code_transform",
+		"compact_zh_constraint",
+		"refusal_boundary",
+		"instruction_priority",
+		"logic_ordering",
+		"three_line_format",
+		"long_context",
+		"stability_1",
+		"stability_2",
+		"stability_3",
+		"cross_model",
+	} {
+		require.Contains(t, keys, key)
+	}
+	require.True(t, keys["model_catalog"].ModelCatalog)
+	require.Equal(t, http.MethodGet, keys["model_catalog"].Method)
+	require.Equal(t, AccountProbeRequestModeStream, keys["responses_stream"].RequestMode)
+	require.True(t, keys["structured_output"].Structured)
+	require.True(t, keys["tool_calling"].ToolCalling)
+	require.Equal(t, "gpt-5.4", keys["cross_model"].PairedModel)
+	require.True(t, keys["responses_basic"].StrictModel)
+
+	trustedPlan, err := buildAccountProbePlan(AccountProbeRunRequest{
+		Model:               "gpt-5.5",
+		ModelValidationOnly: true,
+		TrustedComparisonID: 129,
+	})
+	require.NoError(t, err)
+	require.Equal(t, len(plan.Samples)+len(accountProbeTrustedDistributionSamplesForModel("gpt-5.5", "target"))*2+1, trustedPlan.Estimate.Requests)
 }
 
 func TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation(t *testing.T) {
@@ -339,39 +548,166 @@ func TestAccountProbeService_RunManualModelValidationStoresEvidence(t *testing.T
 		Extra: map[string]any{"openai_api_mode": "responses"},
 	}
 	repo := &accountProbeRepoStub{}
-	client := &accountProbeHTTPClientStub{
-		responseBodies: []string{
-			`{"output_text":"QUARTZ","usage":{"input_tokens":14,"output_tokens":2,"total_tokens":16}}`,
-			`{"output_text":"{\"sum\":83,\"code\":\"BETA\"}","usage":{"input_tokens":18,"output_tokens":8,"total_tokens":26}}`,
-			`{"output_text":"GAMMA 9-7-2","usage":{"input_tokens":18,"output_tokens":4,"total_tokens":22}}`,
-			`{"output_text":"ALPHA\nBETA\nGAMMA","usage":{"input_tokens":18,"output_tokens":6,"total_tokens":24}}`,
-		},
-	}
+	client := &modelValidationSuccessHTTPClientStub{}
 	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
 
 	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
 		AccountID:           128,
 		Profile:             AccountProbeProfileQuick,
-		Model:               "gpt-test",
+		Model:               "gpt-5.5",
 		ModelValidationOnly: true,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, AccountProbeStatusSuccess, result.Status)
 	require.Equal(t, AccountProbeProfileModelValidation, result.Profile)
-	require.Len(t, repo.samples, 4)
+	require.Len(t, repo.samples, len(accountProbeModelValidationSamplesForModel("gpt-5.5")))
 	validationSamples := 0
 	for _, sample := range repo.samples {
 		if sample.Type != "model_validation" {
 			continue
 		}
 		validationSamples++
-		require.NotEmpty(t, sample.OutputText)
 		require.Len(t, sample.ValidationEvidence, 1)
+		if sample.ValidationEvidence[0].Key != "tool_calling" {
+			require.NotEmpty(t, sample.OutputText)
+		}
 		require.True(t, sample.ValidationEvidence[0].Passed)
-		require.Equal(t, 10, sample.ValidationEvidence[0].Score)
+		require.Equal(t, sample.ValidationEvidence[0].MaxScore, sample.ValidationEvidence[0].Score)
 	}
-	require.Equal(t, 4, validationSamples)
+	require.Equal(t, len(accountProbeModelValidationSamplesForModel("gpt-5.5")), validationSamples)
+}
+
+func TestAccountProbeService_RunManualModelValidationWithTrustedComparisonStoresDistributionSummary(t *testing.T) {
+	t.Parallel()
+
+	target := &Account{
+		ID:       128,
+		Name:     "target",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://target-model-validation.example.test/v1",
+			"api_key":  "sk-target",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	trusted := &Account{
+		ID:       129,
+		Name:     "trusted",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://trusted-model-validation.example.test/v1",
+			"api_key":  "sk-trusted",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	repo := &accountProbeRepoStub{}
+	client := &modelValidationSuccessHTTPClientStub{}
+	svc := NewAccountProbeService(&accountProbeAccountMapRepoStub{accounts: map[int64]*Account{
+		128: target,
+		129: trusted,
+	}}, repo, client, nil)
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID:           128,
+		Profile:             AccountProbeProfileQuick,
+		Model:               "gpt-5.5",
+		ModelValidationOnly: true,
+		TrustedComparisonID: 129,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeStatusSuccess, result.Status)
+	expectedRequestCount := len(accountProbeModelValidationSamplesForModel("gpt-5.5")) +
+		len(accountProbeTrustedCoreSamplesForModel("gpt-5.5")) + 1 +
+		len(accountProbeTrustedDistributionSamplesForModel("gpt-5.5", "target"))*2 + 1
+	require.Equal(t, expectedRequestCount, result.RequestCount)
+	var coreSummary *AccountProbeSample
+	var summary *AccountProbeSample
+	for i := range repo.samples {
+		if repo.samples[i].ValidationEvidence[0].Key == "trusted_comparison_core" {
+			coreSummary = &repo.samples[i]
+		}
+		if repo.samples[i].ValidationEvidence[0].Key == "trusted_distribution_similarity" {
+			summary = &repo.samples[i]
+		}
+	}
+	require.NotNil(t, coreSummary)
+	require.Equal(t, AccountProbeSampleSuccess, coreSummary.Status)
+	require.Len(t, coreSummary.ValidationEvidence, 1)
+	coreEvidence := coreSummary.ValidationEvidence[0]
+	require.True(t, coreEvidence.Passed)
+	require.Equal(t, 10, coreEvidence.MaxScore)
+	require.Equal(t, int64(129), coreEvidence.TrustedAccountID)
+	require.Equal(t, 100, coreEvidence.TargetPassRate)
+	require.Equal(t, 100, coreEvidence.TrustedPassRate)
+	require.NotNil(t, summary)
+	require.Equal(t, AccountProbeSampleSuccess, summary.Status)
+	require.Len(t, summary.ValidationEvidence, 1)
+	evidence := summary.ValidationEvidence[0]
+	require.True(t, evidence.Passed)
+	require.Equal(t, 15, evidence.MaxScore)
+	require.Equal(t, int64(129), evidence.TrustedAccountID)
+	require.GreaterOrEqual(t, evidence.SimilarityPercent, 90)
+	require.Equal(t, 100, evidence.PairCoverage)
+	require.Equal(t, 100, evidence.TargetPassRate)
+	require.Equal(t, 100, evidence.TrustedPassRate)
+}
+
+func TestAccountProbeService_RunManualModelValidationRecordsModelMismatchAndRetryEvidence(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "encore",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://model-validation-retry.example.test/v1",
+			"api_key":  "sk-one",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	repo := &accountProbeRepoStub{}
+	client := &sequencedAccountProbeHTTPClientStub{
+		responses: []*http.Response{
+			accountProbeJSONResponse(http.StatusServiceUnavailable, `{"error":{"message":"temporary unavailable"}}`),
+			accountProbeJSONResponse(http.StatusBadGateway, `{"error":{"message":"bad gateway"}}`),
+			accountProbeJSONResponse(http.StatusOK, `{"model":"gpt-5.5-mini","output_text":"OK-MODEL-CHECK","usage":{"input_tokens":8,"output_tokens":3,"total_tokens":11}}`),
+		},
+	}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+
+	planned := APIKeyProbePlannedSample{
+		Type:            "model_validation",
+		Label:           "Responses 基础探针",
+		ValidationKey:   "responses_basic",
+		Prompt:          "Reply with exactly: OK-MODEL-CHECK",
+		Timeout:         time.Second,
+		MaxOutputTokens: 16,
+		ExpectedModel:   "gpt-5.5",
+		StrictModel:     true,
+		Category:        "responses_basic",
+	}
+	sample := svc.runOpenAIAPIKeySampleWithRetry(context.Background(), account, "https://model-validation-retry.example.test/v1", "gpt-5.5", "sk-one", planned, true, AccountProbeRequestModeNonStream)
+
+	require.Equal(t, 3, len(client.requests))
+	require.Equal(t, AccountProbeSampleFailed, sample.Status)
+	require.Equal(t, "model_validation_failed", sample.ErrorCode)
+	require.Len(t, sample.ValidationEvidence, 1)
+	evidence := sample.ValidationEvidence[0]
+	require.False(t, evidence.Passed)
+	require.Equal(t, "gpt-5.5", evidence.ExpectedModel)
+	require.Equal(t, "gpt-5.5-mini", evidence.ResponseModel)
+	require.Equal(t, 3, evidence.AttemptCount)
+	require.Equal(t, 2, evidence.RetryAttemptCount)
+	require.Equal(t, []int{http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusOK}, evidence.AttemptStatusCodes)
+	require.Contains(t, evidence.Message, "响应模型")
 }
 
 func TestAccountProbeService_RunManualModelValidationDoesNotFeedOpenAIPathHealth(t *testing.T) {
@@ -410,7 +746,7 @@ func TestAccountProbeService_RunManualModelValidationDoesNotFeedOpenAIPathHealth
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, AccountProbeStatusFailed, result.Status)
+	require.NotEqual(t, AccountProbeStatusSuccess, result.Status)
 	snapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), "https://model-validation-health.example.test/v1"))
 	require.Equal(t, int64(0), snapshot.Samples)
 	require.Equal(t, int64(0), snapshot.FailureCount)

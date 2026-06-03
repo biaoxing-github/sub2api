@@ -5,6 +5,7 @@ package admin
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -80,10 +81,11 @@ func (s *blockingAccountProbeService) ListRanking(ctx context.Context, limit int
 }
 
 type recordingAccountProbeService struct {
-	mu        sync.Mutex
-	startReqs []service.AccountProbeRunRequest
-	runReqs   []service.AccountProbeRunRequest
-	runDone   chan struct{}
+	mu          sync.Mutex
+	startReqs   []service.AccountProbeRunRequest
+	runReqs     []service.AccountProbeRunRequest
+	runDone     chan struct{}
+	startErrors map[int64]error
 }
 
 func newRecordingAccountProbeService() *recordingAccountProbeService {
@@ -93,6 +95,9 @@ func newRecordingAccountProbeService() *recordingAccountProbeService {
 func (s *recordingAccountProbeService) Start(ctx context.Context, req service.AccountProbeRunRequest) (service.AccountProbeResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.startErrors[req.AccountID]; err != nil {
+		return service.AccountProbeResult{}, err
+	}
 	s.startReqs = append(s.startReqs, req)
 	return service.AccountProbeResult{
 		ID:           int64(100 + len(s.startReqs)),
@@ -181,7 +186,7 @@ func TestAccountModelProbeBatchCreateRunsManualValidationOnly(t *testing.T) {
 	router.POST("/api/v1/admin/account-model-probe-runs/batch", h.BatchCreateModelProbeRuns)
 
 	rec := httptest.NewRecorder()
-	body := `{"account_ids":[128,129],"model":"gpt-5.4","request_mode":"stream"}`
+	body := `{"account_ids":[128,129],"model":"gpt-5.4","request_mode":"stream","trusted_comparison_account_id":777}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/account-model-probe-runs/batch", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -194,6 +199,7 @@ func TestAccountModelProbeBatchCreateRunsManualValidationOnly(t *testing.T) {
 		require.Equal(t, service.AccountProbeProfileModelValidation, got.Profile)
 		require.Equal(t, "gpt-5.4", got.Model)
 		require.Equal(t, "stream", got.RequestMode)
+		require.Equal(t, int64(777), got.TrustedComparisonID)
 		require.True(t, got.ModelValidationOnly)
 	}
 
@@ -201,6 +207,40 @@ func TestAccountModelProbeBatchCreateRunsManualValidationOnly(t *testing.T) {
 	case <-probeSvc.runDone:
 	case <-time.After(time.Second):
 		t.Fatal("background batch model probe tasks did not start")
+	}
+	probeSvc.mu.Lock()
+	defer probeSvc.mu.Unlock()
+	for _, got := range probeSvc.runReqs {
+		require.Equal(t, int64(777), got.TrustedComparisonID)
+	}
+}
+
+func TestAccountModelProbeBatchCreateSkipsStartFailuresAndRunsAccepted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	probeSvc := newRecordingAccountProbeService()
+	probeSvc.startErrors = map[int64]error{130: errors.New("no api key available")}
+	h := &AccountHandler{accountProbeService: probeSvc}
+	router := gin.New()
+	router.POST("/api/v1/admin/account-model-probe-runs/batch", h.BatchCreateModelProbeRuns)
+
+	rec := httptest.NewRecorder()
+	body := `{"account_ids":[128,130,129],"model":"gpt-5.4","request_mode":"stream"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/account-model-probe-runs/batch", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.Contains(t, rec.Body.String(), `"accepted_count":2`)
+	require.Contains(t, rec.Body.String(), `"skipped_count":1`)
+	require.Contains(t, rec.Body.String(), `"account_id":130`)
+	require.Contains(t, rec.Body.String(), `"message":"no api key available"`)
+	require.Len(t, probeSvc.startReqs, 2)
+
+	select {
+	case <-probeSvc.runDone:
+	case <-time.After(time.Second):
+		t.Fatal("background batch model probe tasks did not start for accepted runs")
 	}
 }
 
@@ -231,7 +271,7 @@ func TestAccountModelProbeCreateRunsManualValidationOnly(t *testing.T) {
 	router.POST("/api/v1/admin/account-model-probe-runs", h.CreateModelProbeRun)
 
 	rec := httptest.NewRecorder()
-	body := `{"account_id":128,"model":"gpt-5.4","request_mode":"stream"}`
+	body := `{"account_id":128,"model":"gpt-5.4","request_mode":"stream","trusted_comparison_account_id":777}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/account-model-probe-runs", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -250,6 +290,7 @@ func TestAccountModelProbeCreateRunsManualValidationOnly(t *testing.T) {
 	require.Equal(t, int64(128), probeSvc.req.AccountID)
 	require.Equal(t, "gpt-5.4", probeSvc.req.Model)
 	require.Equal(t, "stream", probeSvc.req.RequestMode)
+	require.Equal(t, int64(777), probeSvc.req.TrustedComparisonID)
 	require.True(t, probeSvc.req.ModelValidationOnly)
 
 	select {

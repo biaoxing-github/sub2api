@@ -703,12 +703,14 @@ export interface CreateAccountModelProbeRunRequest {
   account_id: number
   model?: string
   request_mode?: AccountProbeRequestMode | string
+  trusted_comparison_account_id?: number
 }
 
 export interface BatchAccountModelProbeRunsRequest {
   account_ids: number[]
   model?: string
   request_mode?: AccountProbeRequestMode | string
+  trusted_comparison_account_id?: number
 }
 
 export interface AccountProbeSample {
@@ -745,6 +747,18 @@ export interface AccountProbeValidationEvidence {
   score: number
   max_score: number
   message?: string | null
+  category?: string | null
+  severity?: string | null
+  attempt_count?: number | null
+  retry_attempt_count?: number | null
+  attempt_status_codes?: number[] | null
+  response_model?: string | null
+  expected_model?: string | null
+  trusted_account_id?: number | null
+  similarity_percent?: number | null
+  pair_coverage_percent?: number | null
+  target_pass_rate_percent?: number | null
+  trusted_pass_rate_percent?: number | null
 }
 
 export interface AccountProbeScoreItem {
@@ -893,6 +907,11 @@ export interface BatchAccountProbeRunsRequest {
 export interface BatchAccountProbeRunsResponse {
   runs: AccountProbeRun[]
   accepted_count: number
+  skipped_count?: number
+  skipped?: Array<{
+    account_id: number
+    message: string
+  }>
 }
 
 export type BatchAccountModelProbeRunsResponse = BatchAccountProbeRunsResponse

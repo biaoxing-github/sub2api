@@ -12,7 +12,7 @@
             <span class="ml-1.5">{{ t('admin.accountModelProbes.batchModelProbe') }}</span>
           </button>
         </div>
-        <form data-test="run-model-probe" class="grid gap-3 md:grid-cols-[160px_minmax(220px,1fr)_180px_auto]" @submit.prevent="submitProbe">
+        <form data-test="run-model-probe" class="grid gap-3 md:grid-cols-[160px_minmax(220px,1fr)_180px_180px_auto]" @submit.prevent="submitProbe">
           <input
             v-model.number="form.account_id"
             data-test="model-probe-account-id"
@@ -36,6 +36,14 @@
             <option value="non_stream">{{ t('admin.accountModelProbes.requestModes.non_stream') }}</option>
             <option value="stream">{{ t('admin.accountModelProbes.requestModes.stream') }}</option>
           </select>
+          <input
+            v-model.number="form.trusted_comparison_account_id"
+            data-test="model-probe-trusted-account-id"
+            type="number"
+            min="1"
+            class="input"
+            :placeholder="t('admin.accountModelProbes.trustedComparisonAccountId')"
+          />
           <button type="submit" class="btn btn-primary justify-center" :disabled="submitting">
             <Icon name="beaker" size="sm" :class="submitting ? 'animate-pulse' : ''" />
             <span class="ml-1.5">{{ t('admin.accountModelProbes.run') }}</span>
@@ -162,9 +170,39 @@
                 {{ formatStatus(sample.status) }}
               </span>
             </div>
+            <dl class="mt-3 grid gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400 sm:grid-cols-2 lg:grid-cols-4">
+              <div v-if="sample.upstream_endpoint">
+                <dt class="inline font-medium">{{ t('admin.accountModelProbes.upstreamEndpoint') }}:</dt>
+                <dd class="inline break-all"> {{ sample.upstream_endpoint }}</dd>
+              </div>
+              <div v-if="sample.http_status">
+                <dt class="inline font-medium">{{ t('admin.accountModelProbes.httpStatus') }}:</dt>
+                <dd class="inline"> {{ sample.http_status }}</dd>
+              </div>
+              <div v-if="typeof sample.latency_ms === 'number'">
+                <dt class="inline font-medium">{{ t('admin.accountModelProbes.latency') }}:</dt>
+                <dd class="inline"> {{ formatDuration(sample.latency_ms) }}</dd>
+              </div>
+              <div v-if="typeof sample.first_token_ms === 'number'">
+                <dt class="inline font-medium">{{ t('admin.accountModelProbes.firstToken') }}:</dt>
+                <dd class="inline"> {{ formatDuration(sample.first_token_ms) }}</dd>
+              </div>
+              <div v-if="sample.api_key_masked || sample.api_key_fingerprint">
+                <dt class="inline font-medium">{{ t('admin.accountModelProbes.apiKey') }}:</dt>
+                <dd class="inline break-all"> {{ sample.api_key_masked || sample.api_key_fingerprint }}</dd>
+              </div>
+              <div v-if="typeof sample.input_tokens === 'number' || typeof sample.output_tokens === 'number' || typeof sample.tokens === 'number'" class="sm:col-span-2">
+                <dt class="inline font-medium">{{ t('admin.accountModelProbes.tokens') }}:</dt>
+                <dd class="inline"> {{ formatSampleTokens(sample) }}</dd>
+              </div>
+              <div v-if="sample.error_code || sample.error || sample.error_message" class="sm:col-span-2">
+                <dt class="inline font-medium">{{ t('admin.accountModelProbes.error') }}:</dt>
+                <dd class="inline break-all"> {{ sample.error_code || '' }} {{ sample.error || sample.error_message || '' }}</dd>
+              </div>
+            </dl>
             <pre v-if="sample.output_text" class="mt-3 max-h-40 overflow-auto rounded-lg bg-gray-950 p-3 text-xs text-gray-100">{{ sample.output_text }}</pre>
             <div v-if="sample.validation_evidence?.length" class="mt-3 overflow-x-auto">
-              <table class="w-full min-w-[640px]">
+              <table class="w-full min-w-[820px]">
                 <thead>
                   <tr>
                     <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.evidence') }}</th>
@@ -177,6 +215,57 @@
                   <tr v-for="evidence in sample.validation_evidence" :key="evidence.key" class="border-t border-gray-100 dark:border-dark-700">
                     <td class="px-2 py-2 text-sm text-gray-700 dark:text-gray-300">
                       <span :class="evidence.passed ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'" class="font-medium">{{ evidence.label }}</span>
+                      <dl v-if="hasEvidenceProbeDetails(evidence)" class="mt-1 grid gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400 sm:grid-cols-2">
+                        <div v-if="evidence.category">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.evidenceCategory') }}:</dt>
+                          <dd class="inline break-all"> {{ evidence.category }}</dd>
+                        </div>
+                        <div v-if="evidence.severity">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.evidenceSeverity') }}:</dt>
+                          <dd class="inline break-all"> {{ evidence.severity }}</dd>
+                        </div>
+                        <div v-if="evidence.response_model">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.responseModel') }}:</dt>
+                          <dd class="inline break-all"> {{ evidence.response_model }}</dd>
+                        </div>
+                        <div v-if="evidence.expected_model">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.expectedModel') }}:</dt>
+                          <dd class="inline break-all"> {{ evidence.expected_model }}</dd>
+                        </div>
+                        <div v-if="typeof evidence.attempt_count === 'number'">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.attemptCount') }}:</dt>
+                          <dd class="inline"> {{ evidence.attempt_count }}</dd>
+                        </div>
+                        <div v-if="typeof evidence.retry_attempt_count === 'number'">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.retryAttemptCount') }}:</dt>
+                          <dd class="inline"> {{ evidence.retry_attempt_count }}</dd>
+                        </div>
+                        <div v-if="evidence.attempt_status_codes?.length" class="sm:col-span-2">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.attemptStatusCodes') }}:</dt>
+                          <dd class="inline"> {{ formatEvidenceStatusCodes(evidence) }}</dd>
+                        </div>
+                        <div v-if="evidence.trusted_account_id">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.trustedAccount') }}:</dt>
+                          <dd class="inline"> #{{ evidence.trusted_account_id }}</dd>
+                        </div>
+                        <div v-if="typeof evidence.similarity_percent === 'number'">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.similarity') }}:</dt>
+                          <dd class="inline"> {{ evidence.similarity_percent }}%</dd>
+                        </div>
+                        <div v-if="typeof evidence.pair_coverage_percent === 'number'">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.pairCoverage') }}:</dt>
+                          <dd class="inline"> {{ evidence.pair_coverage_percent }}%</dd>
+                        </div>
+                        <div v-if="typeof evidence.target_pass_rate_percent === 'number'">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.targetPassRate') }}:</dt>
+                          <dd class="inline"> {{ evidence.target_pass_rate_percent }}%</dd>
+                        </div>
+                        <div v-if="typeof evidence.trusted_pass_rate_percent === 'number'">
+                          <dt class="inline font-medium">{{ t('admin.accountModelProbes.trustedPassRate') }}:</dt>
+                          <dd class="inline"> {{ evidence.trusted_pass_rate_percent }}%</dd>
+                        </div>
+                      </dl>
+                      <p v-if="evidence.message" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ evidence.message }}</p>
                     </td>
                     <td class="px-2 py-2 text-sm text-gray-700 dark:text-gray-300">{{ evidence.expected || '-' }}</td>
                     <td class="px-2 py-2 text-sm text-gray-700 dark:text-gray-300">{{ evidence.observed || '-' }}</td>
@@ -199,7 +288,7 @@
         @close="closeBatchDialog"
       >
         <div class="space-y-4">
-          <div class="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px]">
+          <div class="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_240px]">
             <input
               v-model="batchForm.model"
               data-test="batch-model-probe-model"
@@ -214,6 +303,16 @@
             >
               <option value="non_stream">{{ t('admin.accountModelProbes.requestModes.non_stream') }}</option>
               <option value="stream">{{ t('admin.accountModelProbes.requestModes.stream') }}</option>
+            </select>
+            <select
+              v-model.number="batchForm.trusted_comparison_account_id"
+              data-test="batch-model-probe-trusted-account"
+              class="input"
+            >
+              <option value="">{{ t('admin.accountModelProbes.noTrustedComparison') }}</option>
+              <option v-for="account in batchAccounts" :key="account.id" :value="account.id">
+                {{ account.name || `#${account.id}` }}
+              </option>
             </select>
           </div>
 
@@ -331,11 +430,13 @@ const form = reactive({
   account_id: undefined as number | undefined,
   model: defaultOpenAIAccountTestModelID,
   request_mode: 'non_stream' as AccountProbeRequestMode,
+  trusted_comparison_account_id: undefined as number | undefined,
 })
 
 const batchForm = reactive({
   model: defaultOpenAIAccountTestModelID,
   request_mode: 'non_stream' as AccountProbeRequestMode,
+  trusted_comparison_account_id: undefined as number | undefined,
 })
 
 const detailSamples = computed<AccountProbeSample[]>(() => detailRun.value?.samples || [])
@@ -409,11 +510,21 @@ async function submitProbe() {
   error.value = ''
   message.value = ''
   try {
-    await createAccountModelProbeRun({
+    const payload = {
       account_id: form.account_id,
       model: form.model.trim() || undefined,
       request_mode: form.request_mode,
-    }, {
+    } as {
+      account_id: number
+      model?: string
+      request_mode?: AccountProbeRequestMode
+      trusted_comparison_account_id?: number
+    }
+    const trustedAccountId = positiveAccountId(form.trusted_comparison_account_id)
+    if (trustedAccountId) {
+      payload.trusted_comparison_account_id = trustedAccountId
+    }
+    await createAccountModelProbeRun(payload, {
       signal: controller.signal,
     })
     if (controller.signal.aborted) return
@@ -440,6 +551,7 @@ async function loadBatchAccounts() {
     const response = await listAccounts(1, 100, {
       platform: 'openai',
       type: 'apikey',
+      status: 'active',
       search: batchAccountSearch.value.trim() || undefined,
       sort_by: 'name',
       sort_order: 'asc',
@@ -471,16 +583,34 @@ async function submitBatchModelProbe() {
   batchError.value = ''
   batchMessage.value = ''
   try {
-    const response = await batchAccountModelProbeRuns({
+    const payload = {
       account_ids: selectedAccountIds.value,
       model: batchForm.model.trim() || undefined,
       request_mode: batchForm.request_mode,
-    }, {
+    } as {
+      account_ids: number[]
+      model?: string
+      request_mode?: AccountProbeRequestMode
+      trusted_comparison_account_id?: number
+    }
+    const trustedAccountId = positiveAccountId(batchForm.trusted_comparison_account_id)
+    if (trustedAccountId) {
+      payload.trusted_comparison_account_id = trustedAccountId
+    }
+    const response = await batchAccountModelProbeRuns(payload, {
       signal: controller.signal,
     })
     if (controller.signal.aborted) return
-    batchMessage.value = t('admin.accountModelProbes.batchModelAccepted', { count: response.accepted_count })
-    batchDialogOpen.value = false
+    const skippedCount = response.skipped_count || 0
+    batchMessage.value = skippedCount > 0
+      ? t('admin.accountModelProbes.batchModelAcceptedWithSkipped', {
+        count: response.accepted_count,
+        skipped: skippedCount,
+      })
+      : t('admin.accountModelProbes.batchModelAccepted', { count: response.accepted_count })
+    if (skippedCount === 0) {
+      batchDialogOpen.value = false
+    }
     await loadRuns()
   } catch (err: any) {
     if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
@@ -516,6 +646,11 @@ function selectAllBatchAccounts() {
 
 function clearBatchAccountSelection() {
   selectedAccountIds.value = []
+}
+
+function positiveAccountId(value: number | string | undefined): number | undefined {
+  const numeric = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined
 }
 
 function onBatchAccountSearch() {
@@ -581,9 +716,43 @@ function formatEvidenceScore(evidence: AccountProbeValidationEvidence): string {
   return `${formatNumber(evidence.score)} / ${formatNumber(evidence.max_score)}`
 }
 
+function formatEvidenceStatusCodes(evidence: AccountProbeValidationEvidence): string {
+  return evidence.attempt_status_codes?.join(', ') || '-'
+}
+
+function formatDuration(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${formatNumber(value)} ms` : '-'
+}
+
+function formatSampleTokens(sample: AccountProbeSample): string {
+  const parts = [
+    `${t('admin.accountModelProbes.inputTokens')} ${formatNumber(sample.input_tokens)}`,
+    `${t('admin.accountModelProbes.outputTokens')} ${formatNumber(sample.output_tokens)}`,
+    `${t('admin.accountModelProbes.totalTokens')} ${formatNumber(sample.tokens)}`,
+  ]
+  return parts.join(' / ')
+}
+
+function hasEvidenceProbeDetails(evidence: AccountProbeValidationEvidence): boolean {
+  return Boolean(
+    evidence.category ||
+    evidence.severity ||
+    evidence.response_model ||
+    evidence.expected_model ||
+    typeof evidence.attempt_count === 'number' ||
+    typeof evidence.retry_attempt_count === 'number' ||
+    evidence.attempt_status_codes?.length ||
+    evidence.trusted_account_id ||
+    typeof evidence.similarity_percent === 'number' ||
+    typeof evidence.pair_coverage_percent === 'number' ||
+    typeof evidence.target_pass_rate_percent === 'number' ||
+    typeof evidence.trusted_pass_rate_percent === 'number'
+  )
+}
+
 function statusClass(status: string | undefined): string {
   if (status === 'success') return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200'
-  if (status === 'partial' || status === 'running' || status === 'pending') return 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
+  if (status === 'partial' || status === 'warning' || status === 'running' || status === 'pending') return 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
   if (status === 'failed') return 'bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200'
   return 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-200'
 }

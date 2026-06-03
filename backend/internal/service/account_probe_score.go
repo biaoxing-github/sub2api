@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"unicode"
 )
 
 const (
@@ -17,6 +16,12 @@ const (
 	AccountProbeGradeGenuine          = "genuine_gpt55"
 	AccountProbeGradeSuspectedWatered = "suspected_watered"
 	AccountProbeGradeWatered          = "watered"
+
+	AccountProbeGradeHighConfidence = "high_confidence"
+	AccountProbeGradeLikely         = "likely"
+	AccountProbeGradeUncertain      = "uncertain"
+	AccountProbeGradeSuspicious     = "suspicious"
+	AccountProbeGradeUnavailable    = "unavailable"
 )
 
 const (
@@ -99,31 +104,37 @@ func ScoreAccountProbeRun(run AccountProbeResult) AccountProbeScore {
 }
 
 func scoreAccountProbeModelValidation(run AccountProbeResult) AccountProbeScore {
-	passed, total := accountProbeModelValidationCounts(run)
-	if total <= 0 {
+	rawScore, rawMaxScore, passed, total := accountProbeModelValidationScoreStats(run)
+	if rawMaxScore <= 0 {
 		return AccountProbeScore{
 			Score:        0,
-			Grade:        AccountProbeGradeWatered,
-			Label:        accountProbeGradeLabel(AccountProbeGradeWatered),
+			Grade:        AccountProbeGradeUnavailable,
+			Label:        accountProbeGradeLabel(AccountProbeGradeUnavailable),
 			Confidence:   accountProbeScoreConfidence(0),
-			PenaltyItems: []string{"缺少模型验证证据，无法判定是否正版 gpt-5.5"},
+			PenaltyItems: []string{"缺少模型验证证据，无法判定目标模型链路"},
 		}
 	}
 
-	score := clampInt(int(math.Round(float64(passed)*100/float64(total))), 0, 100)
+	score := clampInt(int(math.Round(float64(rawScore)*100/float64(rawMaxScore))), 0, 100)
 	grade := accountProbeModelValidationGrade(score)
 	confidence := accountProbeScoreConfidence(total)
 	if total >= len(accountProbeModelValidationSamples()) {
 		confidence = 100
 	}
-	scoreItems := []string{fmt.Sprintf("正版验证通过 %d/%d，得分 %d", passed, total, score)}
-	penaltyItems := make([]string, 0, 2)
+	scoreItems := []string{fmt.Sprintf("强验证通过 %d/%d，原始得分 %d/%d，折算 %d", passed, total, rawScore, rawMaxScore, score)}
+	penaltyItems := make([]string, 0, 4)
 	if passed < total {
 		penaltyItems = append(penaltyItems, fmt.Sprintf("模型验证未通过 %d/%d", total-passed, total))
 	}
-	if !accountProbeModelValidationTargetsGPT55(run.Model) {
-		grade = AccountProbeGradeWatered
-		penaltyItems = append(penaltyItems, fmt.Sprintf("验证目标不是 gpt-5.5：%s", strings.TrimSpace(run.Model)))
+	if !accountProbeModelValidationTargetSupported(run.Model) {
+		grade = AccountProbeGradeUnavailable
+		penaltyItems = append(penaltyItems, fmt.Sprintf("模型验证仅支持 gpt-5.5/gpt-5.4 及其日期快照：%s", strings.TrimSpace(run.Model)))
+	} else if accountProbeModelValidationHasTargetModelMismatch(run) {
+		grade = AccountProbeGradeSuspicious
+		penaltyItems = append(penaltyItems, "响应模型字段与请求模型不一致，目标链路疑似被替换或降级")
+	} else if accountProbeModelValidationBasicUnavailable(run) {
+		grade = AccountProbeGradeUnavailable
+		penaltyItems = append(penaltyItems, "目标 Responses 基础探针不可用")
 	}
 	return AccountProbeScore{
 		Score:        score,
@@ -136,39 +147,64 @@ func scoreAccountProbeModelValidation(run AccountProbeResult) AccountProbeScore 
 }
 
 func accountProbeModelValidationCounts(run AccountProbeResult) (int, int) {
-	passed, total := 0, 0
+	_, _, passed, total := accountProbeModelValidationScoreStats(run)
+	return passed, total
+}
+
+func accountProbeModelValidationScoreStats(run AccountProbeResult) (int, int, int, int) {
+	rawScore, rawMaxScore, passed, total := 0, 0, 0, 0
 	for _, sample := range run.Samples {
 		for _, evidence := range sample.ValidationEvidence {
+			if evidence.MaxScore <= 0 {
+				continue
+			}
 			total++
+			rawMaxScore += evidence.MaxScore
+			rawScore += clampInt(evidence.Score, 0, evidence.MaxScore)
 			if evidence.Passed {
 				passed++
 			}
 		}
 	}
-	if total > 0 {
-		return passed, total
+	if rawMaxScore > 0 {
+		return rawScore, rawMaxScore, passed, total
 	}
 	total = run.RequestCount
 	if total <= 0 {
 		total = run.SuccessCount + run.FailureCount
 	}
-	return run.SuccessCount, total
+	return run.SuccessCount * 10, total * 10, run.SuccessCount, total
 }
 
-func accountProbeModelValidationTargetsGPT55(model string) bool {
-	model = strings.ToLower(strings.TrimSpace(model))
-	if model == "" || model == "gpt-5.5" {
+func accountProbeModelValidationTargetSupported(model string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
 		return true
 	}
-	if !strings.HasPrefix(model, "gpt-5.5-") {
-		return false
+	return accountProbeModelValidationBaseModel(model) != ""
+}
+
+func accountProbeModelValidationHasTargetModelMismatch(run AccountProbeResult) bool {
+	for _, sample := range run.Samples {
+		for _, evidence := range sample.ValidationEvidence {
+			if strings.EqualFold(evidence.Category, "cross_model") || evidence.Key == "cross_model" {
+				continue
+			}
+			if evidence.ExpectedModel != "" && evidence.ResponseModel != "" && !accountProbeModelMatches(evidence.ResponseModel, evidence.ExpectedModel) {
+				return true
+			}
+		}
 	}
-	suffix := strings.TrimPrefix(model, "gpt-5.5-")
-	if suffix == "" {
-		return false
-	}
-	for _, first := range suffix {
-		return unicode.IsDigit(first)
+	return false
+}
+
+func accountProbeModelValidationBasicUnavailable(run AccountProbeResult) bool {
+	for _, sample := range run.Samples {
+		for _, evidence := range sample.ValidationEvidence {
+			if evidence.Key == "responses_basic" && !evidence.Passed && evidence.Score <= 0 {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -353,17 +389,31 @@ func accountProbeGrade(score int) string {
 
 func accountProbeModelValidationGrade(score int) string {
 	switch {
-	case score >= 100:
-		return AccountProbeGradeGenuine
-	case score >= 70:
-		return AccountProbeGradeSuspectedWatered
+	case score >= 92:
+		return AccountProbeGradeHighConfidence
+	case score >= 78:
+		return AccountProbeGradeLikely
+	case score >= 50:
+		return AccountProbeGradeUncertain
+	case score >= 25:
+		return AccountProbeGradeSuspicious
 	default:
-		return AccountProbeGradeWatered
+		return AccountProbeGradeUnavailable
 	}
 }
 
 func accountProbeGradeLabel(grade string) string {
 	switch grade {
+	case AccountProbeGradeHighConfidence:
+		return "高可信正版"
+	case AccountProbeGradeLikely:
+		return "较可信"
+	case AccountProbeGradeUncertain:
+		return "不确定"
+	case AccountProbeGradeSuspicious:
+		return "疑似替换或降级"
+	case AccountProbeGradeUnavailable:
+		return "不可检测"
 	case AccountProbeGradeGenuine:
 		return "正版 gpt-5.5"
 	case AccountProbeGradeSuspectedWatered:
