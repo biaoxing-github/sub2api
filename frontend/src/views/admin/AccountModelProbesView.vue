@@ -73,15 +73,36 @@
                 {{ t('common.search') }}
               </button>
             </form>
+            <button
+              type="button"
+              data-test="delete-selected-model-probe-runs"
+              class="btn btn-danger px-3 py-1.5 text-sm"
+              :disabled="selectedRunIds.length === 0 || deletingRuns"
+              @click="deleteSelectedRuns"
+            >
+              <Icon name="trash" size="sm" :class="deletingRuns ? 'animate-pulse' : ''" />
+              <span class="ml-1.5">{{ t('admin.accountModelProbes.deleteSelected', { count: selectedRunIds.length }) }}</span>
+            </button>
             <button type="button" class="btn btn-ghost px-2 py-1 text-sm" :disabled="loading" @click="loadRuns">
               <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
             </button>
           </div>
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[760px]">
+          <table class="w-full min-w-[840px]">
             <thead class="bg-gray-50 dark:bg-dark-800">
               <tr>
+                <th class="w-10 px-4 py-3 text-left">
+                  <input
+                    data-test="select-visible-model-probe-runs"
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    :checked="allVisibleRunsSelected"
+                    :disabled="selectableRuns.length === 0"
+                    :aria-label="t('admin.accountModelProbes.selectAllRuns')"
+                    @change="handleToggleAllVisibleRuns"
+                  />
+                </th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.account') }}</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.model') }}</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.requestMode') }}</th>
@@ -93,12 +114,23 @@
             </thead>
             <tbody>
               <tr v-if="loading && runs.length === 0">
-                <td colspan="7" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</td>
+                <td colspan="8" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</td>
               </tr>
               <tr v-else-if="runs.length === 0">
-                <td colspan="7" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.empty') }}</td>
+                <td colspan="8" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.empty') }}</td>
               </tr>
               <tr v-for="run in runs" :key="run.id" class="border-t border-gray-100 hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-800/60">
+                <td class="px-4 py-3">
+                  <input
+                    data-test="model-probe-run-select"
+                    type="checkbox"
+                    class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    :checked="selectedRunIdSet.has(run.id)"
+                    :disabled="run.status === 'running'"
+                    :aria-label="t('admin.accountModelProbes.selectRun', { id: run.id })"
+                    @change="handleToggleRun(run.id, $event)"
+                  />
+                </td>
                 <td class="px-4 py-3">
                   <div class="font-medium text-gray-900 dark:text-gray-100">{{ run.account_name || `#${run.account_id}` }}</div>
                   <div class="text-xs text-gray-500 dark:text-gray-400">#{{ run.account_id }}</div>
@@ -116,10 +148,22 @@
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(run.created_at) }}</td>
                 <td class="px-4 py-3">
-                  <button type="button" class="btn btn-ghost px-2 py-1 text-sm" :data-test="`model-probe-detail-${run.id}`" @click="loadDetail(run.id)">
-                    <Icon name="eye" size="sm" />
-                    <span class="ml-1">{{ t('common.view') }}</span>
-                  </button>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button type="button" class="btn btn-ghost px-2 py-1 text-sm" :data-test="`model-probe-detail-${run.id}`" @click="loadDetail(run.id)">
+                      <Icon name="eye" size="sm" />
+                      <span class="ml-1">{{ t('common.view') }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-ghost px-2 py-1 text-sm text-rose-600 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                      :data-test="`model-probe-delete-${run.id}`"
+                      :disabled="run.status === 'running' || deletingRuns"
+                      @click="deleteModelProbeRuns([run.id])"
+                    >
+                      <Icon name="trash" size="sm" :class="deletingRuns ? 'animate-pulse' : ''" />
+                      <span class="ml-1">{{ t('admin.accountModelProbes.deleteRun') }}</span>
+                    </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -392,7 +436,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
-import { batchAccountModelProbeRuns, createAccountModelProbeRun, getAccountProbeRun, list as listAccounts, listAccountProbeRuns } from '@/api/admin/accounts'
+import { batchAccountModelProbeRuns, createAccountModelProbeRun, deleteAccountProbeRuns, getAccountProbeRun, list as listAccounts, listAccountProbeRuns } from '@/api/admin/accounts'
 import type { Account, AccountProbeRequestMode, AccountProbeRun, AccountProbeSample, AccountProbeValidationEvidence } from '@/types'
 
 const { t } = useI18n()
@@ -406,12 +450,14 @@ const detailRun = ref<AccountProbeRun | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
 const detailDialogOpen = ref(false)
+const deletingRuns = ref(false)
 const batchDialogOpen = ref(false)
 const batchSubmitting = ref(false)
 const batchAccountsLoading = ref(false)
 const batchError = ref('')
 const batchMessage = ref('')
 const batchAccounts = ref<Account[]>([])
+const selectedRunIds = ref<number[]>([])
 const selectedAccountIds = ref<number[]>([])
 const batchAccountSearch = ref('')
 const defaultOpenAIAccountTestModelID = 'gpt-5.5'
@@ -440,10 +486,14 @@ const batchForm = reactive({
 })
 
 const detailSamples = computed<AccountProbeSample[]>(() => detailRun.value?.samples || [])
+const selectedRunIdSet = computed(() => new Set(selectedRunIds.value))
+const selectableRuns = computed(() => runs.value.filter(run => run.status !== 'running'))
+const allVisibleRunsSelected = computed(() => selectableRuns.value.length > 0 && selectableRuns.value.every(run => selectedRunIdSet.value.has(run.id)))
 
 let listAbortController: AbortController | null = null
 let submitAbortController: AbortController | null = null
 let detailAbortController: AbortController | null = null
+let deleteAbortController: AbortController | null = null
 let batchAccountsAbortController: AbortController | null = null
 let batchSubmitAbortController: AbortController | null = null
 let batchSearchTimer: ReturnType<typeof setTimeout> | null = null
@@ -465,6 +515,7 @@ async function loadRuns() {
     })
     if (controller.signal.aborted) return
     runs.value = response.items || []
+    pruneSelectedRuns()
     pagination.total = response.total || 0
     pagination.page = response.page || pagination.page
     pagination.page_size = response.page_size || pagination.page_size
@@ -472,6 +523,7 @@ async function loadRuns() {
     if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
     error.value = err?.response?.data?.error || err?.message || t('admin.accountModelProbes.failedToLoad')
     runs.value = []
+    selectedRunIds.value = []
     pagination.total = 0
   } finally {
     if (listAbortController === controller) {
@@ -495,6 +547,81 @@ function handlePageSizeChange(pageSize: number) {
   pagination.page_size = pageSize
   pagination.page = 1
   loadRuns()
+}
+
+function pruneSelectedRuns() {
+  const selectableIDs = new Set(selectableRuns.value.map(run => run.id))
+  selectedRunIds.value = selectedRunIds.value.filter(id => selectableIDs.has(id))
+}
+
+function toggleRun(runId: number, checked: boolean) {
+  const ids = new Set(selectedRunIds.value)
+  if (checked) {
+    ids.add(runId)
+  } else {
+    ids.delete(runId)
+  }
+  selectedRunIds.value = Array.from(ids)
+}
+
+function handleToggleRun(runId: number, event: Event) {
+  toggleRun(runId, (event.target as HTMLInputElement).checked)
+}
+
+function toggleAllVisibleRuns(checked: boolean) {
+  const ids = new Set(selectedRunIds.value)
+  for (const run of selectableRuns.value) {
+    if (checked) {
+      ids.add(run.id)
+    } else {
+      ids.delete(run.id)
+    }
+  }
+  selectedRunIds.value = Array.from(ids)
+}
+
+function handleToggleAllVisibleRuns(event: Event) {
+  toggleAllVisibleRuns((event.target as HTMLInputElement).checked)
+}
+
+function deleteSelectedRuns() {
+  deleteModelProbeRuns(selectedRunIds.value)
+}
+
+async function deleteModelProbeRuns(runIds: number[]) {
+  const ids = Array.from(new Set(runIds.filter(id => id > 0)))
+  if (ids.length === 0 || deletingRuns.value) return
+  if (!window.confirm(t('admin.accountModelProbes.deleteConfirm'))) return
+
+  deleteAbortController?.abort()
+  const controller = new AbortController()
+  deleteAbortController = controller
+  deletingRuns.value = true
+  error.value = ''
+  message.value = ''
+  try {
+    const result = await deleteAccountProbeRuns(ids, {
+      signal: controller.signal,
+    })
+    if (controller.signal.aborted) return
+    selectedRunIds.value = selectedRunIds.value.filter(id => !ids.includes(id))
+    if (detailRun.value && ids.includes(detailRun.value.id)) {
+      clearDetail()
+    }
+    message.value = t('admin.accountModelProbes.deleteSucceeded', {
+      count: result.deleted_count,
+      skipped: result.skipped_running_count,
+    })
+    await loadRuns()
+  } catch (err: any) {
+    if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
+    error.value = err?.response?.data?.error || err?.message || t('admin.accountModelProbes.deleteFailed')
+  } finally {
+    if (deleteAbortController === controller) {
+      deletingRuns.value = false
+      deleteAbortController = null
+    }
+  }
 }
 
 async function submitProbe() {
@@ -764,6 +891,7 @@ onUnmounted(() => {
   listAbortController?.abort()
   submitAbortController?.abort()
   detailAbortController?.abort()
+  deleteAbortController?.abort()
   batchAccountsAbortController?.abort()
   batchSubmitAbortController?.abort()
   if (batchSearchTimer) {

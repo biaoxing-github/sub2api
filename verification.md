@@ -1363,3 +1363,70 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 本地 compose 中 `sub2api`、`sub2api-postgres`、`sub2api-redis` 均 healthy，`/health` 返回 HTTP 200 与 `{"status":"ok"}`。
 - 真实模型探针：`POST /api/v1/admin/account-model-probe-runs` 返回 202，创建 `run_id=120`，最终状态 `partial`；数据库中该 run 生成 19 条样本，18 条有 `request_prompt`，19 条有 `request_body`，19 条有 `response_body`。
 - 详情 API `GET /api/v1/admin/account-probe-runs/120` 返回 HTTP 200，样本 JSON 中可见新增请求体和返回体字段；行为验证样本中可见 prompt 字段。
+
+## 提交后部署验证
+
+- `docker build -t sub2api:multi-key-local .` 通过，镜像 manifest list 为 `sha256:c8a65b24a30d80f6d83432f7001d8659901098f664971ddfb38b2b1bc5240a60`。
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --no-deps --force-recreate sub2api` 通过。
+- 部署后 `sub2api` 容器状态为 `running`，健康状态为 `healthy`。
+- `Invoke-WebRequest http://127.0.0.1:8080/health` 返回 HTTP 200。
+- `GET /api/v1/admin/account-probe-runs/120` 返回 HTTP 200，19 条样本中 18 条带 `request_prompt`，19 条带 `request_body`，19 条带 `response_body`。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针删除/批量删除
+
+本轮为管理端模型探针页面增加删除能力：列表新增当前页选择列，运行中的探针不可选择；每行新增删除按钮，批量删除按钮会删除当前已选的非 running 探针；删除走现有 `DELETE /api/v1/admin/account-probe-runs`，后端仍按既有规则跳过运行中的记录并删除对应样本。
+
+## 校验方式
+
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+- `git diff --check`
+- `npm run build`
+- `Invoke-WebRequest http://127.0.0.1:5174/admin/model-probes`
+
+## 校验结果
+
+- TDD 红灯已观察：新增删除测试在实现前失败于找不到单删按钮和批量选择框。
+- `AccountModelProbesView.spec.ts` 6 个测试通过，覆盖单删、当前页批删、running 记录跳过选择、删除后刷新列表。
+- `vue-tsc --noEmit` 通过；前端生产构建通过，仍有项目既有 Browserslist、Vite dynamic import 和 chunk size 警告。
+- `git diff --check` 通过，仅提示 `docs/process_list.jsonl` 后续可能 LF 转 CRLF。
+- 临时 Vite dev server 的 `/admin/model-probes` HTTP smoke 返回 200 且 HTML 包含 Vue 挂载点；5174 端口进程已停止。
+- Playwright MCP 浏览器验证被现有 browser user-data-dir 占用阻塞，未执行截图。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针删除/批量删除提交后部署验证
+
+本轮按用户要求将模型探针删除功能提交、构建、部署到本地 `sub2api` 容器，并完成部署后 smoke。Docker 构建上下文按 `.dockerignore` 排除 `docs/` 和 `*.md`，部署镜像使用已提交的前端/后端源码输入。
+
+## 校验方式
+
+- `git diff --cached --check`
+- `git commit -m "feat(admin): add model probe deletion"`
+- `docker build -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --no-deps --force-recreate sub2api`
+- `docker inspect sub2api --format '{{.State.Status}} {{.State.Health.Status}}'`
+- `Invoke-WebRequest http://127.0.0.1:8080/health`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/model-probes`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/probe-reports`
+- 未登录请求模型探针列表、删除和批量创建管理端 API
+
+## 校验结果
+
+- 功能提交成功，初始提交为 `dee9c07d feat(admin): add model probe deletion`。
+- Docker build 通过，镜像 digest 为 `sha256:2c4be589d090471d1cde748f45a4315418bd736053fe6774d8bec0922d440b84`；构建仍有项目既有 Browserslist、Vite dynamic import 和 chunk size 警告。
+- 本地 compose 重建 `sub2api` 成功，容器状态 `running healthy`。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- `/admin/model-probes` 和 `/admin/probe-reports` 均返回 HTTP 200 HTML，包含 Vue 挂载点。
+- `GET /api/v1/admin/account-probe-runs?mode=model_validation&page=1&page_size=20` 未登录返回 HTTP 401。
+- `DELETE /api/v1/admin/account-probe-runs` 未登录返回 HTTP 401。
+- `POST /api/v1/admin/account-model-probe-runs/batch` 未登录返回 HTTP 401。
+- 容器尾部日志未见 panic/fatal；仅有一条既有 `/responses` `context canceled` WARN，与本次模型探针页面 smoke 无关。

@@ -1,14 +1,15 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountModelProbesView from '../AccountModelProbesView.vue'
 
-const { listAccounts, listAccountProbeRuns, getAccountProbeRun, createAccountModelProbeRun, batchAccountModelProbeRuns } = vi.hoisted(() => ({
+const { listAccounts, listAccountProbeRuns, getAccountProbeRun, createAccountModelProbeRun, batchAccountModelProbeRuns, deleteAccountProbeRuns } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listAccountProbeRuns: vi.fn(),
   getAccountProbeRun: vi.fn(),
   createAccountModelProbeRun: vi.fn(),
   batchAccountModelProbeRuns: vi.fn(),
+  deleteAccountProbeRuns: vi.fn(),
 }))
 
 vi.mock('@/api/admin/accounts', () => ({
@@ -18,12 +19,14 @@ vi.mock('@/api/admin/accounts', () => ({
     getAccountProbeRun,
     createAccountModelProbeRun,
     batchAccountModelProbeRuns,
+    deleteAccountProbeRuns,
   },
   list: listAccounts,
   listAccountProbeRuns,
   getAccountProbeRun,
   createAccountModelProbeRun,
   batchAccountModelProbeRuns,
+  deleteAccountProbeRuns,
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -55,6 +58,12 @@ describe('AccountModelProbesView', () => {
     getAccountProbeRun.mockReset()
     createAccountModelProbeRun.mockReset()
     batchAccountModelProbeRuns.mockReset()
+    deleteAccountProbeRuns.mockReset()
+    vi.stubGlobal('confirm', vi.fn(() => true))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('loads manual model probe runs and starts a new manual probe', async () => {
@@ -259,6 +268,126 @@ describe('AccountModelProbesView', () => {
       mode: 'model_validation',
       keyword: 'rayapi',
     }), expect.any(Object))
+  })
+
+  it('deletes one model probe run from the row action', async () => {
+    listAccountProbeRuns
+      .mockResolvedValueOnce({
+        items: [{
+          id: 101,
+          account_id: 12,
+          account_name: 'rayapi',
+          mode: 'model_validation',
+          status: 'success',
+          model: 'gpt-5.5',
+          request_mode: 'non_stream',
+          created_at: '2026-06-03T12:00:00Z',
+        }],
+        total: 1,
+        page: 1,
+        page_size: 20,
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 20,
+      })
+    deleteAccountProbeRuns.mockResolvedValue({
+      requested_count: 1,
+      deleted_count: 1,
+      skipped_running_count: 0,
+    })
+
+    const wrapper = mount(AccountModelProbesView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
+          Pagination: PaginationStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="model-probe-delete-101"]').trigger('click')
+    await flushPromises()
+
+    expect(window.confirm).toHaveBeenCalledWith('admin.accountModelProbes.deleteConfirm')
+    expect(deleteAccountProbeRuns).toHaveBeenCalledWith([101], expect.any(Object))
+    expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('admin.accountModelProbes.deleteSucceeded')
+  })
+
+  it('bulk deletes selected non-running model probe runs on the current page', async () => {
+    listAccountProbeRuns
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 101,
+            account_id: 12,
+            account_name: 'rayapi',
+            mode: 'model_validation',
+            status: 'success',
+            model: 'gpt-5.5',
+            request_mode: 'non_stream',
+            created_at: '2026-06-03T12:00:00Z',
+          },
+          {
+            id: 102,
+            account_id: 13,
+            account_name: 'running-account',
+            mode: 'model_validation',
+            status: 'running',
+            model: 'gpt-5.5',
+            request_mode: 'stream',
+            created_at: '2026-06-03T12:05:00Z',
+          },
+          {
+            id: 103,
+            account_id: 14,
+            account_name: 'partial-account',
+            mode: 'model_validation',
+            status: 'partial',
+            model: 'gpt-5.5',
+            request_mode: 'stream',
+            created_at: '2026-06-03T12:10:00Z',
+          },
+        ],
+        total: 3,
+        page: 1,
+        page_size: 20,
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+        page: 1,
+        page_size: 20,
+      })
+    deleteAccountProbeRuns.mockResolvedValue({
+      requested_count: 2,
+      deleted_count: 2,
+      skipped_running_count: 0,
+    })
+
+    const wrapper = mount(AccountModelProbesView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
+          Pagination: PaginationStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="select-visible-model-probe-runs"]').setValue(true)
+    await wrapper.find('[data-test="delete-selected-model-probe-runs"]').trigger('click')
+    await flushPromises()
+
+    expect(deleteAccountProbeRuns).toHaveBeenCalledWith([101, 103], expect.any(Object))
+    expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('admin.accountModelProbes.deleteSucceeded')
   })
 
   it('loads model probe detail and renders validation evidence', async () => {
