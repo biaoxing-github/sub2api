@@ -352,7 +352,9 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 		key := keys[idx%len(keys)]
 		baseURL := baseURLs[idx%len(baseURLs)]
 		sample := s.runOpenAIAPIKeySampleWithRetry(ctx, account, baseURL, model, key, planned, useResponses, run.RequestMode)
-		s.recordProbePathHealth(account, baseURL, sample)
+		if !req.ModelValidationOnly && !strings.EqualFold(plan.Profile, AccountProbeProfileModelValidation) {
+			s.recordProbePathHealth(account, baseURL, sample)
+		}
 		sample.RunID = run.ID
 		sample.RequestIndex = idx + 1
 		sample.Type = planned.Type

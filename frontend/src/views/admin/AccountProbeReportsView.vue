@@ -77,10 +77,6 @@
             <Icon name="beaker" size="sm" />
             <span class="ml-1.5">{{ t('admin.accountProbeReports.batchProbe') }}</span>
           </button>
-          <button type="button" data-test="open-batch-model-probe-dialog" class="btn btn-secondary px-3" @click="openBatchModelDialog">
-            <Icon name="sparkles" size="sm" />
-            <span class="ml-1.5">{{ t('admin.accountProbeReports.batchModelProbe') }}</span>
-          </button>
           <button type="button" data-test="open-scheduled-probe-dialog" class="btn btn-secondary px-3" @click="openScheduleDialog">
             <Icon name="calendar" size="sm" />
             <span class="ml-1.5">{{ t('admin.accountProbeReports.scheduleProbe') }}</span>
@@ -292,28 +288,40 @@
                 <thead class="bg-gray-50 dark:bg-dark-800">
                   <tr>
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">#</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.request') }}</th>
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.status') }}</th>
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.avgLatency') }}</th>
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.firstToken') }}</th>
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.tokens') }}</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.output') }}</th>
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.error') }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-if="!detailRun?.samples?.length">
-                    <td colspan="6" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.noData') }}</td>
+                    <td colspan="8" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.noData') }}</td>
                   </tr>
                   <template v-for="sample in detailRun?.samples || []" :key="sample.id">
                     <tr class="border-t border-gray-100 dark:border-dark-700">
                       <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ sample.request_index }}</td>
+                      <td class="max-w-[260px] px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
+                        <div class="font-medium">{{ sample.label || sample.type || '-' }}</div>
+                        <div class="break-all font-mono text-xs text-gray-500 dark:text-gray-400">{{ sample.upstream_endpoint || '-' }}</div>
+                      </td>
                       <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatStatus(sample.status) }}</td>
                       <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatMs(sample.latency_ms) }}</td>
                       <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatMs(sample.first_token_ms) }}</td>
                       <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatInteger(sample.tokens) }}</td>
-                      <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ sample.error || sample.error_code || '-' }}</td>
+                      <td class="max-w-[220px] px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
+                        <pre v-if="sample.output_text" class="max-h-24 whitespace-pre-wrap break-words rounded bg-gray-50 p-2 text-xs dark:bg-dark-900">{{ sample.output_text }}</pre>
+                        <span v-else>-</span>
+                      </td>
+                      <td class="max-w-[240px] px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
+                        <span class="break-words">{{ sampleErrorText(sample) }}</span>
+                      </td>
                     </tr>
                     <tr v-if="sample.validation_evidence?.length" class="border-t border-gray-100 bg-gray-50/70 dark:border-dark-700 dark:bg-dark-800/60">
-                      <td colspan="6" class="px-3 py-3">
+                      <td colspan="8" class="px-3 py-3">
                         <div class="grid gap-2">
                           <div
                             v-for="evidence in sample.validation_evidence"
@@ -432,7 +440,7 @@
 
   <BaseDialog
     :show="batchDialogOpen"
-    :title="batchDialogMode === 'model' ? t('admin.accountProbeReports.batchModelDialogTitle') : t('admin.accountProbeReports.batchDialogTitle')"
+    :title="t('admin.accountProbeReports.batchDialogTitle')"
     width="extra-wide"
     @close="closeBatchDialog"
   >
@@ -458,10 +466,10 @@
       </div>
 
       <div class="grid gap-3 md:grid-cols-4">
-        <Select v-if="batchDialogMode === 'probe'" v-model="batchForm.mode" :options="batchModeOptions" />
+        <Select v-model="batchForm.mode" :options="batchModeOptions" />
         <Select v-model="batchForm.request_mode" :options="batchRequestModeOptions" />
         <input v-model="batchForm.model" data-test="batch-probe-model" type="text" class="input" :placeholder="t('admin.accountProbeReports.batchModelPlaceholder')" />
-        <label v-if="batchDialogMode === 'probe'" class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+        <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
           <input v-model="batchForm.long_context" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
           <span>{{ t('admin.accountProbeReports.longContext') }}</span>
         </label>
@@ -520,7 +528,6 @@
     <template #footer>
       <button type="button" class="btn btn-secondary" @click="closeBatchDialog">{{ t('common.cancel') }}</button>
       <button
-        v-if="batchDialogMode === 'probe'"
         type="button"
         data-test="batch-probe-submit"
         class="btn btn-primary"
@@ -529,17 +536,6 @@
       >
         <Icon name="beaker" size="sm" :class="batchSubmitting ? 'animate-pulse' : ''" />
         <span class="ml-1.5">{{ t('admin.accountProbeReports.batchProbe') }}</span>
-      </button>
-      <button
-        v-else
-        type="button"
-        data-test="batch-model-probe-submit"
-        class="btn btn-primary"
-        :disabled="selectedAccountIds.length === 0 || batchSubmitting"
-        @click="submitBatchModelProbe"
-      >
-        <Icon name="sparkles" size="sm" :class="batchSubmitting ? 'animate-pulse' : ''" />
-        <span class="ml-1.5">{{ t('admin.accountProbeReports.batchModelProbe') }}</span>
       </button>
     </template>
   </BaseDialog>
@@ -594,9 +590,9 @@ import Select from '@/components/common/Select.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { getConfiguredTablePageSizeOptions, normalizeTablePageSize } from '@/utils/tablePreferences'
-import { batchAccountModelProbeRuns, batchAccountProbeRuns, deleteAccountProbeRuns, list as listAccounts, listAccountProbeRuns, getAccountProbeRun, listAccountProbeRanking } from '@/api/admin/accounts'
+import { batchAccountProbeRuns, deleteAccountProbeRuns, list as listAccounts, listAccountProbeRuns, getAccountProbeRun, listAccountProbeRanking } from '@/api/admin/accounts'
 import { create as createScheduledTestPlan } from '@/api/admin/scheduledTests'
-import type { Account, AccountProbeRankingItem, AccountProbeRun, AccountProbeRunListFilters, AccountProbeRunSortBy, AccountProbeScoreBreakdownItem, SelectOption } from '@/types'
+import type { Account, AccountProbeRankingItem, AccountProbeRun, AccountProbeRunListFilters, AccountProbeRunSortBy, AccountProbeSample, AccountProbeScoreBreakdownItem, SelectOption } from '@/types'
 
 const { t } = useI18n()
 
@@ -614,7 +610,6 @@ const batchSubmitting = ref(false)
 const batchMessage = ref('')
 const batchError = ref('')
 const batchDialogOpen = ref(false)
-const batchDialogMode = ref<'probe' | 'model'>('probe')
 const batchAccounts = ref<Account[]>([])
 const batchAccountsLoading = ref(false)
 const batchAccountSearch = ref('')
@@ -951,41 +946,6 @@ async function submitBatchProbe() {
   }
 }
 
-async function submitBatchModelProbe() {
-  if (selectedAccountIds.value.length === 0 || batchSubmitting.value) return
-  batchAbortController?.abort()
-  const controller = new AbortController()
-  batchAbortController = controller
-  batchSubmitting.value = true
-  batchError.value = ''
-  batchMessage.value = ''
-  try {
-    const response = await batchAccountModelProbeRuns({
-      account_ids: selectedAccountIds.value,
-      model: batchForm.model.trim() || undefined,
-      request_mode: batchForm.request_mode,
-    }, {
-      signal: controller.signal,
-    })
-    if (controller.signal.aborted) return
-    batchMessage.value = t('admin.accountProbeReports.batchModelAccepted', { count: response.accepted_count })
-    selectedAccountIds.value = []
-    batchDialogOpen.value = false
-    filters.mode = 'model_validation'
-    pagination.page = 1
-    await loadRuns()
-    await loadRanking()
-  } catch (err: any) {
-    if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
-    batchError.value = err?.response?.data?.error || err?.message || t('admin.accountProbeReports.batchModelFailed')
-  } finally {
-    if (batchAbortController === controller) {
-      batchSubmitting.value = false
-      batchAbortController = null
-    }
-  }
-}
-
 function closeDetail() {
   detailAbortController?.abort()
   detailOpen.value = false
@@ -993,16 +953,6 @@ function closeDetail() {
 }
 
 function openBatchDialog() {
-  batchDialogMode.value = 'probe'
-  batchDialogOpen.value = true
-  batchError.value = ''
-  if (batchAccounts.value.length === 0) {
-    loadBatchAccounts()
-  }
-}
-
-function openBatchModelDialog() {
-  batchDialogMode.value = 'model'
   batchDialogOpen.value = true
   batchError.value = ''
   if (batchAccounts.value.length === 0) {
@@ -1206,6 +1156,10 @@ function formatStatus(value: string | undefined): string {
 
 function formatValidationPassed(value: boolean): string {
   return value ? t('admin.accountProbeReports.validationPassed') : t('admin.accountProbeReports.validationFailed')
+}
+
+function sampleErrorText(sample: AccountProbeSample): string {
+  return sample.error || sample.error_message || sample.error_code || '-'
 }
 
 function formatScoreItemValue(item: AccountProbeScoreBreakdownItem): string {

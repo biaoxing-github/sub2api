@@ -2,6 +2,16 @@
   <AppLayout>
     <div class="space-y-5">
       <section class="rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 class="text-base font-semibold text-gray-900 dark:text-gray-100">{{ t('admin.accountModelProbes.title') }}</h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.description') }}</p>
+          </div>
+          <button type="button" data-test="open-batch-model-probe-dialog" class="btn btn-secondary px-3" @click="openBatchDialog">
+            <Icon name="sparkles" size="sm" />
+            <span class="ml-1.5">{{ t('admin.accountModelProbes.batchModelProbe') }}</span>
+          </button>
+        </div>
         <form data-test="run-model-probe" class="grid gap-3 md:grid-cols-[160px_minmax(220px,1fr)_180px_auto]" @submit.prevent="submitProbe">
           <input
             v-model.number="form.account_id"
@@ -73,7 +83,10 @@
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ run.model || '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatRequestMode(run.request_mode) }}</td>
-                <td class="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(run.score) }}</td>
+                <td class="px-4 py-3">
+                  <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(run.score) }}</div>
+                  <div v-if="run.grade_label" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ run.grade_label }}</div>
+                </td>
                 <td class="px-4 py-3">
                   <span :class="statusClass(run.status)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium">
                     {{ formatStatus(run.status) }}
@@ -108,6 +121,7 @@
             <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-dark-800">
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.score') }}</div>
               <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(detailRun.score) }}</div>
+              <div v-if="detailRun.grade_label" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ detailRun.grade_label }}</div>
             </div>
             <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-dark-800">
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.time') }}</div>
@@ -151,6 +165,97 @@
           </div>
         </div>
       </section>
+
+      <BaseDialog
+        :show="batchDialogOpen"
+        :title="t('admin.accountModelProbes.batchModelDialogTitle')"
+        width="extra-wide"
+        @close="closeBatchDialog"
+      >
+        <div class="space-y-4">
+          <div class="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px]">
+            <input
+              v-model="batchForm.model"
+              data-test="batch-model-probe-model"
+              type="text"
+              class="input"
+              :placeholder="t('admin.accountModelProbes.modelPlaceholder')"
+            />
+            <select
+              v-model="batchForm.request_mode"
+              data-test="batch-model-probe-request-mode"
+              class="input"
+            >
+              <option value="non_stream">{{ t('admin.accountModelProbes.requestModes.non_stream') }}</option>
+              <option value="stream">{{ t('admin.accountModelProbes.requestModes.stream') }}</option>
+            </select>
+          </div>
+
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <input
+              v-model="batchAccountSearch"
+              data-test="batch-model-account-search"
+              type="search"
+              class="input max-w-xs"
+              :placeholder="t('admin.accountModelProbes.batchAccountSearchPlaceholder')"
+              @input="onBatchAccountSearch"
+            />
+            <div class="flex items-center gap-3 text-sm text-gray-600 dark:text-gray-300">
+              <button type="button" class="btn btn-ghost px-2 py-1 text-sm" @click="selectAllBatchAccounts">
+                {{ t('admin.accountModelProbes.selectAll') }}
+              </button>
+              <button type="button" class="btn btn-ghost px-2 py-1 text-sm" @click="clearBatchAccountSelection">
+                {{ t('admin.accountModelProbes.clearSelection') }}
+              </button>
+              <span>{{ t('admin.accountModelProbes.selectedAccounts', { count: selectedAccountIds.length }) }}</span>
+            </div>
+          </div>
+
+          <div v-if="batchError" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200">
+            {{ batchError }}
+          </div>
+          <div v-if="batchMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+            {{ batchMessage }}
+          </div>
+
+          <div class="max-h-[420px] overflow-auto rounded-lg border border-gray-200 dark:border-dark-700">
+            <div v-if="batchAccountsLoading" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</div>
+            <div v-else-if="batchAccounts.length === 0" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.batchAccountsEmpty') }}</div>
+            <template v-else>
+              <label
+                v-for="account in batchAccounts"
+                :key="account.id"
+                class="flex items-start gap-3 border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-dark-700"
+              >
+                <input
+                  v-model="selectedAccountIds"
+                  data-test="batch-account-select"
+                  type="checkbox"
+                  class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600"
+                  :value="account.id"
+                />
+                <span class="min-w-0 flex-1">
+                  <span class="block font-medium text-gray-900 dark:text-gray-100">{{ account.name || `#${account.id}` }}</span>
+                  <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">#{{ account.id }} · {{ account.platform }} · {{ account.type }}</span>
+                </span>
+              </label>
+            </template>
+          </div>
+        </div>
+        <template #footer>
+          <button type="button" class="btn btn-secondary" @click="closeBatchDialog">{{ t('common.cancel') }}</button>
+          <button
+            type="button"
+            data-test="batch-model-probe-submit"
+            class="btn btn-primary"
+            :disabled="selectedAccountIds.length === 0 || batchSubmitting"
+            @click="submitBatchModelProbe"
+          >
+            <Icon name="sparkles" size="sm" :class="batchSubmitting ? 'animate-pulse' : ''" />
+            <span class="ml-1.5">{{ t('admin.accountModelProbes.batchModelProbe') }}</span>
+          </button>
+        </template>
+      </BaseDialog>
     </div>
   </AppLayout>
 </template>
@@ -160,8 +265,9 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { createAccountModelProbeRun, getAccountProbeRun, listAccountProbeRuns } from '@/api/admin/accounts'
-import type { AccountProbeRequestMode, AccountProbeRun, AccountProbeSample, AccountProbeValidationEvidence } from '@/types'
+import BaseDialog from '@/components/common/BaseDialog.vue'
+import { batchAccountModelProbeRuns, createAccountModelProbeRun, getAccountProbeRun, list as listAccounts, listAccountProbeRuns } from '@/api/admin/accounts'
+import type { Account, AccountProbeRequestMode, AccountProbeRun, AccountProbeSample, AccountProbeValidationEvidence } from '@/types'
 
 const { t } = useI18n()
 
@@ -173,10 +279,23 @@ const message = ref('')
 const detailRun = ref<AccountProbeRun | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
+const batchDialogOpen = ref(false)
+const batchSubmitting = ref(false)
+const batchAccountsLoading = ref(false)
+const batchError = ref('')
+const batchMessage = ref('')
+const batchAccounts = ref<Account[]>([])
+const selectedAccountIds = ref<number[]>([])
+const batchAccountSearch = ref('')
 const defaultOpenAIAccountTestModelID = 'gpt-5.5'
 
 const form = reactive({
   account_id: undefined as number | undefined,
+  model: defaultOpenAIAccountTestModelID,
+  request_mode: 'non_stream' as AccountProbeRequestMode,
+})
+
+const batchForm = reactive({
   model: defaultOpenAIAccountTestModelID,
   request_mode: 'non_stream' as AccountProbeRequestMode,
 })
@@ -186,6 +305,9 @@ const detailSamples = computed<AccountProbeSample[]>(() => detailRun.value?.samp
 let listAbortController: AbortController | null = null
 let submitAbortController: AbortController | null = null
 let detailAbortController: AbortController | null = null
+let batchAccountsAbortController: AbortController | null = null
+let batchSubmitAbortController: AbortController | null = null
+let batchSearchTimer: ReturnType<typeof setTimeout> | null = null
 
 async function loadRuns() {
   listAbortController?.abort()
@@ -247,6 +369,103 @@ async function submitProbe() {
       submitAbortController = null
     }
   }
+}
+
+async function loadBatchAccounts() {
+  batchAccountsAbortController?.abort()
+  const controller = new AbortController()
+  batchAccountsAbortController = controller
+  batchAccountsLoading.value = true
+  batchError.value = ''
+  try {
+    const response = await listAccounts(1, 100, {
+      platform: 'openai',
+      type: 'apikey',
+      search: batchAccountSearch.value.trim() || undefined,
+      sort_by: 'name',
+      sort_order: 'asc',
+    }, {
+      signal: controller.signal,
+    })
+    if (controller.signal.aborted) return
+    batchAccounts.value = response.items || []
+    selectedAccountIds.value = batchAccounts.value.map(account => account.id)
+  } catch (err: any) {
+    if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
+    batchError.value = err?.response?.data?.error || err?.message || t('admin.accountModelProbes.failedToLoadAccounts')
+    batchAccounts.value = []
+    selectedAccountIds.value = []
+  } finally {
+    if (batchAccountsAbortController === controller) {
+      batchAccountsLoading.value = false
+      batchAccountsAbortController = null
+    }
+  }
+}
+
+async function submitBatchModelProbe() {
+  if (selectedAccountIds.value.length === 0 || batchSubmitting.value) return
+  batchSubmitAbortController?.abort()
+  const controller = new AbortController()
+  batchSubmitAbortController = controller
+  batchSubmitting.value = true
+  batchError.value = ''
+  batchMessage.value = ''
+  try {
+    const response = await batchAccountModelProbeRuns({
+      account_ids: selectedAccountIds.value,
+      model: batchForm.model.trim() || undefined,
+      request_mode: batchForm.request_mode,
+    }, {
+      signal: controller.signal,
+    })
+    if (controller.signal.aborted) return
+    batchMessage.value = t('admin.accountModelProbes.batchModelAccepted', { count: response.accepted_count })
+    batchDialogOpen.value = false
+    await loadRuns()
+  } catch (err: any) {
+    if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
+    batchError.value = err?.response?.data?.error || err?.message || t('admin.accountModelProbes.batchModelFailed')
+  } finally {
+    if (batchSubmitAbortController === controller) {
+      batchSubmitting.value = false
+      batchSubmitAbortController = null
+    }
+  }
+}
+
+function openBatchDialog() {
+  batchDialogOpen.value = true
+  batchError.value = ''
+  batchMessage.value = ''
+  if (batchAccounts.value.length === 0) {
+    loadBatchAccounts()
+  } else {
+    selectedAccountIds.value = batchAccounts.value.map(account => account.id)
+  }
+}
+
+function closeBatchDialog() {
+  batchDialogOpen.value = false
+  batchAccountsAbortController?.abort()
+  batchSubmitAbortController?.abort()
+}
+
+function selectAllBatchAccounts() {
+  selectedAccountIds.value = batchAccounts.value.map(account => account.id)
+}
+
+function clearBatchAccountSelection() {
+  selectedAccountIds.value = []
+}
+
+function onBatchAccountSearch() {
+  if (batchSearchTimer) {
+    clearTimeout(batchSearchTimer)
+  }
+  batchSearchTimer = setTimeout(() => {
+    loadBatchAccounts()
+  }, 250)
 }
 
 async function loadDetail(runId: number) {
@@ -316,5 +535,10 @@ onUnmounted(() => {
   listAbortController?.abort()
   submitAbortController?.abort()
   detailAbortController?.abort()
+  batchAccountsAbortController?.abort()
+  batchSubmitAbortController?.abort()
+  if (batchSearchTimer) {
+    clearTimeout(batchSearchTimer)
+  }
 })
 </script>

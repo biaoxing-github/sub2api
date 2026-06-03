@@ -3,12 +3,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountProbeReportsView from '../AccountProbeReportsView.vue'
 
-const { listAccounts, listAccountProbeRuns, getAccountProbeRun, batchAccountProbeRuns, batchAccountModelProbeRuns, deleteAccountProbeRuns, listAccountProbeRanking, createScheduledTestPlan } = vi.hoisted(() => ({
+const { listAccounts, listAccountProbeRuns, getAccountProbeRun, batchAccountProbeRuns, deleteAccountProbeRuns, listAccountProbeRanking, createScheduledTestPlan } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listAccountProbeRuns: vi.fn(),
   getAccountProbeRun: vi.fn(),
   batchAccountProbeRuns: vi.fn(),
-  batchAccountModelProbeRuns: vi.fn(),
   deleteAccountProbeRuns: vi.fn(),
   listAccountProbeRanking: vi.fn(),
   createScheduledTestPlan: vi.fn(),
@@ -20,7 +19,6 @@ vi.mock('@/api/admin/accounts', () => ({
     listAccountProbeRuns,
     getAccountProbeRun,
     batchAccountProbeRuns,
-    batchAccountModelProbeRuns,
     deleteAccountProbeRuns,
     listAccountProbeRanking,
   },
@@ -28,7 +26,6 @@ vi.mock('@/api/admin/accounts', () => ({
   listAccountProbeRuns,
   getAccountProbeRun,
   batchAccountProbeRuns,
-  batchAccountModelProbeRuns,
   deleteAccountProbeRuns,
   listAccountProbeRanking,
 }))
@@ -86,7 +83,6 @@ describe('AccountProbeReportsView', () => {
     listAccountProbeRuns.mockReset()
     getAccountProbeRun.mockReset()
     batchAccountProbeRuns.mockReset()
-    batchAccountModelProbeRuns.mockReset()
     deleteAccountProbeRuns.mockReset()
     listAccountProbeRanking.mockReset()
     createScheduledTestPlan.mockReset()
@@ -177,6 +173,7 @@ describe('AccountProbeReportsView', () => {
     expect(wrapper.text()).toContain('1,440ms')
     expect(wrapper.text()).toContain('admin.accountProbeReports.rankingTitle')
     expect(wrapper.find('[data-test="probe-ranking-item"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="open-batch-model-probe-dialog"]').exists()).toBe(false)
   })
 
   it('opens ranking in a dialog without occupying the report table area', async () => {
@@ -319,6 +316,9 @@ describe('AccountProbeReportsView', () => {
         request_index: 1,
         status: 'success',
         latency_ms: 830,
+        type: 'short',
+        label: '基础测速',
+        upstream_endpoint: 'https://api.example.test/v1/responses',
         output_text: '{"sum":83,"code":"BETA"}',
         validation_evidence: [{
           key: 'json_arithmetic',
@@ -330,6 +330,17 @@ describe('AccountProbeReportsView', () => {
           max_score: 10,
         }],
         created_at: '2026-05-26T10:00:01Z',
+      }, {
+        id: 2,
+        run_id: 91,
+        request_index: 2,
+        status: 'failed',
+        type: 'short',
+        label: '基础测速',
+        upstream_endpoint: 'https://api.example.test/v1/responses',
+        latency_ms: 1200,
+        error_message: 'context deadline exceeded',
+        created_at: '2026-05-26T10:00:02Z',
       }],
     })
 
@@ -352,9 +363,12 @@ describe('AccountProbeReportsView', () => {
     expect(getAccountProbeRun).toHaveBeenCalledWith(91, expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(document.body.textContent).toContain('Success rate')
     expect(document.body.textContent).toContain('Timeout')
+    expect(document.body.textContent).toContain('https://api.example.test/v1/responses')
+    expect(document.body.textContent).toContain('基础测速')
     expect(document.body.textContent).toContain('830ms')
     expect(document.body.textContent).toContain('JSON 算术')
     expect(document.body.textContent).toContain('{"sum":83,"code":"BETA"}')
+    expect(document.body.textContent).toContain('context deadline exceeded')
     expect(document.body.textContent).toContain('10 / 10')
   })
 
@@ -458,7 +472,7 @@ describe('AccountProbeReportsView', () => {
     expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
   })
 
-  it('prepopulates report batch, model validation, and schedule forms with gpt-5.5', async () => {
+  it('prepopulates report batch and schedule forms with gpt-5.5', async () => {
     listAccountProbeRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, summary: {} })
     listAccounts.mockResolvedValue({
       items: [],
@@ -486,45 +500,13 @@ describe('AccountProbeReportsView', () => {
     await flushPromises()
     expect((wrapper.find('[data-test="batch-probe-model"]').element as HTMLInputElement).value).toBe('gpt-5.5')
 
-    await wrapper.find('[data-test="open-batch-model-probe-dialog"]').trigger('click')
-    await flushPromises()
-    expect((wrapper.find('[data-test="batch-probe-model"]').element as HTMLInputElement).value).toBe('gpt-5.5')
-
     await wrapper.find('[data-test="open-scheduled-probe-dialog"]').trigger('click')
     await flushPromises()
     expect((wrapper.find('[data-test="schedule-probe-model"]').element as HTMLInputElement).value).toBe('gpt-5.5')
   })
 
-  it('starts batch model validation from the report page without changing scheduled regular probes', async () => {
+  it('does not expose batch model validation from the report page', async () => {
     listAccountProbeRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, summary: {} })
-    listAccounts.mockResolvedValue({
-      items: [
-        {
-          id: 12,
-          name: 'rayapi-free',
-          platform: 'openai',
-          type: 'apikey',
-          status: 'active',
-          schedulable: true,
-        },
-        {
-          id: 99,
-          name: 'new-api-key-not-yet-probed',
-          platform: 'openai',
-          type: 'apikey',
-          status: 'active',
-          schedulable: true,
-        },
-      ],
-      total: 2,
-      page: 1,
-      page_size: 100,
-      pages: 1,
-    })
-    batchAccountModelProbeRuns.mockResolvedValue({
-      runs: [],
-      accepted_count: 2,
-    })
 
     const wrapper = mount(AccountProbeReportsView, {
       global: {
@@ -540,20 +522,8 @@ describe('AccountProbeReportsView', () => {
     })
     await flushPromises()
 
-    await wrapper.find('[data-test="open-batch-model-probe-dialog"]').trigger('click')
-    await flushPromises()
-    const checkboxes = wrapper.findAll('input[type="checkbox"][data-test="batch-account-select"]')
-    await checkboxes[0].setValue(true)
-    await checkboxes[1].setValue(true)
-    await wrapper.find('[data-test="batch-probe-model"]').setValue('gpt-4.1-mini')
-    await wrapper.find('[data-test="batch-model-probe-submit"]').trigger('click')
-    await flushPromises()
-
-    expect(batchAccountModelProbeRuns).toHaveBeenCalledWith({
-      account_ids: [12, 99],
-      model: 'gpt-4.1-mini',
-      request_mode: 'stream',
-    }, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(wrapper.find('[data-test="open-batch-model-probe-dialog"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="batch-model-probe-submit"]').exists()).toBe(false)
     expect(batchAccountProbeRuns).not.toHaveBeenCalled()
   })
 

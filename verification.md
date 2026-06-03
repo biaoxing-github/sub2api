@@ -1061,3 +1061,56 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `vue-tsc --noEmit` 通过。
 - `git diff --check` 通过。
 - 浏览器可打开本地 dev server；未登录访问管理页按路由守卫跳转到登录页，因此实际管理页视觉烟测需要登录态。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 上游体检请求样本不展示/批量失败排查
+
+本轮排查 8080 本地容器与 PostgreSQL `sub2api` 数据库，确认不是单个 foyeapi 问题：`account_probe_runs` 中 14:27 批次多个上游账号均失败，错误一致为 `pq: null value in column "output_text" of relation "account_probe_samples" violates not-null constraint`。根因是 `SaveAccountProbeSample` 对空 `output_text` 使用 `NULLIF($16,'')`，而线上表结构 `account_probe_samples.output_text` 是 `NOT NULL DEFAULT ''`；当上游请求失败或无输出文本时，sample 保存失败，run 被标记失败，后续详情页自然看不到请求样本。
+
+同时确认成功 run 的 sample 其实已落库，但报告详情页只展示状态、延迟、token 和错误码，没有直接展示 `upstream_endpoint`、`output_text`、失败错误正文，造成“请求不展示”的观感。修复后：空输出文本按空字符串落库，空 `validation_evidence` 保存为 `[]`；报告详情样本表展示请求地址、样本标签/类型、输出文本和错误正文。
+
+## 校验方式
+
+- `docker exec sub2api /app/sub2api --version`
+- `docker exec sub2api-postgres psql -U sub2api -d sub2api -Atc "<account_probe_runs/account_probe_samples 查询>"`
+- `rtk go test ./internal/repository -run "TestAccountProbeRepositorySaveFailedSampleAllowsEmptyOutputText|TestAccountProbeRepositorySaveSampleStoresEmptyValidationEvidenceArray|TestAccountProbeRepositorySaveSampleStoresValidationEvidence|TestAccountProbeRepositoryListSamplesLoadsValidationEvidence" -count=1`
+- `rtk go test ./internal/repository -run "TestAccountProbeRepository" -count=1`
+- `rtk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts`
+- `rtk npm run typecheck`
+- `git diff --check`
+
+## 校验结果
+
+- 运行容器版本为 `a24b2d62`，问题发生在已部署旧版本；数据库证据显示 foyeapi、aisz、mikuapi、zz1cc、吱吱鼠等多个上游同类失败。
+- repository 聚焦测试 4 个通过，`TestAccountProbeRepository` 组 6 个通过。
+- 报告页 Vitest 10 个通过，覆盖详情抽屉展示请求地址、输出文本和失败错误正文。
+- `vue-tsc --noEmit` 通过。
+- `git diff --check` 通过。
+- 当前未重建本地容器，因为工作区同时存在本轮之外的未提交改动，直接发布会把无关改动一起带到 8080。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针批量入口与正版评分拆分
+
+本轮将批量模型探测从上游体检报告页移到模型探针页：报告页不再展示批量模型验证按钮，也不再在普通报告列表/排行榜默认混入 `model_validation` 记录；模型探针页新增批量验证弹窗，默认按 `platform=openai`、`type=apikey` 加载 API_KEY 账号并全选。模型验证评分改为只按验证证据通过率计算，输出“正版 gpt-5.5 / 疑似掺水 / 掺水明显”结论，不再复用上游体检的延迟、首 token、稳定性、token 消耗评分；模型验证失败也不再写入 OpenAI path health。
+
+## 校验方式
+
+- `go test ./internal/service -run "TestScoreAccount|TestAccountProbeService" -count=1`
+- `go test ./internal/repository -run "TestAccountProbeRepository|TestAccountProbeReportWhere" -count=1`
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts --run`
+- `npm run typecheck`
+
+## 校验结果
+
+- service 聚焦测试通过，覆盖模型验证通过率评分、非 gpt-5.5 不标正版、模型验证证据落库和不污染 path health。
+- repository 聚焦测试通过，覆盖样本证据保存、空输出落库和报告默认排除模型验证记录。
+- 前端 Vitest 13 个测试通过，覆盖模型页批量默认全选 API_KEY 账号、批量提交、报告页移除批量模型入口和详情样本展示。
+- `vue-tsc --noEmit` 通过。

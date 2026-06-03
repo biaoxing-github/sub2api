@@ -732,6 +732,7 @@ export interface AccountProbeSample {
   validation_evidence?: AccountProbeValidationEvidence[]
   error_code?: string | null
   error?: string | null
+  error_message?: string | null
   created_at: string
 }
 

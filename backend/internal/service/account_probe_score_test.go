@@ -133,3 +133,54 @@ func TestScoreAccountProbeRunMarksLowConfidenceForSingleSample(t *testing.T) {
 	require.Less(t, score.Confidence, 70)
 	require.Contains(t, strings.Join(score.PenaltyItems, " "), "样本数不足")
 }
+
+func TestScoreAccountModelValidationUsesAuthenticityPassRate(t *testing.T) {
+	run := AccountProbeResult{
+		Profile:      AccountProbeProfileModelValidation,
+		Status:       AccountProbeStatusPartial,
+		Model:        "gpt-5.5",
+		RequestCount: 4,
+		SuccessCount: 3,
+		FailureCount: 1,
+		Samples: []AccountProbeSample{
+			{ValidationEvidence: []AccountProbeValidationEvidence{{Key: "exact_uppercase", Passed: true, Score: 10, MaxScore: 10}}},
+			{ValidationEvidence: []AccountProbeValidationEvidence{{Key: "json_arithmetic", Passed: true, Score: 10, MaxScore: 10}}},
+			{ValidationEvidence: []AccountProbeValidationEvidence{{Key: "code_transform", Passed: true, Score: 10, MaxScore: 10}}},
+			{ValidationEvidence: []AccountProbeValidationEvidence{{Key: "three_line_format", Passed: false, Score: 0, MaxScore: 10}}},
+		},
+	}
+
+	score := ScoreAccountProbeRun(run)
+
+	require.Equal(t, 75, score.Score)
+	require.Equal(t, AccountProbeGradeSuspectedWatered, score.Grade)
+	require.Equal(t, "疑似掺水", score.Label)
+	require.Equal(t, 100, score.Confidence)
+	require.Contains(t, strings.Join(score.ScoreItems, " "), "正版验证通过 3/4")
+	require.Contains(t, strings.Join(score.PenaltyItems, " "), "模型验证未通过 1/4")
+	require.NotContains(t, strings.Join(score.ScoreItems, " "), "平均耗时")
+	require.NotContains(t, strings.Join(score.ScoreItems, " "), "Token 消耗")
+}
+
+func TestScoreAccountModelValidationDoesNotMarkOtherModelsGenuineGPT55(t *testing.T) {
+	run := AccountProbeResult{
+		Profile:      AccountProbeProfileModelValidation,
+		Status:       AccountProbeStatusSuccess,
+		Model:        "gpt-5.4-mini",
+		RequestCount: 4,
+		SuccessCount: 4,
+		Samples: []AccountProbeSample{
+			{ValidationEvidence: []AccountProbeValidationEvidence{{Key: "exact_uppercase", Passed: true, Score: 10, MaxScore: 10}}},
+			{ValidationEvidence: []AccountProbeValidationEvidence{{Key: "json_arithmetic", Passed: true, Score: 10, MaxScore: 10}}},
+			{ValidationEvidence: []AccountProbeValidationEvidence{{Key: "code_transform", Passed: true, Score: 10, MaxScore: 10}}},
+			{ValidationEvidence: []AccountProbeValidationEvidence{{Key: "three_line_format", Passed: true, Score: 10, MaxScore: 10}}},
+		},
+	}
+
+	score := ScoreAccountProbeRun(run)
+
+	require.Equal(t, 100, score.Score)
+	require.Equal(t, AccountProbeGradeWatered, score.Grade)
+	require.Equal(t, "掺水明显", score.Label)
+	require.Contains(t, strings.Join(score.PenaltyItems, " "), "验证目标不是 gpt-5.5")
+}

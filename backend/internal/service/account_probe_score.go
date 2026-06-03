@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -12,6 +13,10 @@ const (
 	AccountProbeGradeSlow      = "slow"
 	AccountProbeGradeUnstable  = "unstable"
 	AccountProbeGradePoor      = "poor"
+
+	AccountProbeGradeGenuine          = "genuine_gpt55"
+	AccountProbeGradeSuspectedWatered = "suspected_watered"
+	AccountProbeGradeWatered          = "watered"
 )
 
 const (
@@ -30,6 +35,10 @@ type AccountProbeScore struct {
 }
 
 func ScoreAccountProbeRun(run AccountProbeResult) AccountProbeScore {
+	if strings.EqualFold(strings.TrimSpace(run.Profile), AccountProbeProfileModelValidation) {
+		return scoreAccountProbeModelValidation(run)
+	}
+
 	requestCount := run.RequestCount
 	if requestCount <= 0 {
 		requestCount = run.SuccessCount + run.FailureCount
@@ -87,6 +96,81 @@ func ScoreAccountProbeRun(run AccountProbeResult) AccountProbeScore {
 		ScoreItems:   scoreItems,
 		PenaltyItems: penaltyItems,
 	}
+}
+
+func scoreAccountProbeModelValidation(run AccountProbeResult) AccountProbeScore {
+	passed, total := accountProbeModelValidationCounts(run)
+	if total <= 0 {
+		return AccountProbeScore{
+			Score:        0,
+			Grade:        AccountProbeGradeWatered,
+			Label:        accountProbeGradeLabel(AccountProbeGradeWatered),
+			Confidence:   accountProbeScoreConfidence(0),
+			PenaltyItems: []string{"缺少模型验证证据，无法判定是否正版 gpt-5.5"},
+		}
+	}
+
+	score := clampInt(int(math.Round(float64(passed)*100/float64(total))), 0, 100)
+	grade := accountProbeModelValidationGrade(score)
+	confidence := accountProbeScoreConfidence(total)
+	if total >= len(accountProbeModelValidationSamples()) {
+		confidence = 100
+	}
+	scoreItems := []string{fmt.Sprintf("正版验证通过 %d/%d，得分 %d", passed, total, score)}
+	penaltyItems := make([]string, 0, 2)
+	if passed < total {
+		penaltyItems = append(penaltyItems, fmt.Sprintf("模型验证未通过 %d/%d", total-passed, total))
+	}
+	if !accountProbeModelValidationTargetsGPT55(run.Model) {
+		grade = AccountProbeGradeWatered
+		penaltyItems = append(penaltyItems, fmt.Sprintf("验证目标不是 gpt-5.5：%s", strings.TrimSpace(run.Model)))
+	}
+	return AccountProbeScore{
+		Score:        score,
+		Grade:        grade,
+		Label:        accountProbeGradeLabel(grade),
+		Confidence:   confidence,
+		ScoreItems:   scoreItems,
+		PenaltyItems: penaltyItems,
+	}
+}
+
+func accountProbeModelValidationCounts(run AccountProbeResult) (int, int) {
+	passed, total := 0, 0
+	for _, sample := range run.Samples {
+		for _, evidence := range sample.ValidationEvidence {
+			total++
+			if evidence.Passed {
+				passed++
+			}
+		}
+	}
+	if total > 0 {
+		return passed, total
+	}
+	total = run.RequestCount
+	if total <= 0 {
+		total = run.SuccessCount + run.FailureCount
+	}
+	return run.SuccessCount, total
+}
+
+func accountProbeModelValidationTargetsGPT55(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "" || model == "gpt-5.5" {
+		return true
+	}
+	if !strings.HasPrefix(model, "gpt-5.5-") {
+		return false
+	}
+	suffix := strings.TrimPrefix(model, "gpt-5.5-")
+	if suffix == "" {
+		return false
+	}
+	for _, first := range suffix {
+		return unicode.IsDigit(first)
+	}
+	return false
 }
 
 func accountProbeLatencyScore(run AccountProbeResult) (int, []string) {
@@ -267,8 +351,25 @@ func accountProbeGrade(score int) string {
 	}
 }
 
+func accountProbeModelValidationGrade(score int) string {
+	switch {
+	case score >= 100:
+		return AccountProbeGradeGenuine
+	case score >= 70:
+		return AccountProbeGradeSuspectedWatered
+	default:
+		return AccountProbeGradeWatered
+	}
+}
+
 func accountProbeGradeLabel(grade string) string {
 	switch grade {
+	case AccountProbeGradeGenuine:
+		return "正版 gpt-5.5"
+	case AccountProbeGradeSuspectedWatered:
+		return "疑似掺水"
+	case AccountProbeGradeWatered:
+		return "掺水明显"
 	case AccountProbeGradeExcellent:
 		return "优秀"
 	case AccountProbeGradeStable:

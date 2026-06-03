@@ -121,6 +121,9 @@ WHERE status = $1
 }
 
 func (r *accountProbeRepository) SaveAccountProbeSample(ctx context.Context, sample service.AccountProbeSample) error {
+	if sample.ValidationEvidence == nil {
+		sample.ValidationEvidence = []service.AccountProbeValidationEvidence{}
+	}
 	validationEvidence, err := json.Marshal(sample.ValidationEvidence)
 	if err != nil {
 		return fmt.Errorf("marshal account probe validation evidence: %w", err)
@@ -138,7 +141,7 @@ INSERT INTO account_probe_samples (
   $7,$8,NULLIF($9,''),$10,
   $11,$12,
   $13,$14,$15,
-  NULLIF($16,''),$17::jsonb,
+  $16,$17::jsonb,
   NULLIF($18,''),NULLIF($19,''),$20
 )`,
 		sample.RunID, sample.RequestIndex, sample.Type, sample.Label, sample.Status, sample.Model,
@@ -294,10 +297,11 @@ FROM (
   SELECT r.*, ROW_NUMBER() OVER (PARTITION BY r.account_id ORDER BY r.created_at DESC) AS rn
   FROM account_probe_runs r
   WHERE COALESCE(r.status,'') <> $1
+    AND COALESCE(r.mode,'') <> $2
 ) r
 JOIN accounts a ON a.id = r.account_id
-WHERE r.rn <= $2
-ORDER BY r.account_id ASC, r.created_at DESC`, service.AccountProbeStatusRunning, perAccountLimit)
+WHERE r.rn <= $3
+ORDER BY r.account_id ASC, r.created_at DESC`, service.AccountProbeStatusRunning, service.AccountProbeProfileModelValidation, perAccountLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -496,6 +500,8 @@ func buildAccountProbeReportWhere(filter service.AccountProbeReportFilter) (stri
 	}
 	if strings.TrimSpace(filter.Profile) != "" {
 		add("r.mode = $%d", strings.TrimSpace(filter.Profile))
+	} else {
+		add("COALESCE(r.mode,'') <> $%d", service.AccountProbeProfileModelValidation)
 	}
 	if strings.TrimSpace(filter.RequestMode) != "" {
 		add("COALESCE(r.request_mode,'non_stream') = $%d", strings.TrimSpace(filter.RequestMode))

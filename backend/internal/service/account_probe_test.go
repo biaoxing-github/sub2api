@@ -374,6 +374,48 @@ func TestAccountProbeService_RunManualModelValidationStoresEvidence(t *testing.T
 	require.Equal(t, 4, validationSamples)
 }
 
+func TestAccountProbeService_RunManualModelValidationDoesNotFeedOpenAIPathHealth(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "encore",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://model-validation-health.example.test/v1",
+			"api_key":  "sk-one",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true})
+	repo := &accountProbeRepoStub{}
+	client := &accountProbeHTTPClientStub{
+		responseBodies: []string{
+			`{"output_text":"wrong answer","usage":{"input_tokens":14,"output_tokens":2,"total_tokens":16}}`,
+			`{"output_text":"wrong answer","usage":{"input_tokens":18,"output_tokens":8,"total_tokens":26}}`,
+			`{"output_text":"wrong answer","usage":{"input_tokens":18,"output_tokens":4,"total_tokens":22}}`,
+			`{"output_text":"wrong answer","usage":{"input_tokens":18,"output_tokens":6,"total_tokens":24}}`,
+		},
+	}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+	svc.SetOpenAIPathHealthTracker(tracker)
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID:           128,
+		Profile:             AccountProbeProfileQuick,
+		Model:               "gpt-5.5",
+		ModelValidationOnly: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeStatusFailed, result.Status)
+	snapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), "https://model-validation-health.example.test/v1"))
+	require.Equal(t, int64(0), snapshot.Samples)
+	require.Equal(t, int64(0), snapshot.FailureCount)
+}
+
 type accountProbeStreamHTTPClientStub struct {
 	requests []*http.Request
 	bodies   []string

@@ -3,21 +3,27 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountModelProbesView from '../AccountModelProbesView.vue'
 
-const { listAccountProbeRuns, getAccountProbeRun, createAccountModelProbeRun } = vi.hoisted(() => ({
+const { listAccounts, listAccountProbeRuns, getAccountProbeRun, createAccountModelProbeRun, batchAccountModelProbeRuns } = vi.hoisted(() => ({
+  listAccounts: vi.fn(),
   listAccountProbeRuns: vi.fn(),
   getAccountProbeRun: vi.fn(),
   createAccountModelProbeRun: vi.fn(),
+  batchAccountModelProbeRuns: vi.fn(),
 }))
 
 vi.mock('@/api/admin/accounts', () => ({
   default: {
+    list: listAccounts,
     listAccountProbeRuns,
     getAccountProbeRun,
     createAccountModelProbeRun,
+    batchAccountModelProbeRuns,
   },
+  list: listAccounts,
   listAccountProbeRuns,
   getAccountProbeRun,
   createAccountModelProbeRun,
+  batchAccountModelProbeRuns,
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -31,12 +37,19 @@ vi.mock('vue-i18n', async () => {
 })
 
 const AppLayoutStub = { template: '<div><slot /></div>' }
+const BaseDialogStub = {
+  props: ['show', 'title'],
+  emits: ['close'],
+  template: '<section v-if="show" data-test="base-dialog"><h2>{{ title }}</h2><slot /><footer><slot name="footer" /></footer></section>',
+}
 
 describe('AccountModelProbesView', () => {
   beforeEach(() => {
+    listAccounts.mockReset()
     listAccountProbeRuns.mockReset()
     getAccountProbeRun.mockReset()
     createAccountModelProbeRun.mockReset()
+    batchAccountModelProbeRuns.mockReset()
   })
 
   it('loads manual model probe runs and starts a new manual probe', async () => {
@@ -51,6 +64,7 @@ describe('AccountModelProbesView', () => {
           model: 'gpt-4.1-mini',
           request_mode: 'stream',
           score: 95,
+          grade_label: '疑似掺水',
           created_at: '2026-06-03T12:00:00Z',
         },
       ],
@@ -71,6 +85,7 @@ describe('AccountModelProbesView', () => {
       global: {
         stubs: {
           AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
         },
       },
     })
@@ -83,6 +98,7 @@ describe('AccountModelProbesView', () => {
       sort_order: 'desc',
     }), expect.any(Object))
     expect(wrapper.text()).toContain('rayapi')
+    expect(wrapper.text()).toContain('疑似掺水')
 
     await wrapper.find('[data-test="model-probe-account-id"]').setValue('13')
     await wrapper.find('[data-test="model-probe-model"]').setValue('gpt-4.1-mini')
@@ -95,6 +111,78 @@ describe('AccountModelProbesView', () => {
       model: 'gpt-4.1-mini',
       request_mode: 'stream',
     }, expect.any(Object))
+  })
+
+  it('starts a batch model probe with all API key accounts selected by default', async () => {
+    listAccountProbeRuns.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 20,
+    })
+    listAccounts.mockResolvedValue({
+      items: [
+        {
+          id: 12,
+          name: 'rayapi-free',
+          platform: 'openai',
+          type: 'apikey',
+          status: 'active',
+          schedulable: true,
+          api_key_items: [{ fingerprint: 'k1', masked: 'sk-...free' }],
+        },
+        {
+          id: 99,
+          name: 'new-api-key-not-yet-probed',
+          platform: 'openai',
+          type: 'apikey',
+          status: 'active',
+          schedulable: true,
+          api_key_items: [{ fingerprint: 'k2', masked: 'sk-...new' }],
+        },
+      ],
+      total: 2,
+      page: 1,
+      page_size: 100,
+      pages: 1,
+    })
+    batchAccountModelProbeRuns.mockResolvedValue({
+      runs: [],
+      accepted_count: 2,
+    })
+
+    const wrapper = mount(AccountModelProbesView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="open-batch-model-probe-dialog"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenCalledWith(1, 100, expect.objectContaining({
+      platform: 'openai',
+      type: 'apikey',
+      sort_by: 'name',
+      sort_order: 'asc',
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(wrapper.text()).toContain('new-api-key-not-yet-probed')
+    expect(wrapper.findAll('input[type="checkbox"][data-test="batch-account-select"]').every(input => (input.element as HTMLInputElement).checked)).toBe(true)
+
+    await wrapper.find('[data-test="batch-model-probe-model"]').setValue('gpt-5.5')
+    await wrapper.find('[data-test="batch-model-probe-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(batchAccountModelProbeRuns).toHaveBeenCalledWith({
+      account_ids: [12, 99],
+      model: 'gpt-5.5',
+      request_mode: 'non_stream',
+    }, expect.any(Object))
+    expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
   })
 
   it('loads model probe detail and renders validation evidence', async () => {
@@ -154,6 +242,7 @@ describe('AccountModelProbesView', () => {
       global: {
         stubs: {
           AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
         },
       },
     })
@@ -167,4 +256,5 @@ describe('AccountModelProbesView', () => {
     expect(wrapper.text()).toContain('{"sum":83,"code":"BETA"}')
     expect(wrapper.text()).toContain('10 / 10')
   })
+
 })

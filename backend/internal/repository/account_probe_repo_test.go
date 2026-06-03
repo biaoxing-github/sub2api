@@ -26,6 +26,9 @@ func (a accountProbeEvidenceJSONArg) Match(value driver.Value) bool {
 	if err := json.Unmarshal([]byte(raw), &evidence); err != nil {
 		return false
 	}
+	if a.key == "" {
+		return len(evidence) == 0
+	}
 	return len(evidence) == 1 && evidence[0].Key == a.key
 }
 
@@ -124,6 +127,83 @@ func TestAccountProbeRepositorySaveSampleStoresValidationEvidence(t *testing.T) 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestAccountProbeRepositorySaveFailedSampleAllowsEmptyOutputText(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectExec("INSERT INTO account_probe_samples").
+		WithArgs(
+			int64(12), 1, "short", "基础测速", service.AccountProbeSampleFailed, "gpt-5.5",
+			"fp", "sk-...test", "https://988665.xyz/v1/responses", 0,
+			18120, sqlmock.AnyArg(),
+			0, 0, 0,
+			"", accountProbeEvidenceJSONArg{},
+			"request_failed", "context deadline exceeded", sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewAccountProbeRepository(db)
+	err = repo.SaveAccountProbeSample(context.Background(), service.AccountProbeSample{
+		RunID:             12,
+		RequestIndex:      1,
+		Type:              "short",
+		Label:             "基础测速",
+		Status:            service.AccountProbeSampleFailed,
+		Model:             "gpt-5.5",
+		APIKeyFingerprint: "fp",
+		APIKeyMasked:      "sk-...test",
+		UpstreamEndpoint:  "https://988665.xyz/v1/responses",
+		DurationMillis:    18120,
+		ErrorCode:         "request_failed",
+		ErrorMessage:      "context deadline exceeded",
+		CreatedAt:         time.Now(),
+	})
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAccountProbeRepositorySaveSampleStoresEmptyValidationEvidenceArray(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectExec("INSERT INTO account_probe_samples").
+		WithArgs(
+			int64(13), 1, "short", "基础测速", service.AccountProbeSampleSuccess, "gpt-5.5",
+			"fp", "sk-...test", "https://api.example.test/v1/responses", 200,
+			830, sqlmock.AnyArg(),
+			12, 2, 14,
+			"ok", accountProbeEvidenceJSONArg{},
+			"", "", sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewAccountProbeRepository(db)
+	err = repo.SaveAccountProbeSample(context.Background(), service.AccountProbeSample{
+		RunID:             13,
+		RequestIndex:      1,
+		Type:              "short",
+		Label:             "基础测速",
+		Status:            service.AccountProbeSampleSuccess,
+		Model:             "gpt-5.5",
+		APIKeyFingerprint: "fp",
+		APIKeyMasked:      "sk-...test",
+		UpstreamEndpoint:  "https://api.example.test/v1/responses",
+		HTTPStatus:        200,
+		DurationMillis:    830,
+		InputTokens:       12,
+		OutputTokens:      2,
+		TotalTokens:       14,
+		OutputText:        "ok",
+		CreatedAt:         time.Now(),
+	})
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAccountProbeRepositoryListSamplesLoadsValidationEvidence(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, err)
@@ -169,4 +249,17 @@ func TestAccountProbeRepositoryListSamplesLoadsValidationEvidence(t *testing.T) 
 	require.Len(t, samples[0].ValidationEvidence, 1)
 	require.True(t, samples[0].ValidationEvidence[0].Passed)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAccountProbeReportWhereExcludesModelValidationUnlessExplicitlyFiltered(t *testing.T) {
+	where, args := buildAccountProbeReportWhere(service.AccountProbeReportFilter{})
+
+	require.Contains(t, where, "COALESCE(r.mode,'') <>")
+	require.Equal(t, []any{service.AccountProbeProfileModelValidation}, args)
+
+	where, args = buildAccountProbeReportWhere(service.AccountProbeReportFilter{Profile: service.AccountProbeProfileModelValidation})
+
+	require.Contains(t, where, "r.mode =")
+	require.NotContains(t, where, "COALESCE(r.mode,'') <>")
+	require.Equal(t, []any{service.AccountProbeProfileModelValidation}, args)
 }
