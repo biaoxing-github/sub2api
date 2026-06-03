@@ -432,6 +432,9 @@ describe('AccountModelProbesView', () => {
           tokens: 26,
           api_key_masked: 'sk-...test',
           output_text: '{"sum":83,"code":"BETA"}',
+          request_prompt: '只输出严格 JSON：{"sum":数字,"code":"BETA"}。',
+          request_body: '{"model":"gpt-4.1-mini","input":[{"role":"user","content":"JSON 算术"}]}',
+          response_body: '{"id":"resp_123","model":"gpt-4.1-mini","output_text":"{\\"sum\\":83,\\"code\\":\\"BETA\\"}"}',
           validation_evidence: [
             {
               key: 'json_arithmetic',
@@ -489,6 +492,12 @@ describe('AccountModelProbesView', () => {
     expect(detailDialog?.text()).toContain('sk-...test')
     expect(detailDialog?.text()).toContain('admin.accountModelProbes.inputTokens 18')
     expect(detailDialog?.text()).toContain('{"sum":83,"code":"BETA"}')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.requestPrompt')
+    expect(detailDialog?.text()).toContain('只输出严格 JSON')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.requestBody')
+    expect(detailDialog?.text()).toContain('"model":"gpt-4.1-mini"')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.responseBody')
+    expect(detailDialog?.text()).toContain('"id":"resp_123"')
     expect(detailDialog?.text()).toContain('10 / 10')
     expect(detailDialog?.text()).toContain('admin.accountModelProbes.evidenceCategory')
     expect(detailDialog?.text()).toContain('model_match')

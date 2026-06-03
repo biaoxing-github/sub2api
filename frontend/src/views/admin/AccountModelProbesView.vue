@@ -245,6 +245,20 @@
               </div>
             </dl>
             <pre v-if="sample.output_text" class="mt-3 max-h-40 overflow-auto rounded-lg bg-gray-950 p-3 text-xs text-gray-100">{{ sample.output_text }}</pre>
+            <div v-if="sample.request_prompt || sample.request_body || sample.response_body" class="mt-3 space-y-3">
+              <div v-if="sample.request_prompt">
+                <div class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('admin.accountModelProbes.requestPrompt') }}</div>
+                <pre class="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 font-mono text-xs text-gray-700 dark:bg-dark-800 dark:text-gray-200">{{ sample.request_prompt }}</pre>
+              </div>
+              <div v-if="sample.request_body">
+                <div class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('admin.accountModelProbes.requestBody') }}</div>
+                <pre class="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 font-mono text-xs text-gray-700 dark:bg-dark-800 dark:text-gray-200">{{ sample.request_body }}</pre>
+              </div>
+              <div v-if="sample.response_body">
+                <div class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('admin.accountModelProbes.responseBody') }}</div>
+                <pre class="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 font-mono text-xs text-gray-700 dark:bg-dark-800 dark:text-gray-200">{{ sample.response_body }}</pre>
+              </div>
+            </div>
             <div v-if="sample.validation_evidence?.length" class="mt-3 overflow-x-auto">
               <table class="w-full min-w-[820px]">
                 <thead>

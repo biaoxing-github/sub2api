@@ -1430,3 +1430,27 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `DELETE /api/v1/admin/account-probe-runs` 未登录返回 HTTP 401。
 - `POST /api/v1/admin/account-model-probe-runs/batch` 未登录返回 HTTP 401。
 - 容器尾部日志未见 panic/fatal；仅有一条既有 `/responses` `context canceled` WARN，与本次模型探针页面 smoke 无关。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针详情展示 Prompt、请求体和返回体
+
+本轮将模型探针页面自身的详情弹窗补齐到与报告详情一致：每个样本在输出文本和验证证据之外，额外展示 `request_prompt`、`request_body`、`response_body`，用于直接复盘模型验证时发送给上游的 Prompt、脱敏请求体和上游返回体。后端字段、仓储和类型已存在，本次只补模型探针页前端展示和测试覆盖。
+
+## 校验方式
+
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+- `git diff --check`
+- `npm run build`
+
+## 校验结果
+
+- TDD 红灯已观察：新增 transcript 断言后，`AccountModelProbesView.spec.ts` 失败于找不到 `admin.accountModelProbes.requestPrompt`。
+- 补齐模板与中英文文案后，`AccountModelProbesView.spec.ts` 6 个测试全部通过。
+- `npm run typecheck` 通过，`vue-tsc --noEmit` 退出码 0。
+- `git diff --check` 通过。
+- `npm run build` 通过；保留项目既有 Browserslist caniuse-lite 过期、Vite dynamic import 和 chunk size 警告。
