@@ -551,7 +551,6 @@ async function loadBatchAccounts() {
     const response = await listAccounts(1, 100, {
       platform: 'openai',
       type: 'apikey',
-      status: 'active',
       search: batchAccountSearch.value.trim() || undefined,
       sort_by: 'name',
       sort_order: 'asc',

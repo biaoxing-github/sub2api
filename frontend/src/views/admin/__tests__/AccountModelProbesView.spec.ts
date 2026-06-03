@@ -120,7 +120,7 @@ describe('AccountModelProbesView', () => {
     }, expect.any(Object))
   })
 
-  it('starts a batch model probe with all API key accounts selected by default', async () => {
+  it('starts a batch model probe with all OpenAI API key accounts selected by default', async () => {
     listAccountProbeRuns.mockResolvedValue({
       items: [],
       total: 0,
@@ -143,8 +143,8 @@ describe('AccountModelProbesView', () => {
           name: 'new-api-key-not-yet-probed',
           platform: 'openai',
           type: 'apikey',
-          status: 'active',
-          schedulable: true,
+          status: 'inactive',
+          schedulable: false,
           api_key_items: [{ fingerprint: 'k2', masked: 'sk-...new' }],
         },
       ],
@@ -176,10 +176,10 @@ describe('AccountModelProbesView', () => {
     expect(listAccounts).toHaveBeenCalledWith(1, 100, expect.objectContaining({
       platform: 'openai',
       type: 'apikey',
-      status: 'active',
       sort_by: 'name',
       sort_order: 'asc',
     }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(listAccounts.mock.calls[0]?.[2]).not.toHaveProperty('status')
     expect(wrapper.text()).toContain('new-api-key-not-yet-probed')
     expect(wrapper.findAll('input[type="checkbox"][data-test="batch-account-select"]').every(input => (input.element as HTMLInputElement).checked)).toBe(true)
 
