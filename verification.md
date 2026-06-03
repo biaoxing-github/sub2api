@@ -1218,3 +1218,35 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `AccountModelProbesView.spec.ts` 4 个测试通过，覆盖关键字查询、翻页和每页数量切换时的请求参数。
 - `vue-tsc --noEmit` 通过。
 - `git diff --check` 通过。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针分页查询提交、构建、部署验证
+
+本轮将模型探针分页查询功能提交为 `1705bbd4 feat(account-probe): add model probe search pagination`，随后构建 `sub2api:multi-key-local` 镜像并使用 `D:\sub2api-deploy\docker-compose.yml` 重建本地 `sub2api` 容器。
+
+## 校验方式
+
+- `git diff --cached --check`
+- `docker build -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --no-deps --force-recreate sub2api`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml ps`
+- `docker exec sub2api /app/sub2api --version`
+- `Invoke-WebRequest http://127.0.0.1:8080/health`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/model-probes`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/probe-reports`
+- `Invoke-WebRequest -SkipHttpErrorCheck http://127.0.0.1:8080/api/v1/admin/account-probe-runs?page=1&page_size=20&mode=model_validation&keyword=rayapi`
+- `Invoke-WebRequest -SkipHttpErrorCheck -Method Post http://127.0.0.1:8080/api/v1/admin/account-model-probe-runs/batch ...`
+- `Invoke-WebRequest -SkipHttpErrorCheck http://127.0.0.1:8080/api/v1/admin/account-probe-runs/ranking?limit=1`
+
+## 校验结果
+
+- Docker build 通过，前端 production build 只出现既有 Node deprecation、Browserslist 和 chunk size 警告；镜像 ID 为 `sha256:9baf8d0360252538e8a58c85fa3df00be83cf728629b939f424be2124d9cda2e`，创建时间 `2026-06-03T07:51:46Z`。
+- `docker compose ps` 显示 `sub2api`、PostgreSQL、Redis 均 `healthy`，`sub2api` 映射 `0.0.0.0:8080->8080/tcp`。
+- 容器版本输出 `Sub2API 0.1.133 (commit: docker, built: 2026-06-03T07:50:49Z)`。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- `/admin/model-probes` 与 `/admin/probe-reports` 返回 HTTP 200 前端 HTML。
+- `/api/v1/admin/account-probe-runs?mode=model_validation&keyword=rayapi`、`/api/v1/admin/account-model-probe-runs/batch` 与 `/api/v1/admin/account-probe-runs/ranking` 未登录访问均返回 HTTP 401 `UNAUTHORIZED`，确认路由存在并进入管理端认证拦截。
