@@ -4989,6 +4989,7 @@ export default {
       account: '账号',
       model: '模型',
       modelPlaceholder: '验证模型（可选）',
+      keywordPlaceholder: '搜索账号、模型或错误',
       requestMode: '请求方式',
       requestModes: {
         non_stream: '非流式',

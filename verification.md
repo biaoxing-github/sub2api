@@ -1196,3 +1196,25 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 容器版本输出 `Sub2API 0.1.133 (commit: docker, built: 2026-06-03T07:17:34Z)`。
 - `/admin/model-probes` 与 `/admin/probe-reports` 返回 HTTP 200 前端 HTML。
 - `/api/v1/admin/account-model-probe-runs/batch` 与 `/api/v1/admin/account-probe-runs` 未登录访问均返回 HTTP 401 `UNAUTHORIZED`，确认路由存在并进入管理端认证拦截。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针分页与查询
+
+本轮为模型探针页面最近探针列表增加关键字查询和分页控制。查询条件用于账号、模型或错误文本检索；提交查询后回到第一页；翻页和切换每页数量时继续携带当前查询关键字，并固定请求 `mode=model_validation`，避免混入普通上游体检记录。
+
+## 校验方式
+
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+- `git diff --check`
+
+## 校验结果
+
+- 新增测试先观察到缺少 `model-probe-keyword` 时失败，再实现查询和分页功能。
+- `AccountModelProbesView.spec.ts` 4 个测试通过，覆盖关键字查询、翻页和每页数量切换时的请求参数。
+- `vue-tsc --noEmit` 通过。
+- `git diff --check` 通过。

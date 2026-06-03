@@ -4834,6 +4834,7 @@ export default {
       account: 'Account',
       model: 'Model',
       modelPlaceholder: 'Probe model (optional)',
+      keywordPlaceholder: 'Search account, model, or error',
       requestMode: 'Request Mode',
       requestModes: {
         non_stream: 'Non-stream',

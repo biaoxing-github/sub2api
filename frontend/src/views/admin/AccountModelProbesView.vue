@@ -52,9 +52,23 @@
       <section class="rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900">
         <div class="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 dark:border-dark-700">
           <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ t('admin.accountModelProbes.recentRuns') }}</div>
-          <button type="button" class="btn btn-ghost px-2 py-1 text-sm" :disabled="loading" @click="loadRuns">
-            <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
-          </button>
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            <form data-test="model-probe-search" class="flex items-center gap-2" @submit.prevent="applyFilters">
+              <input
+                v-model="filters.keyword"
+                data-test="model-probe-keyword"
+                type="search"
+                class="input h-9 w-56 text-sm"
+                :placeholder="t('admin.accountModelProbes.keywordPlaceholder')"
+              />
+              <button type="submit" class="btn btn-secondary px-3 py-1.5 text-sm">
+                {{ t('common.search') }}
+              </button>
+            </form>
+            <button type="button" class="btn btn-ghost px-2 py-1 text-sm" :disabled="loading" @click="loadRuns">
+              <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
+            </button>
+          </div>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full min-w-[760px]">
@@ -103,6 +117,14 @@
             </tbody>
           </table>
         </div>
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+          @update:pageSize="handlePageSizeChange"
+        />
       </section>
 
       <BaseDialog
@@ -270,6 +292,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import { batchAccountModelProbeRuns, createAccountModelProbeRun, getAccountProbeRun, list as listAccounts, listAccountProbeRuns } from '@/api/admin/accounts'
 import type { Account, AccountProbeRequestMode, AccountProbeRun, AccountProbeSample, AccountProbeValidationEvidence } from '@/types'
 
@@ -293,6 +316,16 @@ const batchAccounts = ref<Account[]>([])
 const selectedAccountIds = ref<number[]>([])
 const batchAccountSearch = ref('')
 const defaultOpenAIAccountTestModelID = 'gpt-5.5'
+
+const filters = reactive({
+  keyword: '',
+})
+
+const pagination = reactive({
+  page: 1,
+  page_size: 20,
+  total: 0,
+})
 
 const form = reactive({
   account_id: undefined as number | undefined,
@@ -321,8 +354,9 @@ async function loadRuns() {
   loading.value = true
   error.value = ''
   try {
-    const response = await listAccountProbeRuns(1, 20, {
+    const response = await listAccountProbeRuns(pagination.page, pagination.page_size, {
       mode: 'model_validation',
+      keyword: filters.keyword.trim() || undefined,
       sort_by: 'created_at',
       sort_order: 'desc',
     }, {
@@ -330,16 +364,36 @@ async function loadRuns() {
     })
     if (controller.signal.aborted) return
     runs.value = response.items || []
+    pagination.total = response.total || 0
+    pagination.page = response.page || pagination.page
+    pagination.page_size = response.page_size || pagination.page_size
   } catch (err: any) {
     if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
     error.value = err?.response?.data?.error || err?.message || t('admin.accountModelProbes.failedToLoad')
     runs.value = []
+    pagination.total = 0
   } finally {
     if (listAbortController === controller) {
       loading.value = false
       listAbortController = null
     }
   }
+}
+
+function applyFilters() {
+  pagination.page = 1
+  loadRuns()
+}
+
+function handlePageChange(page: number) {
+  pagination.page = page
+  loadRuns()
+}
+
+function handlePageSizeChange(pageSize: number) {
+  pagination.page_size = pageSize
+  pagination.page = 1
+  loadRuns()
 }
 
 async function submitProbe() {

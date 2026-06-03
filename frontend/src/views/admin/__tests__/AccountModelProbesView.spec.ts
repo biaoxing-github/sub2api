@@ -42,6 +42,11 @@ const BaseDialogStub = {
   emits: ['close'],
   template: '<section v-if="show" data-test="base-dialog"><h2>{{ title }}</h2><slot /><footer><slot name="footer" /></footer></section>',
 }
+const PaginationStub = {
+  props: ['page', 'total', 'pageSize'],
+  emits: ['update:page', 'update:pageSize'],
+  template: '<div data-test="model-probe-pagination"><button data-test="go-page-2" @click="$emit(\'update:page\', 2)">page 2</button><button data-test="set-page-size-50" @click="$emit(\'update:pageSize\', 50)">size 50</button></div>',
+}
 
 describe('AccountModelProbesView', () => {
   beforeEach(() => {
@@ -185,6 +190,69 @@ describe('AccountModelProbesView', () => {
     expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
   })
 
+  it('queries model probe runs by keyword and paginates results', async () => {
+    listAccountProbeRuns
+      .mockResolvedValueOnce({
+        items: [{
+          id: 101,
+          account_id: 12,
+          account_name: 'rayapi',
+          mode: 'model_validation',
+          status: 'success',
+          model: 'gpt-5.5',
+          request_mode: 'non_stream',
+          created_at: '2026-06-03T12:00:00Z',
+        }],
+        total: 60,
+        page: 1,
+        page_size: 20,
+      })
+      .mockResolvedValue({
+        items: [],
+        total: 60,
+        page: 2,
+        page_size: 20,
+      })
+
+    const wrapper = mount(AccountModelProbesView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
+          Pagination: PaginationStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="model-probe-keyword"]').setValue('rayapi')
+    await wrapper.find('[data-test="model-probe-search"]').trigger('submit')
+    await flushPromises()
+
+    expect(listAccountProbeRuns).toHaveBeenLastCalledWith(1, 20, expect.objectContaining({
+      mode: 'model_validation',
+      keyword: 'rayapi',
+      sort_by: 'created_at',
+      sort_order: 'desc',
+    }), expect.any(Object))
+
+    await wrapper.find('[data-test="go-page-2"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccountProbeRuns).toHaveBeenLastCalledWith(2, 20, expect.objectContaining({
+      mode: 'model_validation',
+      keyword: 'rayapi',
+    }), expect.any(Object))
+
+    await wrapper.find('[data-test="set-page-size-50"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccountProbeRuns).toHaveBeenLastCalledWith(1, 50, expect.objectContaining({
+      mode: 'model_validation',
+      keyword: 'rayapi',
+    }), expect.any(Object))
+  })
+
   it('loads model probe detail and renders validation evidence', async () => {
     listAccountProbeRuns.mockResolvedValue({
       items: [
@@ -243,6 +311,7 @@ describe('AccountModelProbesView', () => {
         stubs: {
           AppLayout: AppLayoutStub,
           BaseDialog: BaseDialogStub,
+          Pagination: PaginationStub,
         },
       },
     })
