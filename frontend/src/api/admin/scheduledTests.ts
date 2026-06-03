@@ -5,8 +5,10 @@
 
 import { apiClient } from '../client'
 import type {
+  FetchOptions,
   ScheduledTestPlan,
   ScheduledTestResult,
+  ScheduledTestRunnerSnapshot,
   CreateScheduledTestPlanRequest,
   UpdateScheduledTestPlanRequest
 } from '@/types'
@@ -74,12 +76,28 @@ export async function listResults(planId: number, limit?: number): Promise<Sched
   return data ?? []
 }
 
+/**
+ * List runtime snapshots for scheduled test runners
+ * @param options - Request cancellation options
+ * @returns Runner runtime snapshots
+ */
+export async function listRunnerSnapshots(options?: FetchOptions): Promise<ScheduledTestRunnerSnapshot[]> {
+  const { data } = await apiClient.get<ScheduledTestRunnerSnapshot[]>(
+    '/admin/scheduled-test-runner/snapshots',
+    {
+      signal: options?.signal
+    }
+  )
+  return data ?? []
+}
+
 export const scheduledTestsAPI = {
   listByAccount,
   create,
   update,
   delete: deletePlan,
-  listResults
+  listResults,
+  listRunnerSnapshots
 }
 
 export default scheduledTestsAPI

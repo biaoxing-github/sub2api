@@ -219,7 +219,7 @@ describe('AccountTestModal', () => {
     expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.5')
   })
 
-  it('keeps gpt-5.4 as the default for paid OpenAI accounts', async () => {
+  it('defaults paid OpenAI accounts to gpt-5.5', async () => {
     getAvailableModelsMock.mockResolvedValueOnce([
       { id: 'gpt-5.5', display_name: 'GPT-5.5' },
       { id: 'gpt-5.4', display_name: 'GPT-5.4' }
@@ -245,6 +245,6 @@ describe('AccountTestModal', () => {
     await wrapper.setProps({ show: true })
     await flushPromises()
 
-    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.4')
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.5')
   })
 })

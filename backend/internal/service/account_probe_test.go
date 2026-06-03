@@ -85,6 +85,10 @@ func (r *accountProbeRepoStub) ListAccountProbeSamples(ctx context.Context, runI
 	return r.samples, nil
 }
 
+func (r *accountProbeRepoStub) ListAccountProbeRankingRuns(ctx context.Context, perAccountLimit int) ([]AccountProbeReportItem, error) {
+	return nil, nil
+}
+
 type contextCanceledProbeRepoStub struct {
 	accountProbeRepoStub
 	updatedWithCanceledCtx bool
@@ -99,9 +103,10 @@ func (r *contextCanceledProbeRepoStub) UpdateAccountProbeRun(ctx context.Context
 }
 
 type accountProbeHTTPClientStub struct {
-	requests []*http.Request
-	bodies   []string
-	mu       sync.Mutex
+	requests       []*http.Request
+	bodies         []string
+	mu             sync.Mutex
+	responseBodies []string
 }
 
 func (c *accountProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
@@ -113,6 +118,9 @@ func (c *accountProbeHTTPClientStub) Do(req *http.Request) (*http.Response, erro
 		c.bodies = append(c.bodies, string(data))
 	}
 	body := `{"usage":{"input_tokens":12,"output_tokens":3,"total_tokens":15}}`
+	if len(c.responseBodies) > 0 {
+		body = c.responseBodies[(len(c.requests)-1)%len(c.responseBodies)]
+	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Status:     "200 OK",
@@ -243,6 +251,127 @@ func TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples(t *testing.T) {
 	require.NotEmpty(t, payload["instructions"])
 	require.NotEmpty(t, repo.samples[0].APIKeyFingerprint)
 	require.NotContains(t, repo.samples[0].APIKeyMasked, "sk-one")
+}
+
+func TestEvaluateAccountProbeModelValidationEvidence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		key        string
+		outputText string
+		wantPassed bool
+	}{
+		{name: "uppercase exact answer", key: "exact_uppercase", outputText: "QUARTZ", wantPassed: true},
+		{name: "json arithmetic answer", key: "json_arithmetic", outputText: `{"sum":83,"code":"BETA"}`, wantPassed: true},
+		{name: "code transform answer", key: "code_transform", outputText: "GAMMA 9-7-2", wantPassed: true},
+		{name: "three line format answer", key: "three_line_format", outputText: "ALPHA\nBETA\nGAMMA", wantPassed: true},
+		{name: "wrong arithmetic fails", key: "json_arithmetic", outputText: `{"sum":82,"code":"BETA"}`, wantPassed: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evidence := evaluateAccountProbeModelValidationEvidence(tt.key, tt.outputText)
+
+			require.Equal(t, tt.key, evidence.Key)
+			require.Equal(t, tt.wantPassed, evidence.Passed)
+			require.Equal(t, 10, evidence.MaxScore)
+			if tt.wantPassed {
+				require.Equal(t, 10, evidence.Score)
+			} else {
+				require.Zero(t, evidence.Score)
+			}
+			require.NotEmpty(t, evidence.Observed)
+		})
+	}
+}
+
+func TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "encore",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://model-validation.example.test/v1",
+			"api_key":  "sk-one",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	repo := &accountProbeRepoStub{}
+	client := &accountProbeHTTPClientStub{
+		responseBodies: []string{
+			`{"output":[{"content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":12,"output_tokens":3,"total_tokens":15}}`,
+		},
+	}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID:             128,
+		Profile:               AccountProbeProfileQuick,
+		Model:                 "gpt-test",
+		IncludeCodexStability: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeStatusSuccess, result.Status)
+	require.Len(t, repo.samples, 1)
+	require.Equal(t, "short", repo.samples[0].Type)
+	require.Empty(t, repo.samples[0].ValidationEvidence)
+}
+
+func TestAccountProbeService_RunManualModelValidationStoresEvidence(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "encore",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://model-validation.example.test/v1",
+			"api_key":  "sk-one",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	repo := &accountProbeRepoStub{}
+	client := &accountProbeHTTPClientStub{
+		responseBodies: []string{
+			`{"output_text":"QUARTZ","usage":{"input_tokens":14,"output_tokens":2,"total_tokens":16}}`,
+			`{"output_text":"{\"sum\":83,\"code\":\"BETA\"}","usage":{"input_tokens":18,"output_tokens":8,"total_tokens":26}}`,
+			`{"output_text":"GAMMA 9-7-2","usage":{"input_tokens":18,"output_tokens":4,"total_tokens":22}}`,
+			`{"output_text":"ALPHA\nBETA\nGAMMA","usage":{"input_tokens":18,"output_tokens":6,"total_tokens":24}}`,
+		},
+	}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID:           128,
+		Profile:             AccountProbeProfileQuick,
+		Model:               "gpt-test",
+		ModelValidationOnly: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeStatusSuccess, result.Status)
+	require.Equal(t, AccountProbeProfileModelValidation, result.Profile)
+	require.Len(t, repo.samples, 4)
+	validationSamples := 0
+	for _, sample := range repo.samples {
+		if sample.Type != "model_validation" {
+			continue
+		}
+		validationSamples++
+		require.NotEmpty(t, sample.OutputText)
+		require.Len(t, sample.ValidationEvidence, 1)
+		require.True(t, sample.ValidationEvidence[0].Passed)
+		require.Equal(t, 10, sample.ValidationEvidence[0].Score)
+	}
+	require.Equal(t, 4, validationSamples)
 }
 
 type accountProbeStreamHTTPClientStub struct {

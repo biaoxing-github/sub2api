@@ -27,7 +27,11 @@ import type {
   CheckMixedChannelResponse,
   AccountProbeRun,
   CreateAccountProbeRunRequest,
+  CreateAccountModelProbeRunRequest,
+  BatchAccountModelProbeRunsRequest,
+  BatchAccountModelProbeRunsResponse,
   AccountProbeRunListFilters,
+  AccountProbeRankingItem,
   AccountProbeRunsResponse,
   BatchAccountProbeRunsRequest,
   BatchAccountProbeRunsResponse,
@@ -395,12 +399,51 @@ export async function getAccountProbeRun(
   return data
 }
 
+export async function listAccountProbeRanking(
+  limit = 20,
+  options?: FetchOptions
+): Promise<AccountProbeRankingItem[]> {
+  const { data } = await apiClient.get<AccountProbeRankingItem[]>('/admin/account-probe-runs/ranking', {
+    params: { limit },
+    signal: options?.signal,
+  })
+  return data ?? []
+}
+
 export async function batchAccountProbeRuns(
   payload: BatchAccountProbeRunsRequest,
   options?: FetchOptions
 ): Promise<BatchAccountProbeRunsResponse> {
   const { data } = await apiClient.post<BatchAccountProbeRunsResponse>(
     '/admin/account-probe-runs/batch',
+    payload,
+    {
+      signal: options?.signal,
+    }
+  )
+  return data
+}
+
+export async function createAccountModelProbeRun(
+  payload: CreateAccountModelProbeRunRequest,
+  options?: FetchOptions
+): Promise<AccountProbeRun> {
+  const { data } = await apiClient.post<AccountProbeRun>(
+    '/admin/account-model-probe-runs',
+    payload,
+    {
+      signal: options?.signal,
+    }
+  )
+  return data
+}
+
+export async function batchAccountModelProbeRuns(
+  payload: BatchAccountModelProbeRunsRequest,
+  options?: FetchOptions
+): Promise<BatchAccountModelProbeRunsResponse> {
+  const { data } = await apiClient.post<BatchAccountModelProbeRunsResponse>(
+    '/admin/account-model-probe-runs/batch',
     payload,
     {
       signal: options?.signal,
@@ -1003,7 +1046,10 @@ export const accountsAPI = {
   getProbeRun,
   listAccountProbeRuns,
   getAccountProbeRun,
+  listAccountProbeRanking,
   batchAccountProbeRuns,
+  createAccountModelProbeRun,
+  batchAccountModelProbeRuns,
   refreshCredentials,
   getStats,
   clearError,

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"sort"
 	"strings"
 	"time"
 )
@@ -114,4 +115,94 @@ func buildAccountProbeReportSummary(items []AccountProbeReportItem, total int) A
 		summary.AverageScore = float64(sum) / float64(scored)
 	}
 	return summary
+}
+
+func buildAccountProbeRankingItems(runs []AccountProbeReportItem) []AccountProbeRankingItem {
+	grouped := make(map[int64][]AccountProbeReportItem)
+	for _, run := range runs {
+		if run.AccountID <= 0 {
+			continue
+		}
+		decorateAccountProbeReportItem(&run)
+		grouped[run.AccountID] = append(grouped[run.AccountID], run)
+	}
+
+	items := make([]AccountProbeRankingItem, 0, len(grouped))
+	for accountID, accountRuns := range grouped {
+		sort.SliceStable(accountRuns, func(i, j int) bool {
+			return accountRuns[i].CreatedAt.After(accountRuns[j].CreatedAt)
+		})
+		latest := accountRuns[0]
+		item := AccountProbeRankingItem{
+			AccountID:       accountID,
+			AccountName:     latest.AccountName,
+			RunCount:        len(accountRuns),
+			LatestScore:     latest.Score,
+			Grade:           latest.Grade,
+			GradeLabel:      latest.GradeLabel,
+			LatestRunID:     latest.ID,
+			LatestStatus:    latest.Status,
+			LatestCreatedAt: latest.CreatedAt,
+			LatestModel:     latest.Model,
+			ScoreHistory:    make([]AccountProbeScorePoint, 0, len(accountRuns)),
+		}
+		var scoreSum, successRateSum, latencySum float64
+		var scored, successRated, latencyCount int
+		for i := len(accountRuns) - 1; i >= 0; i-- {
+			run := accountRuns[i]
+			if run.Score > 0 {
+				scoreSum += float64(run.Score)
+				scored++
+			}
+			if run.RequestCount > 0 || run.SuccessCount+run.FailureCount > 0 {
+				successRateSum += run.SuccessRate
+				successRated++
+			}
+			avgLatency := run.Latency.AvgMillis
+			if avgLatency == 0 {
+				avgLatency = run.AvgLatencyMillis
+			}
+			if avgLatency > 0 {
+				latencySum += float64(avgLatency)
+				latencyCount++
+			}
+			item.ScoreHistory = append(item.ScoreHistory, AccountProbeScorePoint{
+				RunID:            run.ID,
+				Score:            run.Score,
+				Grade:            run.Grade,
+				GradeLabel:       run.GradeLabel,
+				Status:           run.Status,
+				Model:            run.Model,
+				Profile:          run.Profile,
+				RequestMode:      run.RequestMode,
+				SuccessRate:      run.SuccessRate,
+				AvgLatencyMillis: avgLatency,
+				P95LatencyMillis: run.Latency.P95Millis,
+				FirstTokenMillis: run.FirstTokenMillis,
+				TotalTokens:      run.TotalTokens,
+				CreatedAt:        run.CreatedAt,
+			})
+		}
+		if scored > 0 {
+			item.AverageScore = scoreSum / float64(scored)
+		}
+		if successRated > 0 {
+			item.AverageSuccessRate = successRateSum / float64(successRated)
+		}
+		if latencyCount > 0 {
+			item.AverageLatencyMillis = latencySum / float64(latencyCount)
+		}
+		items = append(items, item)
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].AverageScore != items[j].AverageScore {
+			return items[i].AverageScore > items[j].AverageScore
+		}
+		if items[i].LatestScore != items[j].LatestScore {
+			return items[i].LatestScore > items[j].LatestScore
+		}
+		return items[i].LatestCreatedAt.After(items[j].LatestCreatedAt)
+	})
+	return items
 }

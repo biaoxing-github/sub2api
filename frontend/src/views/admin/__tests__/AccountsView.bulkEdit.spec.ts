@@ -490,7 +490,7 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(wrapper.text()).toContain('admin.accounts.batchTest.submitted')
   })
 
-  it('uses gpt-5.4 and carries the team plan filter for paid batch tests', async () => {
+  it('uses gpt-5.5 and carries the team plan filter for paid batch tests', async () => {
     listAccounts.mockResolvedValueOnce({
       items: [
         {
@@ -560,7 +560,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(batchTestNonAPIKeyAccounts).toHaveBeenCalledWith(expect.objectContaining({
-      model_id: 'gpt-5.4',
+      model_id: 'gpt-5.5',
       platform: 'openai',
       plan_type: 'team',
       concurrency: 5,

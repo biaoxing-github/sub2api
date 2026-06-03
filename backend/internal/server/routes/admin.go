@@ -276,7 +276,10 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/account-probe-runs", h.Admin.Account.ListProbeReportRuns)
 	admin.DELETE("/account-probe-runs", h.Admin.Account.DeleteProbeReportRuns)
 	admin.POST("/account-probe-runs/batch", h.Admin.Account.BatchCreateProbeReportRuns)
+	admin.GET("/account-probe-runs/ranking", h.Admin.Account.ListProbeReportRanking)
 	admin.GET("/account-probe-runs/:run_id", h.Admin.Account.GetProbeReportRun)
+	admin.POST("/account-model-probe-runs", h.Admin.Account.CreateModelProbeRun)
+	admin.POST("/account-model-probe-runs/batch", h.Admin.Account.BatchCreateModelProbeRuns)
 
 	accounts := admin.Group("/accounts")
 	{
@@ -571,6 +574,7 @@ func registerUserAttributeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 }
 
 func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	admin.GET("/scheduled-test-runner/snapshots", h.Admin.ScheduledTest.ListRunnerSnapshots)
 	plans := admin.Group("/scheduled-test-plans")
 	{
 		plans.POST("", h.Admin.ScheduledTest.Create)

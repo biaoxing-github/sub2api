@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -14,6 +15,10 @@ import (
 
 type accountProbeRepository struct {
 	db *sql.DB
+}
+
+type accountProbeSQLExecutor interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 func NewAccountProbeRepository(db *sql.DB) service.AccountProbeRepository {
@@ -91,10 +96,14 @@ WHERE id = $1`,
 }
 
 func (r *accountProbeRepository) ExpireStaleAccountProbeRuns(ctx context.Context, olderThan time.Duration) error {
+	return expireStaleAccountProbeRuns(ctx, r.db, olderThan)
+}
+
+func expireStaleAccountProbeRuns(ctx context.Context, exec accountProbeSQLExecutor, olderThan time.Duration) error {
 	if olderThan <= 0 {
-		olderThan = 15 * time.Minute
+		olderThan = 12 * time.Minute
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := exec.ExecContext(ctx, `
 UPDATE account_probe_runs
 SET status = $2,
     error_message = COALESCE(NULLIF(error_message,''), $3),
@@ -112,24 +121,31 @@ WHERE status = $1
 }
 
 func (r *accountProbeRepository) SaveAccountProbeSample(ctx context.Context, sample service.AccountProbeSample) error {
-	_, err := r.db.ExecContext(ctx, `
+	validationEvidence, err := json.Marshal(sample.ValidationEvidence)
+	if err != nil {
+		return fmt.Errorf("marshal account probe validation evidence: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
 INSERT INTO account_probe_samples (
   run_id, request_index, sample_type, label, status, model,
   api_key_fingerprint, api_key_masked, upstream_endpoint, http_status,
   duration_ms, first_token_ms,
   input_tokens, output_tokens, total_tokens,
+  output_text, validation_evidence,
   error_code, error_message, created_at
 ) VALUES (
   $1,$2,$3,$4,$5,$6,
   $7,$8,NULLIF($9,''),$10,
   $11,$12,
   $13,$14,$15,
-  NULLIF($16,''),NULLIF($17,''),$18
+  NULLIF($16,''),$17::jsonb,
+  NULLIF($18,''),NULLIF($19,''),$20
 )`,
 		sample.RunID, sample.RequestIndex, sample.Type, sample.Label, sample.Status, sample.Model,
 		sample.APIKeyFingerprint, sample.APIKeyMasked, sample.UpstreamEndpoint, sample.HTTPStatus,
 		sample.DurationMillis, sample.FirstTokenMillis,
 		sample.InputTokens, sample.OutputTokens, sample.TotalTokens,
+		sample.OutputText, string(validationEvidence),
 		sample.ErrorCode, sample.ErrorMessage, sample.CreatedAt,
 	)
 	return err
@@ -233,6 +249,10 @@ func (r *accountProbeRepository) DeleteAccountProbeReportRuns(ctx context.Contex
 	}
 	defer tx.Rollback()
 
+	if err := expireStaleAccountProbeRuns(ctx, tx, 12*time.Minute); err != nil {
+		return result, err
+	}
+
 	if err := tx.QueryRowContext(ctx, `
 SELECT COUNT(*)
 FROM account_probe_runs
@@ -265,12 +285,42 @@ WHERE id = ANY($1) AND COALESCE(status,'') <> $2`, pq.Array(runIDs), service.Acc
 	return result, nil
 }
 
+func (r *accountProbeRepository) ListAccountProbeRankingRuns(ctx context.Context, perAccountLimit int) ([]service.AccountProbeReportItem, error) {
+	if perAccountLimit <= 0 || perAccountLimit > 50 {
+		perAccountLimit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, accountProbeReportSelectSQL+`
+FROM (
+  SELECT r.*, ROW_NUMBER() OVER (PARTITION BY r.account_id ORDER BY r.created_at DESC) AS rn
+  FROM account_probe_runs r
+  WHERE COALESCE(r.status,'') <> $1
+) r
+JOIN accounts a ON a.id = r.account_id
+WHERE r.rn <= $2
+ORDER BY r.account_id ASC, r.created_at DESC`, service.AccountProbeStatusRunning, perAccountLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]service.AccountProbeReportItem, 0)
+	for rows.Next() {
+		item, err := scanAccountProbeReportItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *item)
+	}
+	return out, rows.Err()
+}
+
 func (r *accountProbeRepository) ListAccountProbeSamples(ctx context.Context, runID int64) ([]service.AccountProbeSample, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, run_id, request_index, sample_type, label, status, model,
        api_key_fingerprint, api_key_masked, COALESCE(upstream_endpoint,''), http_status,
        duration_ms, first_token_ms,
        input_tokens, output_tokens, total_tokens,
+       COALESCE(output_text,''), COALESCE(validation_evidence,'[]'::jsonb),
        COALESCE(error_code,''), COALESCE(error_message,''), created_at
 FROM account_probe_samples
 WHERE run_id = $1
@@ -392,11 +442,13 @@ func scanAccountProbeReportItem(scanner interface{ Scan(...any) error }) (*servi
 func scanAccountProbeSample(scanner interface{ Scan(...any) error }) (*service.AccountProbeSample, error) {
 	var sample service.AccountProbeSample
 	var firstToken sql.NullInt64
+	var validationEvidence []byte
 	if err := scanner.Scan(
 		&sample.ID, &sample.RunID, &sample.RequestIndex, &sample.Type, &sample.Label, &sample.Status, &sample.Model,
 		&sample.APIKeyFingerprint, &sample.APIKeyMasked, &sample.UpstreamEndpoint, &sample.HTTPStatus,
 		&sample.DurationMillis, &firstToken,
 		&sample.InputTokens, &sample.OutputTokens, &sample.TotalTokens,
+		&sample.OutputText, &validationEvidence,
 		&sample.ErrorCode, &sample.ErrorMessage, &sample.CreatedAt,
 	); err != nil {
 		return nil, err
@@ -404,6 +456,11 @@ func scanAccountProbeSample(scanner interface{ Scan(...any) error }) (*service.A
 	if firstToken.Valid {
 		v := int(firstToken.Int64)
 		sample.FirstTokenMillis = &v
+	}
+	if len(validationEvidence) > 0 {
+		if err := json.Unmarshal(validationEvidence, &sample.ValidationEvidence); err != nil {
+			return nil, fmt.Errorf("unmarshal account probe validation evidence: %w", err)
+		}
 	}
 	return &sample, nil
 }

@@ -114,6 +114,16 @@ func ProvideAdminAccountHandler(
 	return h
 }
 
+// ProvideScheduledTestHandler creates ScheduledTestHandler with runner snapshots.
+func ProvideScheduledTestHandler(
+	scheduledTestService *service.ScheduledTestService,
+	runner *service.ScheduledTestRunnerService,
+) *admin.ScheduledTestHandler {
+	h := admin.NewScheduledTestHandler(scheduledTestService)
+	h.SetRunnerService(runner)
+	return h
+}
+
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo
 func ProvideSettingHandler(settingService *service.SettingService, buildInfo BuildInfo, notificationEmailService *service.NotificationEmailService) *SettingHandler {
 	h := NewSettingHandler(settingService, buildInfo.Version)
@@ -215,7 +225,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewErrorPassthroughHandler,
 	admin.NewTLSFingerprintProfileHandler,
 	admin.NewAdminAPIKeyHandler,
-	admin.NewScheduledTestHandler,
+	ProvideScheduledTestHandler,
 	admin.NewChannelHandler,
 	admin.NewChannelMonitorHandler,
 	admin.NewChannelMonitorRequestTemplateHandler,

@@ -18,11 +18,14 @@ vi.mock('@/api/client', () => ({
 
 import {
   batchAccountProbeRuns,
+  batchAccountModelProbeRuns,
   deleteAccountProbeRuns,
   getBatchTestNonAPIKeyRun,
   batchTestNonAPIKeyAccounts,
   getAccountProbeRun,
+  listAccountProbeRanking,
   listAccountProbeRuns,
+  createAccountModelProbeRun,
   getActionItems,
   getDashboardSummary,
   getStatusSummary,
@@ -354,6 +357,19 @@ describe('admin accounts api usage summary', () => {
     expect(result).toEqual(response)
   })
 
+  it('loads account probe ranking', async () => {
+    const response = [{ account_id: 12, account_name: 'rayapi', average_score: 94, latest_score: 96, score_history: [] }]
+    get.mockResolvedValue({ data: response })
+
+    const result = await listAccountProbeRanking(12)
+
+    expect(get).toHaveBeenCalledWith('/admin/account-probe-runs/ranking', {
+      params: { limit: 12 },
+      signal: undefined,
+    })
+    expect(result).toEqual(response)
+  })
+
   it('starts batch account probe runs', async () => {
     const response = {
       runs: [
@@ -385,6 +401,63 @@ describe('admin accounts api usage summary', () => {
       request_mode: 'stream',
       codex_stability: true,
       long_context: false,
+    }, {
+      signal: undefined,
+    })
+    expect(result).toEqual(response)
+  })
+
+  it('starts a manual account model probe run', async () => {
+    const response = {
+      id: 101,
+      account_id: 12,
+      status: 'running',
+      mode: 'model_validation',
+      created_at: '2026-06-03T12:00:00Z',
+    }
+    post.mockResolvedValue({ data: response })
+
+    const result = await createAccountModelProbeRun({
+      account_id: 12,
+      model: 'gpt-4.1-mini',
+      request_mode: 'stream',
+    })
+
+    expect(post).toHaveBeenCalledWith('/admin/account-model-probe-runs', {
+      account_id: 12,
+      model: 'gpt-4.1-mini',
+      request_mode: 'stream',
+    }, {
+      signal: undefined,
+    })
+    expect(result).toEqual(response)
+  })
+
+  it('starts batch manual account model probe runs', async () => {
+    const response = {
+      runs: [
+        {
+          id: 101,
+          account_id: 12,
+          status: 'running',
+          mode: 'model_validation',
+          created_at: '2026-06-03T12:00:00Z',
+        },
+      ],
+      accepted_count: 2,
+    }
+    post.mockResolvedValue({ data: response })
+
+    const result = await batchAccountModelProbeRuns({
+      account_ids: [12, 13],
+      model: 'gpt-4.1-mini',
+      request_mode: 'stream',
+    })
+
+    expect(post).toHaveBeenCalledWith('/admin/account-model-probe-runs/batch', {
+      account_ids: [12, 13],
+      model: 'gpt-4.1-mini',
+      request_mode: 'stream',
     }, {
       signal: undefined,
     })

@@ -838,3 +838,200 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `npm run build` 通过，保留 Vite 既有 chunk size / dynamic import 警告。
 - `git diff --check` 通过，仅提示 Windows 工作区将文档 LF 转 CRLF。
 - `go test ./internal/handler/admin -run Dashboard -count=1` 被当前包既有测试编译问题阻塞：`internal\handler\admin\account_handler_mixed_channel_test.go:165:57: adminSvc.updatedAccounts[0].Platform undefined (type *service.UpdateAccountInput has no field or method Platform)`。该失败点不在本轮修改文件内。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 上游体检报告排行、12 分钟超时收尾、定时体检与 Gitee 参考梳理
+
+本轮为管理员上游体检报告增加综合得分排行榜和单上游得分历史；将运行中报告超时收尾阈值统一为 12 分钟；扩展定时测试计划支持 `task_type=account_probe`，并在报告页提供创建定时上游体检计划的弹窗入口。
+
+## 校验方式
+
+- `rtk go test ./internal/service -run "TestScheduledTestRunnerRunsAccountProbePlan" -count=1`：先按 TDD 红灯运行，因 `runOnePlanWithTimeout` 不存在失败；补实现后通过。
+- `rtk go test ./internal/service -run "TestAccountProbeServiceListRankingDecoratesAggregateScores|TestScheduledTestRunnerRunsAccountProbePlan" -count=1`
+- `rtk go test ./internal/repository -run "TestAccountProbeRepositoryDeleteReportRunsSkipsRunning|TestAccountProbeRepositoryExpireStaleRuns" -count=1`
+- `rtk go test -tags unit ./internal/handler/admin -run "TestAccountProbeReportRankingReturnsAggregateItems|TestAccountProbeReportListParsesFiltersAndReturnsPage|TestAccountProbeReportBatchDeleteDeduplicatesRunIDs" -count=1`
+- `rtk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts`
+- `rtk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts`
+- `rtk npm run typecheck`
+- `rtk npm run build`
+- `rtk go test ./cmd/server -run "^$" -count=1`
+- `rtk git diff --check`
+- `git -C .codex/external/juhe-ai fetch origin feature/20250602`
+
+## 校验结果
+
+- service 聚焦测试通过，覆盖排行榜聚合装饰和定时 account_probe 计划执行；定时 account_probe 执行上下文带 12 分钟级 deadline。
+- repository 聚焦测试通过，覆盖 stale running 报告收尾和删除前先把 12 分钟以上 running 标失败。
+- admin handler 单元测试通过，覆盖排行榜接口、报告列表过滤、删除 ID 去重。
+- 前端 API 单测 13 个通过；报告页组件单测 7 个通过，覆盖排行榜展示/点击过滤/历史得分和定时体检计划创建。
+- `npm run typecheck` 通过。
+- `npm run build` 通过；保留项目既有 Browserslist caniuse-lite 过期提示、Vite dynamic import/chunk size 警告。
+- `go test ./cmd/server -run "^$" -count=1` 退出码 0，rtk 总结为 `Go test: No tests found`，因此仅作为 server package 编译切片记录。
+- `git diff --check` 通过。
+- Gitee 参考仓库 `feature/20250602` 已 fetch，当前 HEAD 与 FETCH_HEAD 均为 `6055e7b`。
+
+## Gitee 参考清单
+
+- 调度相关：`backend/src/modules/background/worker-scheduler.ts`，可借鉴任务运行快照、跳过重入、运行次数/失败次数/耗时统计。
+- 分组调度相关：`backend/src/domain/group-scheduling.ts`，可参考高并发分组的软并发、排队、首输出慢阈值和图片 lane 并发字段。
+- API Key 分组选择相关：`backend/src/modules/gateway/api-key-group-route-selector.service.ts`，可参考 round robin / weighted round robin 的选择顺序，但该实现是内存状态，不适合直接搬到多实例 Go 服务。
+- 账号验证相关：`backend/src/modules/accounts/account-test.service.ts`，它通过真实 gateway request 测试 `/v1/responses`、记录首 Token、响应体截断和诊断字段；概念上与本项目现有 AccountProbeService 接近。
+- 模型验证相关：`backend/src/modules/model-checks/model-checks.service.ts`、`backend/src/modules/model-checks/model-checks.routes.ts`、`backend/src/storage/model-checks.repository.ts`、`frontend/src/views/model-checks/ModelChecksView.vue`，包含模型检查 run/item 持久化、多探针行为校验、长上下文、可信对比和进度事件。
+
+结论：Gitee 仓库值得后续借鉴“真实网关链路模型校验”“探针 item/run 证据结构”“后台任务运行快照”和“分组调度策略字段”，但不建议直接搬代码；它是 TypeScript/Express 栈，模型名与业务假设固定在 `gpt-5.5/gpt-5.4`，且部分调度状态在内存中维护。
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## Go-native 实现 Gitee 调度与模型验证可借鉴点
+
+本轮在已有 Go 分层内实现 Gitee `huanminabc/juhe-ai` `feature/20250602` 中值得借鉴的能力：定时 runner 增加运行态快照、重入跳过计数和 admin 查询接口；账号体检增加低成本模型行为验证样本、输出文本提取、验证证据评分与 sample 持久化；前端报告详情展示验证证据，并补 scheduled runner snapshot API wrapper。
+
+## 校验方式
+
+- `rtk npm run test:run -- src/api/__tests__/admin.scheduledTests.spec.ts`：先按 TDD 红灯运行，因 `listRunnerSnapshots is not a function` 失败；补 wrapper 后通过。
+- `rtk go test -tags unit ./internal/service -run "TestScheduledTestRunner|TestEvaluateAccountProbeModelValidationEvidence|TestAccountProbeService_RunStoresModelValidationEvidence|TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples|TestAccountProbeService_RunOpenAIAPIKeyStreamModeRecordsFirstToken|TestAccountProbeServiceGetReportLoadsSamplesAndScoreBreakdown|TestAccountProbeServiceListRankingDecoratesAggregateScores" -count=1`
+- `rtk go test -tags unit ./internal/handler/admin -run "TestScheduledTestHandlerListRunnerSnapshots|TestAccountProbeReport" -count=1`
+- `rtk go test ./internal/repository -run "TestAccountProbeRepository" -count=1`
+- `rtk go test ./cmd/server -run TestDoesNotExist -count=1`
+- `rtk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts src/api/__tests__/admin.scheduledTests.spec.ts src/api/__tests__/admin.accounts.spec.ts`
+- `rtk npm run typecheck`
+- `git diff --check`
+- PowerShell `ConvertFrom-Json` 逐行解析 `docs/feature_list.jsonl` 与 `docs/process_list.jsonl`
+
+## 校验结果
+
+- service 聚焦测试通过，覆盖 scheduled runner 快照/重入跳过、模型验证证据评分、AccountProbeService 保存验证证据、已有账号体检报告路径。
+- admin handler 聚焦测试通过，覆盖 runner snapshot 查询端点和账号体检报告接口。
+- repository 聚焦测试通过，覆盖 account probe sample 的 `output_text` 与 `validation_evidence` 保存和读取。
+- server package 编译切片退出码 0，rtk 输出 `Go test: No tests found`，说明该包无匹配测试但编译通过。
+- 前端 3 个测试文件共 21 个测试通过，覆盖报告详情验证证据展示、账号报告 API 和 scheduled runner snapshot API；保留既有 Browserslist caniuse-lite 过期提示。
+- `vue-tsc --noEmit` 通过。
+- `git diff --check` 通过，仅有 Windows LF/CRLF 提示。
+- docs JSONL 逐行解析通过。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 手动模型探针页面与自动体检隔离
+
+本轮按用户追加要求调整低成本模型探针：常规上游体检、批量体检和定时体检不再自动执行模型验证样本；模型验证只通过新的管理员手动页面触发。前端新增 `/admin/model-probes` 页面和侧边栏入口，管理员填写账号 ID、模型与请求方式后调用 `/api/v1/admin/account-model-probe-runs`，页面展示最近 `model_validation` 运行并可展开查看输出文本、验证证据、期望值/观察值和单项得分。
+
+## 校验方式
+
+- `rtk npm run test:run -- src/views/admin/__tests__/AccountModelProbesView.spec.ts`：先按 TDD 红灯运行，因页面文件不存在失败；补实现后通过。
+- `rtk go test -tags unit ./internal/service -run "TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation|TestAccountProbeService_RunManualModelValidationStoresEvidence|TestScheduledTestRunnerRunsAccountProbePlan" -count=1`
+- `rtk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeCreateRunsManualValidationOnly|TestAccountProbeReportBatchCreate|TestAccountProbeCreate" -count=1`
+- `rtk go test -tags unit ./internal/service -run "TestScheduledTestRunner|TestEvaluateAccountProbeModelValidationEvidence|TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation|TestAccountProbeService_RunManualModelValidationStoresEvidence|TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples|TestAccountProbeService_RunOpenAIAPIKeyStreamModeRecordsFirstToken|TestAccountProbeServiceGetReportLoadsSamplesAndScoreBreakdown|TestAccountProbeServiceListRankingDecoratesAggregateScores" -count=1`
+- `rtk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeCreateRunsManualValidationOnly|TestAccountProbeReportBatchCreate|TestAccountProbeCreate|TestScheduledTest" -count=1`
+- `rtk npm run test:run -- src/views/admin/__tests__/AccountModelProbesView.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts src/api/__tests__/admin.accounts.spec.ts`
+- `rtk npm run typecheck`
+- `git diff --check`
+- Vite dev server: `http://127.0.0.1:5173/admin/model-probes`
+- Playwright 浏览器打开新路由
+
+## 校验结果
+
+- service 聚焦测试通过，覆盖普通 Codex 稳定性体检不会再自动追加模型验证样本、手动 `model_validation` 会保存验证证据、定时 account_probe 计划不再传播模型验证。
+- admin handler 聚焦测试通过，覆盖手动模型探针端点只创建 `model_validation` 运行，以及批量/普通体检接口不再携带自动模型验证。
+- 前端 3 个测试文件共 23 个测试通过，覆盖新模型探针页面加载、手动提交、详情证据展示，以及报告页批量/定时 payload 不再包含模型验证字段；保留既有 Browserslist caniuse-lite 过期提示。
+- `vue-tsc --noEmit` 通过。
+- `git diff --check` 通过，仅提示 docs/feature_list.jsonl、docs/process_list.jsonl、verification.md 在 Windows 工作区会由 LF 转 CRLF。
+- Vite 已在 5173 端口启动，`/admin/model-probes` 返回 HTTP 200。
+- 未登录访问新路由按应用路由守卫跳转到 `/login?redirect=/admin/model-probes`，浏览器控制台 0 errors。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 上游体检报告页批量模型验证
+
+本轮在上游体检报告页增加手动“批量模型验证”入口，同时保留定时常规体检。报告页现在有三个独立动作：常规批量验证、批量模型验证、定时体检。批量模型验证复用 API Key 账号选择弹窗，但提交到 /api/v1/admin/account-model-probe-runs/batch，只创建 model_validation 运行；定时体检继续创建 	ask_type=account_probe 的常规计划，默认 probe_mode=standard，不携带模型验证字段。
+
+## 校验方式
+
+- tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeBatchCreateRunsManualValidationOnly" -count=1：先按 TDD 红灯运行，因 BatchCreateModelProbeRuns 不存在失败；补实现后通过。
+- tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts -t "starts batch manual account model probe runs"：先按 TDD 红灯运行，因 atchAccountModelProbeRuns 不存在失败；补 wrapper 后通过。
+- tk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts -t "starts batch model validation"：先按 TDD 红灯运行，因报告页按钮不存在失败；补入口后通过。
+- tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeCreateRunsManualValidationOnly|TestAccountModelProbeBatchCreateRunsManualValidationOnly|TestAccountProbeReportBatchCreate|TestAccountProbeCreate" -count=1
+- tk go test -tags unit ./internal/service -run "TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation|TestAccountProbeService_RunManualModelValidationStoresEvidence|TestScheduledTestRunnerRunsAccountProbePlan" -count=1
+- tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts src/views/admin/__tests__/AccountModelProbesView.spec.ts
+- tk npm run typecheck
+- git diff --check
+
+## 校验结果
+
+- admin handler 聚焦测试通过，覆盖单个/批量手动模型探针只创建 ModelValidationOnly 的 model_validation 运行，以及常规体检接口保持可用。
+- service 聚焦测试通过，覆盖普通 Codex 稳定性不自动追加模型验证、手动模型验证保存证据、定时 account_probe 仍按常规计划执行。
+- 前端 3 个测试文件共 25 个测试通过，覆盖 accounts API、报告页批量模型验证入口、常规批量体检、定时常规体检、模型探针页面。
+- ue-tsc --noEmit 通过。
+- git diff --check 通过，仅有 Windows LF/CRLF 提示。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 默认测试模型统一为 gpt-5.5
+
+本轮将 OpenAI 上游体检、模型探针、账号测试、非 API_KEY 批量账号测试和账号定时测试的默认模型统一为 `gpt-5.5`。后端 `openai.DefaultTestModel` 改为 `gpt-5.5`；前端账号测试弹窗不再按 free/paid 计划分流到 `gpt-5.4`；报告页批量体检、批量模型验证、定时体检、手动模型探针页面、账号定时测试面板均默认填入或优先选择 `gpt-5.5`。
+
+## 校验方式
+
+- `rtk go test ./internal/pkg/openai -run TestDefaultTestModelUsesGPT55 -count=1`：先红后绿。
+- `rtk npm run test:run -- src/components/admin/account/__tests__/AccountTestModal.spec.ts src/components/account/__tests__/AccountTestModal.spec.ts src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts src/views/admin/__tests__/AccountModelProbesView.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts -t "gpt-5.5|paid OpenAI|prepopulates"`：先红后绿。
+- `rtk npm run test:run -- src/views/admin/__tests__/AccountModelProbesView.spec.ts -t "loads manual model probe runs"`：先红后绿。
+- `rtk npm run test:run -- src/components/admin/account/__tests__/ScheduledTestsPanel.spec.ts -t "preselects gpt-5.5"`：先红后绿。
+- `rtk go test ./internal/pkg/openai -count=1`
+- `rtk go test -tags unit ./internal/service -run "TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples|TestAccountProbeService_RunManualModelValidationStoresEvidence|TestAccountTestService_OpenAIResponsesStreamEmitsFirstTokenMs|TestAccountTestService_OpenAIChatCompletionsStreamEmitsFirstTokenMs" -count=1`
+- `rtk npm run test:run -- src/components/admin/account/__tests__/AccountTestModal.spec.ts src/components/account/__tests__/AccountTestModal.spec.ts src/components/admin/account/__tests__/ScheduledTestsPanel.spec.ts src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts src/views/admin/__tests__/AccountModelProbesView.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts`
+- `rtk npm run typecheck`
+
+## 校验结果
+
+- `openai` 包测试通过，覆盖默认测试模型常量。
+- service 聚焦测试通过，覆盖上游体检、模型验证和账号 OpenAI 请求测试关键路径。
+- 前端 6 个测试文件共 29 个测试通过，覆盖账号测试弹窗、账号定时测试面板、非 API_KEY 批量账号测试、报告页批量/模型/定时表单和手动模型探针页面。
+- `vue-tsc --noEmit` 通过。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 本地提交、构建、部署与验证
+
+本轮将上游体检报告排行榜、12 分钟运行超时失败、定时常规体检、手动模型验证、报告页批量模型验证以及默认测试模型 `gpt-5.5` 的变更提交后，使用本地 Docker 部署配置重建 `sub2api:multi-key-local` 镜像，并通过 `D:\sub2api-deploy\docker-compose.yml` 重建 `sub2api` 服务。
+
+## 校验方式
+
+- `git diff --cached --check`
+- `git commit -m "feat(account-probe): add scheduled model probes"`
+- `docker build --pull=false --build-arg COMMIT=<git rev-parse --short HEAD> --build-arg DATE=<utc-now> -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml --env-file D:\sub2api-deploy\.env up -d --no-deps --force-recreate sub2api`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml --env-file D:\sub2api-deploy\.env ps sub2api`
+- `Invoke-RestMethod http://127.0.0.1:8080/health`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/model-probes`
+- `Invoke-WebRequest -Method Post http://127.0.0.1:8080/api/v1/admin/account-model-probe-runs`
+- `Invoke-WebRequest -Method Post http://127.0.0.1:8080/api/v1/admin/account-model-probe-runs/batch`
+- `Invoke-WebRequest http://127.0.0.1:8080/api/v1/admin/account-probe-runs/ranking?page=1&page_size=1`
+- `docker exec sub2api /app/sub2api --version`
+
+## 校验结果
+
+- 暂存区空白检查通过。
+- Docker 镜像构建通过；前端容器构建保留既有 Browserslist 过期提示、Vite 动态/静态导入提示和 chunk size 提示。
+- `sub2api` 容器重建并进入 healthy 状态，端口映射为 `0.0.0.0:8080->8080/tcp`。
+- `/health` 返回 `{"status":"ok"}`。
+- `/admin/model-probes` 返回 HTTP 200 的前端 HTML。
+- 模型探针单个/批量 POST 路由与排行榜 GET 路由未登录访问均返回 HTTP 401，确认路由存在并进入认证拦截。
+- 容器二进制 `--version` 输出包含构建提交、版本号和构建时间。
+- 启动日志显示 `ScheduledTestRunner started` 与 `Server started on 0.0.0.0:8080`；日志中的 `OpenAI upstream error ... insufficient_quota` 来自运行中 `/responses` 上游账号额度请求，不属于启动、迁移或监听失败。

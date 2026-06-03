@@ -73,6 +73,14 @@
             <Icon name="beaker" size="sm" />
             <span class="ml-1.5">{{ t('admin.accountProbeReports.batchProbe') }}</span>
           </button>
+          <button type="button" data-test="open-batch-model-probe-dialog" class="btn btn-secondary px-3" @click="openBatchModelDialog">
+            <Icon name="sparkles" size="sm" />
+            <span class="ml-1.5">{{ t('admin.accountProbeReports.batchModelProbe') }}</span>
+          </button>
+          <button type="button" data-test="open-scheduled-probe-dialog" class="btn btn-secondary px-3" @click="openScheduleDialog">
+            <Icon name="calendar" size="sm" />
+            <span class="ml-1.5">{{ t('admin.accountProbeReports.scheduleProbe') }}</span>
+          </button>
           <button type="button" class="btn btn-ghost px-3" @click="resetFilters">
             {{ t('common.reset') }}
           </button>
@@ -87,6 +95,80 @@
       </template>
 
       <template #table>
+        <section class="mb-4 rounded-lg border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ t('admin.accountProbeReports.rankingTitle') }}</h2>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.rankingDescription') }}</p>
+            </div>
+            <button type="button" class="btn btn-ghost px-2 py-1 text-sm" :disabled="rankingLoading" @click="loadRanking">
+              <Icon name="refresh" size="sm" :class="rankingLoading ? 'animate-spin' : ''" />
+            </button>
+          </div>
+          <div v-if="rankingError" class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200">{{ rankingError }}</div>
+          <div v-else-if="rankingLoading && rankings.length === 0" class="mt-4 text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</div>
+          <div v-else-if="rankings.length === 0" class="mt-4 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.rankingEmpty') }}</div>
+          <div v-else class="mt-4 grid gap-3 lg:grid-cols-3">
+            <button
+              v-for="(item, index) in rankings"
+              :key="item.account_id"
+              type="button"
+              data-test="probe-ranking-item"
+              class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-left transition hover:border-primary-300 hover:bg-primary-50 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-primary-700 dark:hover:bg-primary-950/30"
+              @click="selectRankingAccount(item)"
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-xs font-medium text-gray-500 dark:text-gray-400">#{{ index + 1 }} · #{{ item.account_id }}</div>
+                  <div class="mt-1 font-semibold text-gray-900 dark:text-gray-100">{{ item.account_name || `#${item.account_id}` }}</div>
+                </div>
+                <span :class="gradeClass(item.grade)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold">{{ item.grade_label || formatGrade(item.grade) }}</span>
+              </div>
+              <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-600 dark:text-gray-300">
+                <div><span class="block text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.averageScore') }}</span><strong>{{ formatNumber(item.average_score) }}</strong></div>
+                <div><span class="block text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.latestScore') }}</span><strong>{{ formatNumber(item.latest_score) }}</strong></div>
+                <div><span class="block text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.runCount') }}</span><strong>{{ formatInteger(item.run_count) }}</strong></div>
+              </div>
+              <div class="mt-3 flex items-end gap-1 h-10" :aria-label="t('admin.accountProbeReports.scoreHistory')">
+                <span
+                  v-for="point in item.score_history.slice(-12)"
+                  :key="point.run_id"
+                  class="w-3 rounded-t bg-primary-500/75 dark:bg-primary-400/80"
+                  :style="{ height: `${Math.max(8, Math.min(40, point.score * 0.4))}px` }"
+                  :title="`${point.score} · ${formatDateTime(point.created_at)}`"
+                ></span>
+              </div>
+            </button>
+          </div>
+          <div v-if="selectedRanking" class="mt-4 rounded-lg border border-primary-200 bg-primary-50 p-3 dark:border-primary-900/60 dark:bg-primary-950/30">
+            <div class="flex items-center justify-between gap-3">
+              <div class="text-sm font-semibold text-primary-900 dark:text-primary-100">{{ t('admin.accountProbeReports.selectedRanking', { account: selectedRanking.account_name || `#${selectedRanking.account_id}` }) }}</div>
+              <button type="button" class="btn btn-ghost px-2 py-1 text-sm" @click="clearRankingSelection">{{ t('common.clear') }}</button>
+            </div>
+            <div class="mt-2 overflow-x-auto">
+              <table class="w-full min-w-[640px]">
+                <thead>
+                  <tr>
+                    <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.time') }}</th>
+                    <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.score') }}</th>
+                    <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.status') }}</th>
+                    <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.avgLatency') }}</th>
+                    <th class="px-2 py-1 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountProbeReports.tokens') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="point in selectedRanking.score_history.slice().reverse()" :key="point.run_id" class="border-t border-primary-100 dark:border-primary-900/50">
+                    <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatDateTime(point.created_at) }}</td>
+                    <td class="px-2 py-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(point.score) }}</td>
+                    <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatStatus(point.status) }}</td>
+                    <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatMs(point.avg_latency_ms) }}</td>
+                    <td class="px-2 py-1 text-sm text-gray-700 dark:text-gray-300">{{ formatInteger(point.total_tokens) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
         <div class="table-wrapper">
           <table>
             <thead>
@@ -291,14 +373,38 @@
                   <tr v-if="!detailRun?.samples?.length">
                     <td colspan="6" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.noData') }}</td>
                   </tr>
-                  <tr v-for="sample in detailRun?.samples || []" :key="sample.id" class="border-t border-gray-100 dark:border-dark-700">
-                    <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ sample.request_index }}</td>
-                    <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatStatus(sample.status) }}</td>
-                    <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatMs(sample.latency_ms) }}</td>
-                    <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatMs(sample.first_token_ms) }}</td>
-                    <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatInteger(sample.tokens) }}</td>
-                    <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ sample.error || sample.error_code || '-' }}</td>
-                  </tr>
+                  <template v-for="sample in detailRun?.samples || []" :key="sample.id">
+                    <tr class="border-t border-gray-100 dark:border-dark-700">
+                      <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ sample.request_index }}</td>
+                      <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatStatus(sample.status) }}</td>
+                      <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatMs(sample.latency_ms) }}</td>
+                      <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatMs(sample.first_token_ms) }}</td>
+                      <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatInteger(sample.tokens) }}</td>
+                      <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ sample.error || sample.error_code || '-' }}</td>
+                    </tr>
+                    <tr v-if="sample.validation_evidence?.length" class="border-t border-gray-100 bg-gray-50/70 dark:border-dark-700 dark:bg-dark-800/60">
+                      <td colspan="6" class="px-3 py-3">
+                        <div class="grid gap-2">
+                          <div
+                            v-for="evidence in sample.validation_evidence"
+                            :key="`${sample.id}-${evidence.key}`"
+                            class="rounded-md border border-gray-200 bg-white px-3 py-2 text-xs dark:border-dark-700 dark:bg-dark-900"
+                          >
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                              <span class="font-medium text-gray-900 dark:text-gray-100">{{ evidence.label || evidence.key }}</span>
+                              <span :class="evidence.passed ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'">
+                                {{ formatValidationPassed(evidence.passed) }} · {{ evidence.score }} / {{ evidence.max_score }}
+                              </span>
+                            </div>
+                            <div class="mt-1 grid gap-1 text-gray-600 dark:text-gray-300 sm:grid-cols-2">
+                              <div><span class="text-gray-400">{{ t('admin.accountProbeReports.validationExpected') }}</span> {{ evidence.expected || '-' }}</div>
+                              <div><span class="text-gray-400">{{ t('admin.accountProbeReports.validationObserved') }}</span> {{ evidence.observed || sample.output_text || '-' }}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
                 </tbody>
               </table>
             </div>
@@ -310,7 +416,7 @@
 
   <BaseDialog
     :show="batchDialogOpen"
-    :title="t('admin.accountProbeReports.batchDialogTitle')"
+    :title="batchDialogMode === 'model' ? t('admin.accountProbeReports.batchModelDialogTitle') : t('admin.accountProbeReports.batchDialogTitle')"
     width="extra-wide"
     @close="closeBatchDialog"
   >
@@ -335,15 +441,11 @@
         </span>
       </div>
 
-      <div class="grid gap-3 md:grid-cols-5">
-        <Select v-model="batchForm.mode" :options="batchModeOptions" />
+      <div class="grid gap-3 md:grid-cols-4">
+        <Select v-if="batchDialogMode === 'probe'" v-model="batchForm.mode" :options="batchModeOptions" />
         <Select v-model="batchForm.request_mode" :options="batchRequestModeOptions" />
         <input v-model="batchForm.model" data-test="batch-probe-model" type="text" class="input" :placeholder="t('admin.accountProbeReports.batchModelPlaceholder')" />
-        <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-          <input v-model="batchForm.codex_stability" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
-          <span>{{ t('admin.accountProbeReports.codexStability') }}</span>
-        </label>
-        <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+        <label v-if="batchDialogMode === 'probe'" class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
           <input v-model="batchForm.long_context" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
           <span>{{ t('admin.accountProbeReports.longContext') }}</span>
         </label>
@@ -401,9 +503,66 @@
 
     <template #footer>
       <button type="button" class="btn btn-secondary" @click="closeBatchDialog">{{ t('common.cancel') }}</button>
-      <button type="button" data-test="batch-probe-submit" class="btn btn-primary" :disabled="selectedAccountIds.length === 0 || batchSubmitting" @click="submitBatchProbe">
+      <button
+        v-if="batchDialogMode === 'probe'"
+        type="button"
+        data-test="batch-probe-submit"
+        class="btn btn-primary"
+        :disabled="selectedAccountIds.length === 0 || batchSubmitting"
+        @click="submitBatchProbe"
+      >
         <Icon name="beaker" size="sm" :class="batchSubmitting ? 'animate-pulse' : ''" />
         <span class="ml-1.5">{{ t('admin.accountProbeReports.batchProbe') }}</span>
+      </button>
+      <button
+        v-else
+        type="button"
+        data-test="batch-model-probe-submit"
+        class="btn btn-primary"
+        :disabled="selectedAccountIds.length === 0 || batchSubmitting"
+        @click="submitBatchModelProbe"
+      >
+        <Icon name="sparkles" size="sm" :class="batchSubmitting ? 'animate-pulse' : ''" />
+        <span class="ml-1.5">{{ t('admin.accountProbeReports.batchModelProbe') }}</span>
+      </button>
+    </template>
+  </BaseDialog>
+
+  <BaseDialog
+    :show="scheduleDialogOpen"
+    :title="t('admin.accountProbeReports.scheduleDialogTitle')"
+    width="wide"
+    @close="closeScheduleDialog"
+  >
+    <div class="space-y-4">
+      <div class="grid gap-3 md:grid-cols-2">
+        <input v-model.number="scheduleForm.account_id" data-test="schedule-probe-account-id" type="number" min="1" class="input" :placeholder="t('admin.accountProbeReports.accountId')" />
+        <input v-model="scheduleForm.model_id" data-test="schedule-probe-model" type="text" class="input" :placeholder="t('admin.accountProbeReports.batchModelPlaceholder')" />
+        <input v-model="scheduleForm.cron_expression" data-test="schedule-probe-cron" type="text" class="input" :placeholder="t('admin.accountProbeReports.scheduleCronPlaceholder')" />
+        <input v-model.number="scheduleForm.max_results" type="number" min="1" max="200" class="input" :placeholder="t('admin.accountProbeReports.maxResults')" />
+      </div>
+      <div class="grid gap-3 md:grid-cols-2">
+        <Select v-model="scheduleForm.probe_mode" :options="batchModeOptions" />
+        <Select v-model="scheduleForm.probe_request_mode" :options="batchRequestModeOptions" />
+      </div>
+      <div class="flex flex-wrap gap-4">
+        <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          <input v-model="scheduleForm.enabled" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
+          <span>{{ t('admin.accountProbeReports.scheduleEnabled') }}</span>
+        </label>
+        <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          <input v-model="scheduleForm.probe_long_context" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" />
+          <span>{{ t('admin.accountProbeReports.longContext') }}</span>
+        </label>
+      </div>
+      <div v-if="scheduleError" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200">{{ scheduleError }}</div>
+    </div>
+
+    <template #footer>
+      <button type="button" class="btn btn-secondary" @click="closeScheduleDialog">{{ t('common.cancel') }}</button>
+      <button type="button" data-test="schedule-probe-submit" class="btn btn-primary" :disabled="scheduleSubmitting" @click="submitScheduledProbe">
+        <Icon name="calendar" size="sm" :class="scheduleSubmitting ? 'animate-pulse' : ''" />
+        <span class="ml-1.5">{{ t('admin.accountProbeReports.createSchedule') }}</span>
       </button>
     </template>
   </BaseDialog>
@@ -419,8 +578,9 @@ import Select from '@/components/common/Select.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { getConfiguredTablePageSizeOptions, normalizeTablePageSize } from '@/utils/tablePreferences'
-import { batchAccountProbeRuns, deleteAccountProbeRuns, list as listAccounts, listAccountProbeRuns, getAccountProbeRun } from '@/api/admin/accounts'
-import type { Account, AccountProbeRun, AccountProbeRunListFilters, AccountProbeRunSortBy, AccountProbeScoreBreakdownItem, SelectOption } from '@/types'
+import { batchAccountModelProbeRuns, batchAccountProbeRuns, deleteAccountProbeRuns, list as listAccounts, listAccountProbeRuns, getAccountProbeRun, listAccountProbeRanking } from '@/api/admin/accounts'
+import { create as createScheduledTestPlan } from '@/api/admin/scheduledTests'
+import type { Account, AccountProbeRankingItem, AccountProbeRun, AccountProbeRunListFilters, AccountProbeRunSortBy, AccountProbeScoreBreakdownItem, SelectOption } from '@/types'
 
 const { t } = useI18n()
 
@@ -438,9 +598,18 @@ const batchSubmitting = ref(false)
 const batchMessage = ref('')
 const batchError = ref('')
 const batchDialogOpen = ref(false)
+const batchDialogMode = ref<'probe' | 'model'>('probe')
 const batchAccounts = ref<Account[]>([])
 const batchAccountsLoading = ref(false)
 const batchAccountSearch = ref('')
+const rankings = ref<AccountProbeRankingItem[]>([])
+const rankingLoading = ref(false)
+const rankingError = ref('')
+const selectedRanking = ref<AccountProbeRankingItem | null>(null)
+const scheduleDialogOpen = ref(false)
+const scheduleSubmitting = ref(false)
+const scheduleError = ref('')
+const defaultOpenAIAccountTestModelID = 'gpt-5.5'
 
 const filters = reactive({
   account_id: '',
@@ -461,9 +630,19 @@ const sortState = reactive({
 const batchForm = reactive({
   mode: 'standard',
   request_mode: 'stream',
-  model: '',
-  codex_stability: false,
+  model: defaultOpenAIAccountTestModelID,
   long_context: false,
+})
+
+const scheduleForm = reactive({
+  account_id: undefined as number | undefined,
+  model_id: defaultOpenAIAccountTestModelID,
+  cron_expression: '*/30 * * * *',
+  max_results: 50,
+  enabled: true,
+  probe_mode: 'standard',
+  probe_request_mode: 'stream',
+  probe_long_context: false,
 })
 
 const pagination = reactive({
@@ -485,6 +664,7 @@ let detailAbortController: AbortController | null = null
 let batchAbortController: AbortController | null = null
 let batchAccountsAbortController: AbortController | null = null
 let deleteAbortController: AbortController | null = null
+let rankingAbortController: AbortController | null = null
 let keywordTimer: number | null = null
 let activeRunsTimer: number | null = null
 
@@ -569,6 +749,43 @@ async function loadRuns() {
       listAbortController = null
     }
   }
+}
+
+async function loadRanking() {
+  rankingAbortController?.abort()
+  const controller = new AbortController()
+  rankingAbortController = controller
+  rankingLoading.value = true
+  rankingError.value = ''
+  try {
+    rankings.value = await listAccountProbeRanking(12, { signal: controller.signal })
+    if (selectedRanking.value) {
+      selectedRanking.value = rankings.value.find(item => item.account_id === selectedRanking.value?.account_id) || null
+    }
+  } catch (err: any) {
+    if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
+    rankingError.value = err?.response?.data?.error || err?.message || t('admin.accountProbeReports.rankingFailed')
+    rankings.value = []
+  } finally {
+    if (rankingAbortController === controller) {
+      rankingLoading.value = false
+      rankingAbortController = null
+    }
+  }
+}
+
+function selectRankingAccount(item: AccountProbeRankingItem) {
+  selectedRanking.value = item
+  filters.account_id = String(item.account_id)
+  pagination.page = 1
+  loadRuns()
+}
+
+function clearRankingSelection() {
+  selectedRanking.value = null
+  filters.account_id = ''
+  pagination.page = 1
+  loadRuns()
 }
 
 function pruneSelectedReports() {
@@ -685,7 +902,6 @@ async function submitBatchProbe() {
       mode: batchForm.mode,
       model: batchForm.model.trim() || undefined,
       request_mode: batchForm.request_mode,
-      codex_stability: batchForm.codex_stability,
       long_context: batchForm.long_context,
     }, {
       signal: controller.signal,
@@ -695,9 +911,45 @@ async function submitBatchProbe() {
     selectedAccountIds.value = []
     batchDialogOpen.value = false
     await loadRuns()
+    await loadRanking()
   } catch (err: any) {
     if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
     batchError.value = err?.response?.data?.error || err?.message || t('admin.accountProbeReports.batchFailed')
+  } finally {
+    if (batchAbortController === controller) {
+      batchSubmitting.value = false
+      batchAbortController = null
+    }
+  }
+}
+
+async function submitBatchModelProbe() {
+  if (selectedAccountIds.value.length === 0 || batchSubmitting.value) return
+  batchAbortController?.abort()
+  const controller = new AbortController()
+  batchAbortController = controller
+  batchSubmitting.value = true
+  batchError.value = ''
+  batchMessage.value = ''
+  try {
+    const response = await batchAccountModelProbeRuns({
+      account_ids: selectedAccountIds.value,
+      model: batchForm.model.trim() || undefined,
+      request_mode: batchForm.request_mode,
+    }, {
+      signal: controller.signal,
+    })
+    if (controller.signal.aborted) return
+    batchMessage.value = t('admin.accountProbeReports.batchModelAccepted', { count: response.accepted_count })
+    selectedAccountIds.value = []
+    batchDialogOpen.value = false
+    filters.mode = 'model_validation'
+    pagination.page = 1
+    await loadRuns()
+    await loadRanking()
+  } catch (err: any) {
+    if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
+    batchError.value = err?.response?.data?.error || err?.message || t('admin.accountProbeReports.batchModelFailed')
   } finally {
     if (batchAbortController === controller) {
       batchSubmitting.value = false
@@ -713,10 +965,61 @@ function closeDetail() {
 }
 
 function openBatchDialog() {
+  batchDialogMode.value = 'probe'
   batchDialogOpen.value = true
   batchError.value = ''
   if (batchAccounts.value.length === 0) {
     loadBatchAccounts()
+  }
+}
+
+function openBatchModelDialog() {
+  batchDialogMode.value = 'model'
+  batchDialogOpen.value = true
+  batchError.value = ''
+  if (batchAccounts.value.length === 0) {
+    loadBatchAccounts()
+  }
+}
+
+function openScheduleDialog() {
+  scheduleDialogOpen.value = true
+  scheduleError.value = ''
+  const selected = selectedRanking.value?.account_id || Number(filters.account_id)
+  scheduleForm.account_id = Number.isFinite(selected) && selected > 0 ? selected : undefined
+}
+
+function closeScheduleDialog() {
+  scheduleDialogOpen.value = false
+  scheduleError.value = ''
+}
+
+async function submitScheduledProbe() {
+  if (scheduleSubmitting.value) return
+  if (!scheduleForm.account_id || scheduleForm.account_id <= 0) {
+    scheduleError.value = t('admin.accountProbeReports.accountRequired')
+    return
+  }
+  scheduleSubmitting.value = true
+  scheduleError.value = ''
+  try {
+    await createScheduledTestPlan({
+      account_id: scheduleForm.account_id,
+      task_type: 'account_probe',
+      model_id: scheduleForm.model_id.trim(),
+      cron_expression: scheduleForm.cron_expression.trim(),
+      enabled: scheduleForm.enabled,
+      max_results: scheduleForm.max_results,
+      probe_mode: scheduleForm.probe_mode,
+      probe_request_mode: scheduleForm.probe_request_mode,
+      probe_long_context: scheduleForm.probe_long_context,
+    })
+    batchMessage.value = t('admin.accountProbeReports.scheduleCreated')
+    scheduleDialogOpen.value = false
+  } catch (err: any) {
+    scheduleError.value = err?.response?.data?.error || err?.message || t('admin.accountProbeReports.scheduleFailed')
+  } finally {
+    scheduleSubmitting.value = false
   }
 }
 
@@ -873,6 +1176,10 @@ function formatStatus(value: string | undefined): string {
   return t(`admin.accountProbeReports.statuses.${value}`)
 }
 
+function formatValidationPassed(value: boolean): string {
+  return value ? t('admin.accountProbeReports.validationPassed') : t('admin.accountProbeReports.validationFailed')
+}
+
 function formatScoreItemValue(item: AccountProbeScoreBreakdownItem): string {
   if (typeof item === 'string') return ''
   const value = item.value ?? item.score ?? '-'
@@ -908,7 +1215,10 @@ function statusClass(status: string): string {
   return 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-200'
 }
 
-onMounted(loadRuns)
+onMounted(() => {
+  loadRuns()
+  loadRanking()
+})
 
 onUnmounted(() => {
   listAbortController?.abort()
@@ -916,6 +1226,7 @@ onUnmounted(() => {
   batchAbortController?.abort()
   batchAccountsAbortController?.abort()
   deleteAbortController?.abort()
+  rankingAbortController?.abort()
   if (keywordTimer) window.clearTimeout(keywordTimer)
   if (activeRunsTimer) window.clearTimeout(activeRunsTimer)
 })

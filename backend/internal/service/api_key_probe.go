@@ -56,6 +56,7 @@ type APIKeyProbePlan struct {
 type APIKeyProbePlannedSample struct {
 	Type            string
 	Label           string
+	ValidationKey   string
 	Prompt          string
 	Timeout         time.Duration
 	MaxOutputTokens int

@@ -2289,27 +2289,10 @@ const handleBulkRefreshToken = async () => {
   }
 }
 
-const paidOpenAIPlanTypes = new Set(['plus', 'team'])
-const planTypeOfAccount = (account: Account) => {
-  const planType = account.credentials?.plan_type
-  return typeof planType === 'string' ? planType.trim().toLowerCase() : ''
-}
+const defaultOpenAIAccountTestModelID = 'gpt-5.5'
 
 const resolveBatchTestNonAPIKeyModelID = () => {
-  const selectedAccountIds = [...selIds.value]
-  if (selectedAccountIds.length > 0) {
-    const selectedAccounts = accounts.value.filter((account) => selectedAccountIds.includes(account.id))
-    if (
-      selectedAccounts.length > 0 &&
-      selectedAccounts.every((account) => account.platform === 'openai' && paidOpenAIPlanTypes.has(planTypeOfAccount(account)))
-    ) {
-      return 'gpt-5.4'
-    }
-    return 'gpt-5.5'
-  }
-
-  const planType = typeof params.plan_type === 'string' ? params.plan_type.trim().toLowerCase() : ''
-  return paidOpenAIPlanTypes.has(planType) ? 'gpt-5.4' : 'gpt-5.5'
+  return defaultOpenAIAccountTestModelID
 }
 
 const handleBatchTestNonAPIKey = async () => {

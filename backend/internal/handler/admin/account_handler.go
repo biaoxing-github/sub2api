@@ -32,6 +32,7 @@ import (
 )
 
 const accountProbeBatchConcurrency = 2
+const accountProbeRunTimeout = 12 * time.Minute
 
 const (
 	batchTestNonAPIKeyGlobalConcurrency = 10
@@ -89,6 +90,7 @@ type accountProbeRunner interface {
 	ListReports(ctx context.Context, filter service.AccountProbeReportFilter) (service.AccountProbeReportPage, error)
 	GetReport(ctx context.Context, runID int64) (*service.AccountProbeReportItem, error)
 	DeleteReports(ctx context.Context, runIDs []int64) (service.AccountProbeReportDeleteResult, error)
+	ListRanking(ctx context.Context, limit int) ([]service.AccountProbeRankingItem, error)
 }
 
 type accountPathHealthReader interface {
@@ -958,6 +960,18 @@ type BatchCreateAccountProbeRunsRequest struct {
 	RequestMode           string  `json:"request_mode"`
 }
 
+type CreateAccountModelProbeRunRequest struct {
+	AccountID   int64  `json:"account_id" binding:"required"`
+	Model       string `json:"model"`
+	RequestMode string `json:"request_mode"`
+}
+
+type BatchCreateAccountModelProbeRunsRequest struct {
+	AccountIDs  []int64 `json:"account_ids"`
+	Model       string  `json:"model"`
+	RequestMode string  `json:"request_mode"`
+}
+
 type DeleteAccountProbeRunsRequest struct {
 	RunIDs []int64 `json:"run_ids"`
 }
@@ -1450,12 +1464,11 @@ func (h *AccountHandler) CreateProbeRun(c *gin.Context) {
 		mode = service.AccountProbeProfileStandard
 	}
 	probeReq := service.AccountProbeRunRequest{
-		AccountID:             accountID,
-		Profile:               mode,
-		Model:                 req.Model,
-		IncludeCodexStability: req.IncludeCodexStability || req.CodexStability,
-		IncludeLongContext:    req.IncludeLongContext || req.LongContext,
-		RequestMode:           req.RequestMode,
+		AccountID:          accountID,
+		Profile:            mode,
+		Model:              req.Model,
+		IncludeLongContext: req.IncludeLongContext || req.LongContext,
+		RequestMode:        req.RequestMode,
 	}
 	result, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
 	if err != nil {
@@ -1464,6 +1477,78 @@ func (h *AccountHandler) CreateProbeRun(c *gin.Context) {
 	}
 	go h.runAccountProbeBackground(result, probeReq)
 	response.Accepted(c, result)
+}
+
+// CreateModelProbeRun 手动执行账号模型行为探针。
+// POST /api/v1/admin/account-model-probe-runs
+func (h *AccountHandler) CreateModelProbeRun(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	var req CreateAccountModelProbeRunRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	probeReq := service.AccountProbeRunRequest{
+		AccountID:           req.AccountID,
+		Profile:             service.AccountProbeProfileModelValidation,
+		Model:               req.Model,
+		RequestMode:         req.RequestMode,
+		ModelValidationOnly: true,
+	}
+	result, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	go h.runAccountProbeBackground(result, probeReq)
+	response.Accepted(c, result)
+}
+
+// BatchCreateModelProbeRuns 手动批量执行账号模型行为探针。
+// POST /api/v1/admin/account-model-probe-runs/batch
+func (h *AccountHandler) BatchCreateModelProbeRuns(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	var req BatchCreateAccountModelProbeRunsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	accountIDs := uniquePositiveInt64s(req.AccountIDs)
+	if len(accountIDs) == 0 {
+		response.BadRequest(c, "account_ids is required")
+		return
+	}
+	if len(accountIDs) > 50 {
+		response.BadRequest(c, "account_ids cannot exceed 50")
+		return
+	}
+	runs := make([]service.AccountProbeResult, 0, len(accountIDs))
+	for _, accountID := range accountIDs {
+		probeReq := service.AccountProbeRunRequest{
+			AccountID:           accountID,
+			Profile:             service.AccountProbeProfileModelValidation,
+			Model:               req.Model,
+			RequestMode:         req.RequestMode,
+			ModelValidationOnly: true,
+		}
+		run, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		runs = append(runs, run)
+	}
+	go h.runAccountModelProbeBatchBackground(runs, req)
+	response.Accepted(c, gin.H{
+		"accepted_count": len(runs),
+		"runs":           runs,
+	})
 }
 
 func (h *AccountHandler) runAccountProbeBackground(run service.AccountProbeResult, req service.AccountProbeRunRequest) {
@@ -1483,14 +1568,17 @@ func (h *AccountHandler) runAccountProbeBackground(run service.AccountProbeResul
 
 func accountProbeBackgroundTimeout(req service.AccountProbeRunRequest) time.Duration {
 	timeout := 2 * time.Minute
+	if req.ModelValidationOnly {
+		timeout = 6 * time.Minute
+	}
 	if strings.EqualFold(strings.TrimSpace(req.Profile), service.AccountProbeProfileStandard) {
 		timeout = 4 * time.Minute
 	}
-	if req.IncludeCodexStability {
-		timeout += 6 * time.Minute
-	}
 	if req.IncludeLongContext {
 		timeout += 4 * time.Minute
+	}
+	if timeout > accountProbeRunTimeout {
+		timeout = accountProbeRunTimeout
 	}
 	return timeout
 }
@@ -1562,6 +1650,22 @@ func (h *AccountHandler) ListProbeReportRuns(c *gin.Context) {
 		return
 	}
 	response.Success(c, result)
+}
+
+// ListProbeReportRanking returns aggregate upstream probe ranking.
+// GET /api/v1/admin/account-probe-runs/ranking
+func (h *AccountHandler) ListProbeReportRanking(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	items, err := h.accountProbeService.ListRanking(c.Request.Context(), limit)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, items)
 }
 
 // GetProbeReportRun returns one upstream account probe run for the report page.
@@ -1641,12 +1745,11 @@ func (h *AccountHandler) BatchCreateProbeReportRuns(c *gin.Context) {
 	runs := make([]service.AccountProbeResult, 0, len(accountIDs))
 	for _, accountID := range accountIDs {
 		probeReq := service.AccountProbeRunRequest{
-			AccountID:             accountID,
-			Profile:               mode,
-			Model:                 req.Model,
-			IncludeCodexStability: req.IncludeCodexStability || req.CodexStability,
-			IncludeLongContext:    req.IncludeLongContext || req.LongContext,
-			RequestMode:           req.RequestMode,
+			AccountID:          accountID,
+			Profile:            mode,
+			Model:              req.Model,
+			IncludeLongContext: req.IncludeLongContext || req.LongContext,
+			RequestMode:        req.RequestMode,
 		}
 		run, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
 		if err != nil {
@@ -1675,15 +1778,50 @@ func (h *AccountHandler) runAccountProbeBatchBackground(runs []service.AccountPr
 	for _, run := range runs {
 		run := run
 		probeReq := service.AccountProbeRunRequest{
-			AccountID:             run.AccountID,
-			Profile:               run.Profile,
-			Model:                 run.Model,
-			IncludeCodexStability: run.IncludeCodexStability || req.IncludeCodexStability || req.CodexStability,
-			IncludeLongContext:    run.IncludeLongContext || req.IncludeLongContext || req.LongContext,
-			RequestMode:           run.RequestMode,
+			AccountID:          run.AccountID,
+			Profile:            run.Profile,
+			Model:              run.Model,
+			IncludeLongContext: run.IncludeLongContext || req.IncludeLongContext || req.LongContext,
+			RequestMode:        run.RequestMode,
 		}
 		if strings.TrimSpace(probeReq.Profile) == "" {
 			probeReq.Profile = req.Mode
+		}
+		if strings.TrimSpace(probeReq.Model) == "" {
+			probeReq.Model = req.Model
+		}
+		if strings.TrimSpace(probeReq.RequestMode) == "" {
+			probeReq.RequestMode = req.RequestMode
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			h.runAccountProbeBackground(run, probeReq)
+		}()
+	}
+	wg.Wait()
+}
+
+func (h *AccountHandler) runAccountModelProbeBatchBackground(runs []service.AccountProbeResult, req BatchCreateAccountModelProbeRunsRequest) {
+	if h == nil || h.accountProbeService == nil || len(runs) == 0 {
+		return
+	}
+	limit := accountProbeBatchConcurrency
+	if limit <= 0 {
+		limit = 1
+	}
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for _, run := range runs {
+		run := run
+		probeReq := service.AccountProbeRunRequest{
+			AccountID:           run.AccountID,
+			Profile:             service.AccountProbeProfileModelValidation,
+			Model:               run.Model,
+			RequestMode:         run.RequestMode,
+			ModelValidationOnly: true,
 		}
 		if strings.TrimSpace(probeReq.Model) == "" {
 			probeReq.Model = req.Model

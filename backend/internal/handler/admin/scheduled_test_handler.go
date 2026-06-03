@@ -12,6 +12,7 @@ import (
 // ScheduledTestHandler handles admin scheduled-test-plan management.
 type ScheduledTestHandler struct {
 	scheduledTestSvc *service.ScheduledTestService
+	runnerSnapshots  func() []service.ScheduledTestRunnerSnapshot
 }
 
 // NewScheduledTestHandler creates a new ScheduledTestHandler.
@@ -19,21 +20,39 @@ func NewScheduledTestHandler(scheduledTestSvc *service.ScheduledTestService) *Sc
 	return &ScheduledTestHandler{scheduledTestSvc: scheduledTestSvc}
 }
 
+// SetRunnerService injects the scheduled runner status provider.
+func (h *ScheduledTestHandler) SetRunnerService(runner *service.ScheduledTestRunnerService) {
+	if h == nil || runner == nil {
+		return
+	}
+	h.runnerSnapshots = runner.Snapshots
+}
+
 type createScheduledTestPlanRequest struct {
-	AccountID      int64  `json:"account_id" binding:"required"`
-	ModelID        string `json:"model_id"`
-	CronExpression string `json:"cron_expression" binding:"required"`
-	Enabled        *bool  `json:"enabled"`
-	MaxResults     int    `json:"max_results"`
-	AutoRecover    *bool  `json:"auto_recover"`
+	AccountID           int64  `json:"account_id" binding:"required"`
+	TaskType            string `json:"task_type"`
+	ModelID             string `json:"model_id"`
+	CronExpression      string `json:"cron_expression" binding:"required"`
+	Enabled             *bool  `json:"enabled"`
+	MaxResults          int    `json:"max_results"`
+	AutoRecover         *bool  `json:"auto_recover"`
+	ProbeMode           string `json:"probe_mode"`
+	ProbeRequestMode    string `json:"probe_request_mode"`
+	ProbeCodexStability bool   `json:"probe_codex_stability"`
+	ProbeLongContext    bool   `json:"probe_long_context"`
 }
 
 type updateScheduledTestPlanRequest struct {
-	ModelID        string `json:"model_id"`
-	CronExpression string `json:"cron_expression"`
-	Enabled        *bool  `json:"enabled"`
-	MaxResults     int    `json:"max_results"`
-	AutoRecover    *bool  `json:"auto_recover"`
+	TaskType            string `json:"task_type"`
+	ModelID             string `json:"model_id"`
+	CronExpression      string `json:"cron_expression"`
+	Enabled             *bool  `json:"enabled"`
+	MaxResults          int    `json:"max_results"`
+	AutoRecover         *bool  `json:"auto_recover"`
+	ProbeMode           string `json:"probe_mode"`
+	ProbeRequestMode    string `json:"probe_request_mode"`
+	ProbeCodexStability *bool  `json:"probe_codex_stability"`
+	ProbeLongContext    *bool  `json:"probe_long_context"`
 }
 
 // ListByAccount GET /admin/accounts/:id/scheduled-test-plans
@@ -61,11 +80,16 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	}
 
 	plan := &service.ScheduledTestPlan{
-		AccountID:      req.AccountID,
-		ModelID:        req.ModelID,
-		CronExpression: req.CronExpression,
-		Enabled:        true,
-		MaxResults:     req.MaxResults,
+		AccountID:           req.AccountID,
+		TaskType:            req.TaskType,
+		ModelID:             req.ModelID,
+		CronExpression:      req.CronExpression,
+		Enabled:             true,
+		MaxResults:          req.MaxResults,
+		ProbeMode:           req.ProbeMode,
+		ProbeRequestMode:    req.ProbeRequestMode,
+		ProbeCodexStability: req.ProbeCodexStability,
+		ProbeLongContext:    req.ProbeLongContext,
 	}
 	if req.Enabled != nil {
 		plan.Enabled = *req.Enabled
@@ -105,6 +129,9 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	if req.ModelID != "" {
 		existing.ModelID = req.ModelID
 	}
+	if req.TaskType != "" {
+		existing.TaskType = req.TaskType
+	}
 	if req.CronExpression != "" {
 		existing.CronExpression = req.CronExpression
 	}
@@ -116,6 +143,18 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	}
 	if req.AutoRecover != nil {
 		existing.AutoRecover = *req.AutoRecover
+	}
+	if req.ProbeMode != "" {
+		existing.ProbeMode = req.ProbeMode
+	}
+	if req.ProbeRequestMode != "" {
+		existing.ProbeRequestMode = req.ProbeRequestMode
+	}
+	if req.ProbeCodexStability != nil {
+		existing.ProbeCodexStability = *req.ProbeCodexStability
+	}
+	if req.ProbeLongContext != nil {
+		existing.ProbeLongContext = *req.ProbeLongContext
 	}
 
 	updated, err := h.scheduledTestSvc.UpdatePlan(c.Request.Context(), existing)
@@ -160,4 +199,13 @@ func (h *ScheduledTestHandler) ListResults(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, results)
+}
+
+// ListRunnerSnapshots GET /admin/scheduled-test-runner/snapshots
+func (h *ScheduledTestHandler) ListRunnerSnapshots(c *gin.Context) {
+	if h.runnerSnapshots == nil {
+		c.JSON(http.StatusOK, []service.ScheduledTestRunnerSnapshot{})
+		return
+	}
+	c.JSON(http.StatusOK, h.runnerSnapshots())
 }

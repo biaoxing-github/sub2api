@@ -9,12 +9,14 @@ import (
 )
 
 type accountProbeReportRepoStub struct {
-	items       []AccountProbeReportItem
-	total       int
-	filter      AccountProbeReportFilter
-	detail      *AccountProbeReportItem
-	samples     []AccountProbeSample
-	sampleRunID int64
+	items        []AccountProbeReportItem
+	total        int
+	filter       AccountProbeReportFilter
+	detail       *AccountProbeReportItem
+	samples      []AccountProbeSample
+	sampleRunID  int64
+	rankings     []AccountProbeReportItem
+	rankingLimit int
 }
 
 func (r *accountProbeReportRepoStub) CreateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error {
@@ -61,6 +63,11 @@ func (r *accountProbeReportRepoStub) DeleteAccountProbeReportRuns(ctx context.Co
 func (r *accountProbeReportRepoStub) ListAccountProbeSamples(ctx context.Context, runID int64) ([]AccountProbeSample, error) {
 	r.sampleRunID = runID
 	return r.samples, nil
+}
+
+func (r *accountProbeReportRepoStub) ListAccountProbeRankingRuns(ctx context.Context, limit int) ([]AccountProbeReportItem, error) {
+	r.rankingLimit = limit
+	return r.rankings, nil
 }
 
 func TestAccountProbeServiceListReportsDecoratesAndSortsByScore(t *testing.T) {
@@ -119,4 +126,48 @@ func TestAccountProbeServiceGetReportLoadsSamplesAndScoreBreakdown(t *testing.T)
 	require.Len(t, item.Samples, 1)
 	require.NotZero(t, item.Score)
 	require.Contains(t, item.PenaltyItems, "unexpected EOF，-10")
+}
+
+func TestAccountProbeServiceListRankingDecoratesAggregateScores(t *testing.T) {
+	now := time.Now()
+	repo := &accountProbeReportRepoStub{
+		rankings: []AccountProbeReportItem{
+			{
+				AccountName: "stable-upstream",
+				AccountProbeResult: AccountProbeResult{
+					ID: 101, AccountID: 12, Status: AccountProbeStatusSuccess, RequestCount: 3, SuccessCount: 3,
+					Latency: AccountProbeLatencyStats{AvgMillis: 1300, P95Millis: 1700}, TotalTokens: 3400, CreatedAt: now.Add(-2 * time.Hour),
+				},
+			},
+			{
+				AccountName: "stable-upstream",
+				AccountProbeResult: AccountProbeResult{
+					ID: 201, AccountID: 12, Status: AccountProbeStatusSuccess, RequestCount: 3, SuccessCount: 3,
+					Latency: AccountProbeLatencyStats{AvgMillis: 1100, P95Millis: 1500}, TotalTokens: 3200, CreatedAt: now.Add(-1 * time.Hour),
+				},
+			},
+			{
+				AccountName: "stable-upstream",
+				AccountProbeResult: AccountProbeResult{
+					ID: 301, AccountID: 12, Status: AccountProbeStatusSuccess, RequestCount: 3, SuccessCount: 3,
+					Latency: AccountProbeLatencyStats{AvgMillis: 850, P95Millis: 1200}, TotalTokens: 2400, CreatedAt: now,
+				},
+			},
+		},
+	}
+	svc := NewAccountProbeService(nil, repo, nil, nil)
+
+	items, err := svc.ListRanking(context.Background(), 25)
+
+	require.NoError(t, err)
+	require.Equal(t, accountProbeRankingHistorySize, repo.rankingLimit)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(12), items[0].AccountID)
+	require.Equal(t, "stable-upstream", items[0].AccountName)
+	require.Equal(t, 3, items[0].RunCount)
+	require.GreaterOrEqual(t, items[0].AverageScore, 90.0)
+	require.Equal(t, int64(301), items[0].LatestRunID)
+	require.GreaterOrEqual(t, items[0].LatestScore, 90)
+	require.Equal(t, AccountProbeGradeExcellent, items[0].Grade)
+	require.Len(t, items[0].ScoreHistory, 3)
 }

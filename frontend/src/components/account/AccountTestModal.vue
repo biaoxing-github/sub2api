@@ -320,13 +320,8 @@ const sortTestModels = (models: ClaudeModel[]) => {
   })
 }
 
-const openAIPlanType = () => {
-  const value = props.account?.credentials?.plan_type
-  return typeof value === 'string' ? value.trim().toLowerCase() : ''
-}
-
 const selectOpenAITestModel = (models: ClaudeModel[]) => {
-  const preferredModelID = openAIPlanType() === 'free' ? 'gpt-5.5' : 'gpt-5.4'
+  const preferredModelID = 'gpt-5.5'
   return models.find((m) => m.id === preferredModelID)?.id || models[0]?.id || ''
 }
 

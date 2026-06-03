@@ -33,6 +33,7 @@ func (s *ScheduledTestService) CreatePlan(ctx context.Context, plan *ScheduledTe
 	if err != nil {
 		return nil, fmt.Errorf("invalid cron expression: %w", err)
 	}
+	normalizeScheduledTestPlan(plan)
 	plan.NextRunAt = &nextRun
 
 	if plan.MaxResults <= 0 {
@@ -58,9 +59,28 @@ func (s *ScheduledTestService) UpdatePlan(ctx context.Context, plan *ScheduledTe
 	if err != nil {
 		return nil, fmt.Errorf("invalid cron expression: %w", err)
 	}
+	normalizeScheduledTestPlan(plan)
 	plan.NextRunAt = &nextRun
 
 	return s.planRepo.Update(ctx, plan)
+}
+
+func normalizeScheduledTestPlan(plan *ScheduledTestPlan) {
+	if plan == nil {
+		return
+	}
+	switch plan.TaskType {
+	case ScheduledTestTaskTypeAccountProbe:
+		// keep explicit probe type
+	default:
+		plan.TaskType = ScheduledTestTaskTypeAccountTest
+	}
+	if plan.ProbeMode == "" {
+		plan.ProbeMode = AccountProbeProfileStandard
+	}
+	if plan.ProbeRequestMode == "" {
+		plan.ProbeRequestMode = AccountProbeRequestModeStream
+	}
 }
 
 // DeletePlan removes a plan and its results (via CASCADE).

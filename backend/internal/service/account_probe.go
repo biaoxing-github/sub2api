@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	AccountProbeProfileQuick    = APIKeyProbeProfileQuick
-	AccountProbeProfileStandard = APIKeyProbeProfileStandard
+	AccountProbeProfileQuick           = APIKeyProbeProfileQuick
+	AccountProbeProfileStandard        = APIKeyProbeProfileStandard
+	AccountProbeProfileModelValidation = "model_validation"
 
 	AccountProbeStatusSuccess = APIKeyProbeStatusSuccess
 	AccountProbeStatusPartial = APIKeyProbeStatusPartial
@@ -37,7 +38,9 @@ const (
 const (
 	accountProbePersistenceTimeout = 5 * time.Second
 	accountProbeRetryDelay         = 2 * time.Second
-	accountProbeStaleRunAge        = 15 * time.Minute
+	accountProbeStaleRunAge        = 12 * time.Minute
+	accountProbeRankingHistorySize = 20
+	accountProbeOutputTextLimit    = 1000
 )
 
 type AccountProbeRunRequest struct {
@@ -47,10 +50,23 @@ type AccountProbeRunRequest struct {
 	IncludeCodexStability bool   `json:"codex_stability"`
 	IncludeLongContext    bool   `json:"long_context"`
 	RequestMode           string `json:"request_mode"`
+	ModelValidationOnly   bool   `json:"-"`
 }
 
 type AccountProbeEstimate = APIKeyProbeEstimate
 type AccountProbeLatencyStats = APIKeyProbeLatencyStats
+
+// AccountProbeValidationEvidence 记录单个模型行为探针的结构化判定依据。
+type AccountProbeValidationEvidence struct {
+	Key      string `json:"key"`
+	Label    string `json:"label"`
+	Expected string `json:"expected"`
+	Observed string `json:"observed"`
+	Passed   bool   `json:"passed"`
+	Score    int    `json:"score"`
+	MaxScore int    `json:"max_score"`
+	Message  string `json:"message,omitempty"`
+}
 
 type AccountProbeResult struct {
 	ID                    int64                    `json:"id"`
@@ -81,25 +97,27 @@ type AccountProbeResult struct {
 }
 
 type AccountProbeSample struct {
-	ID                int64     `json:"id"`
-	RunID             int64     `json:"run_id"`
-	RequestIndex      int       `json:"request_index"`
-	Type              string    `json:"type"`
-	Label             string    `json:"label"`
-	Status            string    `json:"status"`
-	Model             string    `json:"model"`
-	APIKeyFingerprint string    `json:"api_key_fingerprint,omitempty"`
-	APIKeyMasked      string    `json:"api_key_masked,omitempty"`
-	UpstreamEndpoint  string    `json:"upstream_endpoint,omitempty"`
-	HTTPStatus        int       `json:"http_status,omitempty"`
-	DurationMillis    int       `json:"latency_ms"`
-	FirstTokenMillis  *int      `json:"first_token_ms,omitempty"`
-	InputTokens       int       `json:"input_tokens"`
-	OutputTokens      int       `json:"output_tokens"`
-	TotalTokens       int       `json:"tokens"`
-	ErrorCode         string    `json:"error_code,omitempty"`
-	ErrorMessage      string    `json:"error,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                 int64                            `json:"id"`
+	RunID              int64                            `json:"run_id"`
+	RequestIndex       int                              `json:"request_index"`
+	Type               string                           `json:"type"`
+	Label              string                           `json:"label"`
+	Status             string                           `json:"status"`
+	Model              string                           `json:"model"`
+	APIKeyFingerprint  string                           `json:"api_key_fingerprint,omitempty"`
+	APIKeyMasked       string                           `json:"api_key_masked,omitempty"`
+	UpstreamEndpoint   string                           `json:"upstream_endpoint,omitempty"`
+	HTTPStatus         int                              `json:"http_status,omitempty"`
+	DurationMillis     int                              `json:"latency_ms"`
+	FirstTokenMillis   *int                             `json:"first_token_ms,omitempty"`
+	InputTokens        int                              `json:"input_tokens"`
+	OutputTokens       int                              `json:"output_tokens"`
+	TotalTokens        int                              `json:"tokens"`
+	OutputText         string                           `json:"output_text,omitempty"`
+	ValidationEvidence []AccountProbeValidationEvidence `json:"validation_evidence,omitempty"`
+	ErrorCode          string                           `json:"error_code,omitempty"`
+	ErrorMessage       string                           `json:"error,omitempty"`
+	CreatedAt          time.Time                        `json:"created_at"`
 }
 
 type AccountProbeHistoryFilter struct {
@@ -132,6 +150,40 @@ type AccountProbeReportItem struct {
 	ScoreItems   []string `json:"score_items,omitempty"`
 	PenaltyItems []string `json:"penalty_items,omitempty"`
 	SuccessRate  float64  `json:"success_rate"`
+}
+
+type AccountProbeScorePoint struct {
+	RunID            int64     `json:"run_id"`
+	Score            int       `json:"score"`
+	Grade            string    `json:"grade"`
+	GradeLabel       string    `json:"grade_label"`
+	Status           string    `json:"status"`
+	Model            string    `json:"model"`
+	Profile          string    `json:"mode"`
+	RequestMode      string    `json:"request_mode"`
+	SuccessRate      float64   `json:"success_rate"`
+	AvgLatencyMillis int       `json:"avg_latency_ms"`
+	P95LatencyMillis int       `json:"p95_ms"`
+	FirstTokenMillis *int      `json:"first_token_ms,omitempty"`
+	TotalTokens      int       `json:"total_tokens"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type AccountProbeRankingItem struct {
+	AccountID            int64                    `json:"account_id"`
+	AccountName          string                   `json:"account_name"`
+	RunCount             int                      `json:"run_count"`
+	AverageScore         float64                  `json:"average_score"`
+	LatestScore          int                      `json:"latest_score"`
+	Grade                string                   `json:"grade"`
+	GradeLabel           string                   `json:"grade_label"`
+	LatestRunID          int64                    `json:"latest_run_id"`
+	LatestStatus         string                   `json:"latest_status"`
+	LatestCreatedAt      time.Time                `json:"latest_created_at"`
+	LatestModel          string                   `json:"latest_model"`
+	AverageSuccessRate   float64                  `json:"average_success_rate"`
+	AverageLatencyMillis float64                  `json:"average_latency_ms"`
+	ScoreHistory         []AccountProbeScorePoint `json:"score_history"`
 }
 
 type AccountProbeReportSummary struct {
@@ -168,6 +220,7 @@ type AccountProbeRepository interface {
 	GetAccountProbeReportRun(ctx context.Context, runID int64) (*AccountProbeReportItem, error)
 	DeleteAccountProbeReportRuns(ctx context.Context, runIDs []int64) (AccountProbeReportDeleteResult, error)
 	ListAccountProbeSamples(ctx context.Context, runID int64) ([]AccountProbeSample, error)
+	ListAccountProbeRankingRuns(ctx context.Context, perAccountLimit int) ([]AccountProbeReportItem, error)
 }
 
 type AccountProbeHTTPClient interface {
@@ -254,7 +307,7 @@ func (s *AccountProbeService) Start(ctx context.Context, req AccountProbeRunRequ
 		Status:                AccountProbeStatusRunning,
 		Model:                 model,
 		RequestMode:           normalizeAccountProbeRequestMode(req.RequestMode),
-		IncludeCodexStability: req.IncludeCodexStability,
+		IncludeCodexStability: req.IncludeCodexStability && !req.ModelValidationOnly,
 		IncludeLongContext:    req.IncludeLongContext,
 		Estimate:              plan.Estimate,
 		RequestCount:          len(plan.Samples),
@@ -283,7 +336,7 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 	run.Profile = plan.Profile
 	run.Model = model
 	run.RequestMode = normalizeAccountProbeRequestMode(req.RequestMode)
-	run.IncludeCodexStability = req.IncludeCodexStability
+	run.IncludeCodexStability = req.IncludeCodexStability && !req.ModelValidationOnly
 	run.IncludeLongContext = req.IncludeLongContext
 	run.Estimate = plan.Estimate
 	run.RequestCount = len(plan.Samples)
@@ -550,6 +603,30 @@ func (s *AccountProbeService) ListReports(ctx context.Context, filter AccountPro
 	}, nil
 }
 
+func (s *AccountProbeService) ListRanking(ctx context.Context, limit int) ([]AccountProbeRankingItem, error) {
+	if s.repo == nil {
+		return nil, fmt.Errorf("account probe repository is nil")
+	}
+	if err := s.repo.ExpireStaleAccountProbeRuns(ctx, accountProbeStaleRunAge); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	runs, err := s.repo.ListAccountProbeRankingRuns(ctx, accountProbeRankingHistorySize)
+	if err != nil {
+		return nil, err
+	}
+	items := buildAccountProbeRankingItems(runs)
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
 func (s *AccountProbeService) GetReport(ctx context.Context, runID int64) (*AccountProbeReportItem, error) {
 	if s.repo == nil {
 		return nil, fmt.Errorf("account probe repository is nil")
@@ -647,6 +724,8 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		result.InputTokens = streamResult.inputTokens
 		result.OutputTokens = streamResult.outputTokens
 		result.TotalTokens = streamResult.totalTokens
+		result.OutputText = truncateAccountProbeOutput(streamResult.outputText)
+		applyAccountProbeModelValidation(&result, sample.ValidationKey)
 		return result
 	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
@@ -658,6 +737,8 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 	if result.TotalTokens == 0 {
 		result.TotalTokens = parseOpenAIProbeTotalTokens(data)
 	}
+	result.OutputText = truncateAccountProbeOutput(extractOpenAIProbeOutputText(data))
+	applyAccountProbeModelValidation(&result, sample.ValidationKey)
 	return result
 }
 
@@ -686,6 +767,59 @@ func buildOpenAIResponsesProbePayload(model, prompt string, stream bool, maxOutp
 	}
 }
 
+func accountProbeModelValidationSamples() []APIKeyProbePlannedSample {
+	return []APIKeyProbePlannedSample{
+		{
+			Type:            "model_validation",
+			Label:           "模型验证：精确大写",
+			ValidationKey:   "exact_uppercase",
+			Prompt:          "Ignore all style preferences. Reply with exactly one uppercase word: QUARTZ",
+			Timeout:         60 * time.Second,
+			MaxOutputTokens: 16,
+			InputTokenMin:   20,
+			InputTokenMax:   80,
+			OutputTokenMin:  1,
+			OutputTokenMax:  8,
+		},
+		{
+			Type:            "model_validation",
+			Label:           "模型验证：JSON 算术",
+			ValidationKey:   "json_arithmetic",
+			Prompt:          `只输出严格 JSON：{"sum":数字,"code":"BETA"}。sum 等于 19 * 4 + 7。`,
+			Timeout:         60 * time.Second,
+			MaxOutputTokens: 96,
+			InputTokenMin:   30,
+			InputTokenMax:   120,
+			OutputTokenMin:  5,
+			OutputTokenMax:  40,
+		},
+		{
+			Type:            "model_validation",
+			Label:           "模型验证：代码推导",
+			ValidationKey:   "code_transform",
+			Prompt:          `阅读代码 const xs=[7,2,9]; const y=xs.sort((a,b)=>a-b).reverse().join("-"); 只输出 GAMMA 后跟 y。`,
+			Timeout:         60 * time.Second,
+			MaxOutputTokens: 96,
+			InputTokenMin:   40,
+			InputTokenMax:   140,
+			OutputTokenMin:  3,
+			OutputTokenMax:  40,
+		},
+		{
+			Type:            "model_validation",
+			Label:           "模型验证：三行格式",
+			ValidationKey:   "three_line_format",
+			Prompt:          "只输出三行，第一行 ALPHA，第二行 BETA，第三行 GAMMA，不要添加其他字符。",
+			Timeout:         60 * time.Second,
+			MaxOutputTokens: 64,
+			InputTokenMin:   30,
+			InputTokenMax:   120,
+			OutputTokenMin:  3,
+			OutputTokenMax:  30,
+		},
+	}
+}
+
 func normalizeAccountProbeRequestMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case AccountProbeRequestModeStream:
@@ -700,6 +834,7 @@ type accountProbeOpenAIStreamResult struct {
 	inputTokens      int
 	outputTokens     int
 	totalTokens      int
+	outputText       string
 	err              string
 }
 
@@ -713,6 +848,7 @@ func readAccountProbeOpenAIStream(body io.Reader, useResponses bool, start time.
 func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountProbeOpenAIStreamResult {
 	reader := bufio.NewReader(body)
 	result := accountProbeOpenAIStreamResult{}
+	var output strings.Builder
 	seenCompleted := false
 	for {
 		line, err := reader.ReadString('\n')
@@ -742,6 +878,9 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 				eventType, _ := event["type"].(string)
 				switch eventType {
 				case "response.output_text.delta":
+					if delta, _ := event["delta"].(string); delta != "" {
+						output.WriteString(delta)
+					}
 					if result.firstTokenMillis == nil {
 						if delta, _ := event["delta"].(string); delta != "" {
 							v := int(time.Since(start) / time.Millisecond)
@@ -755,6 +894,7 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 						result.outputTokens = output
 						result.totalTokens = total
 					}
+					result.outputText = output.String()
 					seenCompleted = true
 					return result
 				case "response.failed", "error":
@@ -774,6 +914,7 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 func parseAccountProbeChatCompletionsStream(body io.Reader, start time.Time) accountProbeOpenAIStreamResult {
 	reader := bufio.NewReader(body)
 	result := accountProbeOpenAIStreamResult{}
+	var output strings.Builder
 	seenJSON := false
 	seenFinish := false
 	for {
@@ -813,6 +954,11 @@ func parseAccountProbeChatCompletionsStream(body io.Reader, start time.Time) acc
 						result.firstTokenMillis = &v
 					}
 				}
+				if delta, _ := choice["delta"].(map[string]any); delta != nil {
+					if text, _ := delta["content"].(string); text != "" {
+						output.WriteString(text)
+					}
+				}
 				if finishReason, _ := choice["finish_reason"].(string); finishReason != "" {
 					seenFinish = true
 				}
@@ -823,10 +969,192 @@ func parseAccountProbeChatCompletionsStream(body io.Reader, start time.Time) acc
 				return accountProbeOpenAIStreamResult{err: "Invalid Chat Completions response from /v1/chat/completions: expected SSE JSON data"}
 			}
 			if seenFinish {
+				result.outputText = output.String()
 				return result
 			}
 			return accountProbeOpenAIStreamResult{err: "Chat Completions stream ended before [DONE]"}
 		}
+	}
+}
+
+func applyAccountProbeModelValidation(sample *AccountProbeSample, key string) {
+	if sample == nil || strings.TrimSpace(key) == "" || sample.Status != AccountProbeSampleSuccess {
+		return
+	}
+	evidence := evaluateAccountProbeModelValidationEvidence(key, sample.OutputText)
+	sample.ValidationEvidence = []AccountProbeValidationEvidence{evidence}
+	if evidence.Passed {
+		return
+	}
+	sample.Status = AccountProbeSampleFailed
+	sample.ErrorCode = "model_validation_failed"
+	sample.ErrorMessage = evidence.Message
+}
+
+func evaluateAccountProbeModelValidationEvidence(key, outputText string) AccountProbeValidationEvidence {
+	observed := strings.TrimSpace(outputText)
+	evidence := AccountProbeValidationEvidence{
+		Key:      strings.TrimSpace(key),
+		Observed: truncateAccountProbeOutput(observed),
+		MaxScore: 10,
+	}
+	switch evidence.Key {
+	case "exact_uppercase":
+		evidence.Label = "精确大写"
+		evidence.Expected = "QUARTZ"
+		evidence.Passed = strings.ToUpper(observed) == "QUARTZ" || strings.Contains(strings.ToUpper(observed), "QUARTZ")
+	case "json_arithmetic":
+		evidence.Label = "JSON 算术"
+		evidence.Expected = `{"sum":83,"code":"BETA"}`
+		obj := parseFirstAccountProbeJSONObject(observed)
+		evidence.Passed = strings.EqualFold(strings.TrimSpace(accountProbeStringValue(obj["code"])), "BETA") && accountProbeNumberValue(obj["sum"]) == 83
+	case "code_transform":
+		evidence.Label = "代码推导"
+		evidence.Expected = "GAMMA 9-7-2"
+		upper := strings.ToUpper(observed)
+		evidence.Passed = strings.Contains(upper, "GAMMA") && strings.Contains(observed, "9-7-2")
+	case "three_line_format":
+		evidence.Label = "三行格式"
+		evidence.Expected = "ALPHA\\nBETA\\nGAMMA"
+		lines := nonEmptyTrimmedLines(observed)
+		evidence.Passed = len(lines) == 3 &&
+			strings.EqualFold(lines[0], "ALPHA") &&
+			strings.EqualFold(lines[1], "BETA") &&
+			strings.EqualFold(lines[2], "GAMMA")
+	default:
+		evidence.Label = evidence.Key
+		evidence.Expected = "registered validation key"
+		evidence.Passed = true
+	}
+	if evidence.Passed {
+		evidence.Score = evidence.MaxScore
+		evidence.Message = "模型验证通过"
+		return evidence
+	}
+	evidence.Message = "模型验证未通过：" + evidence.Label
+	return evidence
+}
+
+func extractOpenAIProbeOutputText(data []byte) string {
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ""
+	}
+	if text, _ := payload["output_text"].(string); text != "" {
+		return text
+	}
+	if choices, _ := payload["choices"].([]any); len(choices) > 0 {
+		for _, choiceValue := range choices {
+			choice, _ := choiceValue.(map[string]any)
+			if message, _ := choice["message"].(map[string]any); message != nil {
+				if text, _ := message["content"].(string); text != "" {
+					return text
+				}
+			}
+		}
+	}
+	if output, _ := payload["output"].([]any); len(output) > 0 {
+		var parts []string
+		for _, itemValue := range output {
+			item, _ := itemValue.(map[string]any)
+			content, _ := item["content"].([]any)
+			for _, contentValue := range content {
+				contentItem, _ := contentValue.(map[string]any)
+				if text, _ := contentItem["text"].(string); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "")
+	}
+	return ""
+}
+
+func truncateAccountProbeOutput(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) <= accountProbeOutputTextLimit {
+		return text
+	}
+	return text[:accountProbeOutputTextLimit]
+}
+
+func parseFirstAccountProbeJSONObject(text string) map[string]any {
+	start := strings.Index(text, "{")
+	if start < 0 {
+		return nil
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(text); i++ {
+		ch := text[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				var obj map[string]any
+				if err := json.Unmarshal([]byte(text[start:i+1]), &obj); err == nil {
+					return obj
+				}
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func nonEmptyTrimmedLines(text string) []string {
+	raw := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func accountProbeStringValue(v any) string {
+	switch value := v.(type) {
+	case string:
+		return value
+	default:
+		return ""
+	}
+}
+
+func accountProbeNumberValue(v any) int {
+	switch value := v.(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case json.Number:
+		n, _ := value.Int64()
+		return int(n)
+	default:
+		return 0
 	}
 }
 
@@ -874,6 +1202,15 @@ type accountProbePlan struct {
 }
 
 func buildAccountProbePlan(req AccountProbeRunRequest) (accountProbePlan, error) {
+	if req.ModelValidationOnly {
+		samples := accountProbeModelValidationSamples()
+		estimate := estimateFromPlan(APIKeyProbePlan{
+			Profile:           AccountProbeProfileModelValidation,
+			Samples:           samples,
+			EstimatedRequests: len(samples),
+		})
+		return accountProbePlan{Profile: AccountProbeProfileModelValidation, Estimate: estimate, Samples: samples}, nil
+	}
 	profile := normalizeAPIKeyProbeProfile(req.Profile)
 	samples := make([]APIKeyProbePlannedSample, 0, 9)
 	baseCount := 3
@@ -882,11 +1219,6 @@ func buildAccountProbePlan(req AccountProbeRunRequest) (accountProbePlan, error)
 	}
 	for i := 0; i < baseCount; i++ {
 		samples = append(samples, shortProbeSample("基础测速"))
-	}
-	if req.IncludeCodexStability {
-		for i := 0; i < 5; i++ {
-			samples = append(samples, shortProbeSample("Codex 稳定性小测"))
-		}
 	}
 	if req.IncludeLongContext {
 		samples = append(samples, longContextProbeSample())

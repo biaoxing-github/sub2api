@@ -23,6 +23,8 @@ type accountProbeReportHTTPServiceStub struct {
 	reportItem   *service.AccountProbeReportItem
 	deleteIDs    []int64
 	deleteResult service.AccountProbeReportDeleteResult
+	rankingLimit int
+	rankingItems []service.AccountProbeRankingItem
 	startedRuns  []service.AccountProbeRunRequest
 	activeRuns   int
 	maxActive    int
@@ -94,6 +96,11 @@ func (s *accountProbeReportHTTPServiceStub) DeleteReports(ctx context.Context, r
 	return s.deleteResult, nil
 }
 
+func (s *accountProbeReportHTTPServiceStub) ListRanking(ctx context.Context, limit int) ([]service.AccountProbeRankingItem, error) {
+	s.rankingLimit = limit
+	return s.rankingItems, nil
+}
+
 func TestAccountProbeReportListParsesFiltersAndReturnsPage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	now := time.Now()
@@ -160,6 +167,32 @@ func TestAccountProbeReportGetReturnsDetail(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"penalty_items":["unexpected EOF，-10"]`)
 }
 
+func TestAccountProbeReportRankingReturnsAggregateItems(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	probeSvc := &accountProbeReportHTTPServiceStub{
+		rankingItems: []service.AccountProbeRankingItem{{
+			AccountID:    181,
+			AccountName:  "foyeapi",
+			RunCount:     4,
+			AverageScore: 91.5,
+			LatestScore:  94,
+		}},
+	}
+	h := &AccountHandler{accountProbeService: probeSvc}
+	router := gin.New()
+	router.GET("/api/v1/admin/account-probe-runs/ranking", h.ListProbeReportRanking)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/account-probe-runs/ranking?limit=12", nil)
+
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 12, probeSvc.rankingLimit)
+	require.Contains(t, rec.Body.String(), `"account_name":"foyeapi"`)
+	require.Contains(t, rec.Body.String(), `"average_score":91.5`)
+}
+
 func TestAccountProbeReportBatchDeleteDeduplicatesRunIDs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	probeSvc := &accountProbeReportHTTPServiceStub{
@@ -206,7 +239,7 @@ func TestAccountProbeReportBatchCreateDeduplicatesAccounts(t *testing.T) {
 	require.Equal(t, int64(181), probeSvc.startedRuns[0].AccountID)
 	require.Equal(t, int64(182), probeSvc.startedRuns[1].AccountID)
 	require.Equal(t, "stream", probeSvc.startedRuns[0].RequestMode)
-	require.True(t, probeSvc.startedRuns[0].IncludeCodexStability)
+	require.False(t, probeSvc.startedRuns[0].IncludeCodexStability)
 }
 
 func TestAccountProbeReportBatchCreateLimitsBackgroundConcurrency(t *testing.T) {

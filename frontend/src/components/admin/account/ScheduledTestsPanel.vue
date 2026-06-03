@@ -12,7 +12,7 @@
           {{ t('admin.scheduledTests.title') }}
         </p>
         <button
-          @click="showAddForm = !showAddForm"
+          @click="toggleAddForm"
           class="btn btn-primary flex items-center gap-1.5 text-sm"
         >
           <Icon name="plus" size="sm" :stroke-width="2" />
@@ -503,6 +503,7 @@ const showDeleteConfirm = ref(false)
 const deletingPlan = ref<ScheduledTestPlan | null>(null)
 const editingPlanId = ref<number | null>(null)
 const updating = ref(false)
+const defaultOpenAIAccountTestModelID = 'gpt-5.5'
 const editForm = reactive({
   model_id: '' as string,
   cron_expression: '' as string,
@@ -519,12 +520,28 @@ const newPlan = reactive({
   auto_recover: false
 })
 
+const normalizeModelOptionValue = (value: SelectOption['value']) => String(value)
+
+const resolveDefaultNewPlanModelID = () => {
+  const preferred = props.modelOptions.find(option => option.value === defaultOpenAIAccountTestModelID)
+  if (preferred) return normalizeModelOptionValue(preferred.value)
+  const fallback = props.modelOptions[0]
+  return fallback ? normalizeModelOptionValue(fallback.value) : ''
+}
+
 const resetNewPlan = () => {
-  newPlan.model_id = ''
+  newPlan.model_id = resolveDefaultNewPlanModelID()
   newPlan.cron_expression = ''
   newPlan.max_results = '100'
   newPlan.enabled = true
   newPlan.auto_recover = false
+}
+
+const toggleAddForm = () => {
+  showAddForm.value = !showAddForm.value
+  if (showAddForm.value && !newPlan.model_id) {
+    newPlan.model_id = resolveDefaultNewPlanModelID()
+  }
 }
 
 // Load plans when dialog opens
@@ -542,6 +559,16 @@ watch(
       showDeleteConfirm.value = false
     }
   }
+)
+
+watch(
+  () => props.modelOptions,
+  () => {
+    if (showAddForm.value && !newPlan.model_id) {
+      newPlan.model_id = resolveDefaultNewPlanModelID()
+    }
+  },
+  { deep: true }
 )
 
 const loadPlans = async () => {

@@ -686,7 +686,7 @@ export interface ApiKeyProbeRun {
   finished_at?: string | null
 }
 
-export type AccountProbeMode = ApiKeyProbeMode
+export type AccountProbeMode = ApiKeyProbeMode | 'model_validation'
 export type AccountProbeRequestMode = 'non_stream' | 'stream'
 
 export interface CreateAccountProbeRunRequest {
@@ -697,6 +697,18 @@ export interface CreateAccountProbeRunRequest {
   include_long_context?: boolean
   codex_stability?: boolean
   long_context?: boolean
+}
+
+export interface CreateAccountModelProbeRunRequest {
+  account_id: number
+  model?: string
+  request_mode?: AccountProbeRequestMode | string
+}
+
+export interface BatchAccountModelProbeRunsRequest {
+  account_ids: number[]
+  model?: string
+  request_mode?: AccountProbeRequestMode | string
 }
 
 export interface AccountProbeSample {
@@ -716,9 +728,22 @@ export interface AccountProbeSample {
   input_tokens?: number | null
   output_tokens?: number | null
   tokens?: number | null
+  output_text?: string | null
+  validation_evidence?: AccountProbeValidationEvidence[]
   error_code?: string | null
   error?: string | null
   created_at: string
+}
+
+export interface AccountProbeValidationEvidence {
+  key: string
+  label: string
+  expected: string
+  observed: string
+  passed: boolean
+  score: number
+  max_score: number
+  message?: string | null
 }
 
 export interface AccountProbeScoreItem {
@@ -821,6 +846,40 @@ export interface AccountProbeRunsResponse {
   summary?: AccountProbeRunSummary
 }
 
+export interface AccountProbeScorePoint {
+  run_id: number
+  score: number
+  grade: string
+  grade_label: string
+  status: string
+  model: string
+  mode: string
+  request_mode: string
+  success_rate: number
+  avg_latency_ms: number
+  p95_ms: number
+  first_token_ms?: number | null
+  total_tokens: number
+  created_at: string
+}
+
+export interface AccountProbeRankingItem {
+  account_id: number
+  account_name: string
+  run_count: number
+  average_score: number
+  latest_score: number
+  grade: string
+  grade_label: string
+  latest_run_id: number
+  latest_status: string
+  latest_created_at: string
+  latest_model: string
+  average_success_rate: number
+  average_latency_ms: number
+  score_history: AccountProbeScorePoint[]
+}
+
 export interface BatchAccountProbeRunsRequest {
   account_ids: number[]
   mode: AccountProbeMode | string
@@ -834,6 +893,8 @@ export interface BatchAccountProbeRunsResponse {
   runs: AccountProbeRun[]
   accepted_count: number
 }
+
+export type BatchAccountModelProbeRunsResponse = BatchAccountProbeRunsResponse
 
 export interface DeleteAccountProbeRunsResponse {
   requested_count: number
@@ -2252,11 +2313,16 @@ export interface TotpLogin2FARequest {
 export interface ScheduledTestPlan {
   id: number
   account_id: number
+  task_type?: 'account_test' | 'account_probe' | string
   model_id: string
   cron_expression: string
   enabled: boolean
   max_results: number
   auto_recover: boolean
+  probe_mode?: AccountProbeMode | string
+  probe_request_mode?: AccountProbeRequestMode | string
+  probe_codex_stability?: boolean
+  probe_long_context?: boolean
   last_run_at: string | null
   next_run_at: string | null
   created_at: string
@@ -2270,26 +2336,56 @@ export interface ScheduledTestResult {
   response_text: string
   error_message: string
   latency_ms: number
+  first_token_ms?: number | null
+  account_probe_run_id?: number | null
   started_at: string
   finished_at: string
   created_at: string
 }
 
+export interface ScheduledTestRunnerSnapshot {
+  name: string
+  interval_ms: number
+  initial_delay_ms: number
+  running: boolean
+  last_started_at?: string | null
+  last_finished_at?: string | null
+  last_success_at?: string | null
+  last_error_at?: string | null
+  last_error?: string | null
+  last_duration_ms: number
+  max_duration_ms: number
+  run_count: number
+  success_count: number
+  failure_count: number
+  skipped_count: number
+}
+
 export interface CreateScheduledTestPlanRequest {
   account_id: number
+  task_type?: 'account_test' | 'account_probe' | string
   model_id: string
   cron_expression: string
   enabled?: boolean
   max_results?: number
   auto_recover?: boolean
+  probe_mode?: AccountProbeMode | string
+  probe_request_mode?: AccountProbeRequestMode | string
+  probe_codex_stability?: boolean
+  probe_long_context?: boolean
 }
 
 export interface UpdateScheduledTestPlanRequest {
+  task_type?: 'account_test' | 'account_probe' | string
   model_id?: string
   cron_expression?: string
   enabled?: boolean
   max_results?: number
   auto_recover?: boolean
+  probe_mode?: AccountProbeMode | string
+  probe_request_mode?: AccountProbeRequestMode | string
+  probe_codex_stability?: boolean
+  probe_long_context?: boolean
 }
 
 // Payment types
