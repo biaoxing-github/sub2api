@@ -320,6 +320,9 @@ describe('AccountProbeReportsView', () => {
         label: '基础测速',
         upstream_endpoint: 'https://api.example.test/v1/responses',
         output_text: '{"sum":83,"code":"BETA"}',
+        request_prompt: '返回 JSON：sum=83, code=BETA',
+        request_body: '{"model":"gpt-5.5","input":[{"role":"user","content":"返回 JSON"}]}',
+        response_body: '{"output":[{"content":[{"type":"output_text","text":"{\\"sum\\":83,\\"code\\":\\"BETA\\"}"}]}]}',
         validation_evidence: [{
           key: 'json_arithmetic',
           label: 'JSON 算术',
@@ -368,6 +371,9 @@ describe('AccountProbeReportsView', () => {
     expect(document.body.textContent).toContain('830ms')
     expect(document.body.textContent).toContain('JSON 算术')
     expect(document.body.textContent).toContain('{"sum":83,"code":"BETA"}')
+    expect(document.body.textContent).toContain('返回 JSON：sum=83, code=BETA')
+    expect(document.body.textContent).toContain('"model":"gpt-5.5"')
+    expect(document.body.textContent).toContain('output_text')
     expect(document.body.textContent).toContain('context deadline exceeded')
     expect(document.body.textContent).toContain('10 / 10')
   })

@@ -342,6 +342,24 @@
                         </div>
                       </td>
                     </tr>
+                    <tr v-if="sample.request_prompt || sample.request_body || sample.response_body" class="border-t border-gray-100 bg-white dark:border-dark-700 dark:bg-dark-900/50">
+                      <td colspan="8" class="px-3 py-3">
+                        <div class="grid gap-3 text-xs">
+                          <div v-if="sample.request_prompt">
+                            <div class="mb-1 font-medium text-gray-600 dark:text-gray-300">{{ t('admin.accountProbeReports.requestPrompt') }}</div>
+                            <pre class="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-2 font-mono text-gray-700 dark:bg-dark-800 dark:text-gray-200">{{ sample.request_prompt }}</pre>
+                          </div>
+                          <div v-if="sample.request_body">
+                            <div class="mb-1 font-medium text-gray-600 dark:text-gray-300">{{ t('admin.accountProbeReports.requestBody') }}</div>
+                            <pre class="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-2 font-mono text-gray-700 dark:bg-dark-800 dark:text-gray-200">{{ sample.request_body }}</pre>
+                          </div>
+                          <div v-if="sample.response_body">
+                            <div class="mb-1 font-medium text-gray-600 dark:text-gray-300">{{ t('admin.accountProbeReports.responseBody') }}</div>
+                            <pre class="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-2 font-mono text-gray-700 dark:bg-dark-800 dark:text-gray-200">{{ sample.response_body }}</pre>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
                   </template>
                 </tbody>
               </table>

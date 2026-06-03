@@ -226,6 +226,46 @@ func (c *modelValidationSuccessHTTPClientStub) Do(req *http.Request) (*http.Resp
 	return accountProbeJSONResponse(http.StatusOK, string(data)), nil
 }
 
+type modelValidationStreamToolHTTPClientStub struct {
+	requests []*http.Request
+	bodies   []string
+}
+
+func (c *modelValidationStreamToolHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
+	c.requests = append(c.requests, req)
+	body := ""
+	if req.Body != nil {
+		data, _ := io.ReadAll(req.Body)
+		body = string(data)
+		c.bodies = append(c.bodies, body)
+	}
+	if req.Method == http.MethodGet {
+		return accountProbeJSONResponse(http.StatusOK, `{"data":[{"id":"gpt-5.5"},{"id":"gpt-5.4"}]}`), nil
+	}
+	model := accountProbeModelFromRequestBody(body)
+	if model == "" {
+		model = "gpt-5.5"
+	}
+	outputText := accountProbeOutputForRequestBody(body)
+	outputJSON := `[]`
+	if strings.Contains(body, "record_model_check") {
+		outputText = ""
+		outputJSON = `[{"type":"function_call","name":"record_model_check","arguments":"{\"code\":\"ok\",\"count\":1}"}]`
+	}
+	deltaEvent, _ := json.Marshal(map[string]any{
+		"type":  "response.output_text.delta",
+		"delta": outputText,
+	})
+	completedEvent := []byte(`{"type":"response.completed","response":{"model":"` + model + `","output":` + outputJSON + `,"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}}`)
+	streamBody := strings.Join([]string{
+		`data: ` + string(deltaEvent),
+		``,
+		`data: ` + string(completedEvent),
+		``,
+	}, "\n")
+	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(streamBody)), Header: make(http.Header)}, nil
+}
+
 func accountProbeModelFromRequestBody(body string) string {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(body), &payload); err != nil {
@@ -568,6 +608,12 @@ func TestAccountProbeService_RunManualModelValidationStoresEvidence(t *testing.T
 			continue
 		}
 		validationSamples++
+		require.NotEmpty(t, sample.RequestBody)
+		require.NotEmpty(t, sample.ResponseBody)
+		if sample.ValidationEvidence[0].Key != "model_catalog" {
+			require.NotEmpty(t, sample.RequestPrompt)
+			require.Contains(t, sample.RequestBody, `"input"`)
+		}
 		require.Len(t, sample.ValidationEvidence, 1)
 		if sample.ValidationEvidence[0].Key != "tool_calling" {
 			require.NotEmpty(t, sample.OutputText)
@@ -576,6 +622,51 @@ func TestAccountProbeService_RunManualModelValidationStoresEvidence(t *testing.T
 		require.Equal(t, sample.ValidationEvidence[0].MaxScore, sample.ValidationEvidence[0].Score)
 	}
 	require.Equal(t, len(accountProbeModelValidationSamplesForModel("gpt-5.5")), validationSamples)
+}
+
+func TestAccountProbeService_RunStreamModelValidationPreservesToolCallEvidence(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "encore",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://stream-tool-validation.example.test/v1",
+			"api_key":  "sk-one",
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	repo := &accountProbeRepoStub{}
+	client := &modelValidationStreamToolHTTPClientStub{}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID:           128,
+		Profile:             AccountProbeProfileQuick,
+		Model:               "gpt-5.5",
+		ModelValidationOnly: true,
+		RequestMode:         AccountProbeRequestModeStream,
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Status)
+	var toolSample *AccountProbeSample
+	for i := range repo.samples {
+		if repo.samples[i].ValidationEvidence[0].Key == "tool_calling" {
+			toolSample = &repo.samples[i]
+			break
+		}
+	}
+	require.NotNil(t, toolSample)
+	require.Equal(t, AccountProbeSampleSuccess, toolSample.Status)
+	require.Empty(t, toolSample.ErrorCode)
+	require.Contains(t, toolSample.RequestBody, "record_model_check")
+	require.Contains(t, toolSample.ResponseBody, `"function_call"`)
+	require.True(t, toolSample.ValidationEvidence[0].Passed)
+	require.Equal(t, "record_model_check", toolSample.ValidationEvidence[0].Observed)
 }
 
 func TestAccountProbeService_RunManualModelValidationWithTrustedComparisonStoresDistributionSummary(t *testing.T) {

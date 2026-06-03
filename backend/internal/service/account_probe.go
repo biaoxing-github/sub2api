@@ -38,14 +38,15 @@ const (
 )
 
 const (
-	accountProbePersistenceTimeout = 5 * time.Second
-	accountProbeRetryDelay         = 2 * time.Second
-	accountProbeModelRetryDelay    = 300 * time.Millisecond
-	accountProbeModelMaxAttempts   = 3
-	accountProbeDistributionRuns   = 5
-	accountProbeStaleRunAge        = 12 * time.Minute
-	accountProbeRankingHistorySize = 20
-	accountProbeOutputTextLimit    = 1000
+	accountProbePersistenceTimeout  = 5 * time.Second
+	accountProbeRetryDelay          = 2 * time.Second
+	accountProbeModelRetryDelay     = 300 * time.Millisecond
+	accountProbeModelMaxAttempts    = 3
+	accountProbeDistributionRuns    = 5
+	accountProbeStaleRunAge         = 12 * time.Minute
+	accountProbeRankingHistorySize  = 20
+	accountProbeOutputTextLimit     = 1000
+	accountProbeTranscriptTextLimit = 20000
 )
 
 type AccountProbeRunRequest struct {
@@ -133,9 +134,15 @@ type AccountProbeSample struct {
 	TotalTokens        int                              `json:"tokens"`
 	OutputText         string                           `json:"output_text,omitempty"`
 	ValidationEvidence []AccountProbeValidationEvidence `json:"validation_evidence,omitempty"`
-	ErrorCode          string                           `json:"error_code,omitempty"`
-	ErrorMessage       string                           `json:"error,omitempty"`
-	CreatedAt          time.Time                        `json:"created_at"`
+	// RequestPrompt 保存发送给上游模型的原始 prompt，便于在体检报告里复盘输入。
+	RequestPrompt string `json:"request_prompt,omitempty"`
+	// RequestBody 保存不含 Authorization 的上游请求 JSON 或 GET 请求摘要。
+	RequestBody string `json:"request_body,omitempty"`
+	// ResponseBody 保存上游返回体或流式 completed response，用于详情弹窗核对输出。
+	ResponseBody string    `json:"response_body,omitempty"`
+	ErrorCode    string    `json:"error_code,omitempty"`
+	ErrorMessage string    `json:"error,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type AccountProbeHistoryFilter struct {
@@ -1141,14 +1148,20 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 			"max_tokens": sample.MaxOutputTokens,
 		}
 	}
+	requestPrompt := strings.TrimSpace(sample.Prompt)
+	requestBody := accountProbeRequestBodyForDisplay(method, endpoint, requestModel, stream, payload)
 	var body io.Reader
 	if payload != nil {
 		data, _ := json.Marshal(payload)
+		requestBody = truncateAccountProbeTranscript(string(data))
 		body = bytes.NewReader(data)
 	}
 	req, err := http.NewRequestWithContext(sampleCtx, method, endpoint, body)
 	if err != nil {
-		return failedAccountProbeSample(account, apiKey, endpoint, "request_create_failed", err.Error(), 0, 0)
+		result := failedAccountProbeSample(account, apiKey, endpoint, "request_create_failed", err.Error(), 0, 0)
+		result.RequestPrompt = requestPrompt
+		result.RequestBody = requestBody
+		return result
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	if payload != nil {
@@ -1166,7 +1179,10 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 	resp, err := s.doAccountProbeHTTP(req, proxyURL, account)
 	duration := time.Since(start)
 	if err != nil {
-		return failedAccountProbeSample(account, apiKey, endpoint, "request_failed", err.Error(), 0, duration)
+		result := failedAccountProbeSample(account, apiKey, endpoint, "request_failed", err.Error(), 0, duration)
+		result.RequestPrompt = requestPrompt
+		result.RequestBody = requestBody
+		return result
 	}
 	defer resp.Body.Close()
 
@@ -1179,6 +1195,8 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		DurationMillis:    int(math.Round(float64(duration / time.Millisecond))),
 		CreatedAt:         time.Now(),
 		Model:             requestModel,
+		RequestPrompt:     requestPrompt,
+		RequestBody:       requestBody,
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
@@ -1186,6 +1204,7 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		result.Status = AccountProbeSampleFailed
 		result.ErrorCode = fmt.Sprintf("http_%d", resp.StatusCode)
 		result.ErrorMessage = truncateAccountProbeError(data, resp.Status)
+		result.ResponseBody = truncateAccountProbeTranscript(string(data))
 		applyFailedAccountProbeModelValidation(&result, sample)
 		return result
 	}
@@ -1193,6 +1212,7 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		result.DurationMillis = int(math.Round(float64(time.Since(start) / time.Millisecond)))
 		result.OutputText = truncateAccountProbeOutput(string(data))
+		result.ResponseBody = truncateAccountProbeTranscript(string(data))
 		applyAccountProbeModelValidation(&result, sample, data, "")
 		return result
 	}
@@ -1203,6 +1223,9 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 			result.Status = AccountProbeSampleFailed
 			result.ErrorCode = "stream_parse_failed"
 			result.ErrorMessage = streamResult.err
+			if len(streamResult.responseBody) > 0 {
+				result.ResponseBody = truncateAccountProbeTranscript(string(streamResult.responseBody))
+			}
 			return result
 		}
 		result.FirstTokenMillis = streamResult.firstTokenMillis
@@ -1210,7 +1233,8 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		result.OutputTokens = streamResult.outputTokens
 		result.TotalTokens = streamResult.totalTokens
 		result.OutputText = truncateAccountProbeOutput(streamResult.outputText)
-		applyAccountProbeModelValidation(&result, sample, nil, streamResult.responseModel)
+		result.ResponseBody = truncateAccountProbeTranscript(string(streamResult.responseBody))
+		applyAccountProbeModelValidation(&result, sample, streamResult.responseBody, streamResult.responseModel)
 		return result
 	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
@@ -1223,6 +1247,7 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		result.TotalTokens = parseOpenAIProbeTotalTokens(data)
 	}
 	result.OutputText = truncateAccountProbeOutput(extractOpenAIProbeOutputText(data))
+	result.ResponseBody = truncateAccountProbeTranscript(string(data))
 	applyAccountProbeModelValidation(&result, sample, data, extractOpenAIProbeResponseModel(data))
 	return result
 }
@@ -1426,7 +1451,9 @@ type accountProbeOpenAIStreamResult struct {
 	totalTokens      int
 	outputText       string
 	responseModel    string
-	err              string
+	// responseBody 保存流式 completed 事件里的完整 response，供工具调用等非文本验证复用。
+	responseBody []byte
+	err          string
 }
 
 func readAccountProbeOpenAIStream(body io.Reader, useResponses bool, start time.Time) accountProbeOpenAIStreamResult {
@@ -1486,6 +1513,9 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 						result.totalTokens = total
 						if model, _ := response["model"].(string); model != "" {
 							result.responseModel = model
+						}
+						if data, err := json.Marshal(response); err == nil {
+							result.responseBody = data
 						}
 					}
 					result.outputText = output.String()
@@ -2225,6 +2255,28 @@ func truncateAccountProbeOutput(text string) string {
 		return text
 	}
 	return text[:accountProbeOutputTextLimit]
+}
+
+func truncateAccountProbeTranscript(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) <= accountProbeTranscriptTextLimit {
+		return text
+	}
+	return text[:accountProbeTranscriptTextLimit]
+}
+
+func accountProbeRequestBodyForDisplay(method, endpoint, model string, stream bool, payload map[string]any) string {
+	if payload != nil {
+		data, _ := json.Marshal(payload)
+		return truncateAccountProbeTranscript(string(data))
+	}
+	data, _ := json.Marshal(map[string]any{
+		"method": strings.TrimSpace(method),
+		"url":    strings.TrimSpace(endpoint),
+		"model":  strings.TrimSpace(model),
+		"stream": stream,
+	})
+	return truncateAccountProbeTranscript(string(data))
 }
 
 func parseFirstAccountProbeJSONObject(text string) map[string]any {

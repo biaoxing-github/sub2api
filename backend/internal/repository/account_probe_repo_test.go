@@ -90,6 +90,7 @@ func TestAccountProbeRepositorySaveSampleStoresValidationEvidence(t *testing.T) 
 			123, sqlmock.AnyArg(),
 			18, 8, 26,
 			`{"sum":83,"code":"BETA"}`, accountProbeEvidenceJSONArg{key: "json_arithmetic"},
+			"只输出严格 JSON", `{"model":"gpt-test"}`, `{"output_text":"{\"sum\":83,\"code\":\"BETA\"}"}`,
 			"", "", sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -111,6 +112,9 @@ func TestAccountProbeRepositorySaveSampleStoresValidationEvidence(t *testing.T) 
 		OutputTokens:      8,
 		TotalTokens:       26,
 		OutputText:        `{"sum":83,"code":"BETA"}`,
+		RequestPrompt:     "只输出严格 JSON",
+		RequestBody:       `{"model":"gpt-test"}`,
+		ResponseBody:      `{"output_text":"{\"sum\":83,\"code\":\"BETA\"}"}`,
 		ValidationEvidence: []service.AccountProbeValidationEvidence{{
 			Key:      "json_arithmetic",
 			Label:    "JSON 算术",
@@ -139,6 +143,7 @@ func TestAccountProbeRepositorySaveFailedSampleAllowsEmptyOutputText(t *testing.
 			18120, sqlmock.AnyArg(),
 			0, 0, 0,
 			"", accountProbeEvidenceJSONArg{},
+			"", "", "",
 			"request_failed", "context deadline exceeded", sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -176,6 +181,7 @@ func TestAccountProbeRepositorySaveSampleStoresEmptyValidationEvidenceArray(t *t
 			830, sqlmock.AnyArg(),
 			12, 2, 14,
 			"ok", accountProbeEvidenceJSONArg{},
+			"", "", "",
 			"", "", sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -227,6 +233,7 @@ func TestAccountProbeRepositoryListSamplesLoadsValidationEvidence(t *testing.T) 
 		"duration_ms", "first_token_ms",
 		"input_tokens", "output_tokens", "total_tokens",
 		"output_text", "validation_evidence",
+		"request_prompt", "request_body", "response_body",
 		"error_code", "error_message", "created_at",
 	}).AddRow(
 		int64(1), int64(9), 1, "model_validation", "模型验证：JSON 算术", service.AccountProbeSampleSuccess, "gpt-test",
@@ -234,6 +241,7 @@ func TestAccountProbeRepositoryListSamplesLoadsValidationEvidence(t *testing.T) 
 		123, firstToken,
 		18, 8, 26,
 		`{"sum":83,"code":"BETA"}`, evidence,
+		"只输出严格 JSON", `{"model":"gpt-test"}`, `{"output_text":"{\"sum\":83,\"code\":\"BETA\"}"}`,
 		"", "", createdAt,
 	)
 	mock.ExpectQuery("SELECT id, run_id, request_index").WithArgs(int64(9)).WillReturnRows(rows)
@@ -244,6 +252,9 @@ func TestAccountProbeRepositoryListSamplesLoadsValidationEvidence(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, samples, 1)
 	require.Equal(t, `{"sum":83,"code":"BETA"}`, samples[0].OutputText)
+	require.Equal(t, "只输出严格 JSON", samples[0].RequestPrompt)
+	require.Equal(t, `{"model":"gpt-test"}`, samples[0].RequestBody)
+	require.Equal(t, `{"output_text":"{\"sum\":83,\"code\":\"BETA\"}"}`, samples[0].ResponseBody)
 	require.NotNil(t, samples[0].FirstTokenMillis)
 	require.Equal(t, 88, *samples[0].FirstTokenMillis)
 	require.Len(t, samples[0].ValidationEvidence, 1)

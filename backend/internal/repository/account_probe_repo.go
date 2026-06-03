@@ -135,6 +135,7 @@ INSERT INTO account_probe_samples (
   duration_ms, first_token_ms,
   input_tokens, output_tokens, total_tokens,
   output_text, validation_evidence,
+  request_prompt, request_body, response_body,
   error_code, error_message, created_at
 ) VALUES (
   $1,$2,$3,$4,$5,$6,
@@ -142,13 +143,15 @@ INSERT INTO account_probe_samples (
   $11,$12,
   $13,$14,$15,
   $16,$17::jsonb,
-  NULLIF($18,''),NULLIF($19,''),$20
+  $18,$19,$20,
+  NULLIF($21,''),NULLIF($22,''),$23
 )`,
 		sample.RunID, sample.RequestIndex, sample.Type, sample.Label, sample.Status, sample.Model,
 		sample.APIKeyFingerprint, sample.APIKeyMasked, sample.UpstreamEndpoint, sample.HTTPStatus,
 		sample.DurationMillis, sample.FirstTokenMillis,
 		sample.InputTokens, sample.OutputTokens, sample.TotalTokens,
 		sample.OutputText, string(validationEvidence),
+		sample.RequestPrompt, sample.RequestBody, sample.ResponseBody,
 		sample.ErrorCode, sample.ErrorMessage, sample.CreatedAt,
 	)
 	return err
@@ -325,6 +328,7 @@ SELECT id, run_id, request_index, sample_type, label, status, model,
        duration_ms, first_token_ms,
        input_tokens, output_tokens, total_tokens,
        COALESCE(output_text,''), COALESCE(validation_evidence,'[]'::jsonb),
+       COALESCE(request_prompt,''), COALESCE(request_body,''), COALESCE(response_body,''),
        COALESCE(error_code,''), COALESCE(error_message,''), created_at
 FROM account_probe_samples
 WHERE run_id = $1
@@ -453,6 +457,7 @@ func scanAccountProbeSample(scanner interface{ Scan(...any) error }) (*service.A
 		&sample.DurationMillis, &firstToken,
 		&sample.InputTokens, &sample.OutputTokens, &sample.TotalTokens,
 		&sample.OutputText, &validationEvidence,
+		&sample.RequestPrompt, &sample.RequestBody, &sample.ResponseBody,
 		&sample.ErrorCode, &sample.ErrorMessage, &sample.CreatedAt,
 	); err != nil {
 		return nil, err

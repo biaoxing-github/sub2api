@@ -732,6 +732,12 @@ export interface AccountProbeSample {
   tokens?: number | null
   output_text?: string | null
   validation_evidence?: AccountProbeValidationEvidence[]
+  /** 上游请求使用的原始 prompt，用于报告详情复盘输入。 */
+  request_prompt?: string | null
+  /** 去除 Authorization 后的上游请求体或 GET 请求摘要。 */
+  request_body?: string | null
+  /** 上游原始响应体或流式 completed response。 */
+  response_body?: string | null
   error_code?: string | null
   error?: string | null
   error_message?: string | null

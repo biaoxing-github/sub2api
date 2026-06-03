@@ -1333,3 +1333,33 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 前端 `AccountModelProbesView.spec.ts` 4 个测试通过，`vue-tsc --noEmit` 通过。
 - `git diff --check` 通过，仅提示 `docs/feature_list.jsonl`、`docs/process_list.jsonl` 会在 Windows 工作区下由 LF 转 CRLF。
 - 组合包 `go test -tags unit ./internal/service ./internal/handler/admin -count=1 -timeout=15m` 超时，按用户要求跳过更大包继续等待。
+
+---
+
+日期：2026-06-03
+执行者：Devil
+
+## 模型探针请求响应证据展示
+
+本轮根据用户反馈补齐报告详情弹窗中的每次模型验证输入输出证据。后端新增 `account_probe_samples.request_prompt`、`request_body`、`response_body`，执行 OpenAI API Key 模型探针时保存原始 prompt、去除 Authorization 的请求 JSON 或 GET 摘要、上游非流式响应体或流式 `response.completed.response`。前端报告详情样本列表新增 Prompt、Request Body、Response Body 展示区，便于对照每次请求为什么得分一致或失败。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service ./internal/repository -run TestAccountProbe -count=1`
+- `npm run test:run -- AccountProbeReportsView.spec.ts`
+- `npm run typecheck`
+- `go build ./cmd/server`
+- `npm run build`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml ps`
+- `Invoke-WebRequest http://127.0.0.1:8080/health`
+- 本地生成短期管理员 JWT 后调用 `POST /api/v1/admin/account-model-probe-runs`
+- `GET /api/v1/admin/account-probe-runs/120`
+
+## 校验结果
+
+- 后端 `internal/service` 与 `internal/repository` 的 `TestAccountProbe` 聚焦测试通过。
+- 前端 `AccountProbeReportsView.spec.ts` 10 个测试通过，覆盖详情样本展示新增字段；`vue-tsc --noEmit` 通过。
+- 后端 `go build ./cmd/server` 退出码 0；前端生产构建通过，仍有项目既有 Browserslist 过期、Vite dynamic import 和 chunk size 警告。
+- 本地 compose 中 `sub2api`、`sub2api-postgres`、`sub2api-redis` 均 healthy，`/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- 真实模型探针：`POST /api/v1/admin/account-model-probe-runs` 返回 202，创建 `run_id=120`，最终状态 `partial`；数据库中该 run 生成 19 条样本，18 条有 `request_prompt`，19 条有 `request_body`，19 条有 `response_body`。
+- 详情 API `GET /api/v1/admin/account-probe-runs/120` 返回 HTTP 200，样本 JSON 中可见新增请求体和返回体字段；行为验证样本中可见 prompt 字段。
