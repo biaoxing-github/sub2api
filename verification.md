@@ -1808,6 +1808,38 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 日期：2026-06-04
 执行者：Devil
 
+## BazaarLink 快速验证历史列表 0 分修复
+
+本轮针对账号 423 的快速验证列表显示 `0 / 不可检测` 做根因排查。数据库确认 run `229`、`227` 均为 `request_mode=quick`、`probe_source=bazaarlink_api`，样本 evidence score 为 `0` 且没有 `display_score`，但 `response_body` 仍保留 `"v3"` 候选片段。因此列表接口虽然已经加载 samples，但旧 quick 样本没有新 evidence 字段时仍退回 0 分。
+
+修复后，后端在 quick 模式下会从 sample 的 BazaarLink `response_body` 解析 V3 candidates，并按声明模型匹配候选分：例如 `gpt-5.5` 匹配 `GPT-5.5/openai/gpt-5.5` 的 `0.9852066599830172`，列表返回 `display_score=98.52066599830172`，聚合整数 score 为 `99`，不再显示 `不可检测`。
+
+## 校验方式
+
+- 数据库只读排查：查询账号 423 的 BazaarLink quick run，确认 run `229/227` evidence score 为 0、display_score 为空、response_body 内存在 `"v3"`。
+- TDD 红灯：`go test -tags unit ./internal/service -run "TestAccountProbeServiceListReportsUsesLegacyBazaarLinkQuickCandidateScore" -count=1`
+- `gofmt -w internal\service\account_probe_score.go internal\service\bazaarlink_probe.go internal\service\account_probe_report_test.go`
+- `go test -tags unit ./internal/service -run "TestAccountProbeServiceListReportsUsesLegacyBazaarLinkQuickCandidateScore" -count=1`
+- `go test -tags unit ./internal/service ./internal/handler/admin -run "Test.*Bazaar|Test.*ModelProbe|TestAccountProbeServiceListReports" -count=1`
+- `npm test -- --run src/views/admin/__tests__/AccountModelProbesView.spec.ts`
+- `npm run typecheck`
+- `git diff --check`
+
+## 校验结果
+
+- 红灯先失败于 `expected: 99 actual: 0`。
+- 修复后新增历史 quick 兼容测试通过。
+- 后端 BazaarLink/模型探针/列表报表聚焦测试通过。
+- 前端 `AccountModelProbesView.spec.ts` 12 个测试通过。
+- `npm run typecheck` 通过。
+- `git diff --check` 通过。
+- 本轮未构建部署，截图中的容器需要用本轮源码重新构建/重启后才会显示新分数。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
 ## BazaarLink score 口径修复部署与历史数据落库验证
 
 本轮源码提交为 `bb3e68d9 fix(admin): align BazaarLink probe score source`。远端推送到 `origin feature/account-api-key-rotation` 仍被 GitHub 返回 403，当前凭据用户 `biaoxing-github` 没有 `Wei-Shaw/sub2api` 写权限；随后继续基于本地已提交源码构建 `sub2api:multi-key-local` 并部署到本机 `D:\sub2api-deploy\docker-compose.yml` 管理的 `sub2api` 容器。

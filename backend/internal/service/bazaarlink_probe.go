@@ -500,6 +500,40 @@ func bazaarLinkClaimedCandidateScore(identity bazaarLinkIdentityAssessment, expe
 	return 0, false
 }
 
+func bazaarLinkClaimedCandidateScoreFromResponseBody(responseBody, expectedModel string) (float64, bool) {
+	responseBody = strings.TrimSpace(responseBody)
+	if responseBody == "" {
+		return 0, false
+	}
+	var parsed bazaarLinkProbeResponse
+	if err := json.Unmarshal([]byte(responseBody), &parsed); err == nil {
+		if score, ok := bazaarLinkClaimedCandidateScore(parsed.IdentityAssessment, expectedModel); ok {
+			return score, true
+		}
+	}
+	target := strings.TrimSpace(expectedModel)
+	identityStart := strings.Index(responseBody, `"identityAssessment"`)
+	if identityStart < 0 {
+		identityStart = 0
+	}
+	if target == "" {
+		target = bazaarLinkStringPropertyFromText(responseBody, "claimedModel", identityStart)
+	}
+	if target == "" {
+		return 0, false
+	}
+	for _, candidate := range bazaarLinkCandidatesFromResponseText(responseBody, identityStart) {
+		if !bazaarLinkCandidateMatchesModel(candidate, target) {
+			continue
+		}
+		if candidate.Score == nil {
+			continue
+		}
+		return normalizeBazaarLinkCandidateScore(*candidate.Score)
+	}
+	return 0, false
+}
+
 func bazaarLinkIdentityCandidates(identity bazaarLinkIdentityAssessment) []bazaarLinkModelCandidate {
 	candidates := make([]bazaarLinkModelCandidate, 0, len(identity.V3Candidates)+len(identity.Candidates))
 	candidates = append(candidates, bazaarLinkCandidatesFromRaw(identity.V3)...)
@@ -526,6 +560,127 @@ func bazaarLinkCandidatesFromRaw(raw json.RawMessage) []bazaarLinkModelCandidate
 	candidates = append(candidates, group.TopCandidates...)
 	candidates = append(candidates, group.Matches...)
 	return candidates
+}
+
+func bazaarLinkCandidatesFromResponseText(source string, startIndex int) []bazaarLinkModelCandidate {
+	v3Index := strings.Index(source[max(0, startIndex):], `"v3"`)
+	if v3Index >= 0 {
+		v3Index += max(0, startIndex)
+	}
+	candidatesStart := startIndex
+	if v3Index >= 0 {
+		candidatesStart = v3Index
+	}
+	if candidates := bazaarLinkCandidatesAfterProperty(source, "candidates", candidatesStart); len(candidates) > 0 {
+		return candidates
+	}
+	return bazaarLinkCandidatesAfterProperty(source, "v3Candidates", startIndex)
+}
+
+func bazaarLinkCandidatesAfterProperty(source, property string, startIndex int) []bazaarLinkModelCandidate {
+	arrayText := bazaarLinkJSONArrayAfterProperty(source, property, startIndex)
+	if arrayText == "" {
+		return nil
+	}
+	var candidates []bazaarLinkModelCandidate
+	if err := json.Unmarshal([]byte(arrayText), &candidates); err != nil {
+		return nil
+	}
+	return candidates
+}
+
+func bazaarLinkJSONArrayAfterProperty(source, property string, startIndex int) string {
+	propertyIndex := strings.Index(source[max(0, startIndex):], `"`+property+`"`)
+	if propertyIndex < 0 {
+		return ""
+	}
+	propertyIndex += max(0, startIndex)
+	colonIndex := strings.Index(source[propertyIndex+len(property)+2:], ":")
+	if colonIndex < 0 {
+		return ""
+	}
+	colonIndex += propertyIndex + len(property) + 2
+	arrayStart := strings.Index(source[colonIndex+1:], "[")
+	if arrayStart < 0 {
+		return ""
+	}
+	arrayStart += colonIndex + 1
+	arrayEnd := bazaarLinkBalancedJSONArrayEnd(source, arrayStart)
+	if arrayEnd < 0 {
+		return ""
+	}
+	return source[arrayStart : arrayEnd+1]
+}
+
+func bazaarLinkBalancedJSONArrayEnd(source string, arrayStart int) int {
+	depth := 0
+	inString := false
+	escaped := false
+	for index := arrayStart; index < len(source); index++ {
+		char := source[index]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func bazaarLinkStringPropertyFromText(source, property string, startIndex int) string {
+	propertyIndex := strings.Index(source[max(0, startIndex):], `"`+property+`"`)
+	if propertyIndex < 0 {
+		return ""
+	}
+	propertyIndex += max(0, startIndex)
+	colonIndex := strings.Index(source[propertyIndex+len(property)+2:], ":")
+	if colonIndex < 0 {
+		return ""
+	}
+	colonIndex += propertyIndex + len(property) + 2
+	valueIndex := colonIndex + 1
+	for valueIndex < len(source) && (source[valueIndex] == ' ' || source[valueIndex] == '\n' || source[valueIndex] == '\r' || source[valueIndex] == '\t') {
+		valueIndex++
+	}
+	if valueIndex >= len(source) || source[valueIndex] != '"' {
+		return ""
+	}
+	escaped := false
+	for index := valueIndex + 1; index < len(source); index++ {
+		char := source[index]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if char == '\\' {
+			escaped = true
+			continue
+		}
+		if char == '"' {
+			var value string
+			if err := json.Unmarshal([]byte(source[valueIndex:index+1]), &value); err != nil {
+				return ""
+			}
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func bazaarLinkCandidateMatchesModel(candidate bazaarLinkModelCandidate, expectedModel string) bool {

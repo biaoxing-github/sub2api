@@ -150,6 +150,47 @@ func TestAccountProbeServiceListReportsUsesBazaarLinkEvidenceScore(t *testing.T)
 	require.Contains(t, page.Items[0].ScoreItems[0], "91/100")
 }
 
+func TestAccountProbeServiceListReportsUsesLegacyBazaarLinkQuickCandidateScore(t *testing.T) {
+	now := time.Now()
+	repo := &accountProbeReportRepoStub{
+		total: 1,
+		items: []AccountProbeReportItem{{
+			AccountName: "qingflow",
+			AccountProbeResult: AccountProbeResult{
+				ID: 229, AccountID: 423, Profile: AccountProbeProfileModelValidation, ProbeSource: AccountProbeSourceBazaarLinkAPI,
+				Status: AccountProbeStatusSuccess, RequestMode: string(BazaarLinkProbeModeQuick), Model: "gpt-5.5",
+				RequestCount: 1, SuccessCount: 1, CreatedAt: now,
+			},
+		}},
+		samplesByRunID: map[int64][]AccountProbeSample{
+			229: {{
+				RunID: 229, Type: AccountProbeSourceBazaarLinkAPI, Label: "BazaarLink 快速验证", Status: AccountProbeSampleSuccess, Model: "gpt-5.5",
+				ResponseBody: `{"runId":"run_229","status":"completed","identityAssessment":{"status":"match","confidence":0.98,"claimedModel":"gpt-5.5","predictedFamily":"openai","v3":{"candidates":[{"displayName":"GPT-5.3 Codex","modelId":"openai/gpt-5.3-codex","family":"openai","score":0.9893329875983731},{"displayName":"GPT-5.5","modelId":"openai/gpt-5.5","family":"openai","score":0.9852066599830172},{"displayName":"GPT-5.4 Mini","modelId":"openai/gpt-5.4-mini","family":"openai","score":0.9052747274960748}]}},"items":`,
+				ValidationEvidence: []AccountProbeValidationEvidence{{
+					Key:      "bazaarlink_identity",
+					Label:    "BazaarLink 模型身份",
+					Expected: "gpt-5.5",
+					Observed: "status=match; confidence=0.98; family=openai; v3f=gpt-5.5",
+					Passed:   true,
+					Score:    0,
+					MaxScore: 100,
+				}},
+			}},
+		},
+	}
+	svc := NewAccountProbeService(nil, repo, nil, nil)
+
+	page, err := svc.ListReports(context.Background(), AccountProbeReportFilter{Sort: "score", Order: "desc"})
+
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, 99, page.Items[0].Score)
+	require.NotNil(t, page.Items[0].DisplayScore)
+	require.InDelta(t, 98.52066599830172, *page.Items[0].DisplayScore, 0.000001)
+	require.NotEqual(t, AccountProbeGradeUnavailable, page.Items[0].Grade)
+	require.NotContains(t, page.Items[0].GradeLabel, "不可检测")
+}
+
 func TestAccountProbeServiceListReportsUsesSelfValidationEvidenceScore(t *testing.T) {
 	now := time.Now()
 	repo := &accountProbeReportRepoStub{

@@ -151,8 +151,7 @@ func accountProbeBazaarLinkDisplayScore(run AccountProbeResult) *float64 {
 			if evidence.Key != "bazaarlink_identity" || evidence.MaxScore <= 0 {
 				continue
 			}
-			if evidence.DisplayScore != nil {
-				score := clampFloat64(*evidence.DisplayScore, 0, 100)
+			if score, ok := accountProbeBazaarLinkCandidateDisplayScore(run, sample, evidence); ok {
 				return &score
 			}
 			score := float64(accountProbeBazaarLinkEvidenceScore(evidence)) * 100 / float64(evidence.MaxScore)
@@ -171,7 +170,7 @@ func accountProbeBazaarLinkScoreStats(run AccountProbeResult) (int, int, int, in
 			}
 			total++
 			rawMaxScore += evidence.MaxScore
-			rawScore += accountProbeBazaarLinkEvidenceScore(evidence)
+			rawScore += accountProbeBazaarLinkEvidenceScoreForSample(run, sample, evidence)
 			if evidence.Passed {
 				passed++
 			}
@@ -189,6 +188,32 @@ func accountProbeBazaarLinkScoreStats(run AccountProbeResult) (int, int, int, in
 
 func accountProbeBazaarLinkEvidenceScore(evidence AccountProbeValidationEvidence) int {
 	return clampInt(evidence.Score, 0, evidence.MaxScore)
+}
+
+func accountProbeBazaarLinkEvidenceScoreForSample(run AccountProbeResult, sample AccountProbeSample, evidence AccountProbeValidationEvidence) int {
+	if score, ok := accountProbeBazaarLinkCandidateDisplayScore(run, sample, evidence); ok {
+		return clampInt(int(math.Round(score*float64(evidence.MaxScore)/100)), 0, evidence.MaxScore)
+	}
+	return accountProbeBazaarLinkEvidenceScore(evidence)
+}
+
+func accountProbeBazaarLinkCandidateDisplayScore(run AccountProbeResult, sample AccountProbeSample, evidence AccountProbeValidationEvidence) (float64, bool) {
+	if !strings.EqualFold(strings.TrimSpace(run.RequestMode), string(BazaarLinkProbeModeQuick)) {
+		return 0, false
+	}
+	if evidence.DisplayScore != nil {
+		return clampFloat64(*evidence.DisplayScore, 0, 100), true
+	}
+	return bazaarLinkClaimedCandidateScoreFromResponseBody(sample.ResponseBody, accountProbeBazaarLinkExpectedModel(run, sample, evidence))
+}
+
+func accountProbeBazaarLinkExpectedModel(run AccountProbeResult, sample AccountProbeSample, evidence AccountProbeValidationEvidence) string {
+	for _, value := range []string{evidence.ExpectedModel, evidence.Expected, sample.Model, run.Model} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func scoreAccountProbeModelValidation(run AccountProbeResult) AccountProbeScore {
