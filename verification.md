@@ -1672,3 +1672,34 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 修复并重新部署后，再次触发账号 423 BazaarLink quick 验证返回 HTTP 202，创建 `run_id=229`。
 - 数据库最终结果：`account_probe_runs.id=229` 为 `success`，`success_count=1`，`failure_count=0`，summary 为 `完成 1/1 次请求，平均延迟 94251 ms，消耗 12264 tokens`。
 - 样本结果：`account_probe_samples.id=1552` 为 `success`，`sample_type=bazaarlink_api`，`http_status=200`，验证证据 passed=true，observed 为 `status=match; confidence=0.98; family=openai`。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## BazaarLink 模型探针分数展示修复
+
+本轮修复 BazaarLink 探针已成功但模型探针详情页不显示结构化分数的问题。根因是 BazaarLink 原始响应较大，后端用于展示的 `response_body` 会截断，前端直接 `JSON.parse(response_body)` 失败后把 BazaarLink 结果卡整体隐藏；同时真实成功样本已落库的 `validation_evidence.score` 可能为 `0/100`，但 `observed` 中包含 `confidence=0.98`。
+
+## 校验方式
+
+- TDD 红灯：`go test -tags unit ./internal/service -run TestBazaarLinkProbeEvidenceUsesConfidenceWhenScoreMissing -count=1`
+- TDD 红灯：`npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run -t "renders BazaarLink score from validation evidence"`
+- `go test -tags unit ./internal/service -run "Test.*Bazaar|TestBazaar" -count=1`
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+- `git diff --check`
+- `npm run build`
+
+## 校验结果
+
+- 后端红灯先失败于 BazaarLink 顶层 `score` 缺失时 evidence 分数为 `0`；修复后通过，成功身份验证会从 `confidence` 推导可展示分数。
+- 前端红灯先失败于截断 `response_body` 时没有 BazaarLink 结构化结果卡；收紧为真实旧数据形态后，又先失败于 `score=0` 时显示 `0 / 100`。
+- 前端修复后，即使 `response_body` 不是合法 JSON，也会使用 `bazaarlink_identity` evidence 展示结果卡，并从 `observed` 提取 `status=match`、`confidence=0.98`、`family=openai`、`v3f=gpt-5.5`，分数展示为 `98 / 100`。
+- 后端评分聚合兼容旧成功样本：当 `bazaarlink_identity` evidence 已通过但 `score=0` 时，列表/详情 API 的 run score 会从 `observed` 的 confidence 推导，不再把成功探针算成 0 分。
+- 后端 BazaarLink 聚焦测试通过。
+- `AccountModelProbesView.spec.ts` 10 个测试全部通过。
+- `npm run typecheck` 通过，`vue-tsc --noEmit` 退出码 0。
+- `git diff --check` 通过。
+- `npm run build` 通过；保留项目既有 Browserslist caniuse-lite 过期、Vite dynamic import 和 chunk size 警告。

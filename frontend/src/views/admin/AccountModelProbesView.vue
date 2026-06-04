@@ -256,48 +256,48 @@
                 <dd class="inline break-all"> {{ sample.error_code || '' }} {{ sample.error || sample.error_message || '' }}</dd>
               </div>
             </dl>
-            <div v-if="parseBazaarLinkResult(sample)" class="mt-3 space-y-3 rounded-lg border border-sky-200 bg-sky-50 p-3 dark:border-sky-900/60 dark:bg-sky-950/30">
+            <div v-if="hasBazaarLinkResult(sample)" class="mt-3 space-y-3 rounded-lg border border-sky-200 bg-sky-50 p-3 dark:border-sky-900/60 dark:bg-sky-950/30">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="text-sm font-semibold text-sky-900 dark:text-sky-100">{{ t('admin.accountModelProbes.bazaarLinkResult') }}</div>
                 <span class="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-sky-700 dark:bg-dark-900 dark:text-sky-200">
-                  {{ t('admin.accountModelProbes.runId') }} {{ parseBazaarLinkResult(sample)?.runId || '-' }}
+                  {{ t('admin.accountModelProbes.runId') }} {{ bazaarLinkRunId(sample) }}
                 </span>
               </div>
               <dl class="grid gap-3 text-xs text-sky-800 dark:text-sky-100 sm:grid-cols-2 lg:grid-cols-4">
                 <div>
                   <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.score') }}</dt>
-                  <dd class="mt-1 text-sm font-semibold">{{ formatNumber(parseBazaarLinkResult(sample)?.score) }}</dd>
+                  <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkScore(sample) }}</dd>
                 </div>
                 <div>
                   <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.identityStatus') }}</dt>
-                  <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkIdentityStatus(parseBazaarLinkResult(sample)) }}</dd>
+                  <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkIdentityStatus(sample) }}</dd>
                 </div>
                 <div>
                   <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.confidence') }}</dt>
-                  <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkConfidence(parseBazaarLinkResult(sample)) }}</dd>
+                  <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkConfidence(sample) }}</dd>
                 </div>
                 <div>
                   <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.status') }}</dt>
-                  <dd class="mt-1 text-sm font-semibold">{{ parseBazaarLinkResult(sample)?.status || '-' }}</dd>
+                  <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkStatus(sample) }}</dd>
                 </div>
                 <div>
                   <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.claimedModel') }}</dt>
-                  <dd class="mt-1 break-all text-sm font-semibold">{{ parseBazaarLinkResult(sample)?.identityAssessment?.claimedModel || '-' }}</dd>
+                  <dd class="mt-1 break-all text-sm font-semibold">{{ bazaarLinkClaimedModel(sample) }}</dd>
                 </div>
                 <div>
                   <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.predictedFamily') }}</dt>
-                  <dd class="mt-1 text-sm font-semibold">{{ parseBazaarLinkResult(sample)?.identityAssessment?.predictedFamily || '-' }}</dd>
+                  <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkPredictedFamily(sample) }}</dd>
                 </div>
                 <div>
                   <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.v3fModel') }}</dt>
-                  <dd class="mt-1 break-all text-sm font-semibold">{{ bazaarLinkV3F(parseBazaarLinkResult(sample)) }}</dd>
+                  <dd class="mt-1 break-all text-sm font-semibold">{{ bazaarLinkV3F(sample) }}</dd>
                 </div>
                 <div>
                   <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.riskFlags') }}</dt>
-                  <dd class="mt-1 break-all text-sm font-semibold">{{ bazaarLinkRiskFlags(parseBazaarLinkResult(sample)) }}</dd>
+                  <dd class="mt-1 break-all text-sm font-semibold">{{ bazaarLinkRiskFlags(sample) }}</dd>
                 </div>
               </dl>
-              <div v-if="parseBazaarLinkResult(sample)?.items?.length" class="overflow-x-auto">
+              <div v-if="bazaarLinkItems(sample).length" class="overflow-x-auto">
                 <div class="mb-1 text-xs font-semibold text-sky-800 dark:text-sky-100">{{ t('admin.accountModelProbes.probeItems') }}</div>
                 <table class="w-full min-w-[760px]">
                   <thead>
@@ -312,7 +312,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="item in parseBazaarLinkResult(sample)?.items" :key="item.probeId || item.label" class="border-t border-sky-100 dark:border-sky-900/60">
+                    <tr v-for="item in bazaarLinkItems(sample)" :key="item.probeId || item.label" class="border-t border-sky-100 dark:border-sky-900/60">
                       <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ item.probeId || '-' }}</td>
                       <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ item.label || '-' }}</td>
                       <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ item.group || '-' }}</td>
@@ -421,7 +421,7 @@
                     </td>
                     <td class="px-2 py-2 text-sm text-gray-700 dark:text-gray-300">{{ evidence.expected || '-' }}</td>
                     <td class="px-2 py-2 text-sm text-gray-700 dark:text-gray-300">{{ evidence.observed || '-' }}</td>
-                    <td class="px-2 py-2 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatEvidenceScore(evidence) }}</td>
+                    <td class="px-2 py-2 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatSampleEvidenceScore(sample, evidence) }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -653,6 +653,14 @@ interface BazaarLinkProbeResult {
   items?: BazaarLinkProbeItem[]
   totalInputTokens?: number | null
   totalOutputTokens?: number | null
+}
+
+interface BazaarLinkObservedFields {
+  status?: string
+  confidence?: number
+  family?: string
+  v3f?: string
+  flags?: string[]
 }
 
 const runs = ref<AccountProbeRun[]>([])
@@ -1119,6 +1127,16 @@ function formatEvidenceScore(evidence: AccountProbeValidationEvidence): string {
   return `${formatNumber(evidence.score)} / ${formatNumber(evidence.max_score)}`
 }
 
+function formatSampleEvidenceScore(sample: AccountProbeSample, evidence: AccountProbeValidationEvidence): string {
+  if (isBazaarLinkSample(sample) && evidence.key === 'bazaarlink_identity' && evidence.passed && evidence.score <= 0 && evidence.max_score > 0) {
+    const confidenceScore = bazaarLinkConfidenceScore(bazaarLinkObservedFields(sample).confidence)
+    if (typeof confidenceScore === 'number') {
+      return `${formatNumber(confidenceScore)} / ${formatNumber(evidence.max_score)}`
+    }
+  }
+  return formatEvidenceScore(evidence)
+}
+
 function formatEvidenceStatusCodes(evidence: AccountProbeValidationEvidence): string {
   return evidence.attempt_status_codes?.join(', ') || '-'
 }
@@ -1150,27 +1168,129 @@ function isBazaarLinkSample(sample: AccountProbeSample): boolean {
   return sample.type === 'bazaarlink_api' || detailRun.value?.probe_source === 'bazaarlink_api'
 }
 
-function bazaarLinkIdentityStatus(result: BazaarLinkProbeResult | null | undefined): string {
-  return result?.identityAssessment?.status || '-'
+function hasBazaarLinkResult(sample: AccountProbeSample): boolean {
+  return Boolean(parseBazaarLinkResult(sample) || bazaarLinkIdentityEvidence(sample))
 }
 
-function bazaarLinkConfidence(result: BazaarLinkProbeResult | null | undefined): string {
+function bazaarLinkIdentityEvidence(sample: AccountProbeSample): AccountProbeValidationEvidence | null {
+  if (!isBazaarLinkSample(sample)) return null
+  return sample.validation_evidence?.find(evidence => evidence.key === 'bazaarlink_identity') || null
+}
+
+// BazaarLink response_body 会被后端截断用于安全展示；截断后优先使用已落库的 evidence 摘要。
+function parseBazaarLinkObservedFields(value: string | null | undefined): BazaarLinkObservedFields {
+  const fields: BazaarLinkObservedFields = {}
+  if (!value) return fields
+
+  for (const part of value.split(';')) {
+    const trimmed = part.trim()
+    const separator = trimmed.indexOf('=')
+    if (separator <= 0) continue
+
+    const key = trimmed.slice(0, separator).trim().toLowerCase()
+    const fieldValue = trimmed.slice(separator + 1).trim()
+    if (!fieldValue) continue
+
+    if (key === 'status') {
+      fields.status = fieldValue
+    } else if (key === 'confidence') {
+      const confidence = Number.parseFloat(fieldValue)
+      if (Number.isFinite(confidence)) fields.confidence = confidence
+    } else if (key === 'family') {
+      fields.family = fieldValue
+    } else if (key === 'v3f') {
+      fields.v3f = fieldValue
+    } else if (key === 'flags') {
+      fields.flags = fieldValue.split(',').map(flag => flag.trim()).filter(Boolean)
+    }
+  }
+
+  return fields
+}
+
+function bazaarLinkObservedFields(sample: AccountProbeSample): BazaarLinkObservedFields {
+  return parseBazaarLinkObservedFields(bazaarLinkIdentityEvidence(sample)?.observed)
+}
+
+function bazaarLinkRunId(sample: AccountProbeSample): string {
+  const result = parseBazaarLinkResult(sample)
+  return result?.runId || (sample.run_id ? `#${sample.run_id}` : '-')
+}
+
+function bazaarLinkScore(sample: AccountProbeSample): string {
+  const result = parseBazaarLinkResult(sample)
+  if (typeof result?.score === 'number' && Number.isFinite(result.score)) {
+    return formatNumber(result.score)
+  }
+  const evidence = bazaarLinkIdentityEvidence(sample)
+  if (evidence && evidence.max_score > 0) {
+    return formatSampleEvidenceScore(sample, evidence)
+  }
+  return formatNumber(detailRun.value?.score)
+}
+
+function bazaarLinkIdentityStatus(sample: AccountProbeSample): string {
+  const result = parseBazaarLinkResult(sample)
+  if (result?.identityAssessment?.status) return result.identityAssessment.status
+  const fields = bazaarLinkObservedFields(sample)
+  if (fields.status) return fields.status
+  const evidence = bazaarLinkIdentityEvidence(sample)
+  return evidence?.passed ? t('admin.accountModelProbes.passed') : '-'
+}
+
+function bazaarLinkStatus(sample: AccountProbeSample): string {
+  return parseBazaarLinkResult(sample)?.status || sample.status || '-'
+}
+
+function bazaarLinkClaimedModel(sample: AccountProbeSample): string {
+  const result = parseBazaarLinkResult(sample)
+  const evidence = bazaarLinkIdentityEvidence(sample)
+  return result?.identityAssessment?.claimedModel || evidence?.expected_model || evidence?.expected || sample.model || '-'
+}
+
+function bazaarLinkPredictedFamily(sample: AccountProbeSample): string {
+  const result = parseBazaarLinkResult(sample)
+  return result?.identityAssessment?.predictedFamily || bazaarLinkObservedFields(sample).family || '-'
+}
+
+function formatBazaarLinkConfidenceValue(confidence: number | null | undefined): string {
+  const score = bazaarLinkConfidenceScore(confidence)
+  return typeof score === 'number' ? `${formatNumber(score)}%` : '-'
+}
+
+function bazaarLinkConfidenceScore(confidence: number | null | undefined): number | null {
+  if (typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence <= 0) return null
+  return Math.min(100, Math.max(0, confidence <= 1 ? confidence * 100 : confidence))
+}
+
+function bazaarLinkConfidence(sample: AccountProbeSample): string {
+  const result = parseBazaarLinkResult(sample)
   const confidence = result?.identityAssessment?.confidence
-  return typeof confidence === 'number' && Number.isFinite(confidence) ? `${formatNumber(confidence * 100)}%` : '-'
+  if (typeof confidence === 'number' && Number.isFinite(confidence)) {
+    return formatBazaarLinkConfidenceValue(confidence)
+  }
+  return formatBazaarLinkConfidenceValue(bazaarLinkObservedFields(sample).confidence)
 }
 
-function bazaarLinkV3F(result: BazaarLinkProbeResult | null | undefined): string {
+function bazaarLinkV3F(sample: AccountProbeSample): string {
+  const result = parseBazaarLinkResult(sample)
   const match = result?.identityAssessment?.subModelMatchV3F
-  if (!match?.modelId) return '-'
-  if (typeof match.score === 'number' && Number.isFinite(match.score)) {
+  if (match?.modelId && typeof match.score === 'number' && Number.isFinite(match.score)) {
     return `${match.modelId} (${formatNumber(match.score * 100)}%)`
   }
-  return match.modelId
+  return match?.modelId || bazaarLinkObservedFields(sample).v3f || bazaarLinkIdentityEvidence(sample)?.response_model || '-'
 }
 
-function bazaarLinkRiskFlags(result: BazaarLinkProbeResult | null | undefined): string {
+function bazaarLinkRiskFlags(sample: AccountProbeSample): string {
+  const result = parseBazaarLinkResult(sample)
   const flags = result?.identityAssessment?.riskFlags?.map(flag => flag.trim()).filter(Boolean) || []
-  return flags.length ? flags.join(', ') : t('admin.accountModelProbes.noRiskFlags')
+  if (flags.length) return flags.join(', ')
+  const observedFlags = bazaarLinkObservedFields(sample).flags || []
+  return observedFlags.length ? observedFlags.join(', ') : t('admin.accountModelProbes.noRiskFlags')
+}
+
+function bazaarLinkItems(sample: AccountProbeSample): BazaarLinkProbeItem[] {
+  return parseBazaarLinkResult(sample)?.items || []
 }
 
 function formatBazaarLinkPassed(value: BazaarLinkProbeItem['passed']): string {

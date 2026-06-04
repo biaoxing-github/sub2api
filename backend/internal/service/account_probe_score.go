@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -107,7 +108,7 @@ func ScoreAccountProbeRun(run AccountProbeResult) AccountProbeScore {
 }
 
 func scoreAccountProbeBazaarLink(run AccountProbeResult) AccountProbeScore {
-	rawScore, rawMaxScore, passed, total := accountProbeModelValidationScoreStats(run)
+	rawScore, rawMaxScore, passed, total := accountProbeBazaarLinkScoreStats(run)
 	if rawMaxScore <= 0 {
 		return AccountProbeScore{
 			Score:        0,
@@ -139,6 +140,60 @@ func scoreAccountProbeBazaarLink(run AccountProbeResult) AccountProbeScore {
 		ScoreItems:   scoreItems,
 		PenaltyItems: penaltyItems,
 	}
+}
+
+func accountProbeBazaarLinkScoreStats(run AccountProbeResult) (int, int, int, int) {
+	rawScore, rawMaxScore, passed, total := 0, 0, 0, 0
+	for _, sample := range run.Samples {
+		for _, evidence := range sample.ValidationEvidence {
+			if evidence.MaxScore <= 0 {
+				continue
+			}
+			total++
+			rawMaxScore += evidence.MaxScore
+			rawScore += accountProbeBazaarLinkEvidenceScore(evidence)
+			if evidence.Passed {
+				passed++
+			}
+		}
+	}
+	if rawMaxScore > 0 {
+		return rawScore, rawMaxScore, passed, total
+	}
+	total = run.RequestCount
+	if total <= 0 {
+		total = run.SuccessCount + run.FailureCount
+	}
+	return run.SuccessCount * 10, total * 10, run.SuccessCount, total
+}
+
+func accountProbeBazaarLinkEvidenceScore(evidence AccountProbeValidationEvidence) int {
+	score := clampInt(evidence.Score, 0, evidence.MaxScore)
+	if score > 0 || !evidence.Passed || evidence.Key != "bazaarlink_identity" {
+		return score
+	}
+	return bazaarLinkObservedConfidenceEvidenceScore(evidence.Observed, evidence.MaxScore)
+}
+
+func bazaarLinkObservedConfidenceEvidenceScore(observed string, maxScore int) int {
+	if maxScore <= 0 {
+		return 0
+	}
+	for _, part := range strings.Split(observed, ";") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "confidence") {
+			continue
+		}
+		confidence, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil || math.IsNaN(confidence) || math.IsInf(confidence, 0) || confidence <= 0 {
+			return 0
+		}
+		if confidence > 1 {
+			confidence = confidence / 100
+		}
+		return clampInt(int(math.Round(confidence*float64(maxScore))), 0, maxScore)
+	}
+	return 0
 }
 
 func scoreAccountProbeModelValidation(run AccountProbeResult) AccountProbeScore {

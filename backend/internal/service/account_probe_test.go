@@ -805,6 +805,51 @@ func TestAccountProbeService_RunBazaarLinkPollsAsyncRunUntilCompleted(t *testing
 	require.Equal(t, 93, sample.ValidationEvidence[0].Score)
 }
 
+func TestBazaarLinkProbeEvidenceUsesConfidenceWhenScoreMissing(t *testing.T) {
+	t.Parallel()
+
+	evidence := bazaarLinkProbeEvidence(bazaarLinkProbeResponse{
+		Status: "completed",
+		IdentityAssessment: bazaarLinkIdentityAssessment{
+			Status:          "match",
+			Confidence:      0.98,
+			ClaimedModel:    "gpt-5.5",
+			PredictedFamily: "openai",
+		},
+	}, "gpt-5.5")
+
+	require.True(t, evidence.Passed)
+	require.Equal(t, 98, evidence.Score)
+	require.Equal(t, 100, evidence.MaxScore)
+	require.Contains(t, evidence.Observed, "confidence=0.98")
+}
+
+func TestScoreAccountProbeRunBazaarLinkUsesObservedConfidenceForLegacyEvidence(t *testing.T) {
+	t.Parallel()
+
+	score := ScoreAccountProbeRun(AccountProbeResult{
+		Profile:      AccountProbeProfileModelValidation,
+		ProbeSource:  AccountProbeSourceBazaarLinkAPI,
+		Status:       AccountProbeStatusSuccess,
+		RequestCount: 1,
+		SuccessCount: 1,
+		Samples: []AccountProbeSample{{
+			Status: AccountProbeSampleSuccess,
+			ValidationEvidence: []AccountProbeValidationEvidence{{
+				Key:      "bazaarlink_identity",
+				Label:    "BazaarLink 模型身份",
+				Observed: "status=match; confidence=0.98; family=openai",
+				Passed:   true,
+				Score:    0,
+				MaxScore: 100,
+			}},
+		}},
+	})
+
+	require.Equal(t, 98, score.Score)
+	require.Contains(t, score.ScoreItems[0], "98/100")
+}
+
 func TestAccountProbeService_RunBazaarLinkRedactsSecretFieldsFromErrorMessage(t *testing.T) {
 	t.Parallel()
 

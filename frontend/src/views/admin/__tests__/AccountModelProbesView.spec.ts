@@ -770,4 +770,98 @@ describe('AccountModelProbesView', () => {
     expect(detailDialog?.text()).not.toContain('apiKey')
   })
 
+  it('renders BazaarLink score from validation evidence when stored response is truncated', async () => {
+    listAccountProbeRuns.mockResolvedValue({
+      items: [
+        {
+          id: 203,
+          account_id: 12,
+          account_name: 'rayapi',
+          mode: 'model_validation',
+          probe_source: 'bazaarlink_api',
+          status: 'success',
+          model: 'gpt-5.5',
+          request_mode: 'quick',
+          created_at: '2026-06-04T10:30:00Z',
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    getAccountProbeRun.mockResolvedValue({
+      id: 203,
+      account_id: 12,
+      mode: 'model_validation',
+      probe_source: 'bazaarlink_api',
+      status: 'success',
+      model: 'gpt-5.5',
+      request_mode: 'quick',
+      score: 0,
+      samples: [
+        {
+          id: 2,
+          run_id: 203,
+          request_index: 1,
+          type: 'bazaarlink_api',
+          label: 'BazaarLink 快速验证',
+          status: 'success',
+          model: 'gpt-5.5',
+          upstream_endpoint: 'https://bazaarlink.ai/api/probe/run',
+          http_status: 200,
+          latency_ms: 1300,
+          input_tokens: 120,
+          output_tokens: 34,
+          tokens: 154,
+          request_body: '{"apiKey":"<redacted>"}',
+          response_body: '{"runId":"run_truncated","status":"completed","identityAssessment":',
+          validation_evidence: [
+            {
+              key: 'bazaarlink_identity',
+              label: 'BazaarLink 模型身份',
+              expected: 'gpt-5.5',
+              observed: 'status=match; confidence=0.98; family=openai; v3f=gpt-5.5',
+              passed: true,
+              score: 0,
+              max_score: 100,
+              message: 'BazaarLink 身份验证通过',
+              category: 'external_api',
+              severity: 'info',
+              response_model: 'gpt-5.5',
+              expected_model: 'gpt-5.5',
+            },
+          ],
+          created_at: '2026-06-04T10:30:00Z',
+        },
+      ],
+      created_at: '2026-06-04T10:30:00Z',
+    })
+
+    const wrapper = mount(AccountModelProbesView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
+          Pagination: PaginationStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="model-probe-detail-203"]').trigger('click')
+    await flushPromises()
+
+    const detailDialog = wrapper.findAll('[data-test="base-dialog"]').find(dialog =>
+      dialog.text().includes('admin.accountModelProbes.detailTitle')
+    )
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.bazaarLinkResult')
+    expect(detailDialog?.text()).toContain('98 / 100')
+    expect(detailDialog?.text()).not.toContain('0 / 100')
+    expect(detailDialog?.text()).toContain('match')
+    expect(detailDialog?.text()).toContain('98%')
+    expect(detailDialog?.text()).toContain('openai')
+    expect(detailDialog?.text()).toContain('gpt-5.5')
+    expect(detailDialog?.text()).not.toContain('apiKey')
+  })
+
 })

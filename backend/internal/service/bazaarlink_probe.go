@@ -424,7 +424,7 @@ func bazaarLinkProbeEvidence(result bazaarLinkProbeResponse, expectedModel strin
 		Expected:      expectedModel,
 		Observed:      observed,
 		Passed:        passed,
-		Score:         clampInt(result.Score, 0, 100),
+		Score:         bazaarLinkProbeEvidenceScore(result, passed),
 		MaxScore:      100,
 		Message:       message,
 		Category:      "external_api",
@@ -432,6 +432,19 @@ func bazaarLinkProbeEvidence(result bazaarLinkProbeResponse, expectedModel strin
 		ResponseModel: bazaarLinkSubModelID(identity),
 		ExpectedModel: expectedModel,
 	}
+}
+
+// bazaarLinkProbeEvidenceScore 在 BazaarLink 未返回顶层 score 时，使用身份置信度生成可展示分数。
+func bazaarLinkProbeEvidenceScore(result bazaarLinkProbeResponse, passed bool) int {
+	score := clampInt(result.Score, 0, 100)
+	if score > 0 || !passed {
+		return score
+	}
+	confidenceScore := percentMetric(result.IdentityAssessment.Confidence)
+	if confidenceScore > 0 {
+		return confidenceScore
+	}
+	return score
 }
 
 // bazaarLinkIdentityStatusConfirmed 兼容 BazaarLink 页面返回的模型身份确认状态。
