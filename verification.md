@@ -2041,3 +2041,33 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `npm run typecheck` 通过，`vue-tsc --noEmit` 退出码 0。
 - `git diff --check` 通过。
 - 本轮未执行 Docker 构建部署。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## API Key 手动分组倍率提交构建部署验证
+
+本轮在 `fix(accounts): preserve manual upstream group rate` 提交 `0d4aa5c6` 基础上完成本地构建、compose 重建和部署后冒烟。构建使用 `--pull=false` 与官方 registry 显式镜像，镜像 digest 为 `sha256:6b6ae31c930f06fdc9f4281a16813d646cbf1dcc8c9c1c70ce1518d3b0b39f03`。
+
+## 校验方式
+
+- `git commit -m "fix(accounts): preserve manual upstream group rate"`
+- `docker build --pull=false -t sub2api:multi-key-local --build-arg NODE_IMAGE=registry-1.docker.io/library/node:24-alpine --build-arg GOLANG_IMAGE=registry-1.docker.io/library/golang:1.26.3-alpine --build-arg ALPINE_IMAGE=registry-1.docker.io/library/alpine:3.21 --build-arg POSTGRES_IMAGE=registry-1.docker.io/library/postgres:18-alpine --build-arg COMMIT=0d4aa5c6a5d5 .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `docker inspect sub2api --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}} {{.Image}}'`
+- `curl.exe -s -i http://127.0.0.1:8080/health`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" http://127.0.0.1:8080/admin/accounts`
+- `curl.exe -s -i "http://127.0.0.1:8080/api/v1/admin/accounts?page=1&page_size=1"`
+- `docker logs sub2api --tail 260 | Select-String -Pattern "panic|fatal|migration.*error|checksum mismatch"`
+
+## 校验结果
+
+- 代码已提交为 `0d4aa5c6 fix(accounts): preserve manual upstream group rate`。
+- Docker build 成功，镜像 manifest list 为 `sha256:6b6ae31c930f06fdc9f4281a16813d646cbf1dcc8c9c1c70ce1518d3b0b39f03`。
+- `docker compose` force-recreate 成功，`sub2api` 容器状态为 `running healthy`，镜像与刚构建的 digest 一致。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- `/admin/accounts` 返回 HTTP 200，HTML 长度 2671。
+- 未登录访问 `GET /api/v1/admin/accounts?page=1&page_size=1` 返回 HTTP 401，认证拦截正常。
+- 容器日志近 260 行未匹配 `panic`、`fatal`、迁移错误或 checksum mismatch。
