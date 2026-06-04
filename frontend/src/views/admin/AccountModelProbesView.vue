@@ -1165,10 +1165,10 @@ function formatEvidenceScore(evidence: AccountProbeValidationEvidence): string {
 }
 
 function formatSampleEvidenceScore(sample: AccountProbeSample, evidence: AccountProbeValidationEvidence): string {
-  if (isBazaarLinkSample(sample) && evidence.key === 'bazaarlink_identity' && displayEvidencePassed(sample, evidence) && evidence.score <= 0 && evidence.max_score > 0) {
-    const confidenceScore = bazaarLinkConfidenceScore(bazaarLinkObservedFields(sample).confidence ?? bazaarLinkPartialIdentityConfidence(sample))
-    if (typeof confidenceScore === 'number') {
-      return `${formatNumber(confidenceScore)} / ${formatNumber(evidence.max_score)}`
+  if (isBazaarLinkSample(sample) && evidence.key === 'bazaarlink_identity') {
+    const returnedScore = bazaarLinkReturnedScore(sample)
+    if (typeof returnedScore === 'number') {
+      return `${formatNumber(returnedScore)} / ${formatNumber(evidence.max_score)}`
     }
   }
   return formatEvidenceScore(evidence)
@@ -1395,25 +1395,19 @@ function bazaarLinkRunId(sample: AccountProbeSample): string {
   return result?.runId || bazaarLinkPartialRunId(sample) || (sample.run_id ? `#${sample.run_id}` : '-')
 }
 
-function bazaarLinkScore(sample: AccountProbeSample): string {
+function bazaarLinkReturnedScore(sample: AccountProbeSample): number | undefined {
   const result = parseBazaarLinkResult(sample)
-  if (typeof result?.score === 'number' && Number.isFinite(result.score) && result.score > 0) {
-    return formatNumber(result.score)
-  }
+  if (typeof result?.score === 'number' && Number.isFinite(result.score)) return result.score
+  const partialScore = bazaarLinkPartialScore(sample)
+  return typeof partialScore === 'number' && Number.isFinite(partialScore) ? partialScore : undefined
+}
+
+function bazaarLinkScore(sample: AccountProbeSample): string {
+  const returnedScore = bazaarLinkReturnedScore(sample)
+  if (typeof returnedScore === 'number') return formatNumber(returnedScore)
   const evidence = bazaarLinkIdentityEvidence(sample)
   if (evidence && evidence.max_score > 0) {
     return formatSampleEvidenceScore(sample, evidence)
-  }
-  const partialScore = bazaarLinkPartialScore(sample)
-  if (typeof partialScore === 'number' && partialScore > 0) {
-    return formatNumber(partialScore)
-  }
-  const confidenceScore = bazaarLinkConfidenceScore(result?.identityAssessment?.confidence ?? bazaarLinkPartialIdentityConfidence(sample))
-  if (bazaarLinkIdentityPassed(sample) && typeof confidenceScore === 'number') {
-    return formatNumber(confidenceScore)
-  }
-  if (typeof result?.score === 'number' && Number.isFinite(result.score)) {
-    return formatNumber(result.score)
   }
   return formatNumber(detailRun.value?.score)
 }

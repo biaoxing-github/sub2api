@@ -3,7 +3,6 @@ package service
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 )
 
@@ -168,32 +167,7 @@ func accountProbeBazaarLinkScoreStats(run AccountProbeResult) (int, int, int, in
 }
 
 func accountProbeBazaarLinkEvidenceScore(evidence AccountProbeValidationEvidence) int {
-	score := clampInt(evidence.Score, 0, evidence.MaxScore)
-	if score > 0 || !evidence.Passed || evidence.Key != "bazaarlink_identity" {
-		return score
-	}
-	return bazaarLinkObservedConfidenceEvidenceScore(evidence.Observed, evidence.MaxScore)
-}
-
-func bazaarLinkObservedConfidenceEvidenceScore(observed string, maxScore int) int {
-	if maxScore <= 0 {
-		return 0
-	}
-	for _, part := range strings.Split(observed, ";") {
-		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok || !strings.EqualFold(strings.TrimSpace(key), "confidence") {
-			continue
-		}
-		confidence, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		if err != nil || math.IsNaN(confidence) || math.IsInf(confidence, 0) || confidence <= 0 {
-			return 0
-		}
-		if confidence > 1 {
-			confidence = confidence / 100
-		}
-		return clampInt(int(math.Round(confidence*float64(maxScore))), 0, maxScore)
-	}
-	return 0
+	return clampInt(evidence.Score, 0, evidence.MaxScore)
 }
 
 func scoreAccountProbeModelValidation(run AccountProbeResult) AccountProbeScore {

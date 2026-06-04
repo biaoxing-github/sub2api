@@ -808,7 +808,7 @@ func TestAccountProbeService_RunBazaarLinkPollsAsyncRunUntilCompleted(t *testing
 	require.Equal(t, 93, sample.ValidationEvidence[0].Score)
 }
 
-func TestBazaarLinkProbeEvidenceUsesConfidenceWhenScoreMissing(t *testing.T) {
+func TestBazaarLinkProbeEvidenceKeepsReturnedZeroScoreWhenConfidenceExists(t *testing.T) {
 	t.Parallel()
 
 	evidence := bazaarLinkProbeEvidence(bazaarLinkProbeResponse{
@@ -822,7 +822,7 @@ func TestBazaarLinkProbeEvidenceUsesConfidenceWhenScoreMissing(t *testing.T) {
 	}, "gpt-5.5")
 
 	require.True(t, evidence.Passed)
-	require.Equal(t, 98, evidence.Score)
+	require.Equal(t, 0, evidence.Score)
 	require.Equal(t, 100, evidence.MaxScore)
 	require.Contains(t, evidence.Observed, "confidence=0.98")
 }
@@ -846,12 +846,12 @@ func TestBazaarLinkProbeEvidenceTreatsMatchWithRiskFlagsAsPassed(t *testing.T) {
 
 	require.True(t, evidence.Passed)
 	require.Equal(t, "warning", evidence.Severity)
-	require.Equal(t, 98, evidence.Score)
+	require.Equal(t, 0, evidence.Score)
 	require.Contains(t, evidence.Message, "存在风险提示")
 	require.Contains(t, evidence.Observed, "flags=部署探針")
 }
 
-func TestScoreAccountProbeRunBazaarLinkUsesObservedConfidenceForLegacyEvidence(t *testing.T) {
+func TestScoreAccountProbeRunBazaarLinkKeepsReturnedZeroScoreForLegacyEvidence(t *testing.T) {
 	t.Parallel()
 
 	score := ScoreAccountProbeRun(AccountProbeResult{
@@ -873,8 +873,8 @@ func TestScoreAccountProbeRunBazaarLinkUsesObservedConfidenceForLegacyEvidence(t
 		}},
 	})
 
-	require.Equal(t, 98, score.Score)
-	require.Contains(t, score.ScoreItems[0], "98/100")
+	require.Equal(t, 0, score.Score)
+	require.Contains(t, score.ScoreItems[0], "0/100")
 }
 
 func TestAccountProbeService_RunBazaarLinkRedactsSecretFieldsFromErrorMessage(t *testing.T) {

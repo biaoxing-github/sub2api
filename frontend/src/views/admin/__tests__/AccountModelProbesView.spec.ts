@@ -859,7 +859,7 @@ describe('AccountModelProbesView', () => {
     const candidates = detailDialog?.find('[data-test="bazaarlink-v3-candidates"]')
     expect(detailDialog?.text()).toContain('admin.accountModelProbes.statuses.success')
     expect(detailDialog?.text()).toContain('match')
-    expect(detailDialog?.text()).toContain('98 / 100')
+    expect(detailDialog?.text()).toContain('0 / 100')
     expect(detailDialog?.text()).toContain('部署探針: 回應未包含任何預期關鍵字')
     expect(detailDialog?.text()).toContain('多模態 - PDF 識別: 回應未包含任何預期關鍵字')
     expect(candidates?.exists()).toBe(true)
@@ -875,7 +875,7 @@ describe('AccountModelProbesView', () => {
     expect(detailDialog?.text()).not.toContain('apiKey')
   })
 
-  it('renders BazaarLink score from validation evidence when stored response is truncated', async () => {
+  it('keeps BazaarLink returned zero score when stored response is truncated', async () => {
     listAccountProbeRuns.mockResolvedValue({
       items: [
         {
@@ -960,8 +960,8 @@ describe('AccountModelProbesView', () => {
       dialog.text().includes('admin.accountModelProbes.detailTitle')
     )
     expect(detailDialog?.text()).toContain('admin.accountModelProbes.bazaarLinkResult')
-    expect(detailDialog?.text()).toContain('98 / 100')
-    expect(detailDialog?.text()).not.toContain('0 / 100')
+    expect(detailDialog?.text()).toContain('0 / 100')
+    expect(detailDialog?.text()).not.toContain('98 / 100')
     expect(detailDialog?.text()).toContain('match')
     expect(detailDialog?.text()).toContain('98%')
     expect(detailDialog?.text()).toContain('openai')

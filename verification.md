@@ -1729,3 +1729,76 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 前端类型检查通过。
 - `git diff --check` 通过。
 - 本轮按用户最新要求未执行构建、部署和线上探测。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## BazaarLink match/risk 修复推送构建部署与历史数据修正
+
+本轮按用户要求提交、推送、构建、部署、验证，并修正历史误判数据。源码提交为 `ed3d7465 fix(admin): repair BazaarLink match probe results`；远端推送到 `origin feature/account-api-key-rotation` 时仍被 GitHub 返回 403，当前凭据用户 `biaoxing-github` 没有 `Wei-Shaw/sub2api` 写权限。随后继续基于本地已提交状态构建并部署到本机 `D:\sub2api-deploy\docker-compose.yml` 管理的 `sub2api` 容器。
+
+## 校验方式
+
+- `git push -u origin feature/account-api-key-rotation`
+- `docker build --pull=false -t sub2api:multi-key-local --build-arg NODE_IMAGE=registry-1.docker.io/library/node:24-alpine --build-arg GOLANG_IMAGE=registry-1.docker.io/library/golang:1.26.3-alpine --build-arg ALPINE_IMAGE=registry-1.docker.io/library/alpine:3.21 --build-arg POSTGRES_IMAGE=postgres:18-alpine .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `docker inspect sub2api`
+- `SELECT filename FROM schema_migrations WHERE filename='154_repair_bazaarlink_match_probe_history.sql'`
+- 历史误判样本和 run 查询：`account_probe_runs.id IN (227,242)`、`account_probe_samples.id IN (1551,1589)`
+- `Invoke-WebRequest http://127.0.0.1:8080/health`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/model-probes`
+- `curl.exe -i "http://127.0.0.1:8080/api/v1/admin/account-probe-runs?page=1&page_size=1"`
+- Playwright 打开 `http://127.0.0.1:8080/admin/model-probes`
+- `docker logs sub2api --tail 220 | Select-String 'panic|fatal|migration.*error|checksum mismatch|apply migration'`
+
+## 校验结果
+
+- `git push` 失败：`Permission to Wei-Shaw/sub2api.git denied to biaoxing-github`，HTTP 403；远端未更新。
+- 首次 Docker build 因 Docker Desktop 直连 `registry-1.docker.io` 拉取 `postgres:18-alpine` 元数据超时失败；使用本地已有 `postgres:18-alpine` 并加 `--pull=false` 后构建通过。
+- Docker build 成功，新镜像 manifest list 为 `sha256:843ea986727259ba57b0bd257871083a8dfc984c154d391b49bcbf5c5225540c`。
+- Docker compose force-recreate 成功，`sub2api` 容器状态为 `running healthy`，镜像为 `sha256:843ea986727259ba57b0bd257871083a8dfc984c154d391b49bcbf5c5225540c`。
+- `schema_migrations` 已记录 `154_repair_bazaarlink_match_probe_history.sql`，应用时间为 `2026-06-04 14:13:31 +08`。
+- 历史误判剩余数为 0。
+- run 227 与 run 242 均已修正为 `status=success, success_count=1, failure_count=0`；summary 分别为 `完成 1/1 次请求，平均延迟 166036 ms，消耗 16094 tokens` 与 `完成 1/1 次请求，平均延迟 113163 ms，消耗 20188 tokens`。
+- sample 1551 与 sample 1589 均已修正为 `status=success, http_status=200`，error_code/error_message 已清空；sample 1551 evidence 为 `passed=true, severity=info, score=98`，sample 1589 evidence 为 `passed=true, severity=warning, score=91`，风险提示 message 仍保留。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- `/admin/model-probes` 返回 HTTP 200，HTML 长度 2627。
+- 未登录访问 `GET /api/v1/admin/account-probe-runs?page=1&page_size=1` 返回 HTTP 401 与 `{"code":"UNAUTHORIZED","message":"Authorization required"}`。
+- Playwright 打开 `/admin/model-probes` 后按预期跳转 `Login - Sub2API`，console warning/error 为 0。
+- 容器日志近 220 行未匹配 panic、fatal、migration error、checksum mismatch 或 apply migration 错误。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## BazaarLink 探测得分改为只使用上游返回 score
+
+本轮根据最新要求修正 BazaarLink 探测得分口径：探测得分只采用 BazaarLink 返回结果中的 `score`，`identityAssessment.confidence` 只作为身份置信度展示，不再换算成样本 evidence 分数、run 聚合分数或前端结果卡分数。新增迁移 `155_align_bazaarlink_evidence_score.sql`，把旧版从 confidence 派生出的历史 evidence 分数归零；事务回滚验证显示仅命中样本 1551，样本 1589 的 BazaarLink 返回分数 91 保持不变，riskFlags 仍保留展示。
+
+## 校验方式
+
+- TDD 红灯：`go test -tags unit ./internal/service -run "TestBazaarLinkProbeEvidenceKeepsReturnedZeroScoreWhenConfidenceExists|TestBazaarLinkProbeEvidenceTreatsMatchWithRiskFlagsAsPassed|TestScoreAccountProbeRunBazaarLinkKeepsReturnedZeroScoreForLegacyEvidence" -count=1`
+- TDD 红灯：`npm test -- --run src/views/admin/__tests__/AccountModelProbesView.spec.ts`
+- `gofmt -w internal\service\bazaarlink_probe.go internal\service\account_probe_score.go internal\service\account_probe_test.go`
+- `go test -tags unit ./internal/service -run "TestBazaarLinkProbeEvidenceKeepsReturnedZeroScoreWhenConfidenceExists|TestBazaarLinkProbeEvidenceTreatsMatchWithRiskFlagsAsPassed|TestScoreAccountProbeRunBazaarLinkKeepsReturnedZeroScoreForLegacyEvidence" -count=1`
+- `go test -tags unit ./internal/service -run "Test.*Bazaar|TestBazaar" -count=1`
+- `go test -tags unit ./internal/service ./internal/handler/admin -run "Test.*Bazaar|Test.*ModelProbe" -count=1`
+- `npm test -- --run src/views/admin/__tests__/AccountModelProbesView.spec.ts`
+- `npm run typecheck`
+- `git diff --check`
+- `npm run build`
+- 迁移事务回滚验证：`BEGIN; 155_align_bazaarlink_evidence_score.sql; SELECT sample 1551/1589 evidence score; ROLLBACK;`
+
+## 校验结果
+
+- 后端红灯先失败于旧逻辑把 confidence=0.98 换算为 98；修复后聚焦用例通过。
+- 前端红灯先失败于详情页继续显示 `98 / 100`；修复后 `score=0` 的 BazaarLink 响应显示 `0 / 100`，confidence 仍显示 `98%`，V3 候选和 riskFlags 仍展示。
+- 迁移 SQL 事务回滚验证通过：`UPDATE 1`，事务内 sample 1551 score 从 98 改为 0，sample 1589 score 保持 91，随后 ROLLBACK。
+- 后端 BazaarLink/模型探针相关测试通过。
+- 前端 `AccountModelProbesView.spec.ts` 11 个测试通过。
+- `npm run typecheck` 通过。
+- `git diff --check` 通过。
+- `npm run build` 通过；保留既有 Browserslist、Vite dynamic import 和 chunk size 警告。
