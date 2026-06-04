@@ -688,6 +688,7 @@ export interface ApiKeyProbeRun {
 
 export type AccountProbeMode = ApiKeyProbeMode | 'model_validation'
 export type AccountProbeRequestMode = 'non_stream' | 'stream'
+export type AccountProbeSource = 'self_validation' | 'bazaarlink_api'
 
 export interface CreateAccountProbeRunRequest {
   mode: AccountProbeMode
@@ -704,6 +705,12 @@ export interface CreateAccountModelProbeRunRequest {
   model?: string
   request_mode?: AccountProbeRequestMode | string
   trusted_comparison_account_id?: number
+}
+
+export interface CreateBazaarLinkModelProbeRunRequest {
+  account_id: number
+  model?: string
+  mode?: 'quick' | 'full'
 }
 
 export interface BatchAccountModelProbeRunsRequest {
@@ -795,6 +802,7 @@ export interface AccountProbeRun {
   account_name?: string | null
   account_platform?: string | null
   mode: AccountProbeMode | string
+  probe_source?: AccountProbeSource | string
   request_mode?: AccountProbeRequestMode | string
   status: 'pending' | 'running' | 'success' | 'failed' | 'partial' | string
   model?: string

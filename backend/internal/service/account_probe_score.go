@@ -41,6 +41,9 @@ type AccountProbeScore struct {
 
 func ScoreAccountProbeRun(run AccountProbeResult) AccountProbeScore {
 	if strings.EqualFold(strings.TrimSpace(run.Profile), AccountProbeProfileModelValidation) {
+		if strings.EqualFold(strings.TrimSpace(run.ProbeSource), AccountProbeSourceBazaarLinkAPI) {
+			return scoreAccountProbeBazaarLink(run)
+		}
 		return scoreAccountProbeModelValidation(run)
 	}
 
@@ -95,6 +98,41 @@ func ScoreAccountProbeRun(run AccountProbeResult) AccountProbeScore {
 	grade := accountProbeGrade(total)
 	return AccountProbeScore{
 		Score:        total,
+		Grade:        grade,
+		Label:        accountProbeGradeLabel(grade),
+		Confidence:   confidence,
+		ScoreItems:   scoreItems,
+		PenaltyItems: penaltyItems,
+	}
+}
+
+func scoreAccountProbeBazaarLink(run AccountProbeResult) AccountProbeScore {
+	rawScore, rawMaxScore, passed, total := accountProbeModelValidationScoreStats(run)
+	if rawMaxScore <= 0 {
+		return AccountProbeScore{
+			Score:        0,
+			Grade:        AccountProbeGradeUnavailable,
+			Label:        accountProbeGradeLabel(AccountProbeGradeUnavailable),
+			Confidence:   accountProbeScoreConfidence(0),
+			PenaltyItems: []string{"缺少 BazaarLink 验证证据"},
+		}
+	}
+	score := clampInt(int(math.Round(float64(rawScore)*100/float64(rawMaxScore))), 0, 100)
+	grade := accountProbeModelValidationGrade(score)
+	confidence := accountProbeScoreConfidence(total)
+	if total > 0 {
+		confidence = 100
+	}
+	scoreItems := []string{fmt.Sprintf("BazaarLink API 返回分数 %d/%d，折算 %d", rawScore, rawMaxScore, score)}
+	penaltyItems := make([]string, 0, 2)
+	if passed < total {
+		penaltyItems = append(penaltyItems, fmt.Sprintf("BazaarLink 身份验证未通过 %d/%d", total-passed, total))
+	}
+	if run.Status == AccountProbeStatusFailed && run.ErrorMessage != "" {
+		penaltyItems = append(penaltyItems, run.ErrorMessage)
+	}
+	return AccountProbeScore{
+		Score:        score,
 		Grade:        grade,
 		Label:        accountProbeGradeLabel(grade),
 		Confidence:   confidence,

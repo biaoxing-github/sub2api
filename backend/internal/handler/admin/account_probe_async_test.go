@@ -56,6 +56,37 @@ func (s *blockingAccountProbeService) RunExisting(ctx context.Context, run servi
 	return run, nil
 }
 
+func (s *blockingAccountProbeService) StartBazaarLink(ctx context.Context, req service.BazaarLinkProbeRunRequest) (service.AccountProbeResult, error) {
+	s.req = service.AccountProbeRunRequest{
+		AccountID:   req.AccountID,
+		Profile:     service.AccountProbeProfileModelValidation,
+		Model:       req.Model,
+		RequestMode: string(req.Mode),
+	}
+	return service.AccountProbeResult{
+		ID:           199,
+		AccountID:    req.AccountID,
+		Profile:      service.AccountProbeProfileModelValidation,
+		ProbeSource:  service.AccountProbeSourceBazaarLinkAPI,
+		Status:       service.AccountProbeStatusRunning,
+		Model:        req.Model,
+		RequestMode:  string(req.Mode),
+		RequestCount: 1,
+	}, nil
+}
+
+func (s *blockingAccountProbeService) RunBazaarLinkExisting(ctx context.Context, run service.AccountProbeResult, req service.BazaarLinkProbeRunRequest) (service.AccountProbeResult, error) {
+	s.once.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return run, ctx.Err()
+	}
+	run.Status = service.AccountProbeStatusSuccess
+	run.SuccessCount = run.RequestCount
+	return run, nil
+}
+
 func (s *blockingAccountProbeService) List(ctx context.Context, filter service.AccountProbeHistoryFilter) ([]service.AccountProbeResult, error) {
 	return nil, nil
 }
@@ -114,6 +145,45 @@ func (s *recordingAccountProbeService) RunExisting(ctx context.Context, run serv
 	s.mu.Lock()
 	s.runReqs = append(s.runReqs, req)
 	if len(s.runReqs) == 2 {
+		close(s.runDone)
+	}
+	s.mu.Unlock()
+	run.Status = service.AccountProbeStatusSuccess
+	return run, nil
+}
+
+func (s *recordingAccountProbeService) StartBazaarLink(ctx context.Context, req service.BazaarLinkProbeRunRequest) (service.AccountProbeResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startReqs = append(s.startReqs, service.AccountProbeRunRequest{
+		AccountID:   req.AccountID,
+		Profile:     service.AccountProbeProfileModelValidation,
+		Model:       req.Model,
+		RequestMode: string(req.Mode),
+	})
+	return service.AccountProbeResult{
+		ID:           int64(200 + len(s.startReqs)),
+		AccountID:    req.AccountID,
+		Profile:      service.AccountProbeProfileModelValidation,
+		ProbeSource:  service.AccountProbeSourceBazaarLinkAPI,
+		Status:       service.AccountProbeStatusRunning,
+		Model:        req.Model,
+		RequestMode:  string(req.Mode),
+		RequestCount: 1,
+	}, nil
+}
+
+func (s *recordingAccountProbeService) RunBazaarLinkExisting(ctx context.Context, run service.AccountProbeResult, req service.BazaarLinkProbeRunRequest) (service.AccountProbeResult, error) {
+	s.mu.Lock()
+	s.runReqs = append(s.runReqs, service.AccountProbeRunRequest{
+		AccountID:   req.AccountID,
+		Profile:     service.AccountProbeProfileModelValidation,
+		Model:       req.Model,
+		RequestMode: string(req.Mode),
+	})
+	select {
+	case <-s.runDone:
+	default:
 		close(s.runDone)
 	}
 	s.mu.Unlock()
@@ -297,6 +367,43 @@ func TestAccountModelProbeCreateRunsManualValidationOnly(t *testing.T) {
 	case <-probeSvc.started:
 	case <-time.After(time.Second):
 		t.Fatal("background model probe task did not start")
+	}
+	close(probeSvc.release)
+}
+
+func TestAccountModelProbeCreateBazaarLinkReturnsAcceptedAndRunsInBackground(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	probeSvc := newBlockingAccountProbeService()
+	h := &AccountHandler{accountProbeService: probeSvc}
+	router := gin.New()
+	router.POST("/api/v1/admin/account-model-probe-runs/bazaarlink", h.CreateBazaarLinkModelProbeRun)
+
+	rec := httptest.NewRecorder()
+	body := `{"account_id":128,"model":"gpt-5.5","mode":"full"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/account-model-probe-runs/bazaarlink", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	done := make(chan struct{})
+	go func() {
+		router.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("CreateBazaarLinkModelProbeRun should return before the probe task finishes")
+	}
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.Contains(t, rec.Body.String(), `"probe_source":"bazaarlink_api"`)
+	require.Equal(t, int64(128), probeSvc.req.AccountID)
+	require.Equal(t, "gpt-5.5", probeSvc.req.Model)
+	require.Equal(t, "full", probeSvc.req.RequestMode)
+
+	select {
+	case <-probeSvc.started:
+	case <-time.After(time.Second):
+		t.Fatal("background BazaarLink model probe task did not start")
 	}
 	close(probeSvc.release)
 }

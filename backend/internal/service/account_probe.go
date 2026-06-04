@@ -24,6 +24,9 @@ const (
 	AccountProbeProfileStandard        = APIKeyProbeProfileStandard
 	AccountProbeProfileModelValidation = "model_validation"
 
+	AccountProbeSourceSelfValidation = "self_validation"
+	AccountProbeSourceBazaarLinkAPI  = "bazaarlink_api"
+
 	AccountProbeStatusSuccess = APIKeyProbeStatusSuccess
 	AccountProbeStatusPartial = APIKeyProbeStatusPartial
 	AccountProbeStatusFailed  = APIKeyProbeStatusFailed
@@ -60,6 +63,19 @@ type AccountProbeRunRequest struct {
 	ModelValidationOnly   bool   `json:"-"`
 }
 
+type BazaarLinkProbeMode string
+
+const (
+	BazaarLinkProbeModeQuick BazaarLinkProbeMode = "quick"
+	BazaarLinkProbeModeFull  BazaarLinkProbeMode = "full"
+)
+
+type BazaarLinkProbeRunRequest struct {
+	AccountID int64               `json:"account_id"`
+	Model     string              `json:"model"`
+	Mode      BazaarLinkProbeMode `json:"mode"`
+}
+
 type AccountProbeEstimate = APIKeyProbeEstimate
 type AccountProbeLatencyStats = APIKeyProbeLatencyStats
 
@@ -91,6 +107,7 @@ type AccountProbeResult struct {
 	ID                    int64                    `json:"id"`
 	AccountID             int64                    `json:"account_id"`
 	Profile               string                   `json:"mode"`
+	ProbeSource           string                   `json:"probe_source"`
 	Status                string                   `json:"status"`
 	Model                 string                   `json:"model"`
 	RequestMode           string                   `json:"request_mode"`
@@ -329,6 +346,7 @@ func (s *AccountProbeService) Start(ctx context.Context, req AccountProbeRunRequ
 	run := AccountProbeResult{
 		AccountID:             req.AccountID,
 		Profile:               plan.Profile,
+		ProbeSource:           AccountProbeSourceSelfValidation,
 		Status:                AccountProbeStatusRunning,
 		Model:                 model,
 		RequestMode:           normalizeAccountProbeRequestMode(req.RequestMode),
@@ -359,6 +377,9 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 	defer releaseBaseURL()
 	run.AccountID = account.ID
 	run.Profile = plan.Profile
+	if strings.TrimSpace(run.ProbeSource) == "" {
+		run.ProbeSource = AccountProbeSourceSelfValidation
+	}
 	run.Model = model
 	run.RequestMode = normalizeAccountProbeRequestMode(req.RequestMode)
 	run.IncludeCodexStability = req.IncludeCodexStability && !req.ModelValidationOnly

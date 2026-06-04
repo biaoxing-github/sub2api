@@ -122,6 +122,47 @@ type accountProbeHTTPClientStub struct {
 	responseBodies []string
 }
 
+type bazaarLinkProbeHTTPClientStub struct {
+	requests []*http.Request
+	bodies   []string
+}
+
+func (c *bazaarLinkProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
+	c.requests = append(c.requests, req)
+	body := ""
+	if req.Body != nil {
+		data, _ := io.ReadAll(req.Body)
+		body = string(data)
+		c.bodies = append(c.bodies, body)
+	}
+	response := `{
+	  "runId":"run_123",
+	  "status":"completed",
+	  "score":87,
+	  "identityAssessment":{
+	    "status":"confirmed",
+	    "confidence":0.92,
+	    "claimedModel":"gpt-5.5",
+	    "predictedFamily":"openai",
+	    "subModelMatchV3F":{"modelId":"gpt-5.5","score":0.94},
+	    "riskFlags":[],
+	    "apiKey":"sk-should-not-persist"
+	  },
+	  "items":[{"probeId":"submodel_cutoff","label":"cutoff","group":"identity","passed":true,"response":"ok"}],
+	  "totalInputTokens":3120,
+	  "totalOutputTokens":2540
+	}`
+	return accountProbeJSONResponse(http.StatusOK, response), nil
+}
+
+type failingBazaarLinkProbeHTTPClientStub struct {
+	body string
+}
+
+func (c *failingBazaarLinkProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
+	return accountProbeJSONResponse(http.StatusBadRequest, c.body), nil
+}
+
 func (c *accountProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -622,6 +663,97 @@ func TestAccountProbeService_RunManualModelValidationStoresEvidence(t *testing.T
 		require.Equal(t, sample.ValidationEvidence[0].MaxScore, sample.ValidationEvidence[0].Score)
 	}
 	require.Equal(t, len(accountProbeModelValidationSamplesForModel("gpt-5.5")), validationSamples)
+}
+
+func TestAccountProbeService_RunBazaarLinkUsesAccountAPIKeyAndPersistsRedactedResult(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "bazaar-upstream",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":           "sk-live-secret",
+			"base_url":          "https://relay.example.com",
+			"request_base_urls": []any{"https://relay.example.com"},
+		},
+	}
+	repo := &accountProbeRepoStub{}
+	client := &bazaarLinkProbeHTTPClientStub{}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+
+	req := BazaarLinkProbeRunRequest{AccountID: 128, Model: "gpt-5.5", Mode: BazaarLinkProbeModeQuick}
+	run, err := svc.StartBazaarLink(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeSourceBazaarLinkAPI, run.ProbeSource)
+	require.Equal(t, AccountProbeProfileModelValidation, run.Profile)
+	require.Equal(t, "quick", run.RequestMode)
+
+	result, err := svc.RunBazaarLinkExisting(context.Background(), run, req)
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeStatusSuccess, result.Status)
+	require.Len(t, client.bodies, 1)
+	require.Contains(t, client.bodies[0], `"apiKey":"sk-live-secret"`)
+	require.Contains(t, client.bodies[0], `"baseUrl":"https://relay.example.com/v1"`)
+	require.Contains(t, client.bodies[0], `"quickMode":true`)
+	require.Contains(t, client.bodies[0], `"identityOnly":true`)
+	require.Contains(t, client.bodies[0], `"sync":true`)
+
+	require.Len(t, repo.samples, 1)
+	sample := repo.samples[0]
+	require.Equal(t, AccountProbeSourceBazaarLinkAPI, sample.Type)
+	require.Equal(t, AccountProbeSampleSuccess, sample.Status)
+	require.Equal(t, "sk-liv...cret", sample.APIKeyMasked)
+	require.NotContains(t, sample.RequestBody, "sk-live-secret")
+	require.Contains(t, sample.RequestBody, `"apiKey":"\u003credacted\u003e"`)
+	require.NotContains(t, sample.ResponseBody, "sk-should-not-persist")
+	require.Contains(t, sample.ResponseBody, `"apiKey":"\u003credacted\u003e"`)
+	require.Equal(t, 3120, sample.InputTokens)
+	require.Equal(t, 2540, sample.OutputTokens)
+	require.Equal(t, 5660, sample.TotalTokens)
+	require.Len(t, sample.ValidationEvidence, 1)
+	require.True(t, sample.ValidationEvidence[0].Passed)
+	require.Equal(t, 87, sample.ValidationEvidence[0].Score)
+
+	score := ScoreAccountProbeRun(result)
+	require.Equal(t, 87, score.Score)
+	require.Contains(t, score.ScoreItems[0], "BazaarLink API")
+}
+
+func TestAccountProbeService_RunBazaarLinkRedactsSecretFieldsFromErrorMessage(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       128,
+		Name:     "bazaar-upstream",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "sk-live-secret",
+			"base_url": "https://relay.example.com",
+		},
+	}
+	repo := &accountProbeRepoStub{}
+	client := &failingBazaarLinkProbeHTTPClientStub{
+		body: `{"error":{"message":"bad key sk-live-secret","apiKey":"sk-live-secret","token":"secret-token"}}`,
+	}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+
+	req := BazaarLinkProbeRunRequest{AccountID: 128, Model: "gpt-5.5", Mode: BazaarLinkProbeModeFull}
+	run, err := svc.StartBazaarLink(context.Background(), req)
+	require.NoError(t, err)
+
+	result, err := svc.RunBazaarLinkExisting(context.Background(), run, req)
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeStatusFailed, result.Status)
+	require.Len(t, repo.samples, 1)
+	sample := repo.samples[0]
+	require.NotContains(t, sample.ErrorMessage, "sk-live-secret")
+	require.NotContains(t, sample.ErrorMessage, "secret-token")
+	require.Contains(t, sample.ErrorMessage, "<redacted>")
+	require.Len(t, sample.ValidationEvidence, 1)
+	require.NotContains(t, sample.ValidationEvidence[0].Message, "sk-live-secret")
 }
 
 func TestAccountProbeService_RunStreamModelValidationPreservesToolCallEvidence(t *testing.T) {

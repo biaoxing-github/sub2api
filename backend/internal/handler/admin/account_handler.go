@@ -85,6 +85,8 @@ type AccountHandler struct {
 type accountProbeRunner interface {
 	Start(ctx context.Context, req service.AccountProbeRunRequest) (service.AccountProbeResult, error)
 	RunExisting(ctx context.Context, run service.AccountProbeResult, req service.AccountProbeRunRequest) (service.AccountProbeResult, error)
+	StartBazaarLink(ctx context.Context, req service.BazaarLinkProbeRunRequest) (service.AccountProbeResult, error)
+	RunBazaarLinkExisting(ctx context.Context, run service.AccountProbeResult, req service.BazaarLinkProbeRunRequest) (service.AccountProbeResult, error)
 	List(ctx context.Context, filter service.AccountProbeHistoryFilter) ([]service.AccountProbeResult, error)
 	Get(ctx context.Context, accountID, runID int64) (*service.AccountProbeResult, error)
 	ListReports(ctx context.Context, filter service.AccountProbeReportFilter) (service.AccountProbeReportPage, error)
@@ -967,6 +969,12 @@ type CreateAccountModelProbeRunRequest struct {
 	TrustedComparisonID int64  `json:"trusted_comparison_account_id"`
 }
 
+type CreateBazaarLinkModelProbeRunRequest struct {
+	AccountID int64  `json:"account_id" binding:"required"`
+	Model     string `json:"model"`
+	Mode      string `json:"mode"`
+}
+
 type BatchCreateAccountModelProbeRunsRequest struct {
 	AccountIDs          []int64 `json:"account_ids"`
 	Model               string  `json:"model"`
@@ -1571,6 +1579,32 @@ func (h *AccountHandler) BatchCreateModelProbeRuns(c *gin.Context) {
 	})
 }
 
+// CreateBazaarLinkModelProbeRun 创建 BazaarLink 外部 API 模型验证后台任务。
+// POST /api/v1/admin/account-model-probe-runs/bazaarlink
+func (h *AccountHandler) CreateBazaarLinkModelProbeRun(c *gin.Context) {
+	if h.accountProbeService == nil {
+		response.InternalError(c, "Account probe service is not configured")
+		return
+	}
+	var req CreateBazaarLinkModelProbeRunRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	probeReq := service.BazaarLinkProbeRunRequest{
+		AccountID: req.AccountID,
+		Model:     req.Model,
+		Mode:      service.BazaarLinkProbeMode(req.Mode),
+	}
+	result, err := h.accountProbeService.StartBazaarLink(c.Request.Context(), probeReq)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	go h.runBazaarLinkProbeBackground(result, probeReq)
+	response.Accepted(c, result)
+}
+
 func (h *AccountHandler) runAccountProbeBackground(run service.AccountProbeResult, req service.AccountProbeRunRequest) {
 	if h == nil || h.accountProbeService == nil {
 		return
@@ -1579,6 +1613,21 @@ func (h *AccountHandler) runAccountProbeBackground(run service.AccountProbeResul
 	defer cancel()
 	if _, err := h.accountProbeService.RunExisting(bgCtx, run, req); err != nil {
 		slog.Warn("account probe background run failed",
+			"account_id", req.AccountID,
+			"run_id", run.ID,
+			"error", err.Error(),
+		)
+	}
+}
+
+func (h *AccountHandler) runBazaarLinkProbeBackground(run service.AccountProbeResult, req service.BazaarLinkProbeRunRequest) {
+	if h == nil || h.accountProbeService == nil {
+		return
+	}
+	bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if _, err := h.accountProbeService.RunBazaarLinkExisting(bgCtx, run, req); err != nil {
+		slog.Warn("bazaarlink account probe background run failed",
 			"account_id", req.AccountID,
 			"run_id", run.ID,
 			"error", err.Error(),

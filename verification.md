@@ -1575,3 +1575,32 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `npm run typecheck` 通过，`vue-tsc --noEmit` 退出码 0。
 - `git diff --check` 通过。
 - `npm run build` 通过；保留项目既有 Browserslist caniuse-lite 过期、Vite dynamic import 和 chunk size 警告。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## BazaarLink 模型探针对接
+
+本轮按用户要求接入 BazaarLink probe API 到模型探针页面：新增独立 BazaarLink 验证按钮和弹窗，用两个按钮区分快速验证与完整验证；提交后后端立即返回后台任务，不等待外部检测完成；列表和详情新增探针来源，区分本地校验与 BazaarLink API。前端只提交账号 ID、模型和模式，不接收 API key；后端从账号已保存的 OpenAI API key 组装 BazaarLink 请求，持久化的请求体、响应体和错误摘要均脱敏。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run TestAccountProbeService_RunBazaarLinkRedactsSecretFieldsFromErrorMessage -count=1`
+- `go test -tags unit ./internal/service ./internal/handler/admin -run "Test.*Bazaar|Test.*ModelProbe" -count=1`
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+- `git diff --check`
+- `npm run build`
+
+## 校验结果
+
+- TDD 红灯已观察：前端新增 BazaarLink 断言后先失败于缺少独立按钮、来源列和结构化结果展示。
+- TDD 红灯已观察：后端 BazaarLink 错误摘要用例先失败于保存的错误信息仍包含 `sk-live-secret`。
+- 补齐后端错误摘要脱敏后，BazaarLink 单用例通过。
+- 后端 service/admin handler 聚焦测试通过。
+- 前端 `AccountModelProbesView.spec.ts` 9 个测试全部通过。
+- `npm run typecheck` 通过，`vue-tsc --noEmit` 退出码 0。
+- `git diff --check` 通过。
+- `npm run build` 通过；保留项目既有 Browserslist caniuse-lite 过期、Vite dynamic import 和 chunk size 警告。

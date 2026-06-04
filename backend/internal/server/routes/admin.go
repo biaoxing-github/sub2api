@@ -279,6 +279,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/account-probe-runs/ranking", h.Admin.Account.ListProbeReportRanking)
 	admin.GET("/account-probe-runs/:run_id", h.Admin.Account.GetProbeReportRun)
 	admin.POST("/account-model-probe-runs", h.Admin.Account.CreateModelProbeRun)
+	admin.POST("/account-model-probe-runs/bazaarlink", h.Admin.Account.CreateBazaarLinkModelProbeRun)
 	admin.POST("/account-model-probe-runs/batch", h.Admin.Account.BatchCreateModelProbeRuns)
 
 	accounts := admin.Group("/accounts")

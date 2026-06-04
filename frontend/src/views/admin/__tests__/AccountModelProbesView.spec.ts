@@ -3,11 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountModelProbesView from '../AccountModelProbesView.vue'
 
-const { listAccounts, listAccountProbeRuns, getAccountProbeRun, createAccountModelProbeRun, batchAccountModelProbeRuns, deleteAccountProbeRuns } = vi.hoisted(() => ({
+const { listAccounts, listAccountProbeRuns, getAccountProbeRun, createAccountModelProbeRun, createBazaarLinkModelProbeRun, batchAccountModelProbeRuns, deleteAccountProbeRuns } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listAccountProbeRuns: vi.fn(),
   getAccountProbeRun: vi.fn(),
   createAccountModelProbeRun: vi.fn(),
+  createBazaarLinkModelProbeRun: vi.fn(),
   batchAccountModelProbeRuns: vi.fn(),
   deleteAccountProbeRuns: vi.fn(),
 }))
@@ -18,6 +19,7 @@ vi.mock('@/api/admin/accounts', () => ({
     listAccountProbeRuns,
     getAccountProbeRun,
     createAccountModelProbeRun,
+    createBazaarLinkModelProbeRun,
     batchAccountModelProbeRuns,
     deleteAccountProbeRuns,
   },
@@ -25,6 +27,7 @@ vi.mock('@/api/admin/accounts', () => ({
   listAccountProbeRuns,
   getAccountProbeRun,
   createAccountModelProbeRun,
+  createBazaarLinkModelProbeRun,
   batchAccountModelProbeRuns,
   deleteAccountProbeRuns,
 }))
@@ -57,6 +60,7 @@ describe('AccountModelProbesView', () => {
     listAccountProbeRuns.mockReset()
     getAccountProbeRun.mockReset()
     createAccountModelProbeRun.mockReset()
+    createBazaarLinkModelProbeRun.mockReset()
     batchAccountModelProbeRuns.mockReset()
     deleteAccountProbeRuns.mockReset()
     vi.stubGlobal('confirm', vi.fn(() => true))
@@ -205,6 +209,88 @@ describe('AccountModelProbesView', () => {
     }, expect.any(Object))
     expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).toContain('admin.accountModelProbes.batchModelAcceptedWithSkipped')
+  })
+
+  it('starts a BazaarLink full probe without sending an API key from the browser', async () => {
+    listAccountProbeRuns.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 20,
+    })
+    createBazaarLinkModelProbeRun.mockResolvedValue({
+      id: 202,
+      account_id: 12,
+      mode: 'model_validation',
+      probe_source: 'bazaarlink_api',
+      status: 'running',
+      model: 'anthropic/claude-opus-4.7',
+      request_mode: 'full',
+      created_at: '2026-06-04T10:00:00Z',
+    })
+
+    const wrapper = mount(AccountModelProbesView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="open-bazaarlink-probe-dialog"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="bazaarlink-probe-account-id"]').setValue('12')
+    await wrapper.find('[data-test="bazaarlink-probe-model"]').setValue('anthropic/claude-opus-4.7')
+    await wrapper.find('[data-test="bazaarlink-probe-mode-full"]').trigger('click')
+    await wrapper.find('[data-test="bazaarlink-probe-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(createBazaarLinkModelProbeRun).toHaveBeenCalledWith({
+      account_id: 12,
+      model: 'anthropic/claude-opus-4.7',
+      mode: 'full',
+    }, expect.any(Object))
+    expect(createBazaarLinkModelProbeRun.mock.calls[0]?.[0]).not.toHaveProperty('apiKey')
+    expect(createBazaarLinkModelProbeRun.mock.calls[0]?.[0]).not.toHaveProperty('api_key')
+    expect(wrapper.text()).toContain('admin.accountModelProbes.bazaarLinkStarted')
+    expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
+  })
+
+  it('renders the probe source column for BazaarLink API runs', async () => {
+    listAccountProbeRuns.mockResolvedValue({
+      items: [
+        {
+          id: 202,
+          account_id: 12,
+          account_name: 'rayapi',
+          mode: 'model_validation',
+          probe_source: 'bazaarlink_api',
+          status: 'success',
+          model: 'anthropic/claude-opus-4.7',
+          request_mode: 'quick',
+          score: 88,
+          created_at: '2026-06-04T10:00:00Z',
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+
+    const wrapper = mount(AccountModelProbesView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accountModelProbes.probeSources.bazaarlink_api')
+    expect(wrapper.text()).toContain('admin.accountModelProbes.bazaarLinkModes.quick')
   })
 
   it('queries model probe runs by keyword and paginates results', async () => {
@@ -569,6 +655,119 @@ describe('AccountModelProbesView', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('JSON 算术')
+  })
+
+  it('renders BazaarLink probe result as structured cards without raw secret fields', async () => {
+    listAccountProbeRuns.mockResolvedValue({
+      items: [
+        {
+          id: 202,
+          account_id: 12,
+          account_name: 'rayapi',
+          mode: 'model_validation',
+          probe_source: 'bazaarlink_api',
+          status: 'success',
+          model: 'anthropic/claude-opus-4.7',
+          request_mode: 'full',
+          created_at: '2026-06-04T10:00:00Z',
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    getAccountProbeRun.mockResolvedValue({
+      id: 202,
+      account_id: 12,
+      mode: 'model_validation',
+      probe_source: 'bazaarlink_api',
+      status: 'success',
+      model: 'anthropic/claude-opus-4.7',
+      request_mode: 'full',
+      score: 88,
+      samples: [
+        {
+          id: 1,
+          run_id: 202,
+          request_index: 1,
+          type: 'bazaarlink_api',
+          label: 'BazaarLink 完整验证',
+          status: 'success',
+          model: 'anthropic/claude-opus-4.7',
+          upstream_endpoint: 'https://bazaarlink.ai/api/probe/run',
+          http_status: 200,
+          latency_ms: 1200,
+          input_tokens: 31,
+          output_tokens: 17,
+          tokens: 48,
+          request_body: '{"baseUrl":"https://proxy.example.test/v1","apiKey":"<redacted>","modelId":"anthropic/claude-opus-4.7","quickMode":false}',
+          response_body: JSON.stringify({
+            runId: 'probe_run_123',
+            status: 'completed',
+            score: 88,
+            apiKey: '<redacted>',
+            identityAssessment: {
+              status: 'confirmed',
+              confidence: 0.91,
+              claimedModel: 'anthropic/claude-opus-4.7',
+              predictedFamily: 'claude',
+              subModelMatchV3F: {
+                modelId: 'claude-opus-4.7',
+                score: 0.89,
+              },
+              riskFlags: [],
+            },
+            items: [
+              {
+                probeId: 'identity-basic',
+                label: 'Identity Basic',
+                group: 'identity',
+                passed: true,
+                ttftMs: 680,
+                tps: 41.2,
+                response: 'I am Claude Opus 4.7.',
+              },
+            ],
+            totalInputTokens: 31,
+            totalOutputTokens: 17,
+          }),
+          validation_evidence: [],
+          created_at: '2026-06-04T10:00:00Z',
+        },
+      ],
+      created_at: '2026-06-04T10:00:00Z',
+    })
+
+    const wrapper = mount(AccountModelProbesView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
+          Pagination: PaginationStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="model-probe-detail-202"]').trigger('click')
+    await flushPromises()
+
+    const detailDialog = wrapper.findAll('[data-test="base-dialog"]').find(dialog =>
+      dialog.text().includes('admin.accountModelProbes.detailTitle')
+    )
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.bazaarLinkResult')
+    expect(detailDialog?.text()).toContain('probe_run_123')
+    expect(detailDialog?.text()).toContain('confirmed')
+    expect(detailDialog?.text()).toContain('91%')
+    expect(detailDialog?.text()).toContain('anthropic/claude-opus-4.7')
+    expect(detailDialog?.text()).toContain('claude')
+    expect(detailDialog?.text()).toContain('claude-opus-4.7 (89%)')
+    expect(detailDialog?.text()).toContain('Identity Basic')
+    expect(detailDialog?.text()).toContain('680 ms')
+    expect(detailDialog?.text()).toContain('41.2')
+    expect(detailDialog?.text()).toContain('I am Claude Opus 4.7.')
+    expect(detailDialog?.text()).not.toContain('sk-live-secret')
+    expect(detailDialog?.text()).not.toContain('apiKey')
   })
 
 })

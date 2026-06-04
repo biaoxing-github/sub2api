@@ -28,6 +28,7 @@ import type {
   AccountProbeRun,
   CreateAccountProbeRunRequest,
   CreateAccountModelProbeRunRequest,
+  CreateBazaarLinkModelProbeRunRequest,
   BatchAccountModelProbeRunsRequest,
   BatchAccountModelProbeRunsResponse,
   AccountProbeRunListFilters,
@@ -430,6 +431,20 @@ export async function createAccountModelProbeRun(
 ): Promise<AccountProbeRun> {
   const { data } = await apiClient.post<AccountProbeRun>(
     '/admin/account-model-probe-runs',
+    payload,
+    {
+      signal: options?.signal,
+    }
+  )
+  return data
+}
+
+export async function createBazaarLinkModelProbeRun(
+  payload: CreateBazaarLinkModelProbeRunRequest,
+  options?: FetchOptions
+): Promise<AccountProbeRun> {
+  const { data } = await apiClient.post<AccountProbeRun>(
+    '/admin/account-model-probe-runs/bazaarlink',
     payload,
     {
       signal: options?.signal,
@@ -1049,6 +1064,7 @@ export const accountsAPI = {
   listAccountProbeRanking,
   batchAccountProbeRuns,
   createAccountModelProbeRun,
+  createBazaarLinkModelProbeRun,
   batchAccountModelProbeRuns,
   refreshCredentials,
   getStats,

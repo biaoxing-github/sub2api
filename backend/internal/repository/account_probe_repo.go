@@ -31,7 +31,7 @@ func (r *accountProbeRepository) CreateAccountProbeRun(ctx context.Context, run 
 	}
 	return r.db.QueryRowContext(ctx, `
 INSERT INTO account_probe_runs (
-  account_id, mode, status, model, request_mode, codex_stability, long_context,
+  account_id, mode, probe_source, status, model, request_mode, codex_stability, long_context,
   request_count, success_count, failure_count,
   input_tokens, output_tokens, total_tokens,
   p50_ms, p95_ms, avg_ms, max_ms, first_token_ms,
@@ -39,14 +39,14 @@ INSERT INTO account_probe_runs (
   estimated_output_tokens_min, estimated_output_tokens_max,
   error_message, summary, created_at, started_at, finished_at
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,
-  $8,$9,$10,
-  $11,$12,$13,
-  $14,$15,$16,$17,$18,
-  $19,$20,$21,$22,
-  NULLIF($23,''), NULLIF($24,''), $25,$26,$27
+  $1,$2,COALESCE(NULLIF($3,''),'self_validation'),$4,$5,$6,$7,$8,
+  $9,$10,$11,
+  $12,$13,$14,
+  $15,$16,$17,$18,$19,
+  $20,$21,$22,$23,
+  NULLIF($24,''), NULLIF($25,''), $26,$27,$28
 ) RETURNING id, created_at`,
-		run.AccountID, run.Profile, run.Status, run.Model, run.RequestMode, run.IncludeCodexStability, run.IncludeLongContext,
+		run.AccountID, run.Profile, run.ProbeSource, run.Status, run.Model, run.RequestMode, run.IncludeCodexStability, run.IncludeLongContext,
 		run.RequestCount, run.SuccessCount, run.FailureCount,
 		run.InputTokens, run.OutputTokens, run.TotalTokens,
 		run.Latency.P50Millis, run.Latency.P95Millis, run.Latency.AvgMillis, run.Latency.MaxMillis, run.FirstTokenMillis,
@@ -350,7 +350,7 @@ ORDER BY request_index ASC`, runID)
 }
 
 const accountProbeRunSelectSQL = `
-SELECT id, account_id, mode, status, model, COALESCE(request_mode,'non_stream'), codex_stability, long_context,
+SELECT id, account_id, mode, COALESCE(probe_source,'self_validation'), status, model, COALESCE(request_mode,'non_stream'), codex_stability, long_context,
        request_count, success_count, failure_count,
        input_tokens, output_tokens, total_tokens,
        p50_ms, p95_ms, avg_ms, max_ms, first_token_ms,
@@ -360,7 +360,7 @@ SELECT id, account_id, mode, status, model, COALESCE(request_mode,'non_stream'),
 `
 
 const accountProbeReportSelectSQL = `
-SELECT r.id, r.account_id, COALESCE(a.name,''), r.mode, r.status, r.model, COALESCE(r.request_mode,'non_stream'), r.codex_stability, r.long_context,
+SELECT r.id, r.account_id, COALESCE(a.name,''), r.mode, COALESCE(r.probe_source,'self_validation'), r.status, r.model, COALESCE(r.request_mode,'non_stream'), r.codex_stability, r.long_context,
        r.request_count, r.success_count, r.failure_count,
        r.input_tokens, r.output_tokens, r.total_tokens,
        r.p50_ms, r.p95_ms, r.avg_ms, r.max_ms, r.first_token_ms,
@@ -375,7 +375,7 @@ func scanAccountProbeRun(scanner interface{ Scan(...any) error }) (*service.Acco
 	var errorMessage, summary sql.NullString
 	var startedAt, finishedAt sql.NullTime
 	if err := scanner.Scan(
-		&run.ID, &run.AccountID, &run.Profile, &run.Status, &run.Model, &run.RequestMode, &run.IncludeCodexStability, &run.IncludeLongContext,
+		&run.ID, &run.AccountID, &run.Profile, &run.ProbeSource, &run.Status, &run.Model, &run.RequestMode, &run.IncludeCodexStability, &run.IncludeLongContext,
 		&run.RequestCount, &run.SuccessCount, &run.FailureCount,
 		&run.InputTokens, &run.OutputTokens, &run.TotalTokens,
 		&run.Latency.P50Millis, &run.Latency.P95Millis, &run.Latency.AvgMillis, &run.Latency.MaxMillis, &firstToken,
@@ -414,7 +414,7 @@ func scanAccountProbeReportItem(scanner interface{ Scan(...any) error }) (*servi
 	var errorMessage, summary sql.NullString
 	var startedAt, finishedAt sql.NullTime
 	if err := scanner.Scan(
-		&item.ID, &item.AccountID, &item.AccountName, &item.Profile, &item.Status, &item.Model, &item.RequestMode, &item.IncludeCodexStability, &item.IncludeLongContext,
+		&item.ID, &item.AccountID, &item.AccountName, &item.Profile, &item.ProbeSource, &item.Status, &item.Model, &item.RequestMode, &item.IncludeCodexStability, &item.IncludeLongContext,
 		&item.RequestCount, &item.SuccessCount, &item.FailureCount,
 		&item.InputTokens, &item.OutputTokens, &item.TotalTokens,
 		&item.Latency.P50Millis, &item.Latency.P95Millis, &item.Latency.AvgMillis, &item.Latency.MaxMillis, &firstToken,

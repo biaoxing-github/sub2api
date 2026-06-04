@@ -7,10 +7,16 @@
             <h1 class="text-base font-semibold text-gray-900 dark:text-gray-100">{{ t('admin.accountModelProbes.title') }}</h1>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.description') }}</p>
           </div>
-          <button type="button" data-test="open-batch-model-probe-dialog" class="btn btn-secondary px-3" @click="openBatchDialog">
-            <Icon name="sparkles" size="sm" />
-            <span class="ml-1.5">{{ t('admin.accountModelProbes.batchModelProbe') }}</span>
-          </button>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" data-test="open-bazaarlink-probe-dialog" class="btn btn-primary px-3" @click="openBazaarLinkDialog">
+              <Icon name="externalLink" size="sm" />
+              <span class="ml-1.5">{{ t('admin.accountModelProbes.bazaarLinkProbe') }}</span>
+            </button>
+            <button type="button" data-test="open-batch-model-probe-dialog" class="btn btn-secondary px-3" @click="openBatchDialog">
+              <Icon name="sparkles" size="sm" />
+              <span class="ml-1.5">{{ t('admin.accountModelProbes.batchModelProbe') }}</span>
+            </button>
+          </div>
         </div>
         <form data-test="run-model-probe" class="grid gap-3 md:grid-cols-[160px_minmax(220px,1fr)_180px_180px_auto]" @submit.prevent="submitProbe">
           <input
@@ -89,7 +95,7 @@
           </div>
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[840px]">
+          <table class="w-full min-w-[980px]">
             <thead class="bg-gray-50 dark:bg-dark-800">
               <tr>
                 <th class="w-10 px-4 py-3 text-left">
@@ -106,6 +112,7 @@
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.account') }}</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.model') }}</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.requestMode') }}</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.probeSource') }}</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.score') }}</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.status') }}</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.time') }}</th>
@@ -114,10 +121,10 @@
             </thead>
             <tbody>
               <tr v-if="loading && runs.length === 0">
-                <td colspan="8" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</td>
+                <td colspan="9" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</td>
               </tr>
               <tr v-else-if="runs.length === 0">
-                <td colspan="8" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.empty') }}</td>
+                <td colspan="9" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.empty') }}</td>
               </tr>
               <tr v-for="run in runs" :key="run.id" class="border-t border-gray-100 hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-800/60">
                 <td class="px-4 py-3">
@@ -137,6 +144,7 @@
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ run.model || '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatRequestMode(run.request_mode) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatProbeSource(run.probe_source) }}</td>
                 <td class="px-4 py-3">
                   <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(run.score) }}</div>
                   <div v-if="run.grade_label" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ run.grade_label }}</div>
@@ -188,10 +196,14 @@
         <div v-if="detailLoading" class="text-sm text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</div>
         <div v-else-if="detailError" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200">{{ detailError }}</div>
         <div v-else-if="detailRun" class="space-y-4">
-          <div class="grid gap-3 sm:grid-cols-3">
+          <div class="grid gap-3 sm:grid-cols-4">
             <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-dark-800">
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.status') }}</div>
               <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatStatus(detailRun.status) }}</div>
+            </div>
+            <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-dark-800">
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.probeSource') }}</div>
+              <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatProbeSource(detailRun.probe_source) }}</div>
             </div>
             <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-dark-800">
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.score') }}</div>
@@ -231,7 +243,7 @@
                 <dt class="inline font-medium">{{ t('admin.accountModelProbes.firstToken') }}:</dt>
                 <dd class="inline"> {{ formatDuration(sample.first_token_ms) }}</dd>
               </div>
-              <div v-if="sample.api_key_masked || sample.api_key_fingerprint">
+              <div v-if="!isBazaarLinkSample(sample) && (sample.api_key_masked || sample.api_key_fingerprint)">
                 <dt class="inline font-medium">{{ t('admin.accountModelProbes.apiKey') }}:</dt>
                 <dd class="inline break-all"> {{ sample.api_key_masked || sample.api_key_fingerprint }}</dd>
               </div>
@@ -244,7 +256,76 @@
                 <dd class="inline break-all"> {{ sample.error_code || '' }} {{ sample.error || sample.error_message || '' }}</dd>
               </div>
             </dl>
-            <pre v-if="sample.output_text && !sampleFailureResultDetails(sample).length" class="mt-3 max-h-40 overflow-auto rounded-lg bg-gray-950 p-3 text-xs text-gray-100">{{ sample.output_text }}</pre>
+            <div v-if="parseBazaarLinkResult(sample)" class="mt-3 space-y-3 rounded-lg border border-sky-200 bg-sky-50 p-3 dark:border-sky-900/60 dark:bg-sky-950/30">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="text-sm font-semibold text-sky-900 dark:text-sky-100">{{ t('admin.accountModelProbes.bazaarLinkResult') }}</div>
+                <span class="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-sky-700 dark:bg-dark-900 dark:text-sky-200">
+                  {{ t('admin.accountModelProbes.runId') }} {{ parseBazaarLinkResult(sample)?.runId || '-' }}
+                </span>
+              </div>
+              <dl class="grid gap-3 text-xs text-sky-800 dark:text-sky-100 sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.score') }}</dt>
+                  <dd class="mt-1 text-sm font-semibold">{{ formatNumber(parseBazaarLinkResult(sample)?.score) }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.identityStatus') }}</dt>
+                  <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkIdentityStatus(parseBazaarLinkResult(sample)) }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.confidence') }}</dt>
+                  <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkConfidence(parseBazaarLinkResult(sample)) }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.status') }}</dt>
+                  <dd class="mt-1 text-sm font-semibold">{{ parseBazaarLinkResult(sample)?.status || '-' }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.claimedModel') }}</dt>
+                  <dd class="mt-1 break-all text-sm font-semibold">{{ parseBazaarLinkResult(sample)?.identityAssessment?.claimedModel || '-' }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.predictedFamily') }}</dt>
+                  <dd class="mt-1 text-sm font-semibold">{{ parseBazaarLinkResult(sample)?.identityAssessment?.predictedFamily || '-' }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.v3fModel') }}</dt>
+                  <dd class="mt-1 break-all text-sm font-semibold">{{ bazaarLinkV3F(parseBazaarLinkResult(sample)) }}</dd>
+                </div>
+                <div>
+                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.riskFlags') }}</dt>
+                  <dd class="mt-1 break-all text-sm font-semibold">{{ bazaarLinkRiskFlags(parseBazaarLinkResult(sample)) }}</dd>
+                </div>
+              </dl>
+              <div v-if="parseBazaarLinkResult(sample)?.items?.length" class="overflow-x-auto">
+                <div class="mb-1 text-xs font-semibold text-sky-800 dark:text-sky-100">{{ t('admin.accountModelProbes.probeItems') }}</div>
+                <table class="w-full min-w-[760px]">
+                  <thead>
+                    <tr>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.probeId') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.evidence') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.group') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.passed') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">TTFT</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">TPS</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.response') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in parseBazaarLinkResult(sample)?.items" :key="item.probeId || item.label" class="border-t border-sky-100 dark:border-sky-900/60">
+                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ item.probeId || '-' }}</td>
+                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ item.label || '-' }}</td>
+                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ item.group || '-' }}</td>
+                      <td class="px-2 py-2 text-sm font-semibold text-sky-900 dark:text-sky-100">{{ formatBazaarLinkPassed(item.passed) }}</td>
+                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ formatDuration(item.ttftMs) }}</td>
+                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ formatNumber(item.tps) }}</td>
+                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100"><div class="max-h-20 overflow-auto whitespace-pre-wrap break-words">{{ item.response || '-' }}</div></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <pre v-if="!isBazaarLinkSample(sample) && sample.output_text && !sampleFailureResultDetails(sample).length" class="mt-3 max-h-40 overflow-auto rounded-lg bg-gray-950 p-3 text-xs text-gray-100">{{ sample.output_text }}</pre>
             <div v-if="sampleFailureReasons(sample).length" class="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">
               <div class="text-xs font-semibold uppercase text-rose-700 dark:text-rose-200">{{ t('admin.accountModelProbes.failureReason') }}</div>
               <ul class="mt-2 space-y-1">
@@ -262,7 +343,7 @@
                 </div>
               </dl>
             </div>
-            <div v-if="sample.request_prompt || sample.request_body" class="mt-3 space-y-3">
+            <div v-if="!isBazaarLinkSample(sample) && (sample.request_prompt || sample.request_body)" class="mt-3 space-y-3">
               <div v-if="sample.request_prompt">
                 <div class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('admin.accountModelProbes.requestPrompt') }}</div>
                 <pre class="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 font-mono text-xs text-gray-700 dark:bg-dark-800 dark:text-gray-200">{{ sample.request_prompt }}</pre>
@@ -349,6 +430,74 @@
         </div>
         <template #footer>
           <button type="button" class="btn btn-secondary" @click="clearDetail">{{ t('common.close') }}</button>
+        </template>
+      </BaseDialog>
+
+      <BaseDialog
+        :show="bazaarLinkDialogOpen"
+        :title="t('admin.accountModelProbes.bazaarLinkDialogTitle')"
+        width="wide"
+        @close="closeBazaarLinkDialog"
+      >
+        <form id="bazaarlink-probe-form" data-test="bazaarlink-probe-form" class="space-y-4" @submit.prevent="submitBazaarLinkProbe">
+          <div class="grid gap-3 sm:grid-cols-[160px_minmax(220px,1fr)]">
+            <input
+              v-model.number="bazaarLinkForm.account_id"
+              data-test="bazaarlink-probe-account-id"
+              type="number"
+              min="1"
+              class="input"
+              :placeholder="t('admin.accountModelProbes.accountId')"
+            />
+            <input
+              v-model="bazaarLinkForm.model"
+              data-test="bazaarlink-probe-model"
+              type="text"
+              class="input"
+              :placeholder="t('admin.accountModelProbes.modelPlaceholder')"
+            />
+          </div>
+          <div>
+            <div class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+              {{ t('admin.accountModelProbes.bazaarLinkMode') }}
+            </div>
+            <div data-test="bazaarlink-probe-mode" class="grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1 dark:bg-dark-800">
+              <button
+                type="button"
+                data-test="bazaarlink-probe-mode-quick"
+                :class="bazaarLinkForm.mode === 'quick' ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-900 dark:text-primary-300' : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100'"
+                class="rounded-md px-3 py-2 text-sm font-medium transition"
+                @click="bazaarLinkForm.mode = 'quick'"
+              >
+                {{ t('admin.accountModelProbes.bazaarLinkModes.quick') }}
+              </button>
+              <button
+                type="button"
+                data-test="bazaarlink-probe-mode-full"
+                :class="bazaarLinkForm.mode === 'full' ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-900 dark:text-primary-300' : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100'"
+                class="rounded-md px-3 py-2 text-sm font-medium transition"
+                @click="bazaarLinkForm.mode = 'full'"
+              >
+                {{ t('admin.accountModelProbes.bazaarLinkModes.full') }}
+              </button>
+            </div>
+          </div>
+          <div v-if="error" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-200">
+            {{ error }}
+          </div>
+        </form>
+        <template #footer>
+          <button type="button" class="btn btn-secondary" @click="closeBazaarLinkDialog">{{ t('common.cancel') }}</button>
+          <button
+            type="button"
+            data-test="bazaarlink-probe-submit"
+            class="btn btn-primary"
+            :disabled="bazaarLinkSubmitting"
+            @click="submitBazaarLinkProbe"
+          >
+            <Icon name="externalLink" size="sm" :class="bazaarLinkSubmitting ? 'animate-pulse' : ''" />
+            <span class="ml-1.5">{{ t('admin.accountModelProbes.bazaarLinkProbe') }}</span>
+          </button>
         </template>
       </BaseDialog>
 
@@ -463,7 +612,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
-import { batchAccountModelProbeRuns, createAccountModelProbeRun, deleteAccountProbeRuns, getAccountProbeRun, list as listAccounts, listAccountProbeRuns } from '@/api/admin/accounts'
+import { batchAccountModelProbeRuns, createAccountModelProbeRun, createBazaarLinkModelProbeRun, deleteAccountProbeRuns, getAccountProbeRun, list as listAccounts, listAccountProbeRuns } from '@/api/admin/accounts'
 import type { Account, AccountProbeRequestMode, AccountProbeRun, AccountProbeSample, AccountProbeValidationEvidence } from '@/types'
 
 const { t } = useI18n()
@@ -472,6 +621,38 @@ interface SampleFailureResultDetail {
   key: string
   label: string
   value: string
+}
+
+interface BazaarLinkIdentityAssessment {
+  status?: string
+  confidence?: number
+  claimedModel?: string
+  predictedFamily?: string
+  subModelMatchV3F?: {
+    modelId?: string
+    score?: number
+  } | null
+  riskFlags?: string[]
+}
+
+interface BazaarLinkProbeItem {
+  probeId?: string
+  label?: string
+  group?: string
+  passed?: boolean | 'warning' | null
+  response?: string
+  ttftMs?: number
+  tps?: number
+}
+
+interface BazaarLinkProbeResult {
+  runId?: string
+  status?: string
+  score?: number
+  identityAssessment?: BazaarLinkIdentityAssessment
+  items?: BazaarLinkProbeItem[]
+  totalInputTokens?: number | null
+  totalOutputTokens?: number | null
 }
 
 const runs = ref<AccountProbeRun[]>([])
@@ -485,6 +666,8 @@ const detailError = ref('')
 const detailDialogOpen = ref(false)
 const deletingRuns = ref(false)
 const batchDialogOpen = ref(false)
+const bazaarLinkDialogOpen = ref(false)
+const bazaarLinkSubmitting = ref(false)
 const batchSubmitting = ref(false)
 const batchAccountsLoading = ref(false)
 const batchError = ref('')
@@ -518,6 +701,12 @@ const batchForm = reactive({
   trusted_comparison_account_id: undefined as number | undefined,
 })
 
+const bazaarLinkForm = reactive({
+  account_id: undefined as number | undefined,
+  model: defaultOpenAIAccountTestModelID,
+  mode: 'quick' as 'quick' | 'full',
+})
+
 const detailSamples = computed<AccountProbeSample[]>(() => detailRun.value?.samples || [])
 const selectedRunIdSet = computed(() => new Set(selectedRunIds.value))
 const selectableRuns = computed(() => runs.value.filter(run => run.status !== 'running'))
@@ -527,6 +716,7 @@ let listAbortController: AbortController | null = null
 let submitAbortController: AbortController | null = null
 let detailAbortController: AbortController | null = null
 let deleteAbortController: AbortController | null = null
+let bazaarLinkSubmitAbortController: AbortController | null = null
 let batchAccountsAbortController: AbortController | null = null
 let batchSubmitAbortController: AbortController | null = null
 let batchSearchTimer: ReturnType<typeof setTimeout> | null = null
@@ -782,6 +972,52 @@ async function submitBatchModelProbe() {
   }
 }
 
+async function submitBazaarLinkProbe() {
+  if (bazaarLinkSubmitting.value) return
+  if (!bazaarLinkForm.account_id || bazaarLinkForm.account_id <= 0) {
+    error.value = t('admin.accountModelProbes.accountRequired')
+    return
+  }
+  bazaarLinkSubmitAbortController?.abort()
+  const controller = new AbortController()
+  bazaarLinkSubmitAbortController = controller
+  bazaarLinkSubmitting.value = true
+  error.value = ''
+  message.value = ''
+  try {
+    await createBazaarLinkModelProbeRun({
+      account_id: bazaarLinkForm.account_id,
+      model: bazaarLinkForm.model.trim() || undefined,
+      mode: bazaarLinkForm.mode,
+    }, {
+      signal: controller.signal,
+    })
+    if (controller.signal.aborted) return
+    message.value = t('admin.accountModelProbes.bazaarLinkStarted')
+    bazaarLinkDialogOpen.value = false
+    await loadRuns()
+  } catch (err: any) {
+    if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
+    error.value = err?.response?.data?.error || err?.message || t('admin.accountModelProbes.bazaarLinkFailed')
+  } finally {
+    if (bazaarLinkSubmitAbortController === controller) {
+      bazaarLinkSubmitting.value = false
+      bazaarLinkSubmitAbortController = null
+    }
+  }
+}
+
+function openBazaarLinkDialog() {
+  bazaarLinkDialogOpen.value = true
+  error.value = ''
+  message.value = ''
+}
+
+function closeBazaarLinkDialog() {
+  bazaarLinkDialogOpen.value = false
+  bazaarLinkSubmitAbortController?.abort()
+}
+
 function openBatchDialog() {
   batchDialogOpen.value = true
   batchError.value = ''
@@ -863,7 +1099,15 @@ function formatDateTime(value: string | null | undefined): string {
 
 function formatRequestMode(value: string | undefined): string {
   if (!value) return '-'
+  if (value === 'quick' || value === 'full') {
+    return t(`admin.accountModelProbes.bazaarLinkModes.${value}`)
+  }
   return t(`admin.accountModelProbes.requestModes.${value}`)
+}
+
+function formatProbeSource(value: string | undefined): string {
+  if (value === 'bazaarlink_api') return t('admin.accountModelProbes.probeSources.bazaarlink_api')
+  return t('admin.accountModelProbes.probeSources.self_validation')
 }
 
 function formatStatus(value: string | undefined): string {
@@ -890,6 +1134,50 @@ function formatSampleTokens(sample: AccountProbeSample): string {
     `${t('admin.accountModelProbes.totalTokens')} ${formatNumber(sample.tokens)}`,
   ]
   return parts.join(' / ')
+}
+
+function parseBazaarLinkResult(sample: AccountProbeSample): BazaarLinkProbeResult | null {
+  if (!isBazaarLinkSample(sample) || !sample.response_body) return null
+  try {
+    const parsed = JSON.parse(sample.response_body) as BazaarLinkProbeResult
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function isBazaarLinkSample(sample: AccountProbeSample): boolean {
+  return sample.type === 'bazaarlink_api' || detailRun.value?.probe_source === 'bazaarlink_api'
+}
+
+function bazaarLinkIdentityStatus(result: BazaarLinkProbeResult | null | undefined): string {
+  return result?.identityAssessment?.status || '-'
+}
+
+function bazaarLinkConfidence(result: BazaarLinkProbeResult | null | undefined): string {
+  const confidence = result?.identityAssessment?.confidence
+  return typeof confidence === 'number' && Number.isFinite(confidence) ? `${formatNumber(confidence * 100)}%` : '-'
+}
+
+function bazaarLinkV3F(result: BazaarLinkProbeResult | null | undefined): string {
+  const match = result?.identityAssessment?.subModelMatchV3F
+  if (!match?.modelId) return '-'
+  if (typeof match.score === 'number' && Number.isFinite(match.score)) {
+    return `${match.modelId} (${formatNumber(match.score * 100)}%)`
+  }
+  return match.modelId
+}
+
+function bazaarLinkRiskFlags(result: BazaarLinkProbeResult | null | undefined): string {
+  const flags = result?.identityAssessment?.riskFlags?.map(flag => flag.trim()).filter(Boolean) || []
+  return flags.length ? flags.join(', ') : t('admin.accountModelProbes.noRiskFlags')
+}
+
+function formatBazaarLinkPassed(value: BazaarLinkProbeItem['passed']): string {
+  if (value === true) return t('admin.accountModelProbes.passed')
+  if (value === false) return t('admin.accountModelProbes.notPassed')
+  if (value === 'warning') return t('admin.accountModelProbes.warning')
+  return '-'
 }
 
 function normalizeReasonText(value: string | null | undefined): string {
@@ -994,6 +1282,7 @@ onUnmounted(() => {
   submitAbortController?.abort()
   detailAbortController?.abort()
   deleteAbortController?.abort()
+  bazaarLinkSubmitAbortController?.abort()
   batchAccountsAbortController?.abort()
   batchSubmitAbortController?.abort()
   if (batchSearchTimer) {
