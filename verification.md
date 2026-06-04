@@ -1983,3 +1983,37 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 前端 `AccountModelProbesView.spec.ts` 12 个测试通过。
 - `npm run typecheck` 通过。
 - 浏览器 MCP 当前被另一个 `mcp-chrome` 实例占用，无法执行页面截图/console smoke；本轮以前端构建、组件测试、类型检查和已部署页面 HTTP 200 作为替代验证证据。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## BazaarLink 快速候选分历史数据修正发布验证
+
+本轮修复 BazaarLink quick 历史记录在列表页显示 `0` 的问题：旧样本 `validation_evidence.score=0` 且没有 `display_score` 时，后端会从 BazaarLink `response_body` 的 V3 candidates 中按声明模型匹配候选分；同时新增迁移 `156_align_bazaarlink_quick_candidate_scores.sql` 回填既有历史样本。代码修复已提交为 `c2b0f81c fix(admin): backfill BazaarLink quick candidate scores`，并基于该提交完成本地 Docker 构建与 compose 部署。
+
+## 校验方式
+
+- `git push -u origin feature/account-api-key-rotation`
+- `docker build --pull=false -t sub2api:multi-key-local --build-arg NODE_IMAGE=registry-1.docker.io/library/node:24-alpine --build-arg GOLANG_IMAGE=registry-1.docker.io/library/golang:1.26.3-alpine --build-arg ALPINE_IMAGE=registry-1.docker.io/library/alpine:3.21 --build-arg POSTGRES_IMAGE=postgres:18-alpine .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `docker inspect sub2api --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}} {{.Image}}'`
+- `curl.exe -s -i http://127.0.0.1:8080/health`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" http://127.0.0.1:8080/admin/model-probes`
+- 未登录访问 `GET /api/v1/admin/account-probe-runs?mode=model_validation&keyword=qingflow&sort_by=created_at&sort_order=desc&page=1&page_size=20`
+- SQL 查询 `schema_migrations` 中 `156_align_bazaarlink_quick_candidate_scores.sql`
+- SQL 查询 `account_probe_runs/account_probe_samples` 中 run `227`、`229` 的 `validation_evidence.score/display_score`
+- `docker logs sub2api --tail 260` 过滤 `panic|fatal|migration.*error|checksum mismatch|apply migration|156_align`
+
+## 校验结果
+
+- 代码提交 `c2b0f81c` 已生成；远端推送被网络连接阻断，错误为 `fatal: unable to access 'https://github.com/Wei-Shaw/sub2api.git/': Recv failure: Connection was reset`，此前重试还出现过 `Could not connect to server`，当前远端未确认更新。
+- Docker build 成功，新镜像 manifest list 为 `sha256:86a5049ebdc5923d72655f8287969b2dc5aa2c10fe69506a584bbf527e5c19b4`。
+- Docker compose force-recreate 成功，`sub2api` 容器状态为 `running healthy`，镜像为 `sha256:86a5049ebdc5923d72655f8287969b2dc5aa2c10fe69506a584bbf527e5c19b4`。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- `/admin/model-probes` 返回 HTTP 200，HTML 长度 2671。
+- 未登录访问模型探针管理 API 返回 HTTP 401，认证拦截正常。
+- 迁移 `156_align_bazaarlink_quick_candidate_scores.sql` 已落库，`applied_at=2026-06-04 16:10:36.378201+08`。
+- 历史数据已修正：run `227` / sample `1551` 为 `score=98`、`display_score=98.0389688269813500`；run `229` / sample `1552` 为 `score=99`、`display_score=99.3506366160804800`。
+- 容器日志关键错误过滤为空，未见 panic、fatal、迁移错误或 checksum mismatch。
