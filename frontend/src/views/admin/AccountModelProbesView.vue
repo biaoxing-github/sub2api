@@ -245,7 +245,13 @@
               </div>
             </dl>
             <pre v-if="sample.output_text" class="mt-3 max-h-40 overflow-auto rounded-lg bg-gray-950 p-3 text-xs text-gray-100">{{ sample.output_text }}</pre>
-            <div v-if="sample.request_prompt || sample.request_body || sample.response_body" class="mt-3 space-y-3">
+            <div v-if="sampleFailureReasons(sample).length" class="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">
+              <div class="text-xs font-semibold uppercase text-rose-700 dark:text-rose-200">{{ t('admin.accountModelProbes.failureReason') }}</div>
+              <ul class="mt-2 space-y-1">
+                <li v-for="reason in sampleFailureReasons(sample)" :key="reason" class="break-words">{{ reason }}</li>
+              </ul>
+            </div>
+            <div v-if="sample.request_prompt || sample.request_body" class="mt-3 space-y-3">
               <div v-if="sample.request_prompt">
                 <div class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('admin.accountModelProbes.requestPrompt') }}</div>
                 <pre class="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 font-mono text-xs text-gray-700 dark:bg-dark-800 dark:text-gray-200">{{ sample.request_prompt }}</pre>
@@ -253,10 +259,6 @@
               <div v-if="sample.request_body">
                 <div class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('admin.accountModelProbes.requestBody') }}</div>
                 <pre class="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 font-mono text-xs text-gray-700 dark:bg-dark-800 dark:text-gray-200">{{ sample.request_body }}</pre>
-              </div>
-              <div v-if="sample.response_body">
-                <div class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('admin.accountModelProbes.responseBody') }}</div>
-                <pre class="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 font-mono text-xs text-gray-700 dark:bg-dark-800 dark:text-gray-200">{{ sample.response_body }}</pre>
               </div>
             </div>
             <div v-if="sample.validation_evidence?.length" class="mt-3 overflow-x-auto">
@@ -871,6 +873,37 @@ function formatSampleTokens(sample: AccountProbeSample): string {
     `${t('admin.accountModelProbes.totalTokens')} ${formatNumber(sample.tokens)}`,
   ]
   return parts.join(' / ')
+}
+
+function normalizeReasonText(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function sampleFailureReasons(sample: AccountProbeSample): string[] {
+  const reasons: string[] = []
+  const errorParts = [
+    normalizeReasonText(sample.error_code),
+    normalizeReasonText(sample.error || sample.error_message),
+  ].filter(Boolean)
+
+  if (errorParts.length) {
+    reasons.push(errorParts.join(' '))
+  }
+
+  for (const evidence of sample.validation_evidence || []) {
+    if (evidence.passed) continue
+
+    const label = normalizeReasonText(evidence.label || evidence.key) || t('admin.accountModelProbes.evidence')
+    const details = [
+      normalizeReasonText(evidence.message),
+      normalizeReasonText(evidence.observed) ? `${t('admin.accountModelProbes.observed')}: ${normalizeReasonText(evidence.observed)}` : '',
+      normalizeReasonText(evidence.expected) ? `${t('admin.accountModelProbes.expected')}: ${normalizeReasonText(evidence.expected)}` : '',
+    ].filter(Boolean)
+
+    reasons.push(details.length ? `${label}: ${details.join(' / ')}` : label)
+  }
+
+  return Array.from(new Set(reasons))
 }
 
 function hasEvidenceProbeDetails(evidence: AccountProbeValidationEvidence): boolean {

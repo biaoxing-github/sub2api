@@ -461,6 +461,40 @@ describe('AccountModelProbesView', () => {
           ],
           created_at: '2026-06-03T12:00:00Z',
         },
+        {
+          id: 2,
+          run_id: 101,
+          request_index: 2,
+          type: 'model_validation',
+          label: '模型验证：工具调用',
+          status: 'failed',
+          model: 'gpt-4.1-mini',
+          upstream_endpoint: 'https://api.example.test/v1/responses',
+          http_status: 200,
+          latency_ms: 96,
+          input_tokens: 22,
+          output_tokens: 0,
+          tokens: 22,
+          output_text: '',
+          request_prompt: '必须调用 record_model_check 工具并返回 code=ok。',
+          request_body: '{"model":"gpt-4.1-mini","tools":[{"name":"record_model_check"}]}',
+          response_body: '{"id":"resp_failed","output":[{"type":"message","content":"没有工具调用"}]}',
+          error_code: 'model_validation_failed',
+          error: '模型验证未通过：工具调用未出现',
+          validation_evidence: [
+            {
+              key: 'tool_call',
+              label: '工具调用',
+              expected: 'record_model_check(code=ok,count=1)',
+              observed: 'function call not observed',
+              passed: false,
+              score: 0,
+              max_score: 10,
+              message: '模型验证未通过：工具调用未出现',
+            },
+          ],
+          created_at: '2026-06-03T12:00:00Z',
+        },
       ],
       created_at: '2026-06-03T12:00:00Z',
     })
@@ -496,8 +530,14 @@ describe('AccountModelProbesView', () => {
     expect(detailDialog?.text()).toContain('只输出严格 JSON')
     expect(detailDialog?.text()).toContain('admin.accountModelProbes.requestBody')
     expect(detailDialog?.text()).toContain('"model":"gpt-4.1-mini"')
-    expect(detailDialog?.text()).toContain('admin.accountModelProbes.responseBody')
-    expect(detailDialog?.text()).toContain('"id":"resp_123"')
+    expect(detailDialog?.text()).not.toContain('admin.accountModelProbes.responseBody')
+    expect(detailDialog?.text()).not.toContain('"id":"resp_123"')
+    expect(detailDialog?.text()).not.toContain('"id":"resp_failed"')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.failureReason')
+    expect(detailDialog?.text()).toContain('model_validation_failed')
+    expect(detailDialog?.text()).toContain('模型验证未通过：工具调用未出现')
+    expect(detailDialog?.text()).toContain('function call not observed')
+    expect(detailDialog?.text()).toContain('record_model_check(code=ok,count=1)')
     expect(detailDialog?.text()).toContain('10 / 10')
     expect(detailDialog?.text()).toContain('admin.accountModelProbes.evidenceCategory')
     expect(detailDialog?.text()).toContain('model_match')

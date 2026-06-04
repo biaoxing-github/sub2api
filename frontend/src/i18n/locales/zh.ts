@@ -5030,7 +5030,7 @@ export default {
       totalTokens: '总计',
       requestPrompt: 'Prompt',
       requestBody: '请求体',
-      responseBody: '返回体',
+      failureReason: '失败原因',
       error: '错误',
       recentRuns: '最近探针',
       detailTitle: '探针详情',

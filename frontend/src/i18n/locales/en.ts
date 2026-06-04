@@ -4875,7 +4875,7 @@ export default {
       totalTokens: 'Total',
       requestPrompt: 'Prompt',
       requestBody: 'Request Body',
-      responseBody: 'Response Body',
+      failureReason: 'Failure Reason',
       error: 'Error',
       recentRuns: 'Recent Probes',
       detailTitle: 'Probe Detail',
