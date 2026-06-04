@@ -406,16 +406,19 @@ func failedBazaarLinkProbeSample(account *Account, model string, mode BazaarLink
 func bazaarLinkProbeEvidence(result bazaarLinkProbeResponse, expectedModel string) AccountProbeValidationEvidence {
 	identity := result.IdentityAssessment
 	statusConfirmed := bazaarLinkIdentityStatusConfirmed(identity.Status)
-	noRisk := len(identity.RiskFlags) == 0
-	passed := statusConfirmed && noRisk
+	hasRisk := len(identity.RiskFlags) > 0
+	passed := statusConfirmed
 	message := "BazaarLink 身份验证通过"
 	severity := "info"
 	if !passed {
 		severity = "critical"
 		message = "BazaarLink 未确认目标模型身份"
-		if len(identity.RiskFlags) > 0 {
+		if hasRisk {
 			message += "：" + strings.Join(identity.RiskFlags, ", ")
 		}
+	} else if hasRisk {
+		severity = "warning"
+		message = "BazaarLink 身份验证通过，存在风险提示：" + strings.Join(identity.RiskFlags, ", ")
 	}
 	observed := bazaarLinkIdentityObserved(identity)
 	return AccountProbeValidationEvidence{

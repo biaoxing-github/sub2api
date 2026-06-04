@@ -1703,3 +1703,29 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `npm run typecheck` 通过，`vue-tsc --noEmit` 退出码 0。
 - `git diff --check` 通过。
 - `npm run build` 通过；保留项目既有 Browserslist caniuse-lite 过期、Vite dynamic import 和 chunk size 警告。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## BazaarLink match/risk 与 V3 候选展示修复
+
+本轮修复 BazaarLink 探针返回 `identityAssessment.status=match` 但页面仍按失败展示的问题，并补齐详情页的 BazaarLink 得分、V3 候选模型和风险提示展示。后端不再把 `riskFlags` 当作身份失败条件；只要身份状态为 `confirmed`、`match` 或 `matched`，样本就按通过落库，风险提示保留为 warning message。前端兼容旧的 `failed + bazaarlink_identity_mismatch` 记录：当截断响应或 evidence 显示身份已 match 时，详情页按成功展示，仍在 BazaarLink 结果卡中显示 `riskFlags`。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestAccountProbeService_RunBazaarLinkUsesAccountAPIKeyAndPersistsRedactedResult|TestBazaarLinkProbeEvidenceTreatsMatchWithRiskFlagsAsPassed|TestBazaarLinkProbeEvidenceUsesConfidenceWhenScoreMissing|TestScoreAccountProbeRunBazaarLinkUsesObservedConfidenceForLegacyEvidence" -count=1`
+- `go test -tags unit ./internal/service -run "Test.*Bazaar|TestBazaar" -count=1`
+- `npm test -- --run src/views/admin/__tests__/AccountModelProbesView.spec.ts`
+- `npm run typecheck`
+- `git diff --check`
+
+## 校验结果
+
+- 后端聚焦测试通过，`match + riskFlags` 样本落库为 success，evidence severity 为 warning，message 和 observed 保留风险提示。
+- 后端 BazaarLink 相关测试通过。
+- 前端 `AccountModelProbesView.spec.ts` 11 个测试全部通过；新增截断 BazaarLink 响应测试覆盖 V3 候选模型、风险标记、98 / 100 分数和旧失败状态修正。
+- 前端类型检查通过。
+- `git diff --check` 通过。
+- 本轮按用户最新要求未执行构建、部署和线上探测。

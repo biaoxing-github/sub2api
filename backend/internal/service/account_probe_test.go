@@ -145,7 +145,7 @@ func (c *bazaarLinkProbeHTTPClientStub) Do(req *http.Request) (*http.Response, e
 	    "claimedModel":"gpt-5.5",
 	    "predictedFamily":"openai",
 	    "subModelMatchV3F":{"modelId":"gpt-5.5","score":0.94},
-	    "riskFlags":[],
+	    "riskFlags":["部署探針: 回應未包含任何預期關鍵字"],
 	    "apiKey":"sk-should-not-persist"
 	  },
 	  "items":[{"probeId":"submodel_cutoff","label":"cutoff","group":"identity","passed":true,"response":"ok"}],
@@ -752,7 +752,10 @@ func TestAccountProbeService_RunBazaarLinkUsesAccountAPIKeyAndPersistsRedactedRe
 	require.Equal(t, 5660, sample.TotalTokens)
 	require.Len(t, sample.ValidationEvidence, 1)
 	require.True(t, sample.ValidationEvidence[0].Passed)
+	require.Equal(t, "warning", sample.ValidationEvidence[0].Severity)
 	require.Equal(t, 87, sample.ValidationEvidence[0].Score)
+	require.Contains(t, sample.ValidationEvidence[0].Message, "存在风险提示")
+	require.Contains(t, sample.ValidationEvidence[0].Observed, "flags=部署探針")
 
 	score := ScoreAccountProbeRun(result)
 	require.Equal(t, 87, score.Score)
@@ -822,6 +825,30 @@ func TestBazaarLinkProbeEvidenceUsesConfidenceWhenScoreMissing(t *testing.T) {
 	require.Equal(t, 98, evidence.Score)
 	require.Equal(t, 100, evidence.MaxScore)
 	require.Contains(t, evidence.Observed, "confidence=0.98")
+}
+
+func TestBazaarLinkProbeEvidenceTreatsMatchWithRiskFlagsAsPassed(t *testing.T) {
+	t.Parallel()
+
+	evidence := bazaarLinkProbeEvidence(bazaarLinkProbeResponse{
+		Status: "completed",
+		IdentityAssessment: bazaarLinkIdentityAssessment{
+			Status:          "match",
+			Confidence:      0.98,
+			ClaimedModel:    "gpt-5.5",
+			PredictedFamily: "openai",
+			RiskFlags: []string{
+				"部署探針: 回應未包含任何預期關鍵字",
+				"多模態 - PDF 識別: 回應未包含任何預期關鍵字",
+			},
+		},
+	}, "gpt-5.5")
+
+	require.True(t, evidence.Passed)
+	require.Equal(t, "warning", evidence.Severity)
+	require.Equal(t, 98, evidence.Score)
+	require.Contains(t, evidence.Message, "存在风险提示")
+	require.Contains(t, evidence.Observed, "flags=部署探針")
 }
 
 func TestScoreAccountProbeRunBazaarLinkUsesObservedConfidenceForLegacyEvidence(t *testing.T) {

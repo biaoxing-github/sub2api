@@ -770,6 +770,111 @@ describe('AccountModelProbesView', () => {
     expect(detailDialog?.text()).not.toContain('apiKey')
   })
 
+  it('renders BazaarLink match results with V3 candidates and risk flags from a truncated response', async () => {
+    listAccountProbeRuns.mockResolvedValue({
+      items: [
+        {
+          id: 204,
+          account_id: 12,
+          account_name: 'rayapi',
+          mode: 'model_validation',
+          probe_source: 'bazaarlink_api',
+          status: 'failed',
+          model: 'gpt-5.5',
+          request_mode: 'full',
+          created_at: '2026-06-04T11:00:00Z',
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+    getAccountProbeRun.mockResolvedValue({
+      id: 204,
+      account_id: 12,
+      mode: 'model_validation',
+      probe_source: 'bazaarlink_api',
+      status: 'failed',
+      model: 'gpt-5.5',
+      request_mode: 'full',
+      score: 0,
+      samples: [
+        {
+          id: 4,
+          run_id: 204,
+          request_index: 1,
+          type: 'bazaarlink_api',
+          label: 'BazaarLink 完整验证',
+          status: 'failed',
+          model: 'gpt-5.5',
+          upstream_endpoint: 'https://bazaarlink.ai/api/probe/run',
+          http_status: 200,
+          latency_ms: 113163,
+          input_tokens: 4581,
+          output_tokens: 15607,
+          tokens: 20188,
+          request_body: '{"apiKey":"<redacted>"}',
+          response_body: '{"runId":"run_242","status":"completed","score":0,"identityAssessment":{"status":"match","confidence":0.98,"claimedModel":"gpt-5.5","predictedFamily":"openai","riskFlags":["部署探針: 回應未包含任何預期關鍵字","多模態 - PDF 識別: 回應未包含任何預期關鍵字"],"v3":{"candidates":[{"displayName":"GPT-5.3 Codex","modelId":"openai/gpt-5.3-codex","family":"openai","score":0.9893329875983731},{"displayName":"GPT-5.5","modelId":"openai/gpt-5.5","family":"openai","score":0.9852066599830172},{"displayName":"GPT-5.4 Mini","modelId":"openai/gpt-5.4-mini","family":"openai","score":0.9052747274960748}]}},"items":',
+          error_code: 'bazaarlink_identity_mismatch',
+          error: 'BazaarLink 未确认目标模型身份',
+          validation_evidence: [
+            {
+              key: 'bazaarlink_identity',
+              label: 'BazaarLink 模型身份',
+              expected: 'gpt-5.5',
+              observed: '',
+              passed: false,
+              score: 0,
+              max_score: 100,
+              message: 'BazaarLink 未确认目标模型身份',
+              category: 'external_api',
+              severity: 'critical',
+              response_model: '',
+              expected_model: 'gpt-5.5',
+            },
+          ],
+          created_at: '2026-06-04T11:00:00Z',
+        },
+      ],
+      created_at: '2026-06-04T11:00:00Z',
+    })
+
+    const wrapper = mount(AccountModelProbesView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          BaseDialog: BaseDialogStub,
+          Pagination: PaginationStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="model-probe-detail-204"]').trigger('click')
+    await flushPromises()
+
+    const detailDialog = wrapper.findAll('[data-test="base-dialog"]').find(dialog =>
+      dialog.text().includes('admin.accountModelProbes.detailTitle')
+    )
+    const candidates = detailDialog?.find('[data-test="bazaarlink-v3-candidates"]')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.statuses.success')
+    expect(detailDialog?.text()).toContain('match')
+    expect(detailDialog?.text()).toContain('98 / 100')
+    expect(detailDialog?.text()).toContain('部署探針: 回應未包含任何預期關鍵字')
+    expect(detailDialog?.text()).toContain('多模態 - PDF 識別: 回應未包含任何預期關鍵字')
+    expect(candidates?.exists()).toBe(true)
+    expect(candidates?.text()).toContain('GPT-5.3 Codex')
+    expect(candidates?.text()).toContain('openai/gpt-5.3-codex')
+    expect(candidates?.text()).toContain('98.9%')
+    expect(candidates?.text()).toContain('GPT-5.5')
+    expect(candidates?.text()).toContain('98.5%')
+    expect(candidates?.text()).toContain('GPT-5.4 Mini')
+    expect(candidates?.text()).toContain('90.5%')
+    expect(detailDialog?.text()).not.toContain('bazaarlink_identity_mismatch')
+    expect(detailDialog?.text()).not.toContain('BazaarLink 未确认目标模型身份')
+    expect(detailDialog?.text()).not.toContain('apiKey')
+  })
+
   it('renders BazaarLink score from validation evidence when stored response is truncated', async () => {
     listAccountProbeRuns.mockResolvedValue({
       items: [
