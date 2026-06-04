@@ -1604,3 +1604,39 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `npm run typecheck` 通过，`vue-tsc --noEmit` 退出码 0。
 - `git diff --check` 通过。
 - `npm run build` 通过；保留项目既有 Browserslist caniuse-lite 过期、Vite dynamic import 和 chunk size 警告。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## BazaarLink 模型探针推送构建部署验证
+
+本轮按用户要求执行推送、构建、部署和验证。功能提交为 `a701d841 feat(admin): add BazaarLink model probes`，本地构建产物已部署到 `D:\sub2api-deploy\docker-compose.yml` 管理的 `sub2api` 容器，监听 `http://127.0.0.1:8080`。远端推送被 GitHub 权限阻塞：当前凭据用户 `biaoxing-github` 没有 `Wei-Shaw/sub2api` 写权限，因此远端分支未更新。
+
+## 校验方式
+
+- `git push -u origin feature/account-api-key-rotation`
+- `docker build -t sub2api:multi-key-local --build-arg NODE_IMAGE=registry-1.docker.io/library/node:24-alpine --build-arg GOLANG_IMAGE=registry-1.docker.io/library/golang:1.26.3-alpine --build-arg ALPINE_IMAGE=registry-1.docker.io/library/alpine:3.21 --build-arg POSTGRES_IMAGE=registry-1.docker.io/library/postgres:18-alpine .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `docker inspect sub2api --format ...`
+- `Invoke-WebRequest http://127.0.0.1:8080/health`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/model-probes`
+- `Invoke-WebRequest http://127.0.0.1:8080/api/v1/admin/account-probe-runs?page=1&page_size=1 -SkipHttpErrorCheck`
+- `Invoke-WebRequest http://127.0.0.1:8080/api/v1/admin/account-model-probe-runs/bazaarlink -Method Post -SkipHttpErrorCheck`
+- `psql` 查询 `account_probe_runs.probe_source`
+- Playwright MCP 打开 `/admin/model-probes`
+- `docker logs sub2api --tail 220 | Select-String 'panic|fatal'`
+
+## 校验结果
+
+- 推送失败：`Permission to Wei-Shaw/sub2api.git denied to biaoxing-github`，HTTP 403。
+- Docker build 通过，镜像 manifest list 为 `sha256:df66153f11ed5aae07f197571c740fd4e6aff46f1dbe8c7c9431b86fc18e3ace`；保留既有 Browserslist、Vite dynamic import、chunk size 和 Node DEP0190 警告。
+- compose force-recreate `sub2api` 通过，Postgres 和 Redis 均 healthy。
+- `sub2api` 容器状态为 `running healthy`，使用新镜像 `sha256:df66153f11ed5aae07f197571c740fd4e6aff46f1dbe8c7c9431b86fc18e3ace`。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- `/admin/model-probes` 返回 HTTP 200，生产前端入口可访问。
+- 未登录访问模型探针列表接口和 BazaarLink 后台任务创建接口均返回 HTTP 401，认证边界正常。
+- 数据库迁移已生效：`account_probe_runs.probe_source` 存在，默认值为 `self_validation`。
+- Playwright 实际打开 `/admin/model-probes` 后按预期跳转到 `/login?redirect=/admin/model-probes`，页面标题为 `Login - Sub2API`。
+- 容器日志近 220 行未匹配 `panic/fatal`。
