@@ -1460,6 +1460,41 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 日期：2026-06-04
 执行者：Devil
 
+## 模型探针解析结果展示提交后部署验证
+
+本轮已将 `fix(admin): show parsed model probe failures` 提交后构建到 `sub2api:multi-key-local`，并重建 `D:\sub2api-deploy\docker-compose.yml` 管理的本地 `sub2api` 容器。构建继续使用官方 registry 全路径基础镜像参数，以避开本机 Docker 阿里镜像源对基础镜像的 403。
+
+## 校验方式
+
+- `git commit -m "fix(admin): show parsed model probe failures"`
+- `docker build --build-arg NODE_IMAGE=registry-1.docker.io/library/node:24-alpine --build-arg GOLANG_IMAGE=registry-1.docker.io/library/golang:1.26.3-alpine --build-arg ALPINE_IMAGE=registry-1.docker.io/library/alpine:3.21 -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --no-deps --force-recreate sub2api`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml ps`
+- `Invoke-WebRequest http://127.0.0.1:8080/health`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/model-probes`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/probe-reports`
+- 未登录请求模型探针列表、删除和批量创建管理端 API
+- Playwright 打开 `http://127.0.0.1:8080/admin/model-probes`
+- `docker logs --tail 200 sub2api | Select-String -Pattern 'panic|fatal'`
+
+## 校验结果
+
+- 提交成功，初始提交为 `cd382364 fix(admin): show parsed model probe failures`。
+- Docker build 通过，镜像 manifest list 为 `sha256:5b94228ad790e269556cbf55b2d2fae1642b8d325e7bfc7b06efea1b67a15578`；构建仍保留既有 Browserslist、Vite dynamic import 和 chunk size 警告。
+- 本地 compose 重建 `sub2api` 成功，容器状态 `running healthy`。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- `/admin/model-probes` 和 `/admin/probe-reports` 均返回 HTTP 200 HTML，包含 Vue 挂载点。
+- `GET /api/v1/admin/account-probe-runs?mode=model_validation&page=1&page_size=20` 未登录返回 HTTP 401。
+- `DELETE /api/v1/admin/account-probe-runs` 未登录返回 HTTP 401。
+- `POST /api/v1/admin/account-model-probe-runs/batch` 未登录返回 HTTP 401。
+- Playwright 实际打开 `/admin/model-probes` 后按预期跳转到 `/login?redirect=/admin/model-probes`，登录页标题为 `Login - Sub2API`。
+- 容器日志近 200 行未匹配 `panic` 或 `fatal`。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
 ## 模型探针失败原因展示提交后部署验证
 
 本轮已将 `fix(admin): show model probe failure reasons` 提交后构建到 `sub2api:multi-key-local`，并重建 `D:\sub2api-deploy\docker-compose.yml` 管理的本地 `sub2api` 容器。首次 Docker build 因本机 Docker registry mirror `https://1d75j62o.mirror.aliyuncs.com` 对 `alpine/node/golang` 基础镜像返回 403 失败；随后通过官方 registry 全路径拉取基础镜像，并用等价 build args 构建成功。
@@ -1492,6 +1527,30 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `POST /api/v1/admin/account-model-probe-runs/batch` 未登录返回 HTTP 401。
 - Playwright 实际打开 `/admin/model-probes` 后按预期跳转到 `/login?redirect=/admin/model-probes`，登录页标题为 `Login - Sub2API`，页面渲染 `Sub2API`。
 - 容器日志近 200 行未匹配 `panic` 或 `fatal`。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## 模型探针未通过时展示模型返回和解析结果
+
+本轮分析后端模型验证链路确认：`sample.output_text` 保存从上游响应解析出的模型文本输出，`validation_evidence.observed` 保存各验证项实际解析或观察到的结果，`validation_evidence.expected` 保存导致判定不通过的期望值。为便于定位 `model_validation_failed`，模型探针详情在失败样本下新增“模型返回 / 解析结果”区块，展示模型输出、解析结果和期望值；仍不展示原始 `response_body` 返回体。
+
+## 校验方式
+
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+- `git diff --check`
+- `npm run build`
+
+## 校验结果
+
+- TDD 红灯已观察：新增断言后，`AccountModelProbesView.spec.ts` 失败于缺少 `admin.accountModelProbes.modelResult`。
+- 补齐失败样本“模型返回 / 解析结果”区块后，`AccountModelProbesView.spec.ts` 6 个测试全部通过。
+- `npm run typecheck` 通过，`vue-tsc --noEmit` 退出码 0。
+- `git diff --check` 通过。
+- `npm run build` 通过；保留项目既有 Browserslist caniuse-lite 过期、Vite dynamic import 和 chunk size 警告。
 
 ---
 

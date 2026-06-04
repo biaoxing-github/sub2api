@@ -244,12 +244,23 @@
                 <dd class="inline break-all"> {{ sample.error_code || '' }} {{ sample.error || sample.error_message || '' }}</dd>
               </div>
             </dl>
-            <pre v-if="sample.output_text" class="mt-3 max-h-40 overflow-auto rounded-lg bg-gray-950 p-3 text-xs text-gray-100">{{ sample.output_text }}</pre>
+            <pre v-if="sample.output_text && !sampleFailureResultDetails(sample).length" class="mt-3 max-h-40 overflow-auto rounded-lg bg-gray-950 p-3 text-xs text-gray-100">{{ sample.output_text }}</pre>
             <div v-if="sampleFailureReasons(sample).length" class="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200">
               <div class="text-xs font-semibold uppercase text-rose-700 dark:text-rose-200">{{ t('admin.accountModelProbes.failureReason') }}</div>
               <ul class="mt-2 space-y-1">
                 <li v-for="reason in sampleFailureReasons(sample)" :key="reason" class="break-words">{{ reason }}</li>
               </ul>
+            </div>
+            <div v-if="sampleFailureResultDetails(sample).length" class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+              <div class="text-xs font-semibold uppercase text-amber-800 dark:text-amber-100">{{ t('admin.accountModelProbes.modelResult') }}</div>
+              <dl class="mt-2 space-y-2">
+                <div v-for="detail in sampleFailureResultDetails(sample)" :key="detail.key">
+                  <dt class="mb-1 text-xs font-medium text-amber-700 dark:text-amber-200">{{ detail.label }}</dt>
+                  <dd>
+                    <pre class="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white/70 p-2 font-mono text-xs text-amber-900 dark:bg-dark-900/70 dark:text-amber-100">{{ detail.value }}</pre>
+                  </dd>
+                </div>
+              </dl>
             </div>
             <div v-if="sample.request_prompt || sample.request_body" class="mt-3 space-y-3">
               <div v-if="sample.request_prompt">
@@ -456,6 +467,12 @@ import { batchAccountModelProbeRuns, createAccountModelProbeRun, deleteAccountPr
 import type { Account, AccountProbeRequestMode, AccountProbeRun, AccountProbeSample, AccountProbeValidationEvidence } from '@/types'
 
 const { t } = useI18n()
+
+interface SampleFailureResultDetail {
+  key: string
+  label: string
+  value: string
+}
 
 const runs = ref<AccountProbeRun[]>([])
 const loading = ref(false)
@@ -904,6 +921,44 @@ function sampleFailureReasons(sample: AccountProbeSample): string[] {
   }
 
   return Array.from(new Set(reasons))
+}
+
+function sampleFailureResultDetails(sample: AccountProbeSample): SampleFailureResultDetail[] {
+  if (sampleFailureReasons(sample).length === 0) return []
+
+  const details: SampleFailureResultDetail[] = []
+  const outputText = normalizeReasonText(sample.output_text)
+  if (outputText) {
+    details.push({
+      key: 'output_text',
+      label: t('admin.accountModelProbes.modelOutput'),
+      value: outputText,
+    })
+  }
+
+  for (const evidence of sample.validation_evidence || []) {
+    if (evidence.passed) continue
+
+    const label = normalizeReasonText(evidence.label || evidence.key) || t('admin.accountModelProbes.evidence')
+    const observed = normalizeReasonText(evidence.observed)
+    const expected = normalizeReasonText(evidence.expected)
+    if (observed) {
+      details.push({
+        key: `${evidence.key}:observed`,
+        label: `${label} ${t('admin.accountModelProbes.parsedObserved')}`,
+        value: observed,
+      })
+    }
+    if (expected) {
+      details.push({
+        key: `${evidence.key}:expected`,
+        label: `${label} ${t('admin.accountModelProbes.expected')}`,
+        value: expected,
+      })
+    }
+  }
+
+  return details
 }
 
 function hasEvidenceProbeDetails(evidence: AccountProbeValidationEvidence): boolean {

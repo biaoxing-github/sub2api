@@ -475,7 +475,7 @@ describe('AccountModelProbesView', () => {
           input_tokens: 22,
           output_tokens: 0,
           tokens: 22,
-          output_text: '',
+          output_text: '模型实际返回：没有工具调用',
           request_prompt: '必须调用 record_model_check 工具并返回 code=ok。',
           request_body: '{"model":"gpt-4.1-mini","tools":[{"name":"record_model_check"}]}',
           response_body: '{"id":"resp_failed","output":[{"type":"message","content":"没有工具调用"}]}',
@@ -536,6 +536,10 @@ describe('AccountModelProbesView', () => {
     expect(detailDialog?.text()).toContain('admin.accountModelProbes.failureReason')
     expect(detailDialog?.text()).toContain('model_validation_failed')
     expect(detailDialog?.text()).toContain('模型验证未通过：工具调用未出现')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.modelResult')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.modelOutput')
+    expect(detailDialog?.text()).toContain('模型实际返回：没有工具调用')
+    expect(detailDialog?.text()).toContain('admin.accountModelProbes.parsedObserved')
     expect(detailDialog?.text()).toContain('function call not observed')
     expect(detailDialog?.text()).toContain('record_model_check(code=ok,count=1)')
     expect(detailDialog?.text()).toContain('10 / 10')
