@@ -1802,3 +1802,42 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `npm run typecheck` 通过。
 - `git diff --check` 通过。
 - `npm run build` 通过；保留既有 Browserslist、Vite dynamic import 和 chunk size 警告。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## BazaarLink score 口径修复部署与历史数据落库验证
+
+本轮源码提交为 `bb3e68d9 fix(admin): align BazaarLink probe score source`。远端推送到 `origin feature/account-api-key-rotation` 仍被 GitHub 返回 403，当前凭据用户 `biaoxing-github` 没有 `Wei-Shaw/sub2api` 写权限；随后继续基于本地已提交源码构建 `sub2api:multi-key-local` 并部署到本机 `D:\sub2api-deploy\docker-compose.yml` 管理的 `sub2api` 容器。
+
+## 校验方式
+
+- `git push -u origin feature/account-api-key-rotation`
+- `docker build --pull=false -t sub2api:multi-key-local --build-arg NODE_IMAGE=registry-1.docker.io/library/node:24-alpine --build-arg GOLANG_IMAGE=registry-1.docker.io/library/golang:1.26.3-alpine --build-arg ALPINE_IMAGE=registry-1.docker.io/library/alpine:3.21 --build-arg POSTGRES_IMAGE=postgres:18-alpine .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `docker inspect sub2api`
+- `SELECT filename, applied_at FROM schema_migrations WHERE filename IN ('154_repair_bazaarlink_match_probe_history.sql','155_align_bazaarlink_evidence_score.sql')`
+- 历史样本查询：`account_probe_samples.id IN (1551,1589)` 的 `bazaarlink_identity` evidence
+- confidence 派生残留查询：`remaining_confidence_derived_scores`
+- `Invoke-WebRequest http://127.0.0.1:8080/health`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/model-probes`
+- `curl.exe -i "http://127.0.0.1:8080/api/v1/admin/account-probe-runs?page=1&page_size=1"`
+- Playwright 打开 `http://127.0.0.1:8080/admin/model-probes`
+- `docker logs sub2api --tail 260 2>&1 | Select-String "panic|fatal|migration.*error|checksum mismatch|apply migration|155_align"`
+
+## 校验结果
+
+- `git push` 失败：`Permission to Wei-Shaw/sub2api.git denied to biaoxing-github`，HTTP 403；远端未更新。
+- Docker build 成功，新镜像 manifest list 为 `sha256:a1bd8b83b0c6c27b85b0414975358d1da122037f5e0a4c7d4daf2c37ec9f2b4e`。
+- Docker compose force-recreate 成功，`sub2api` 容器状态为 `running healthy`，镜像为 `sha256:a1bd8b83b0c6c27b85b0414975358d1da122037f5e0a4c7d4daf2c37ec9f2b4e`。
+- `schema_migrations` 已记录 `155_align_bazaarlink_evidence_score.sql`，应用时间为 `2026-06-04 14:35:26.126566 +08`。
+- sample 1551 已修正为 `status=success, run_status=success, evidence_score=0, passed=true, severity=info`。
+- sample 1589 保持 `status=success, run_status=success, evidence_score=91, passed=true, severity=warning`，riskFlags message 仍保留。
+- confidence 派生分数残留数为 0。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- `/admin/model-probes` 返回 HTTP 200，HTML 长度 2627。
+- 未登录访问 `GET /api/v1/admin/account-probe-runs?page=1&page_size=1` 返回 HTTP 401 与 `{"code":"UNAUTHORIZED","message":"Authorization required"}`。
+- Playwright 打开 `/admin/model-probes` 后按预期跳转 `Login - Sub2API`，console warning/error 为 0。
+- 容器日志近 260 行未匹配 panic、fatal、migration error、checksum mismatch、apply migration 或 155_align 错误。
