@@ -758,6 +758,7 @@ export interface AccountProbeValidationEvidence {
   observed: string
   passed: boolean
   score: number
+  display_score?: number | null
   max_score: number
   message?: string | null
   category?: string | null
@@ -807,6 +808,7 @@ export interface AccountProbeRun {
   status: 'pending' | 'running' | 'success' | 'failed' | 'partial' | string
   model?: string
   score?: number | null
+  display_score?: number | null
   grade?: string | null
   grade_label?: string | null
   confidence?: number | null

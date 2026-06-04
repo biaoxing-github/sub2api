@@ -1841,3 +1841,113 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 未登录访问 `GET /api/v1/admin/account-probe-runs?page=1&page_size=1` 返回 HTTP 401 与 `{"code":"UNAUTHORIZED","message":"Authorization required"}`。
 - Playwright 打开 `/admin/model-probes` 后按预期跳转 `Login - Sub2API`，console warning/error 为 0。
 - 容器日志近 260 行未匹配 panic、fatal、migration error、checksum mismatch、apply migration 或 155_align 错误。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## BazaarLink 完整/快速得分展示口径修复
+
+本轮根据最新口径修正模型探针页面分数展示：BazaarLink 完整验证的详情卡和列表页使用 BazaarLink 返回/落库 evidence 总分，例如 `91`；快速验证使用声明模型在 V3 候选列表中的候选分，例如检测 `gpt-5.5` 时展示 `GPT-5.5` 候选 `98.5`。后端列表页现在会为 BazaarLink 报表行加载 samples 再聚合分数，避免单样本成功退回成功率 `100`；前端不再从截断 `response_body` 任意位置读取第一个 `score`，避免把候选分或其他嵌套分误当总分。
+
+## 校验方式
+
+- TDD 红灯：`go test -tags unit ./internal/service -run "TestAccountProbeServiceListReportsUsesBazaarLinkEvidenceScore|TestAccountProbeService_RunBazaarLinkUsesAccountAPIKeyAndPersistsRedactedResult|TestAccountProbeService_RunBazaarLinkPollsAsyncRunUntilCompleted" -count=1`
+- TDD 红灯：`npm test -- --run src/views/admin/__tests__/AccountModelProbesView.spec.ts`
+- `gofmt -w internal\service\account_probe.go internal\service\account_probe_report.go internal\service\account_probe_score.go internal\service\bazaarlink_probe.go internal\service\account_probe_report_test.go internal\service\account_probe_test.go`
+- `go test -tags unit ./internal/service -run "TestAccountProbeServiceListReportsUsesBazaarLinkEvidenceScore|TestAccountProbeService_RunBazaarLinkUsesAccountAPIKeyAndPersistsRedactedResult|TestAccountProbeService_RunBazaarLinkPollsAsyncRunUntilCompleted" -count=1`
+- `npm test -- --run src/views/admin/__tests__/AccountModelProbesView.spec.ts`
+- `go test -tags unit ./internal/service ./internal/handler/admin -run "Test.*Bazaar|Test.*ModelProbe|TestAccountProbeServiceListReports" -count=1`
+- `npm run typecheck`
+- `git diff --check`
+- `npm run build`
+
+## 校验结果
+
+- 后端红灯先失败于列表未加载 samples、quick 仍使用顶层 `score=87/93`。
+- 前端红灯先失败于完整验证详情显示候选嵌套分 `1.0 / 100`，quick 列表显示整数 `99` 而不是候选展示分 `98.5`。
+- 修复后后端 BazaarLink/模型探针/报表聚焦测试通过。
+- 前端 `AccountModelProbesView.spec.ts` 11 个测试通过。
+- `npm run typecheck` 通过。
+- `git diff --check` 通过。
+- `npm run build` 通过；保留既有 Browserslist、Vite dynamic import 和 chunk size 警告。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## 本地校验列表分数与 BazaarLink 展示样式隔离
+
+本轮修复模型探针列表中 `self_validation` 本地校验错误很多但仍显示 `100` 的问题。根因是列表页只为 BazaarLink 模型验证加载 samples，本地校验列表项缺少 `validation_evidence` 后退回 `success_count/request_count` 兜底；账号 `408` 的 run `257` 实际为 `request_count=19`、`success_count=31`、`failure_count=7`，兜底会被 clamp 成 `100`。同时前端 `formatRunScore` 对所有来源都优先使用 `display_score`，导致本地校验也可能带上 BazaarLink 候选展示分样式。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run TestAccountProbeServiceListReportsUsesSelfValidationEvidenceScore -count=1` 红灯确认列表未加载本地校验 samples。
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run -t "does not use BazaarLink display score"` 红灯确认本地校验行误用 `display_score=100`。
+- `go test -tags unit ./internal/service ./internal/handler/admin -run "Test.*Bazaar|Test.*ModelProbe|TestAccountProbeServiceListReports" -count=1`
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+- `npm run build`
+- `git diff --check`
+- `docker build --pull=false -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `Invoke-WebRequest http://127.0.0.1:8080/health`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/model-probes`
+- SQL 聚合 run `257` 的 `account_probe_samples.validation_evidence` 分数。
+
+## 校验结果
+
+- 两个红灯用例修复后均转绿。
+- 后端相关测试通过：`internal/service` 与 `internal/handler/admin` 聚焦测试均通过。
+- 前端 `AccountModelProbesView.spec.ts` 12 个测试通过。
+- `npm run typecheck` 通过。
+- `npm run build` 通过；保留既有 Browserslist、Vite dynamic import、chunk size 和 Node DEP0190 警告。
+- `git diff --check` 无空白错误；仅提示 docs JSONL 工作区 CRLF 转换警告。
+- 首次 Docker build 被本机 Docker mirror `1d75j62o.mirror.aliyuncs.com` 对 `node/golang/alpine` 的 HEAD 请求 403 拦截；补齐本机缓存短名 tag 后用 `--pull=false` 构建成功。
+- 新镜像 manifest list 为 `sha256:4218fa3019f1912cb2134efe179fa792e91d4d6893521ba33d3c91f4a78bdb0e`，容器 `sub2api` 已 force-recreate，状态 `running healthy`。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`，`/admin/model-probes` 返回 HTTP 200。
+- 未登录访问模型探针管理 API 返回 HTTP 401，认证拦截正常；由于 `D:\sub2api-deploy\.env` 未配置 `ADMIN_PASSWORD`，未做登录态 API 读取。
+- run `257` 的真实 evidence 聚合为 `38` 条证据、`30` 条通过、原始分 `345/400`、折算 `86.3`，后端列表会显示约 `86`，不再是 `100`。
+- 容器日志近 5 分钟未匹配 `panic|fatal|migration|checksum`；仅见启动时远端价格 hash 拉取超时，和本次模型探针逻辑无关。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## 本地校验列表分数修复提交后构建部署验证
+
+本轮已将本地校验列表分数与 BazaarLink 展示样式隔离修复提交到当前分支，并基于提交后的工作区重新构建 `sub2api:multi-key-local`，部署到本机 `D:\sub2api-deploy\docker-compose.yml` 管理的 `sub2api` 容器。`.dockerignore` 忽略 `*.md` 与 `docs/`，补充验证记录不会进入镜像构建上下文。
+
+## 校验方式
+
+- `git diff --cached --check`
+- `git commit -m "fix(admin): align model probe scoring"`
+- `docker build --pull=false -t sub2api:multi-key-local .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `docker inspect sub2api --format '{{.State.Status}} {{.State.Health.Status}} {{.Image}}'`
+- `Invoke-WebRequest http://127.0.0.1:8080/health`
+- `Invoke-WebRequest http://127.0.0.1:8080/admin/model-probes`
+- 未登录访问 `GET /api/v1/admin/account-probe-runs?mode=model_validation&keyword=aisz&sort_by=created_at&sort_order=desc&page=1&page_size=20`
+- SQL 聚合 run `257` 的 `account_probe_samples.validation_evidence` 分数。
+- `docker logs --since 5m sub2api` 过滤 `panic|fatal|migration|checksum`
+- `go test -tags unit ./internal/service ./internal/handler/admin -run "Test.*Bazaar|Test.*ModelProbe|TestAccountProbeServiceListReports" -count=1`
+- `npm exec vitest -- src/views/admin/__tests__/AccountModelProbesView.spec.ts --run`
+- `npm run typecheck`
+
+## 校验结果
+
+- 提交前 `git diff --cached --check` 通过。
+- Docker build 成功，新镜像 manifest list 为 `sha256:36c952dcf5bda2a154c98333b39eb3174193436ddad27a0ad20684b92cf7ebb6`。
+- Docker compose force-recreate 成功，`sub2api` 容器状态为 `running healthy`，镜像为 `sha256:36c952dcf5bda2a154c98333b39eb3174193436ddad27a0ad20684b92cf7ebb6`。
+- `/health` 返回 HTTP 200 与 `{"status":"ok"}`。
+- `/admin/model-probes` 返回 HTTP 200，HTML 长度 2627。
+- 未登录访问模型探针管理 API 返回 HTTP 401，认证拦截正常。
+- run `257` 的真实 evidence 聚合为 `38` 条证据、`30` 条通过、原始分 `345/400`、折算 `86.3`，列表分数不再按兜底显示 `100`。
+- 容器日志近 5 分钟未匹配 `panic|fatal|migration|checksum`。
+- 后端聚焦测试通过：`internal/service` 与 `internal/handler/admin` 均通过。
+- 前端 `AccountModelProbesView.spec.ts` 12 个测试通过。
+- `npm run typecheck` 通过。
+- 浏览器 MCP 当前被另一个 `mcp-chrome` 实例占用，无法执行页面截图/console smoke；本轮以前端构建、组件测试、类型检查和已部署页面 HTTP 200 作为替代验证证据。

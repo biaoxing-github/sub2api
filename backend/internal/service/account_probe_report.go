@@ -70,12 +70,17 @@ func decorateAccountProbeReportItem(item *AccountProbeReportItem) {
 	}
 	score := ScoreAccountProbeRun(item.AccountProbeResult)
 	item.Score = score.Score
+	item.DisplayScore = accountProbeBazaarLinkDisplayScore(item.AccountProbeResult)
 	item.Grade = score.Grade
 	item.GradeLabel = score.Label
 	item.Confidence = score.Confidence
 	item.ScoreItems = score.ScoreItems
 	item.PenaltyItems = score.PenaltyItems
 	item.SuccessRate = accountProbeResultSuccessRate(item.AccountProbeResult)
+}
+
+func accountProbeReportItemNeedsSamples(item AccountProbeReportItem) bool {
+	return strings.EqualFold(strings.TrimSpace(item.Profile), AccountProbeProfileModelValidation)
 }
 
 func accountProbeResultSuccessRate(run AccountProbeResult) float64 {

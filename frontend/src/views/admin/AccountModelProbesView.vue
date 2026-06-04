@@ -146,7 +146,7 @@
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatRequestMode(run.request_mode) }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatProbeSource(run.probe_source) }}</td>
                 <td class="px-4 py-3">
-                  <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(run.score) }}</div>
+                  <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatRunScore(run) }}</div>
                   <div v-if="run.grade_label" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ run.grade_label }}</div>
                 </td>
                 <td class="px-4 py-3">
@@ -207,7 +207,7 @@
             </div>
             <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-dark-800">
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accountModelProbes.score') }}</div>
-              <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(detailRun.score) }}</div>
+              <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatRunScore(detailRun) }}</div>
               <div v-if="detailRun.grade_label" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ detailRun.grade_label }}</div>
             </div>
             <div class="rounded-lg bg-gray-50 px-3 py-2 dark:bg-dark-800">
@@ -1136,6 +1136,11 @@ function formatNumber(value: number | null | undefined): string {
   return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(value % 1 === 0 ? 0 : 1) : '-'
 }
 
+function formatRunScore(run: AccountProbeRun): string {
+  const displayScore = run.probe_source === 'bazaarlink_api' ? run.display_score : undefined
+  return formatNumber(typeof displayScore === 'number' && Number.isFinite(displayScore) ? displayScore : run.score)
+}
+
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '-'
   const date = new Date(value)
@@ -1166,9 +1171,9 @@ function formatEvidenceScore(evidence: AccountProbeValidationEvidence): string {
 
 function formatSampleEvidenceScore(sample: AccountProbeSample, evidence: AccountProbeValidationEvidence): string {
   if (isBazaarLinkSample(sample) && evidence.key === 'bazaarlink_identity') {
-    const returnedScore = bazaarLinkReturnedScore(sample)
-    if (typeof returnedScore === 'number') {
-      return `${formatNumber(returnedScore)} / ${formatNumber(evidence.max_score)}`
+    const displayScore = bazaarLinkDisplayScoreValue(sample, evidence)
+    if (typeof displayScore === 'number') {
+      return `${formatNumber(displayScore)} / ${formatNumber(evidence.max_score)}`
     }
   }
   return formatEvidenceScore(evidence)
@@ -1335,8 +1340,18 @@ function bazaarLinkPartialRunId(sample: AccountProbeSample): string {
   return parseJsonStringAfterProperty(sample.response_body, 'runId')
 }
 
-function bazaarLinkPartialScore(sample: AccountProbeSample): number | undefined {
-  return parseJsonNumberAfterProperty(sample.response_body, 'score')
+function bazaarLinkPartialTopLevelScore(sample: AccountProbeSample): number | undefined {
+  const body = sample.response_body
+  if (!body) return undefined
+  const scoreIndex = findJsonPropertyIndex(body, 'score')
+  if (scoreIndex < 0) return undefined
+  const nestedBoundaryIndexes = [
+    findJsonPropertyIndex(body, 'identityAssessment'),
+    findJsonPropertyIndex(body, 'items'),
+  ].filter(index => index >= 0)
+  const firstNestedBoundary = nestedBoundaryIndexes.length ? Math.min(...nestedBoundaryIndexes) : -1
+  if (firstNestedBoundary >= 0 && scoreIndex > firstNestedBoundary) return undefined
+  return parseJsonNumberAfterProperty(body, 'score')
 }
 
 function bazaarLinkPartialIdentityStatus(sample: AccountProbeSample): string {
@@ -1398,18 +1413,31 @@ function bazaarLinkRunId(sample: AccountProbeSample): string {
 function bazaarLinkReturnedScore(sample: AccountProbeSample): number | undefined {
   const result = parseBazaarLinkResult(sample)
   if (typeof result?.score === 'number' && Number.isFinite(result.score)) return result.score
-  const partialScore = bazaarLinkPartialScore(sample)
+  const partialScore = bazaarLinkPartialTopLevelScore(sample)
   return typeof partialScore === 'number' && Number.isFinite(partialScore) ? partialScore : undefined
 }
 
-function bazaarLinkScore(sample: AccountProbeSample): string {
-  const returnedScore = bazaarLinkReturnedScore(sample)
-  if (typeof returnedScore === 'number') return formatNumber(returnedScore)
-  const evidence = bazaarLinkIdentityEvidence(sample)
-  if (evidence && evidence.max_score > 0) {
-    return formatSampleEvidenceScore(sample, evidence)
+function isBazaarLinkQuickSample(sample: AccountProbeSample): boolean {
+  return detailRun.value?.request_mode === 'quick' || /快速|quick/i.test(sample.label || '')
+}
+
+function bazaarLinkDisplayScoreValue(sample: AccountProbeSample, evidence = bazaarLinkIdentityEvidence(sample)): number | undefined {
+  if (isBazaarLinkQuickSample(sample)) {
+    const candidateScore = bazaarLinkClaimedCandidateScore(sample)
+    if (typeof candidateScore === 'number') return candidateScore
+    if (typeof evidence?.display_score === 'number' && Number.isFinite(evidence.display_score)) return evidence.display_score
   }
-  return formatNumber(detailRun.value?.score)
+  const returnedScore = bazaarLinkReturnedScore(sample)
+  if (typeof returnedScore === 'number') return returnedScore
+  if (typeof evidence?.score === 'number' && Number.isFinite(evidence.score)) return evidence.score
+  const runDisplayScore = detailRun.value?.display_score
+  if (typeof runDisplayScore === 'number' && Number.isFinite(runDisplayScore)) return runDisplayScore
+  const runScore = detailRun.value?.score
+  return typeof runScore === 'number' && Number.isFinite(runScore) ? runScore : undefined
+}
+
+function bazaarLinkScore(sample: AccountProbeSample): string {
+  return formatNumber(bazaarLinkDisplayScoreValue(sample))
 }
 
 function bazaarLinkIdentityStatus(sample: AccountProbeSample): string {
@@ -1586,6 +1614,48 @@ function formatBazaarLinkCandidateScore(candidate: BazaarLinkModelCandidate): st
   const score = candidate.score
   if (typeof score !== 'number' || !Number.isFinite(score)) return '-'
   return `${formatNumber(score <= 1 ? score * 100 : score)}%`
+}
+
+function bazaarLinkClaimedCandidateScore(sample: AccountProbeSample): number | undefined {
+  const targets = [
+    bazaarLinkClaimedModel(sample),
+    sample.model,
+    bazaarLinkIdentityEvidence(sample)?.expected_model,
+    bazaarLinkIdentityEvidence(sample)?.expected,
+    detailRun.value?.model,
+  ]
+  for (const target of targets) {
+    if (!target || target === '-') continue
+    for (const candidate of bazaarLinkV3Candidates(sample)) {
+      if (!bazaarLinkCandidateMatchesModel(candidate, target)) continue
+      const score = normalizeBazaarLinkCandidateScore(candidate.score)
+      if (typeof score === 'number') return score
+    }
+  }
+  return undefined
+}
+
+function bazaarLinkCandidateMatchesModel(candidate: BazaarLinkModelCandidate, expectedModel: string): boolean {
+  return bazaarLinkModelNameMatches(candidate.modelId, expectedModel) || bazaarLinkModelNameMatches(candidate.displayName, expectedModel)
+}
+
+function bazaarLinkModelNameMatches(left: string | undefined, right: string | undefined): boolean {
+  const normalizedLeft = normalizeBazaarLinkModelName(left)
+  const normalizedRight = normalizeBazaarLinkModelName(right)
+  if (!normalizedLeft || !normalizedRight) return false
+  return normalizedLeft === normalizedRight || normalizedLeft.endsWith(normalizedRight) || normalizedRight.endsWith(normalizedLeft)
+}
+
+function normalizeBazaarLinkModelName(value: string | undefined): string {
+  const normalized = (value || '').trim().toLowerCase()
+  const withoutProvider = normalized.includes('/') ? normalized.slice(normalized.lastIndexOf('/') + 1) : normalized
+  return withoutProvider.replace(/[\s_-]+/g, '')
+}
+
+function normalizeBazaarLinkCandidateScore(score: number | undefined): number | undefined {
+  if (typeof score !== 'number' || !Number.isFinite(score)) return undefined
+  const percent = score <= 1 ? score * 100 : score
+  return Math.min(100, Math.max(0, percent))
 }
 
 function bazaarLinkItems(sample: AccountProbeSample): BazaarLinkProbeItem[] {

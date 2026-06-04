@@ -141,6 +141,27 @@ func scoreAccountProbeBazaarLink(run AccountProbeResult) AccountProbeScore {
 	}
 }
 
+func accountProbeBazaarLinkDisplayScore(run AccountProbeResult) *float64 {
+	if !strings.EqualFold(strings.TrimSpace(run.Profile), AccountProbeProfileModelValidation) ||
+		!strings.EqualFold(strings.TrimSpace(run.ProbeSource), AccountProbeSourceBazaarLinkAPI) {
+		return nil
+	}
+	for _, sample := range run.Samples {
+		for _, evidence := range sample.ValidationEvidence {
+			if evidence.Key != "bazaarlink_identity" || evidence.MaxScore <= 0 {
+				continue
+			}
+			if evidence.DisplayScore != nil {
+				score := clampFloat64(*evidence.DisplayScore, 0, 100)
+				return &score
+			}
+			score := float64(accountProbeBazaarLinkEvidenceScore(evidence)) * 100 / float64(evidence.MaxScore)
+			return &score
+		}
+	}
+	return nil
+}
+
 func accountProbeBazaarLinkScoreStats(run AccountProbeResult) (int, int, int, int) {
 	rawScore, rawMaxScore, passed, total := 0, 0, 0, 0
 	for _, sample := range run.Samples {

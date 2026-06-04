@@ -9,14 +9,16 @@ import (
 )
 
 type accountProbeReportRepoStub struct {
-	items        []AccountProbeReportItem
-	total        int
-	filter       AccountProbeReportFilter
-	detail       *AccountProbeReportItem
-	samples      []AccountProbeSample
-	sampleRunID  int64
-	rankings     []AccountProbeReportItem
-	rankingLimit int
+	items          []AccountProbeReportItem
+	total          int
+	filter         AccountProbeReportFilter
+	detail         *AccountProbeReportItem
+	samples        []AccountProbeSample
+	samplesByRunID map[int64][]AccountProbeSample
+	sampleRunID    int64
+	sampleRunIDs   []int64
+	rankings       []AccountProbeReportItem
+	rankingLimit   int
 }
 
 func (r *accountProbeReportRepoStub) CreateAccountProbeRun(ctx context.Context, run *AccountProbeResult) error {
@@ -62,6 +64,10 @@ func (r *accountProbeReportRepoStub) DeleteAccountProbeReportRuns(ctx context.Co
 
 func (r *accountProbeReportRepoStub) ListAccountProbeSamples(ctx context.Context, runID int64) ([]AccountProbeSample, error) {
 	r.sampleRunID = runID
+	r.sampleRunIDs = append(r.sampleRunIDs, runID)
+	if r.samplesByRunID != nil {
+		return r.samplesByRunID[runID], nil
+	}
 	return r.samples, nil
 }
 
@@ -104,6 +110,97 @@ func TestAccountProbeServiceListReportsDecoratesAndSortsByScore(t *testing.T) {
 	require.Greater(t, page.Items[0].Score, page.Items[1].Score)
 	require.Greater(t, page.Items[0].SuccessRate, 0.99)
 	require.Greater(t, page.Summary.AverageScore, 0.0)
+}
+
+func TestAccountProbeServiceListReportsUsesBazaarLinkEvidenceScore(t *testing.T) {
+	now := time.Now()
+	repo := &accountProbeReportRepoStub{
+		total: 1,
+		items: []AccountProbeReportItem{{
+			AccountName: "bazaar",
+			AccountProbeResult: AccountProbeResult{
+				ID: 42, AccountID: 12, Profile: AccountProbeProfileModelValidation, ProbeSource: AccountProbeSourceBazaarLinkAPI,
+				Status: AccountProbeStatusSuccess, RequestMode: string(BazaarLinkProbeModeFull), Model: "gpt-5.5",
+				RequestCount: 1, SuccessCount: 1, CreatedAt: now,
+			},
+		}},
+		samplesByRunID: map[int64][]AccountProbeSample{
+			42: {{
+				RunID: 42, Type: AccountProbeSourceBazaarLinkAPI, Status: AccountProbeSampleSuccess, Model: "gpt-5.5",
+				ValidationEvidence: []AccountProbeValidationEvidence{{
+					Key:      "bazaarlink_identity",
+					Label:    "BazaarLink 模型身份",
+					Expected: "gpt-5.5",
+					Observed: "status=match; confidence=0.98; family=openai",
+					Passed:   true,
+					Score:    91,
+					MaxScore: 100,
+				}},
+			}},
+		},
+	}
+	svc := NewAccountProbeService(nil, repo, nil, nil)
+
+	page, err := svc.ListReports(context.Background(), AccountProbeReportFilter{Sort: "score", Order: "desc"})
+
+	require.NoError(t, err)
+	require.Equal(t, []int64{42}, repo.sampleRunIDs)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, 91, page.Items[0].Score)
+	require.Contains(t, page.Items[0].ScoreItems[0], "91/100")
+}
+
+func TestAccountProbeServiceListReportsUsesSelfValidationEvidenceScore(t *testing.T) {
+	now := time.Now()
+	repo := &accountProbeReportRepoStub{
+		total: 1,
+		items: []AccountProbeReportItem{{
+			AccountName: "aisz",
+			AccountProbeResult: AccountProbeResult{
+				ID: 257, AccountID: 408, Profile: AccountProbeProfileModelValidation, ProbeSource: AccountProbeSourceSelfValidation,
+				Status: AccountProbeStatusPartial, RequestMode: AccountProbeRequestModeNonStream, Model: "gpt-5.5",
+				RequestCount: 19, SuccessCount: 31, FailureCount: 7, CreatedAt: now,
+			},
+		}},
+		samplesByRunID: map[int64][]AccountProbeSample{
+			257: {
+				{
+					RunID: 257, Type: "model_validation", Status: AccountProbeSampleSuccess, Model: "gpt-5.5",
+					ValidationEvidence: []AccountProbeValidationEvidence{{
+						Key:      "json_arithmetic",
+						Label:    "JSON 算术",
+						Expected: `{"sum":83}`,
+						Observed: `{"sum":83}`,
+						Passed:   true,
+						Score:    10,
+						MaxScore: 10,
+					}},
+				},
+				{
+					RunID: 257, Type: "model_validation", Status: AccountProbeSampleFailed, Model: "gpt-5.5",
+					ValidationEvidence: []AccountProbeValidationEvidence{{
+						Key:      "responses_non_stream",
+						Label:    "Responses 非流式",
+						Expected: "返回目标模型",
+						Observed: "Service temporarily unavailable",
+						Passed:   false,
+						Score:    0,
+						MaxScore: 10,
+					}},
+				},
+			},
+		},
+	}
+	svc := NewAccountProbeService(nil, repo, nil, nil)
+
+	page, err := svc.ListReports(context.Background(), AccountProbeReportFilter{Sort: "created_at", Order: "desc"})
+
+	require.NoError(t, err)
+	require.Equal(t, []int64{257}, repo.sampleRunIDs)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, 50, page.Items[0].Score)
+	require.Contains(t, page.Items[0].ScoreItems[0], "1/2")
+	require.Empty(t, page.Items[0].Samples)
 }
 
 func TestAccountProbeServiceGetReportLoadsSamplesAndScoreBreakdown(t *testing.T) {

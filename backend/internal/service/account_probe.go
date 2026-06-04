@@ -81,26 +81,27 @@ type AccountProbeLatencyStats = APIKeyProbeLatencyStats
 
 // AccountProbeValidationEvidence 记录单个模型行为探针的结构化判定依据。
 type AccountProbeValidationEvidence struct {
-	Key                string `json:"key"`
-	Label              string `json:"label"`
-	Expected           string `json:"expected"`
-	Observed           string `json:"observed"`
-	Passed             bool   `json:"passed"`
-	Score              int    `json:"score"`
-	MaxScore           int    `json:"max_score"`
-	Message            string `json:"message,omitempty"`
-	Category           string `json:"category,omitempty"`
-	Severity           string `json:"severity,omitempty"`
-	AttemptCount       int    `json:"attempt_count,omitempty"`
-	RetryAttemptCount  int    `json:"retry_attempt_count,omitempty"`
-	AttemptStatusCodes []int  `json:"attempt_status_codes,omitempty"`
-	ResponseModel      string `json:"response_model,omitempty"`
-	ExpectedModel      string `json:"expected_model,omitempty"`
-	TrustedAccountID   int64  `json:"trusted_account_id,omitempty"`
-	SimilarityPercent  int    `json:"similarity_percent,omitempty"`
-	PairCoverage       int    `json:"pair_coverage_percent,omitempty"`
-	TargetPassRate     int    `json:"target_pass_rate_percent,omitempty"`
-	TrustedPassRate    int    `json:"trusted_pass_rate_percent,omitempty"`
+	Key                string   `json:"key"`
+	Label              string   `json:"label"`
+	Expected           string   `json:"expected"`
+	Observed           string   `json:"observed"`
+	Passed             bool     `json:"passed"`
+	Score              int      `json:"score"`
+	DisplayScore       *float64 `json:"display_score,omitempty"`
+	MaxScore           int      `json:"max_score"`
+	Message            string   `json:"message,omitempty"`
+	Category           string   `json:"category,omitempty"`
+	Severity           string   `json:"severity,omitempty"`
+	AttemptCount       int      `json:"attempt_count,omitempty"`
+	RetryAttemptCount  int      `json:"retry_attempt_count,omitempty"`
+	AttemptStatusCodes []int    `json:"attempt_status_codes,omitempty"`
+	ResponseModel      string   `json:"response_model,omitempty"`
+	ExpectedModel      string   `json:"expected_model,omitempty"`
+	TrustedAccountID   int64    `json:"trusted_account_id,omitempty"`
+	SimilarityPercent  int      `json:"similarity_percent,omitempty"`
+	PairCoverage       int      `json:"pair_coverage_percent,omitempty"`
+	TargetPassRate     int      `json:"target_pass_rate_percent,omitempty"`
+	TrustedPassRate    int      `json:"trusted_pass_rate_percent,omitempty"`
 }
 
 type AccountProbeResult struct {
@@ -186,6 +187,7 @@ type AccountProbeReportItem struct {
 	AccountProbeResult
 	AccountName  string   `json:"account_name"`
 	Score        int      `json:"score"`
+	DisplayScore *float64 `json:"display_score,omitempty"`
 	Grade        string   `json:"grade"`
 	GradeLabel   string   `json:"grade_label"`
 	Confidence   int      `json:"confidence"`
@@ -1071,7 +1073,19 @@ func (s *AccountProbeService) ListReports(ctx context.Context, filter AccountPro
 		return AccountProbeReportPage{}, err
 	}
 	for i := range items {
+		loadedSamples := false
+		if accountProbeReportItemNeedsSamples(items[i]) {
+			samples, err := s.repo.ListAccountProbeSamples(ctx, items[i].ID)
+			if err != nil {
+				return AccountProbeReportPage{}, err
+			}
+			items[i].Samples = samples
+			loadedSamples = true
+		}
 		decorateAccountProbeReportItem(&items[i])
+		if loadedSamples {
+			items[i].Samples = nil
+		}
 	}
 	if filter.Sort == "score" {
 		sort.SliceStable(items, func(i, j int) bool {

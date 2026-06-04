@@ -44,17 +44,33 @@ type bazaarLinkProbeResponse struct {
 }
 
 type bazaarLinkIdentityAssessment struct {
-	Status           string                   `json:"status"`
-	Confidence       float64                  `json:"confidence"`
-	ClaimedModel     string                   `json:"claimedModel"`
-	PredictedFamily  string                   `json:"predictedFamily"`
-	SubModelMatchV3F *bazaarLinkSubModelMatch `json:"subModelMatchV3F"`
-	RiskFlags        []string                 `json:"riskFlags"`
+	Status           string                     `json:"status"`
+	Confidence       float64                    `json:"confidence"`
+	ClaimedModel     string                     `json:"claimedModel"`
+	PredictedFamily  string                     `json:"predictedFamily"`
+	SubModelMatchV3F *bazaarLinkSubModelMatch   `json:"subModelMatchV3F"`
+	RiskFlags        []string                   `json:"riskFlags"`
+	V3               json.RawMessage            `json:"v3"`
+	V3Candidates     []bazaarLinkModelCandidate `json:"v3Candidates"`
+	Candidates       []bazaarLinkModelCandidate `json:"candidates"`
 }
 
 type bazaarLinkSubModelMatch struct {
 	ModelID string  `json:"modelId"`
 	Score   float64 `json:"score"`
+}
+
+type bazaarLinkCandidateGroup struct {
+	Candidates    []bazaarLinkModelCandidate `json:"candidates"`
+	TopCandidates []bazaarLinkModelCandidate `json:"topCandidates"`
+	Matches       []bazaarLinkModelCandidate `json:"matches"`
+}
+
+type bazaarLinkModelCandidate struct {
+	DisplayName string   `json:"displayName"`
+	ModelID     string   `json:"modelId"`
+	Family      string   `json:"family"`
+	Score       *float64 `json:"score"`
 }
 
 type bazaarLinkProbeItem struct {
@@ -227,7 +243,7 @@ func (s *AccountProbeService) runBazaarLinkProbeSample(ctx context.Context, acco
 
 	inputTokens := intFromOptional(parsed.TotalInputTokens)
 	outputTokens := intFromOptional(parsed.TotalOutputTokens)
-	evidence := bazaarLinkProbeEvidence(parsed, model)
+	evidence := bazaarLinkProbeEvidenceForMode(parsed, model, mode)
 	status := AccountProbeSampleSuccess
 	errorCode := ""
 	errorMessage := ""
@@ -404,6 +420,10 @@ func failedBazaarLinkProbeSample(account *Account, model string, mode BazaarLink
 }
 
 func bazaarLinkProbeEvidence(result bazaarLinkProbeResponse, expectedModel string) AccountProbeValidationEvidence {
+	return bazaarLinkProbeEvidenceForMode(result, expectedModel, BazaarLinkProbeModeFull)
+}
+
+func bazaarLinkProbeEvidenceForMode(result bazaarLinkProbeResponse, expectedModel string, mode BazaarLinkProbeMode) AccountProbeValidationEvidence {
 	identity := result.IdentityAssessment
 	statusConfirmed := bazaarLinkIdentityStatusConfirmed(identity.Status)
 	hasRisk := len(identity.RiskFlags) > 0
@@ -421,13 +441,22 @@ func bazaarLinkProbeEvidence(result bazaarLinkProbeResponse, expectedModel strin
 		message = "BazaarLink 身份验证通过，存在风险提示：" + strings.Join(identity.RiskFlags, ", ")
 	}
 	observed := bazaarLinkIdentityObserved(identity)
+	score := bazaarLinkProbeEvidenceScore(result, expectedModel, mode)
+	var displayScore *float64
+	if mode == BazaarLinkProbeModeQuick {
+		if candidateScore, ok := bazaarLinkClaimedCandidateScore(identity, expectedModel); ok {
+			copiedScore := candidateScore
+			displayScore = &copiedScore
+		}
+	}
 	return AccountProbeValidationEvidence{
 		Key:           "bazaarlink_identity",
 		Label:         "BazaarLink 模型身份",
 		Expected:      expectedModel,
 		Observed:      observed,
 		Passed:        passed,
-		Score:         bazaarLinkProbeEvidenceScore(result),
+		Score:         score,
+		DisplayScore:  displayScore,
 		MaxScore:      100,
 		Message:       message,
 		Category:      "external_api",
@@ -437,9 +466,104 @@ func bazaarLinkProbeEvidence(result bazaarLinkProbeResponse, expectedModel strin
 	}
 }
 
-// bazaarLinkProbeEvidenceScore 只采用 BazaarLink 顶层 score；confidence 只展示身份置信度，不参与探测得分。
-func bazaarLinkProbeEvidenceScore(result bazaarLinkProbeResponse) int {
+// bazaarLinkProbeEvidenceScore 完整验证采用 BazaarLink 顶层 score；快速验证采用声明模型的候选分。
+func bazaarLinkProbeEvidenceScore(result bazaarLinkProbeResponse, expectedModel string, mode BazaarLinkProbeMode) int {
+	if mode == BazaarLinkProbeModeQuick {
+		if score, ok := bazaarLinkClaimedCandidateScore(result.IdentityAssessment, expectedModel); ok {
+			return clampInt(int(math.Round(score)), 0, 100)
+		}
+	}
 	return clampInt(result.Score, 0, 100)
+}
+
+// bazaarLinkClaimedCandidateScore 匹配声明模型在 V3 候选里的原始百分制分数。
+func bazaarLinkClaimedCandidateScore(identity bazaarLinkIdentityAssessment, expectedModel string) (float64, bool) {
+	target := strings.TrimSpace(expectedModel)
+	if target == "" {
+		target = strings.TrimSpace(identity.ClaimedModel)
+	}
+	if target == "" {
+		return 0, false
+	}
+	for _, candidate := range bazaarLinkIdentityCandidates(identity) {
+		if !bazaarLinkCandidateMatchesModel(candidate, target) {
+			continue
+		}
+		if candidate.Score == nil {
+			continue
+		}
+		return normalizeBazaarLinkCandidateScore(*candidate.Score)
+	}
+	if identity.SubModelMatchV3F != nil && bazaarLinkModelNameMatches(identity.SubModelMatchV3F.ModelID, target) {
+		return normalizeBazaarLinkCandidateScore(identity.SubModelMatchV3F.Score)
+	}
+	return 0, false
+}
+
+func bazaarLinkIdentityCandidates(identity bazaarLinkIdentityAssessment) []bazaarLinkModelCandidate {
+	candidates := make([]bazaarLinkModelCandidate, 0, len(identity.V3Candidates)+len(identity.Candidates))
+	candidates = append(candidates, bazaarLinkCandidatesFromRaw(identity.V3)...)
+	candidates = append(candidates, identity.V3Candidates...)
+	candidates = append(candidates, identity.Candidates...)
+	return candidates
+}
+
+func bazaarLinkCandidatesFromRaw(raw json.RawMessage) []bazaarLinkModelCandidate {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	var direct []bazaarLinkModelCandidate
+	if err := json.Unmarshal(trimmed, &direct); err == nil && len(direct) > 0 {
+		return direct
+	}
+	var group bazaarLinkCandidateGroup
+	if err := json.Unmarshal(trimmed, &group); err != nil {
+		return nil
+	}
+	candidates := make([]bazaarLinkModelCandidate, 0, len(group.Candidates)+len(group.TopCandidates)+len(group.Matches))
+	candidates = append(candidates, group.Candidates...)
+	candidates = append(candidates, group.TopCandidates...)
+	candidates = append(candidates, group.Matches...)
+	return candidates
+}
+
+func bazaarLinkCandidateMatchesModel(candidate bazaarLinkModelCandidate, expectedModel string) bool {
+	return bazaarLinkModelNameMatches(candidate.ModelID, expectedModel) || bazaarLinkModelNameMatches(candidate.DisplayName, expectedModel)
+}
+
+func bazaarLinkModelNameMatches(left, right string) bool {
+	normalizedLeft := normalizeBazaarLinkModelName(left)
+	normalizedRight := normalizeBazaarLinkModelName(right)
+	if normalizedLeft == "" || normalizedRight == "" {
+		return false
+	}
+	return normalizedLeft == normalizedRight || strings.HasSuffix(normalizedLeft, normalizedRight) || strings.HasSuffix(normalizedRight, normalizedLeft)
+}
+
+func normalizeBazaarLinkModelName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if slash := strings.LastIndex(value, "/"); slash >= 0 {
+		value = value[slash+1:]
+	}
+	replacer := strings.NewReplacer(" ", "", "_", "", "-", "")
+	return replacer.Replace(value)
+}
+
+func normalizeBazaarLinkCandidateScore(score float64) (float64, bool) {
+	if math.IsNaN(score) || math.IsInf(score, 0) {
+		return 0, false
+	}
+	if score <= 1 {
+		score *= 100
+	}
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
+	}
+	return score, true
 }
 
 // bazaarLinkIdentityStatusConfirmed 兼容 BazaarLink 页面返回的模型身份确认状态。

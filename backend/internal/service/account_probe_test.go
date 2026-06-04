@@ -145,6 +145,11 @@ func (c *bazaarLinkProbeHTTPClientStub) Do(req *http.Request) (*http.Response, e
 	    "claimedModel":"gpt-5.5",
 	    "predictedFamily":"openai",
 	    "subModelMatchV3F":{"modelId":"gpt-5.5","score":0.94},
+	    "v3":{"candidates":[
+	      {"displayName":"GPT-5.3 Codex","modelId":"openai/gpt-5.3-codex","family":"openai","score":0.9893329875983731},
+	      {"displayName":"GPT-5.5","modelId":"openai/gpt-5.5","family":"openai","score":0.9852066599830172},
+	      {"displayName":"GPT-5.4 Mini","modelId":"openai/gpt-5.4-mini","family":"openai","score":0.9052747274960748}
+	    ]},
 	    "riskFlags":["部署探針: 回應未包含任何預期關鍵字"],
 	    "apiKey":"sk-should-not-persist"
 	  },
@@ -753,12 +758,12 @@ func TestAccountProbeService_RunBazaarLinkUsesAccountAPIKeyAndPersistsRedactedRe
 	require.Len(t, sample.ValidationEvidence, 1)
 	require.True(t, sample.ValidationEvidence[0].Passed)
 	require.Equal(t, "warning", sample.ValidationEvidence[0].Severity)
-	require.Equal(t, 87, sample.ValidationEvidence[0].Score)
+	require.Equal(t, 99, sample.ValidationEvidence[0].Score)
 	require.Contains(t, sample.ValidationEvidence[0].Message, "存在风险提示")
 	require.Contains(t, sample.ValidationEvidence[0].Observed, "flags=部署探針")
 
 	score := ScoreAccountProbeRun(result)
-	require.Equal(t, 87, score.Score)
+	require.Equal(t, 99, score.Score)
 	require.Contains(t, score.ScoreItems[0], "BazaarLink API")
 }
 
@@ -805,7 +810,7 @@ func TestAccountProbeService_RunBazaarLinkPollsAsyncRunUntilCompleted(t *testing
 	require.Equal(t, 34, sample.OutputTokens)
 	require.Contains(t, sample.ResponseBody, `"runId":"run_async"`)
 	require.True(t, sample.ValidationEvidence[0].Passed)
-	require.Equal(t, 93, sample.ValidationEvidence[0].Score)
+	require.Equal(t, 97, sample.ValidationEvidence[0].Score)
 }
 
 func TestBazaarLinkProbeEvidenceKeepsReturnedZeroScoreWhenConfidenceExists(t *testing.T) {
