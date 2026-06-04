@@ -3425,6 +3425,15 @@ function parseEndpointPathsText(value: string): string[] {
   return paths
 }
 
+function applyUpstreamManualRateCredentials(credentials: Record<string, unknown>) {
+  if (upstreamCommonRateMultiplier.value != null && upstreamCommonRateMultiplier.value > 0) {
+    credentials.upstream_manual_rate_multiplier = upstreamCommonRateMultiplier.value
+  }
+  if (upstreamCommonRateGroupName.value.trim()) {
+    credentials.upstream_manual_rate_group_name = upstreamCommonRateGroupName.value.trim()
+  }
+}
+
 interface Props {
   show: boolean
   proxies: Proxy[]
@@ -4632,12 +4641,7 @@ const handleSubmit = async () => {
     if (upstreamAuthPassword.value.trim()) {
       credentials.upstream_auth_password = upstreamAuthPassword.value.trim()
     }
-    if (upstreamCommonRateMultiplier.value != null && upstreamCommonRateMultiplier.value > 0) {
-      credentials.upstream_common_rate_multiplier = upstreamCommonRateMultiplier.value
-    }
-    if (upstreamCommonRateGroupName.value.trim()) {
-      credentials.upstream_common_rate_group_name = upstreamCommonRateGroupName.value.trim()
-    }
+    applyUpstreamManualRateCredentials(credentials)
     credentials.upstream_balance_endpoint_paths = parseEndpointPathsText(upstreamBalanceEndpointPathsText.value)
 
     // Antigravity 只使用映射模式
@@ -4722,12 +4726,7 @@ const handleSubmit = async () => {
     if (upstreamAuthPassword.value.trim()) {
       credentials.upstream_auth_password = upstreamAuthPassword.value.trim()
     }
-    if (upstreamCommonRateMultiplier.value != null && upstreamCommonRateMultiplier.value > 0) {
-      credentials.upstream_common_rate_multiplier = upstreamCommonRateMultiplier.value
-    }
-    if (upstreamCommonRateGroupName.value.trim()) {
-      credentials.upstream_common_rate_group_name = upstreamCommonRateGroupName.value.trim()
-    }
+    applyUpstreamManualRateCredentials(credentials)
     credentials.upstream_balance_endpoint_paths = parseEndpointPathsText(upstreamBalanceEndpointPathsText.value)
   }
   if (form.platform === 'gemini') {

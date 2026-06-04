@@ -387,9 +387,13 @@ func TestUpstreamBalanceServiceRefreshOneUsesAuthenticatedAuthMeBalance(t *testi
 			"/api/v1/auth/me":    `{"code":0,"data":{"email":"alice@example.com","balance":33.0083949,"concurrency":5}}`,
 		},
 		statuses: map[string]int{
-			"/api/user/login":        http.StatusNotFound,
-			"/api/user/self":         http.StatusNotFound,
-			"/api/subscription/self": http.StatusNotFound,
+			"/api/user/login":          http.StatusNotFound,
+			"/api/user/self":           http.StatusNotFound,
+			"/api/subscription/self":   http.StatusNotFound,
+			"/api/v1/groups/available": http.StatusNotFound,
+			"/api/v1/groups/rates":     http.StatusNotFound,
+			"/api/user/groups":         http.StatusNotFound,
+			"/api/pricing":             http.StatusNotFound,
 		},
 	}
 	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
@@ -504,9 +508,68 @@ func TestUpstreamBalanceServiceRefreshOnePreservesManualGroupsWhenUpstreamOmitsG
 	if repo.updateExtra[UpstreamBalanceGroupsKey] == nil {
 		t.Fatalf("updated extra did not preserve groups: %+v", repo.updateExtra)
 	}
+	if repo.updateExtra[UpstreamFetchedGroupsKey] != nil {
+		t.Fatalf("manual groups must not be stored as fetched groups: %+v", repo.updateExtra)
+	}
 }
 
-func TestGroupsForKeyPrefersFetchedGroupsOverManualRate(t *testing.T) {
+func TestUpstreamBalanceServiceRefreshOneManualRateFieldOverridesAuthGroups(t *testing.T) {
+	repo := &upstreamBalanceRefreshOneRepo{
+		account: &Account{
+			ID:       42,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":                         "sk-test",
+				UpstreamAuthUsernameCredentialKey: "alice@example.com",
+				UpstreamAuthPasswordCredentialKey: "secret",
+				UpstreamManualRateMultiplierKey:   7.5,
+				UpstreamManualRateGroupNameKey:    "manual-v2",
+			},
+		},
+	}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{
+		body: `{"data":{}}`,
+		responses: map[string]string{
+			"/api/user/login":          `{"success":true,"token":"login-token","data":{"id":99}}`,
+			"/api/v1/auth/me":          `{"code":0,"data":{"balance":75}}`,
+			"/api/v1/groups/available": `{"data":{"group_ratio":{"login-group":0.2}}}`,
+			"/api/subscription/self":   `{"subscriptions":[]}`,
+		},
+		statuses: map[string]int{
+			"/api/v1/groups/rates": http.StatusNotFound,
+			"/api/user/groups":     http.StatusNotFound,
+			"/api/pricing":         http.StatusNotFound,
+		},
+	}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+
+	snapshot, err := svc.RefreshOne(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("RefreshOne() error = %v", err)
+	}
+	if len(snapshot.Groups) != 1 || snapshot.Groups[0].Name != "manual-v2" || snapshot.Groups[0].Ratio != 7.5 {
+		t.Fatalf("snapshot groups = %+v", snapshot.Groups)
+	}
+	if got := snapshot.ConvertedAvailableByGroup["manual-v2"]; got != 10 {
+		t.Fatalf("converted manual group = %v, want 10; groups = %+v", got, snapshot.ConvertedAvailableByGroup)
+	}
+	if len(snapshot.Keys) != 1 || len(snapshot.Keys[0].Groups) != 1 || snapshot.Keys[0].Groups[0].Name != "manual-v2" {
+		t.Fatalf("key groups = %+v", snapshot.Keys)
+	}
+	if got := repo.updateExtra[UpstreamCommonRateMultiplierKey]; got != 0.2 {
+		t.Fatalf("fetched common rate cache = %v, want 0.2; update extra = %+v", got, repo.updateExtra)
+	}
+	fetched, ok := repo.updateExtra[UpstreamFetchedGroupsKey].([]UpstreamBalanceGroupSnapshot)
+	if !ok || len(fetched) != 1 || fetched[0].Name != "login-group" || fetched[0].Ratio != 0.2 {
+		t.Fatalf("fetched groups cache = %+v, want login-group 0.2", repo.updateExtra[UpstreamFetchedGroupsKey])
+	}
+	if got := repo.updateExtra[UpstreamBalanceGroupsKey]; got == nil {
+		t.Fatalf("updated balance groups missing: %+v", repo.updateExtra)
+	}
+}
+
+func TestGroupsForKeyPrefersManualRateOverFetchedGroups(t *testing.T) {
 	account := &Account{
 		Type: AccountTypeAPIKey,
 		Credentials: map[string]any{
@@ -523,7 +586,38 @@ func TestGroupsForKeyPrefersFetchedGroupsOverManualRate(t *testing.T) {
 	}
 
 	got := groupsForKey(auth, account, "sk-test")
-	if len(got) != 1 || got[0].Name != "login-group" || got[0].Ratio != 0.2 {
+	if len(got) != 1 || got[0].Name != "manual" || got[0].Ratio != 9.0 {
+		t.Fatalf("groupsForKey() = %+v", got)
+	}
+}
+
+func TestGroupsForKeyUsesManualRateFieldBeforeFetchedGroups(t *testing.T) {
+	account := &Account{
+		Type: AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":                       "sk-test",
+			UpstreamManualRateMultiplierKey: 7.5,
+			UpstreamManualRateGroupNameKey:  "manual-v2",
+			UpstreamCommonRateMultiplierKey: 9.0,
+			UpstreamCommonRateGroupNameKey:  "legacy-manual",
+		},
+		Extra: map[string]any{
+			UpstreamCommonRateMultiplierKey: 0.2,
+			UpstreamCommonRateGroupNameKey:  "login-group",
+			UpstreamFetchedGroupsKey: []any{
+				map[string]any{"name": "login-group", "ratio": 0.2},
+			},
+		},
+	}
+	auth := &upstreamAuthContext{
+		groupsByKey: map[string][]UpstreamBalanceGroupSnapshot{
+			FingerprintAPIKey("sk-test"): {{Name: "login-group", Ratio: 0.2}},
+		},
+		allGroups: []UpstreamBalanceGroupSnapshot{{Name: "login-group", Ratio: 0.2}},
+	}
+
+	got := groupsForKey(auth, account, "sk-test")
+	if len(got) != 1 || got[0].Name != "manual-v2" || got[0].Ratio != 7.5 {
 		t.Fatalf("groupsForKey() = %+v", got)
 	}
 }
@@ -556,7 +650,7 @@ func TestManualRateGroupsPrefersExtraRatioAndCredentialName(t *testing.T) {
 			UpstreamCommonRateGroupNameKey:  "codex",
 		},
 		Extra: map[string]any{
-			UpstreamCommonRateMultiplierKey: 0.2,
+			UpstreamManualRateMultiplierKey: 0.2,
 		},
 	}
 

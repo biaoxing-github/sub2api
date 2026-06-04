@@ -405,6 +405,34 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.api_key).toBe('sk-test')
   })
 
+  it('submits manual upstream rate without using fetched common rate cache', async () => {
+    const account = buildAccount()
+    account.credentials = {
+      ...account.credentials,
+      upstream_manual_rate_multiplier: 7.5,
+      upstream_manual_rate_group_name: 'manual-v2'
+    }
+    account.extra = {
+      upstream_common_rate_multiplier: 0.2,
+      upstream_common_rate_group_name: 'login-group'
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials?.upstream_manual_rate_multiplier).toBe(7.5)
+    expect(credentials?.upstream_manual_rate_group_name).toBe('manual-v2')
+    expect(credentials?.upstream_common_rate_multiplier).toBeUndefined()
+    expect(credentials?.upstream_common_rate_group_name).toBeUndefined()
+  })
+
   it('blocks apikey save when neither credentials_status nor legacy api_key indicates existence', async () => {
     const account = buildAccount()
     account.credentials = {

@@ -39,6 +39,8 @@ const (
 	UpstreamAuthUsernameCredentialKey       = "upstream_auth_username"
 	UpstreamAuthPasswordCredentialKey       = "upstream_auth_password"
 	UpstreamAuthTokenCredentialKey          = "upstream_auth_token"
+	UpstreamManualRateMultiplierKey         = "upstream_manual_rate_multiplier"
+	UpstreamManualRateGroupNameKey          = "upstream_manual_rate_group_name"
 	UpstreamCommonRateMultiplierKey         = "upstream_common_rate_multiplier"
 	UpstreamCommonRateGroupNameKey          = "upstream_common_rate_group_name"
 	UpstreamManualBalanceTotalKey           = "upstream_manual_balance_total"
@@ -296,10 +298,6 @@ func (s *UpstreamBalanceService) RefreshAccount(ctx context.Context, account *Ac
 	authCtx := s.fetchUpstreamAuthContext(ctx, account, keys)
 	if authCtx != nil && len(authCtx.allGroups) > 0 {
 		account.Extra[UpstreamFetchedGroupsKey] = authCtx.allGroups
-		if len(authCtx.allGroups) == 1 {
-			account.Extra[UpstreamCommonRateMultiplierKey] = authCtx.allGroups[0].Ratio
-			account.Extra[UpstreamCommonRateGroupNameKey] = authCtx.allGroups[0].Name
-		}
 	}
 	for _, key := range keys {
 		item := s.fetchKeyBalance(ctx, account, key, authCtx)
@@ -385,7 +383,13 @@ func (s *UpstreamBalanceService) RefreshAccount(ctx context.Context, account *Ac
 		snapshot.Error = ""
 	}
 	preserveManualGroups(snapshot, account)
-	if err := s.accountRepo.UpdateExtra(ctx, account.ID, snapshot.toExtraUpdates(now)); err != nil {
+	updates := snapshot.toExtraUpdates(now)
+	if authCtx != nil && len(authCtx.allGroups) > 0 {
+		setFetchedRateGroupUpdates(updates, authCtx.allGroups)
+	} else if len(snapshot.Groups) > 0 && len(manualRateGroups(account)) == 0 {
+		setFetchedRateGroupUpdates(updates, snapshot.Groups)
+	}
+	if err := s.accountRepo.UpdateExtra(ctx, account.ID, updates); err != nil {
 		return nil, err
 	}
 	if authCtx != nil && authCtx.concurrency != nil && *authCtx.concurrency != account.Concurrency {
@@ -461,15 +465,18 @@ func (s *UpstreamBalanceService) fetchKeyBalance(ctx context.Context, account *A
 		item.Used = balance.Used
 		item.Total = balance.Total
 		item.Endpoint = endpoint
-		item.Groups = groupsFromBalanceResponse(body, apiKey, len(allAccountAPIKeys(account)) == 1)
+		item.Groups = manualRateGroups(account)
 		if len(item.Groups) == 0 {
-			item.Groups = balance.Groups
-		}
-		if len(item.Groups) == 0 {
-			item.Groups = groupsForKey(authCtx, account, apiKey)
-		}
-		if len(item.Groups) == 0 {
-			item.Groups = s.fetchKeyGroups(ctx, account, apiKey, baseURL)
+			item.Groups = groupsFromBalanceResponse(body, apiKey, len(allAccountAPIKeys(account)) == 1)
+			if len(item.Groups) == 0 {
+				item.Groups = balance.Groups
+			}
+			if len(item.Groups) == 0 {
+				item.Groups = groupsForKey(authCtx, account, apiKey)
+			}
+			if len(item.Groups) == 0 {
+				item.Groups = s.fetchKeyGroups(ctx, account, apiKey, baseURL)
+			}
 		}
 		applyConvertedBalancesToGroups(&item)
 		item.Status = "ok"
@@ -1623,11 +1630,11 @@ func manualBalanceForAccount(account *Account) *parsedUpstreamBalance {
 }
 
 func groupsForAccount(auth *upstreamAuthContext, account *Account) []UpstreamBalanceGroupSnapshot {
-	if auth != nil && len(auth.allGroups) > 0 {
-		return auth.allGroups
-	}
 	if groups := manualRateGroups(account); len(groups) > 0 {
 		return groups
+	}
+	if auth != nil && len(auth.allGroups) > 0 {
+		return auth.allGroups
 	}
 	if groups := fetchedRateGroups(account); len(groups) > 0 {
 		return groups
@@ -1636,6 +1643,9 @@ func groupsForAccount(auth *upstreamAuthContext, account *Account) []UpstreamBal
 }
 
 func groupsForKey(auth *upstreamAuthContext, account *Account, apiKey string) []UpstreamBalanceGroupSnapshot {
+	if groups := manualRateGroups(account); len(groups) > 0 {
+		return groups
+	}
 	if auth != nil {
 		if groups := auth.groupsByKey[FingerprintAPIKey(apiKey)]; len(groups) > 0 {
 			return groups
@@ -1643,9 +1653,6 @@ func groupsForKey(auth *upstreamAuthContext, account *Account, apiKey string) []
 		if len(auth.allGroups) == 1 && len(allAccountAPIKeys(account)) == 1 {
 			return auth.allGroups
 		}
-	}
-	if groups := manualRateGroups(account); len(groups) > 0 {
-		return groups
 	}
 	if groups := fetchedRateGroups(account); len(groups) > 0 && len(allAccountAPIKeys(account)) == 1 {
 		return groups
@@ -1671,9 +1678,13 @@ func manualRateGroups(account *Account) []UpstreamBalanceGroupSnapshot {
 	var ratio float64
 	var ok bool
 	if account.Extra != nil {
-		ratio, ok = parseAnyFloat(account.Extra[UpstreamCommonRateMultiplierKey])
+		ratio, ok = parseAnyFloat(account.Extra[UpstreamManualRateMultiplierKey])
 	}
 	if !ok || ratio <= 0 {
+		ratio, ok = parseAnyFloat(account.Credentials[UpstreamManualRateMultiplierKey])
+	}
+	if !ok || ratio <= 0 {
+		// 旧版前端曾把人工倍率写入 credentials 的 common 字段，这里只兼容旧人工配置。
 		ratio, ok = parseAnyFloat(account.Credentials[UpstreamCommonRateMultiplierKey])
 	}
 	if !ok || ratio <= 0 {
@@ -1681,7 +1692,10 @@ func manualRateGroups(account *Account) []UpstreamBalanceGroupSnapshot {
 	}
 	name := ""
 	if account.Extra != nil {
-		name = stringValue(account.Extra[UpstreamCommonRateGroupNameKey])
+		name = stringValue(account.Extra[UpstreamManualRateGroupNameKey])
+	}
+	if name == "" {
+		name = stringValue(account.Credentials[UpstreamManualRateGroupNameKey])
 	}
 	if name == "" {
 		name = stringValue(account.Credentials[UpstreamCommonRateGroupNameKey])
@@ -1880,14 +1894,18 @@ func (s *UpstreamBalanceSnapshot) toExtraUpdates(now time.Time) map[string]any {
 		UpstreamBalanceGroupsKey:      s.Groups,
 		UpstreamBalanceConvertedKey:   s.ConvertedAvailableByGroup,
 	}
-	if len(s.Groups) > 0 {
-		updates[UpstreamFetchedGroupsKey] = s.Groups
-		if len(s.Groups) == 1 {
-			updates[UpstreamCommonRateMultiplierKey] = s.Groups[0].Ratio
-			updates[UpstreamCommonRateGroupNameKey] = s.Groups[0].Name
-		}
-	}
 	return updates
+}
+
+func setFetchedRateGroupUpdates(updates map[string]any, groups []UpstreamBalanceGroupSnapshot) {
+	if updates == nil || len(groups) == 0 {
+		return
+	}
+	updates[UpstreamFetchedGroupsKey] = groups
+	if len(groups) == 1 {
+		updates[UpstreamCommonRateMultiplierKey] = groups[0].Ratio
+		updates[UpstreamCommonRateGroupNameKey] = groups[0].Name
+	}
 }
 
 func applySnapshotToSummary(summary *UpstreamBalanceSummary, snapshot *UpstreamBalanceSnapshot) {

@@ -2017,3 +2017,27 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 迁移 `156_align_bazaarlink_quick_candidate_scores.sql` 已落库，`applied_at=2026-06-04 16:10:36.378201+08`。
 - 历史数据已修正：run `227` / sample `1551` 为 `score=98`、`display_score=98.0389688269813500`；run `229` / sample `1552` 为 `score=99`、`display_score=99.3506366160804800`。
 - 容器日志关键错误过滤为空，未见 panic、fatal、迁移错误或 checksum mismatch。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## API Key 手动分组倍率优先级修复验证
+
+本轮修复 OpenAI API Key 账号余额刷新时接口分组倍率覆盖手动倍率的问题。新增 `upstream_manual_rate_multiplier` / `upstream_manual_rate_group_name` 作为手动分组倍率字段；账号存在手动倍率时，余额分组和 `converted_available` 换算优先使用手动倍率；未设置手动倍率时才按上游接口返回分组倍率计算。上游接口分组仍保存到 `upstream_fetched_groups` 与 `upstream_common_rate_*` 缓存，但不再覆盖手动设置。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "Test.*UpstreamBalance|TestGroupsForKey|TestManualRateGroups" -count=1`
+- `npm exec vitest -- src/components/account/__tests__/EditAccountModal.spec.ts --run`
+- `npm run typecheck`
+- `git diff --check`
+
+## 校验结果
+
+- 后端余额聚焦测试通过，覆盖手动倍率优先、接口分组缓存隔离、旧 `credentials.upstream_common_rate_multiplier` 兼容。
+- 前端 `EditAccountModal.spec.ts` 14 个测试通过，覆盖编辑弹窗不再把 `extra.upstream_common_rate_multiplier` 接口缓存当成手动值提交。
+- `npm run typecheck` 通过，`vue-tsc --noEmit` 退出码 0。
+- `git diff --check` 通过。
+- 本轮未执行 Docker 构建部署。

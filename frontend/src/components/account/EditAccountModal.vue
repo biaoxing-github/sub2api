@@ -2546,6 +2546,41 @@ function endpointPathsToText(raw: unknown): string {
   return DEFAULT_UPSTREAM_BALANCE_ENDPOINT_PATHS.join('\n')
 }
 
+function upstreamManualRateMultiplierFrom(
+  credentials?: Record<string, unknown>,
+  extra?: Record<string, unknown>
+): number | null {
+  const extraManual = extra?.upstream_manual_rate_multiplier
+  if (typeof extraManual === 'number' && extraManual > 0) {
+    return extraManual
+  }
+  const credentialManual = credentials?.upstream_manual_rate_multiplier
+  if (typeof credentialManual === 'number' && credentialManual > 0) {
+    return credentialManual
+  }
+  const legacyCredentialManual = credentials?.upstream_common_rate_multiplier
+  if (typeof legacyCredentialManual === 'number' && legacyCredentialManual > 0) {
+    return legacyCredentialManual
+  }
+  return null
+}
+
+function upstreamManualRateGroupNameFrom(
+  credentials?: Record<string, unknown>,
+  extra?: Record<string, unknown>
+): string {
+  const extraManual = extra?.upstream_manual_rate_group_name
+  if (typeof extraManual === 'string' && extraManual.trim()) {
+    return extraManual
+  }
+  const credentialManual = credentials?.upstream_manual_rate_group_name
+  if (typeof credentialManual === 'string' && credentialManual.trim()) {
+    return credentialManual
+  }
+  const legacyCredentialManual = credentials?.upstream_common_rate_group_name
+  return typeof legacyCredentialManual === 'string' ? legacyCredentialManual : ''
+}
+
 const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
 const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
 
@@ -3036,16 +3071,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     const credentials = newAccount.credentials as Record<string, unknown> | undefined
     if (newAccount.type === 'apikey') {
       upstreamAuthUsername.value = (credentials?.upstream_auth_username as string) || ''
-      upstreamCommonRateMultiplier.value =
-        typeof extra?.upstream_common_rate_multiplier === 'number'
-          ? extra.upstream_common_rate_multiplier
-          : typeof credentials?.upstream_common_rate_multiplier === 'number'
-            ? credentials.upstream_common_rate_multiplier
-            : null
-      upstreamCommonRateGroupName.value =
-        typeof extra?.upstream_common_rate_group_name === 'string' && extra.upstream_common_rate_group_name
-          ? extra.upstream_common_rate_group_name
-          : (credentials?.upstream_common_rate_group_name as string) || ''
+      upstreamCommonRateMultiplier.value = upstreamManualRateMultiplierFrom(credentials, extra)
+      upstreamCommonRateGroupName.value = upstreamManualRateGroupNameFrom(credentials, extra)
       upstreamBalanceEndpointPathsText.value = endpointPathsToText(
         credentials?.upstream_balance_endpoint_paths ?? extra?.upstream_balance_endpoint_paths
       )
@@ -3206,16 +3233,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     const extra = (newAccount.extra as Record<string, unknown>) || {}
     editBaseUrl.value = (credentials.base_url as string) || ''
     upstreamAuthUsername.value = (credentials.upstream_auth_username as string) || ''
-    upstreamCommonRateMultiplier.value =
-      typeof extra.upstream_common_rate_multiplier === 'number'
-        ? extra.upstream_common_rate_multiplier
-        : typeof credentials.upstream_common_rate_multiplier === 'number'
-          ? credentials.upstream_common_rate_multiplier
-          : null
-    upstreamCommonRateGroupName.value =
-      typeof extra.upstream_common_rate_group_name === 'string' && extra.upstream_common_rate_group_name
-        ? extra.upstream_common_rate_group_name
-        : (credentials.upstream_common_rate_group_name as string) || ''
+    upstreamCommonRateMultiplier.value = upstreamManualRateMultiplierFrom(credentials, extra)
+    upstreamCommonRateGroupName.value = upstreamManualRateGroupNameFrom(credentials, extra)
     upstreamBalanceEndpointPathsText.value = endpointPathsToText(
       credentials.upstream_balance_endpoint_paths ?? extra.upstream_balance_endpoint_paths
     )
@@ -3495,15 +3514,17 @@ const applyUpstreamAuthCredentials = (credentials: Record<string, unknown>) => {
     credentials.upstream_auth_password = upstreamAuthPassword.value.trim()
   }
   if (upstreamCommonRateMultiplier.value != null && upstreamCommonRateMultiplier.value > 0) {
-    credentials.upstream_common_rate_multiplier = upstreamCommonRateMultiplier.value
+    credentials.upstream_manual_rate_multiplier = upstreamCommonRateMultiplier.value
   } else {
-    delete credentials.upstream_common_rate_multiplier
+    delete credentials.upstream_manual_rate_multiplier
   }
   if (upstreamCommonRateGroupName.value.trim()) {
-    credentials.upstream_common_rate_group_name = upstreamCommonRateGroupName.value.trim()
+    credentials.upstream_manual_rate_group_name = upstreamCommonRateGroupName.value.trim()
   } else {
-    delete credentials.upstream_common_rate_group_name
+    delete credentials.upstream_manual_rate_group_name
   }
+  delete credentials.upstream_common_rate_multiplier
+  delete credentials.upstream_common_rate_group_name
   credentials.upstream_balance_endpoint_paths = parseEndpointPathsText(upstreamBalanceEndpointPathsText.value)
 }
 
