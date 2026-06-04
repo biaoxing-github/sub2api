@@ -1640,3 +1640,35 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 数据库迁移已生效：`account_probe_runs.probe_source` 存在，默认值为 `self_validation`。
 - Playwright 实际打开 `/admin/model-probes` 后按预期跳转到 `/login?redirect=/admin/model-probes`，页面标题为 `Login - Sub2API`。
 - 容器日志近 220 行未匹配 `panic/fatal`。
+
+---
+
+日期：2026-06-04
+执行者：Devil
+
+## BazaarLink 模型探针异步轮询与账号 423 验证
+
+本轮继续按用户要求对接 BazaarLink API key 探测，不让管理端请求等待外部探测完成。前一版同步请求会让 BazaarLink/Cloudflare 边缘超时；本轮改为不发送 `sync=true`，创建 BazaarLink run 后轮询 `/api/probe/run/{runId}`，并兼容 BazaarLink 实际返回的 `identityAssessment.status=match` 身份确认状态。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run TestAccountProbeService_RunBazaarLink -count=1`
+- `go test -tags unit ./internal/service ./internal/handler/admin -run "Test.*Bazaar|Test.*ModelProbe" -count=1`
+- `git diff --check`
+- `docker build -t sub2api:multi-key-local --build-arg NODE_IMAGE=registry-1.docker.io/library/node:24-alpine --build-arg GOLANG_IMAGE=registry-1.docker.io/library/golang:1.26.3-alpine --build-arg ALPINE_IMAGE=registry-1.docker.io/library/alpine:3.21 --build-arg POSTGRES_IMAGE=registry-1.docker.io/library/postgres:18-alpine .`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `docker inspect sub2api` 健康检查
+- 本地生成短期管理员 JWT 后调用 `POST /api/v1/admin/account-model-probe-runs/bazaarlink`，请求体为 `account_id=423, model=gpt-5.5, mode=quick`
+- `psql` 查询 `account_probe_runs` 与 `account_probe_samples`
+
+## 校验结果
+
+- 后端 BazaarLink 聚焦测试通过。
+- 后端 service/admin handler BazaarLink 与模型探针聚焦测试通过。
+- `git diff --check` 通过。
+- Docker build 通过，镜像 manifest list 为 `sha256:9ba59053e0878bf3ad2c3586c5c3545a7853b179daac883e2f3646305795f7d6`。
+- compose force-recreate `sub2api` 通过，容器状态为 `running healthy`。
+- 首次真实后台验证 `run_id=227` 返回 HTTP 200，但 `identityAssessment.status=match` 被旧逻辑误判为失败；该结果用于确认状态兼容缺口。
+- 修复并重新部署后，再次触发账号 423 BazaarLink quick 验证返回 HTTP 202，创建 `run_id=229`。
+- 数据库最终结果：`account_probe_runs.id=229` 为 `success`，`success_count=1`，`failure_count=0`，summary 为 `完成 1/1 次请求，平均延迟 94251 ms，消耗 12264 tokens`。
+- 样本结果：`account_probe_samples.id=1552` 为 `success`，`sample_type=bazaarlink_api`，`http_status=200`，验证证据 passed=true，observed 为 `status=match; confidence=0.98; family=openai`。

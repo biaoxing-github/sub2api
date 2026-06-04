@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 const (
 	bazaarLinkProbeEndpoint       = "https://bazaarlink.ai/api/probe/run"
 	bazaarLinkProbeRequestTimeout = 4 * time.Minute
+	bazaarLinkProbePollInterval   = 1500 * time.Millisecond
 )
 
 type bazaarLinkProbePayload struct {
@@ -26,7 +29,7 @@ type bazaarLinkProbePayload struct {
 	ClaimedModel string `json:"claimedModel,omitempty"`
 	QuickMode    bool   `json:"quickMode"`
 	IdentityOnly bool   `json:"identityOnly"`
-	Sync         bool   `json:"sync"`
+	Sync         bool   `json:"sync,omitempty"`
 	Lang         string `json:"lang"`
 }
 
@@ -200,7 +203,6 @@ func (s *AccountProbeService) runBazaarLinkProbeSample(ctx context.Context, acco
 		APIKey:       apiKey,
 		ModelID:      model,
 		ClaimedModel: model,
-		Sync:         true,
 		Lang:         "zh",
 	}
 	if mode == BazaarLinkProbeModeQuick {
@@ -212,30 +214,15 @@ func (s *AccountProbeService) runBazaarLinkProbeSample(ctx context.Context, acco
 
 	reqCtx, cancel := context.WithTimeout(ctx, bazaarLinkProbeRequestTimeout)
 	defer cancel()
-	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, bazaarLinkProbeEndpoint, bytes.NewReader(data))
-	if err != nil {
-		return failedBazaarLinkProbeSample(account, model, mode, requestBody, "request_create_failed", err.Error(), 0, 0)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
 	start := time.Now()
-	resp, err := s.client.Do(httpReq)
+	parsed, responseBody, httpStatus, err := s.runBazaarLinkProbeRequest(reqCtx, data)
 	duration := time.Since(start)
 	if err != nil {
+		var probeErr *bazaarLinkProbeRequestError
+		if errors.As(err, &probeErr) {
+			return failedBazaarLinkProbeSample(account, model, mode, requestBody, probeErr.Code, bazaarLinkProbeErrorMessageForDisplay([]byte(probeErr.Body), probeErr.Message, apiKey), probeErr.HTTPStatus, duration)
+		}
 		return failedBazaarLinkProbeSample(account, model, mode, requestBody, "request_failed", err.Error(), 0, duration)
-	}
-	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if readErr != nil {
-		return failedBazaarLinkProbeSample(account, model, mode, requestBody, "response_read_failed", readErr.Error(), resp.StatusCode, duration)
-	}
-	responseBody := bazaarLinkProbeResponseBodyForDisplay(body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return failedBazaarLinkProbeSample(account, model, mode, requestBody, fmt.Sprintf("http_%d", resp.StatusCode), bazaarLinkProbeErrorMessageForDisplay(body, resp.Status, apiKey), resp.StatusCode, duration)
-	}
-	var parsed bazaarLinkProbeResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return failedBazaarLinkProbeSample(account, model, mode, requestBody, "response_parse_failed", err.Error(), resp.StatusCode, duration)
 	}
 
 	inputTokens := intFromOptional(parsed.TotalInputTokens)
@@ -257,7 +244,7 @@ func (s *AccountProbeService) runBazaarLinkProbeSample(ctx context.Context, acco
 		APIKeyFingerprint:  FingerprintAPIKey(apiKey),
 		APIKeyMasked:       MaskAPIKey(apiKey),
 		UpstreamEndpoint:   bazaarLinkProbeEndpoint,
-		HTTPStatus:         resp.StatusCode,
+		HTTPStatus:         httpStatus,
 		DurationMillis:     int(math.Round(float64(duration / time.Millisecond))),
 		InputTokens:        inputTokens,
 		OutputTokens:       outputTokens,
@@ -269,6 +256,116 @@ func (s *AccountProbeService) runBazaarLinkProbeSample(ctx context.Context, acco
 		ErrorCode:          errorCode,
 		ErrorMessage:       errorMessage,
 		CreatedAt:          time.Now(),
+	}
+}
+
+type bazaarLinkProbeRequestError struct {
+	Code       string
+	Message    string
+	Body       string
+	HTTPStatus int
+}
+
+func (e *bazaarLinkProbeRequestError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
+func (s *AccountProbeService) runBazaarLinkProbeRequest(ctx context.Context, data []byte) (bazaarLinkProbeResponse, string, int, error) {
+	created, createBody, createStatus, err := s.sendBazaarLinkProbeJSON(ctx, http.MethodPost, bazaarLinkProbeEndpoint, data)
+	if err != nil {
+		return bazaarLinkProbeResponse{}, "", createStatus, err
+	}
+	if bazaarLinkProbeIsFinished(created.Status) {
+		return created, createBody, createStatus, nil
+	}
+	runID := strings.TrimSpace(created.RunID)
+	if runID == "" {
+		return bazaarLinkProbeResponse{}, createBody, createStatus, &bazaarLinkProbeRequestError{
+			Code:       "response_parse_failed",
+			Message:    "BazaarLink async probe did not return runId",
+			Body:       createBody,
+			HTTPStatus: createStatus,
+		}
+	}
+
+	pollURL := bazaarLinkProbeEndpoint + "/" + url.PathEscape(runID)
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return bazaarLinkProbeResponse{}, createBody, createStatus, ctx.Err()
+		case <-timer.C:
+		}
+		current, responseBody, httpStatus, err := s.sendBazaarLinkProbeJSON(ctx, http.MethodGet, pollURL, nil)
+		if err != nil {
+			return bazaarLinkProbeResponse{}, responseBody, httpStatus, err
+		}
+		if bazaarLinkProbeIsFinished(current.Status) {
+			if strings.TrimSpace(current.RunID) == "" {
+				current.RunID = runID
+			}
+			return current, responseBody, httpStatus, nil
+		}
+		timer.Reset(bazaarLinkProbePollInterval)
+	}
+}
+
+func (s *AccountProbeService) sendBazaarLinkProbeJSON(ctx context.Context, method, endpoint string, data []byte) (bazaarLinkProbeResponse, string, int, error) {
+	var body io.Reader
+	if data != nil {
+		body = bytes.NewReader(data)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return bazaarLinkProbeResponse{}, "", 0, &bazaarLinkProbeRequestError{Code: "request_create_failed", Message: err.Error()}
+	}
+	if data != nil {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := s.client.Do(httpReq)
+	if err != nil {
+		return bazaarLinkProbeResponse{}, "", 0, err
+	}
+	defer resp.Body.Close()
+	rawBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if readErr != nil {
+		return bazaarLinkProbeResponse{}, "", resp.StatusCode, &bazaarLinkProbeRequestError{
+			Code:       "response_read_failed",
+			Message:    readErr.Error(),
+			HTTPStatus: resp.StatusCode,
+		}
+	}
+	responseBody := bazaarLinkProbeResponseBodyForDisplay(rawBody)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return bazaarLinkProbeResponse{}, responseBody, resp.StatusCode, &bazaarLinkProbeRequestError{
+			Code:       fmt.Sprintf("http_%d", resp.StatusCode),
+			Message:    resp.Status,
+			Body:       responseBody,
+			HTTPStatus: resp.StatusCode,
+		}
+	}
+	var parsed bazaarLinkProbeResponse
+	if err := json.Unmarshal(rawBody, &parsed); err != nil {
+		return bazaarLinkProbeResponse{}, responseBody, resp.StatusCode, &bazaarLinkProbeRequestError{
+			Code:       "response_parse_failed",
+			Message:    err.Error(),
+			Body:       responseBody,
+			HTTPStatus: resp.StatusCode,
+		}
+	}
+	return parsed, responseBody, resp.StatusCode, nil
+}
+
+func bazaarLinkProbeIsFinished(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "failed", "aborted", "cancelled", "canceled":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -308,7 +405,7 @@ func failedBazaarLinkProbeSample(account *Account, model string, mode BazaarLink
 
 func bazaarLinkProbeEvidence(result bazaarLinkProbeResponse, expectedModel string) AccountProbeValidationEvidence {
 	identity := result.IdentityAssessment
-	statusConfirmed := strings.EqualFold(strings.TrimSpace(identity.Status), "confirmed")
+	statusConfirmed := bazaarLinkIdentityStatusConfirmed(identity.Status)
 	noRisk := len(identity.RiskFlags) == 0
 	passed := statusConfirmed && noRisk
 	message := "BazaarLink 身份验证通过"
@@ -334,6 +431,16 @@ func bazaarLinkProbeEvidence(result bazaarLinkProbeResponse, expectedModel strin
 		Severity:      severity,
 		ResponseModel: bazaarLinkSubModelID(identity),
 		ExpectedModel: expectedModel,
+	}
+}
+
+// bazaarLinkIdentityStatusConfirmed 兼容 BazaarLink 页面返回的模型身份确认状态。
+func bazaarLinkIdentityStatusConfirmed(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "confirmed", "match", "matched":
+		return true
+	default:
+		return false
 	}
 }
 
