@@ -315,5 +315,10 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 		h.responsesErrorResponse(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage())
 		return
 	}
+	if lastErr != nil && service.IsOpenAIResponseTextErrorBody(lastErr.ResponseBody) {
+		service.SetOpsUpstreamError(c, statusCode, service.OpenAIResponseTextErrorClientMessage(), "")
+		h.responsesErrorResponse(c, http.StatusBadGateway, "upstream_error", service.OpenAIResponseTextErrorClientMessage())
+		return
+	}
 	h.responsesErrorResponse(c, statusCode, "server_error", "All available accounts exhausted")
 }

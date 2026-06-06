@@ -3440,6 +3440,10 @@ export default {
         requestBaseUrlsHint: 'Requests, connection tests, and probes use these URLs in order. The first URL is saved as Base URL.',
         balanceBaseUrl: 'Balance Base URL',
         balanceBaseUrlHint: 'Leave empty to follow the first request Base URL. Balance refresh and auth/me only use this URL.',
+        responseTextError: 'Response Text Error Keywords',
+        responseTextErrorHint: 'When matched, this OpenAI account response is treated as an upstream error and can fail over.',
+        responseTextErrorPlaceholder: 'Join the new home',
+        responseTextErrorKeywordsHint: 'One keyword per line. Commas are also supported. Applies only to this account.',
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:
           'When enabled, this OpenAI account uses automatic passthrough: the gateway forwards request/response as-is and only swaps auth, while keeping billing/concurrency/audit and necessary safety filtering.',

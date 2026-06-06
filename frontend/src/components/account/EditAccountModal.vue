@@ -542,6 +542,46 @@
 
       </div>
 
+      <!-- OpenAI response text error section -->
+      <div
+        v-if="account.platform === 'openai'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.responseTextError') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.responseTextErrorHint') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            @click="openAIResponseTextErrorEnabled = !openAIResponseTextErrorEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openAIResponseTextErrorEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openAIResponseTextErrorEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+
+        <div v-if="openAIResponseTextErrorEnabled" class="space-y-2">
+          <textarea
+            v-model="openAIResponseTextErrorKeywordsText"
+            rows="3"
+            class="input"
+            :placeholder="t('admin.accounts.openai.responseTextErrorPlaceholder')"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.accounts.openai.responseTextErrorKeywordsHint') }}</p>
+        </div>
+      </div>
+
       <!-- OpenAI OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立的模型映射区域) -->
       <div
         v-if="account.platform === 'openai' && account.type === 'oauth'"
@@ -2535,6 +2575,29 @@ function parseEndpointPathsText(value: string): string[] {
   return paths
 }
 
+function parseOpenAIResponseTextErrorKeywordsText(value: string): string[] {
+  const seen = new Set<string>()
+  const keywords: string[] = []
+  value
+    .split(/\r?\n|,/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .forEach(keyword => {
+      const key = keyword.toLowerCase()
+      if (seen.has(key)) return
+      seen.add(key)
+      keywords.push(keyword)
+    })
+  return keywords
+}
+
+function openAIResponseTextErrorKeywordsToText(raw: unknown): string {
+  if (Array.isArray(raw)) {
+    return raw.map(item => String(item).trim()).filter(Boolean).join('\n')
+  }
+  return typeof raw === 'string' ? raw : ''
+}
+
 function endpointPathsToText(raw: unknown): string {
   if (Array.isArray(raw)) {
     const values = raw.map(item => String(item).trim()).filter(Boolean)
@@ -2653,6 +2716,8 @@ const poolModeRetryCount = ref(DEFAULT_POOL_MODE_RETRY_COUNT)
 const customErrorCodesEnabled = ref(false)
 const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
+const openAIResponseTextErrorEnabled = ref(false)
+const openAIResponseTextErrorKeywordsText = ref('')
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(false)
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
@@ -3016,6 +3081,12 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   // Load intercept warmup requests setting (applies to all account types)
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
   interceptWarmupRequests.value = credentials?.intercept_warmup_requests === true
+  openAIResponseTextErrorEnabled.value =
+    newAccount.platform === 'openai' && credentials?.openai_response_text_error_enabled === true
+  openAIResponseTextErrorKeywordsText.value =
+    newAccount.platform === 'openai'
+      ? openAIResponseTextErrorKeywordsToText(credentials?.openai_response_text_error_keywords)
+      : ''
   autoPauseOnExpired.value = newAccount.auto_pause_on_expired === true
   editVertexProjectId.value = ''
   editVertexClientEmail.value = ''
@@ -3502,6 +3573,17 @@ const applyTempUnschedConfig = (credentials: Record<string, unknown>) => {
   credentials.temp_unschedulable_enabled = true
   credentials.temp_unschedulable_rules = rules
   return true
+}
+
+const applyOpenAIResponseTextErrorConfig = (credentials: Record<string, unknown>) => {
+  const keywords = parseOpenAIResponseTextErrorKeywordsText(openAIResponseTextErrorKeywordsText.value)
+  if (openAIResponseTextErrorEnabled.value && keywords.length > 0) {
+    credentials.openai_response_text_error_enabled = true
+    credentials.openai_response_text_error_keywords = keywords
+  } else {
+    delete credentials.openai_response_text_error_enabled
+    delete credentials.openai_response_text_error_keywords
+  }
 }
 
 const applyUpstreamAuthCredentials = (credentials: Record<string, unknown>) => {
@@ -4246,6 +4328,14 @@ const handleSubmit = async () => {
       }
 
       updatePayload.extra = newExtra
+    }
+
+    if (props.account.platform === 'openai') {
+      const currentCredentials = (updatePayload.credentials as Record<string, unknown>) ||
+        ((props.account.credentials as Record<string, unknown>) || {})
+      const newCredentials: Record<string, unknown> = { ...currentCredentials }
+      applyOpenAIResponseTextErrorConfig(newCredentials)
+      updatePayload.credentials = newCredentials
     }
 
     // For apikey/bedrock accounts, handle quota_limit in extra

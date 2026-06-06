@@ -2071,3 +2071,28 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `/admin/accounts` 返回 HTTP 200，HTML 长度 2671。
 - 未登录访问 `GET /api/v1/admin/accounts?page=1&page_size=1` 返回 HTTP 401，认证拦截正常。
 - 容器日志近 260 行未匹配 `panic`、`fatal`、迁移错误或 checksum mismatch。
+
+---
+
+日期：2026-06-06
+执行者：Devil
+
+## OpenAI 响应文本异常关键词
+
+本轮为指定 OpenAI 账号增加响应正文关键词异常规则。账号开启 `openai_response_text_error_enabled` 并配置 `openai_response_text_error_keywords` 后，流式/非流式响应中只要命中关键词（例如 `加入新家园`），就按上游异常进入 failover；没有可切换账号时返回明确的 upstream error。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestOpenAI(StreamingConfiguredResponseTextReturnsFailoverBeforeOutput|NonStreamingConfiguredResponseTextReturnsFailover)$" -count=1`
+- `go test -tags unit ./internal/service -run "TestOpenAI.*ResponseText|TestHandleSSEToJSON|TestHandleNonStreamingResponse_APIKeyFallsBackToSSEBodyWhenContentTypeIsWrong" -count=1`
+- `go test -tags unit ./internal/handler -run "FailoverExhausted|StreamWrittenGuard" -count=1`
+- `npm run typecheck`
+- `git diff --check`
+
+## 校验结果
+
+- 两个新增 TDD 用例先红后绿，覆盖流式首个输出前命中关键词、非流式 JSON 命中关键词。
+- service 聚焦测试通过，覆盖 SSE-to-JSON 既有行为未回退。
+- handler 聚焦测试通过，确认 failover exhausted 相关路径可编译并保持现有流保护测试通过。
+- 前端 `vue-tsc --noEmit` 通过。
+- `git diff --check` 通过。

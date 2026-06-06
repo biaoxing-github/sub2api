@@ -5749,6 +5749,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Con
 	failedMessage := ""
 	clientOutputStarted := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	textErrorDetector := newOpenAIResponseTextErrorDetector(account)
 	var streamFailoverErr error
 	sendErrorEvent := func(reason string) {
 		if errorEventSent || clientDisconnected {
@@ -5882,6 +5883,17 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Con
 				data = string(correctedData)
 				line = "data: " + data
 				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
+			}
+			if matchedKeyword, matched := textErrorDetector.ObserveSSEPayload(dataBytes); matched {
+				if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+					streamFailoverErr = newOpenAIResponseTextFailoverError(c, account, upstreamRequestID, matchedKeyword)
+					return
+				}
+				failedMessage = "OpenAI upstream response matched configured error text: " + matchedKeyword
+				sawFailedEvent = true
+				sendErrorEvent(openAIResponseTextErrorCode)
+				streamFailoverErr = fmt.Errorf("upstream response matched configured error text: %s", matchedKeyword)
+				return
 			}
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 
@@ -6240,29 +6252,33 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		return nil, err
 	}
 	bodyLooksLikeSSE := openAIResponseBodyLooksLikeSSE(body)
+	textErrorDetector := newOpenAIResponseTextErrorDetector(account)
 
 	// Detect SSE responses for ALL account types via Content-Type header.
 	// Some OpenAI-compatible upstreams (including other sub2api instances)
 	// may return SSE even when stream=false was requested.
 	if isEventStreamResponse(resp.Header) {
-		return s.handleSSEToJSON(resp, c, body, originalModel, mappedModel)
+		return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 	// For OAuth accounts, also fall back to a body-content heuristic because
 	// the upstream may omit the Content-Type header while still sending SSE.
 	// This heuristic is also reused after JSON parse failure for API-key
 	// accounts whose upstream mislabels SSE as application/json.
 	if account != nil && account.Type == AccountTypeOAuth && bodyLooksLikeSSE {
-		return s.handleSSEToJSON(resp, c, body, originalModel, mappedModel)
+		return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 
 	usageValue, usageOK := extractOpenAIUsageFromJSONBytes(body)
 	if !usageOK {
 		if bodyLooksLikeSSE {
-			return s.handleSSEToJSON(resp, c, body, originalModel, mappedModel)
+			return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 		}
 		return nil, fmt.Errorf("parse response: invalid json response")
 	}
 	usage := &usageValue
+	if matchedKeyword, matched := textErrorDetector.ObserveJSONBytes(body); matched {
+		return nil, newOpenAIResponseTextFailoverError(c, account, resp.Header.Get("x-request-id"), matchedKeyword)
+	}
 
 	// Replace model in response if needed
 	if originalModel != mappedModel {
@@ -6307,8 +6323,11 @@ func openAIResponseBodyLooksLikeSSE(body []byte) bool {
 	return false
 }
 
-func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Context, body []byte, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
+func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
 	bodyText := string(body)
+	if matchedKeyword, matched := newOpenAIResponseTextErrorDetector(account).ObserveSSEBody(bodyText); matched {
+		return nil, newOpenAIResponseTextFailoverError(c, account, resp.Header.Get("x-request-id"), matchedKeyword)
+	}
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 
 	usage := &OpenAIUsage{}
