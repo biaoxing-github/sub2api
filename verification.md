@@ -2310,3 +2310,27 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 方法：用账号 127 `zz1cc` 的上游 API key 与临时本地 API key，创建临时 group 将 `zz1cc` 单独挂到本地网关，发同一 payload（`model=gpt-5.5`、`stream=true`、`input=只输出两个汉字：收到`）各 3 次，测量 `headersMs`、`firstDataMs`、`firstNonPreambleMs`、`firstTextDeltaMs`。
 - 结果：直连 `firstTextDeltaMs` 中位 4184.3ms，本地中位 7017.5ms；直连 `firstNonPreambleMs` 中位 4184.1ms，本地中位 6629.2ms。两边事件序列一致，都是先 `response.created` / `response.in_progress` / `response.metadata` / `response.output_item.added` 再到 `response.output_text.delta`。
 - 结论：这次看不出“零拷贝”能把真实可用数据时间显著拉近；秒级差异主要还是 upstream 生成/排队加上本地路由/缓冲/调度开销。账号 127 已恢复 `schedulable=false`、`priority=20`，临时 group/API key 已删除。
+
+## OpenAI funnyapi 真实可用数据时间对照
+
+- 目标：比较账号 25 `funnyapi` 的直连 `https://codex.subgo.qzz.io/v1/responses` 与本地 `http://127.0.0.1:8080/v1/responses` 在真实可用文本到达时的差异。
+- 方法：用 `credentials.api_key` 创建临时本地 API key，将账号单独挂到本地网关，发同一 payload（`model=gpt-5.5`、`stream=true`、`input=Reply with OK only.`）各 3 次，测量 `headersMs`、`firstDataMs`、`firstNonPreambleMs`、`firstTextDeltaMs`。
+- 结果：直连 `firstTextDeltaMs` 中位 2063.6ms，本地中位 2309.9ms；直连 `firstNonPreambleMs` 中位 1896.0ms，本地中位 1832.6ms。两边事件序列一致，都是先 `response.created` / `response.in_progress` / `response.output_item.added` 再到 `response.output_text.delta`。
+- 结论：`funnyapi` 明显比 `zz1cc` 快，但本地网关仍会在真实文本到达前叠加少量路由与缓冲开销。账号 25 已恢复 `schedulable=false`、`priority=11`，临时 group/API key 已删除。
+
+## 上游体检报告最快优先排序
+
+- 目标：选择上游体检报告的平均耗时、P95、首 Token 排序时，优先看到最快记录，而不是最慢记录。
+- 方法：在 `AccountProbeReportsView.spec.ts` 里新增排序行为测试，切换 `success_rate`、`avg_latency_ms`、`p95_ms`、`first_token_ms` 后断言传给 `listAccountProbeRuns` 的 `sort_order`。
+- 结果：红测确认旧行为在 `avg_latency_ms` 上发出 `sort_order: "desc"`；修复后成功率保持 `desc`，平均耗时、P95、首 Token 都发出 `asc`。
+- 验证：`npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts` 通过 11/11；`npm run typecheck` 通过；`git diff --check` 退出 0，仅提示 docs JSONL 行尾将被 Git 转成 CRLF。
+
+## 上游体检报告最快优先排序发布验证
+
+- 日期：2026-06-06T20:43:09+08:00
+- 执行者：Devil
+- 目标：按“提交、构建、部署、验证”闭环发布上游体检报告耗时类排序修复。
+- 提交：`ae58428ce850 fix(frontend): 修复体检报告耗时排序方向`，包含 `frontend/src/views/admin/AccountProbeReportsView.vue` 和 `frontend/src/views/admin/__tests__/AccountProbeReportsView.spec.ts`。
+- 构建：前端 `npm run build` 通过；从 `git archive HEAD` 清洁归档构建 Docker 镜像 `sub2api:multi-key-local` 通过，镜像 ID 为 `sha256:e6c782a3da021899154feff60fd058ab1d73528e062a55cca65eb2d02b293ee3`。
+- 部署：在 `D:\sub2api-deploy` 执行 `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --no-build --no-deps --force-recreate sub2api`，只重建应用容器，Postgres/Redis 保持运行。
+- 验证：`docker inspect sub2api` 显示 `Status=running`、`Health=healthy`、镜像 ID 匹配；`Invoke-WebRequest http://127.0.0.1:8080/health` 返回 200，内容为 `{"status":"ok"}`。
