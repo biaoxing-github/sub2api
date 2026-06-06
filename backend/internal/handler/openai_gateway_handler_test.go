@@ -228,6 +228,26 @@ func TestOpenAIEnsureForwardErrorResponse_DoesNotOverrideWrittenResponse(t *test
 	assert.Equal(t, "already written", w.Body.String())
 }
 
+func TestOpenAIHandleFailoverExhausted_AppendsResponsesFailedAfterHeartbeat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	_, err := fmt.Fprint(c.Writer, ":\n\n")
+	require.NoError(t, err)
+
+	h := &OpenAIGatewayHandler{}
+	h.handleFailoverExhausted(c, &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}, false)
+
+	body := w.Body.String()
+	require.True(t, strings.HasPrefix(body, ":\n\n"))
+	require.Contains(t, body, "event: response.failed")
+	require.Contains(t, body, `"type":"response.failed"`)
+	require.Contains(t, body, "Upstream service temporarily unavailable")
+	require.NotContains(t, body, `{"error":`)
+}
+
 func TestOpenAIResponses_RejectsOversizedUpstreamBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

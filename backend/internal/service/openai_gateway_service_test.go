@@ -1161,8 +1161,9 @@ func TestOpenAIStreamingReadErrorBeforeOutputReturnsFailover(t *testing.T) {
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-	require.False(t, c.Writer.Written())
-	require.Empty(t, rec.Body.String())
+	require.True(t, c.Writer.Written())
+	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
 func TestOpenAIStreamingReadErrorAfterOutputRecordsPathHealthFailure(t *testing.T) {
@@ -1475,8 +1476,9 @@ func TestOpenAIStreamingResponseFailedBeforeOutputReturnsFailover(t *testing.T) 
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "An error occurred while processing your request")
-	require.False(t, c.Writer.Written())
-	require.Empty(t, rec.Body.String())
+	require.True(t, c.Writer.Written())
+	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
 func TestOpenAIStreamingConfiguredResponseTextReturnsFailoverBeforeOutput(t *testing.T) {
@@ -1528,8 +1530,9 @@ func TestOpenAIStreamingConfiguredResponseTextReturnsFailoverBeforeOutput(t *tes
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "加入新家园")
-	require.False(t, c.Writer.Written())
-	require.Empty(t, rec.Body.String())
+	require.True(t, c.Writer.Written())
+	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
 func TestOpenAIStreamingResponseFailedBeforeOutputCapacityErrorReturnsFailover(t *testing.T) {
@@ -1569,8 +1572,9 @@ func TestOpenAIStreamingResponseFailedBeforeOutputCapacityErrorReturnsFailover(t
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "Selected model is at capacity")
-	require.False(t, c.Writer.Written())
-	require.Empty(t, rec.Body.String())
+	require.True(t, c.Writer.Written())
+	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
 func TestOpenAIStreamingPreambleOnlyMissingTerminalReturnsFailover(t *testing.T) {
@@ -1605,8 +1609,9 @@ func TestOpenAIStreamingPreambleOnlyMissingTerminalReturnsFailover(t *testing.T)
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.False(t, c.Writer.Written())
-	require.Empty(t, rec.Body.String())
+	require.True(t, c.Writer.Written())
+	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
 func TestOpenAIStreamingPreambleKeepaliveUsesDownstreamIdle(t *testing.T) {
@@ -1699,8 +1704,9 @@ func TestOpenAIStreamingWaitGuardTimeoutBeforeOutputReturnsFailover(t *testing.T
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.False(t, c.Writer.Written())
-	require.Empty(t, rec.Body.String())
+	require.True(t, c.Writer.Written())
+	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
 func TestOpenAIStreamingPolicyResponseFailedBeforeOutputPassesThrough(t *testing.T) {
@@ -1931,8 +1937,9 @@ func TestOpenAIStreamingPassthroughResponseFailedBeforeOutputReturnsFailover(t *
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "upstream processing failed")
-	require.False(t, c.Writer.Written())
-	require.Empty(t, rec.Body.String())
+	require.True(t, c.Writer.Written())
+	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
 func TestOpenAIStreamingPassthroughResponseDoneWithoutDoneMarkerStillSucceeds(t *testing.T) {

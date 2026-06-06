@@ -2279,3 +2279,34 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 容器日志关键启动错误过滤未匹配 `panic`、`fatal`、迁移错误或 checksum mismatch。
 - 部署后真实 `/responses` 流量返回 HTTP 200；日志中的 `Upstream scan ended after terminal event: context canceled` 是 terminal event 后的流式收尾，不是 request-phase 502。
 - 启动日志中有一次远程价格表 hash 拉取 `context deadline exceeded`，属于外部 GitHub 访问超时；服务继续启动并保持 healthy。
+
+---
+
+日期：2026-06-06
+执行者：Devil
+
+## OpenAI Responses SSE 初始心跳
+
+本轮在保留真实输出前账号 failover 的前提下，优化本地 `/v1/responses` 流式响应的首字节活性。后端在上游返回 200 且 SSE headers 已设置后立即写入无语义 SSE comment `:\n\n` 并 flush；真实 OpenAI preamble 事件仍按原逻辑缓冲，避免把两个账号的真实事件拼到同一客户端流里。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestOpenAIStreaming(ResponseFailedBeforeOutput|ConfiguredResponseTextReturnsFailoverBeforeOutput|PreambleOnlyMissingTerminalReturnsFailover|WaitGuardTimeoutBeforeOutputReturnsFailover|PolicyResponseFailedBeforeOutputPassesThrough|ReadErrorBeforeOutputReturnsFailover|PassthroughResponseFailedBeforeOutputReturnsFailover|PreambleKeepaliveUsesDownstreamIdle)|TestOpenAIGatewayService_Forward(RequestHeaderTimeoutReturnsFailover|RequestPhaseContextCanceled.*|APIKeyRequestBaseURLFailoverBeforeAccountFailover)" -count=1`
+- `go test -tags unit ./internal/handler -run "TestOpenAI(HandleStreamingAwareError|EnsureForwardErrorResponse|HandleFailoverExhausted_AppendsResponsesFailedAfterHeartbeat)" -count=1`
+- `go build ./cmd/server`
+- `git diff --check`
+
+## 校验结果
+
+- 服务层聚焦测试通过，确认上游 200 后会先输出 `:\n\n`，但真实输出标记仍为 false，因此 `response.failed`、响应文本异常、preamble-only、wait guard timeout、read error 等真实输出前失败仍返回 `UpstreamFailoverError`，可继续切账号。
+- handler 聚焦测试通过，确认只有真实 OpenAI SSE 事件 flush 后才阻断 failover；仅心跳提交 HTTP 200 后，如果最终账号池耗尽，会追加 Responses 协议兼容的 `response.failed` SSE，而不是写 JSON。
+- 后端 `go build ./cmd/server` 通过。
+- `git diff --check` 通过，仅提示 docs JSONL 文件未来可能被 Git 转为 CRLF。
+- 本轮未部署，未做 okcodex 实测。
+
+## OpenAI zz1cc 真实可用数据时间对照
+
+- 目标：比较 `https://zz1cc.cc.cd/v1/responses` 与本地 `http://127.0.0.1:8080/v1/responses` 在“真实可用文本”到达时的差异。
+- 方法：用账号 127 `zz1cc` 的上游 API key 与临时本地 API key，创建临时 group 将 `zz1cc` 单独挂到本地网关，发同一 payload（`model=gpt-5.5`、`stream=true`、`input=只输出两个汉字：收到`）各 3 次，测量 `headersMs`、`firstDataMs`、`firstNonPreambleMs`、`firstTextDeltaMs`。
+- 结果：直连 `firstTextDeltaMs` 中位 4184.3ms，本地中位 7017.5ms；直连 `firstNonPreambleMs` 中位 4184.1ms，本地中位 6629.2ms。两边事件序列一致，都是先 `response.created` / `response.in_progress` / `response.metadata` / `response.output_item.added` 再到 `response.output_text.delta`。
+- 结论：这次看不出“零拷贝”能把真实可用数据时间显著拉近；秒级差异主要还是 upstream 生成/排队加上本地路由/缓冲/调度开销。账号 127 已恢复 `schedulable=false`、`priority=20`，临时 group/API key 已删除。

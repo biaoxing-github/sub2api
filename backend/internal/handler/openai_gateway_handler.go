@@ -451,7 +451,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(forwardBody, channelMapping.MappedModel)
 		}
-		writerSizeBeforeForward := c.Writer.Size()
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -480,7 +479,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if service.OpenAIRealClientOutputStarted(c) {
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
@@ -2039,6 +2038,9 @@ func openAIResponsesRequestBodyTooLargeMessage(bodyBytes int, diagnosis service.
 
 // handleStreamingAwareError handles errors that may occur after streaming has started
 func (h *OpenAIGatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
+	if !streamStarted && inboundIsResponses(c) && c != nil && c.Writer != nil && c.Writer.Written() {
+		streamStarted = true
+	}
 	if streamStarted {
 		// /v1/responses 的严格 SDK（Codex CLI）要求终止事件必须属于
 		// response.completed/failed/incomplete/cancelled 集合。
@@ -2074,6 +2076,9 @@ func (h *OpenAIGatewayHandler) ensureForwardErrorResponse(c *gin.Context, stream
 	// Writer 已被写过时（ping 已 flush）走 streamStarted 分支，
 	// 让 handleStreamingAwareError 通过 SSE 发协议合规的 response.failed。
 	if c.Writer.Written() {
+		if !streamStarted && !inboundIsResponses(c) {
+			return false
+		}
 		streamStarted = true
 	}
 	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed", streamStarted)

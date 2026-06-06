@@ -4142,11 +4142,37 @@ type openaiNonStreamingResultPassthrough struct {
 	imageOutputSizes []string
 }
 
+const openAIRealClientOutputStartedContextKey = "openai_real_client_output_started"
+
+func markOpenAIRealClientOutputStarted(c *gin.Context) {
+	if c != nil {
+		c.Set(openAIRealClientOutputStartedContextKey, true)
+	}
+}
+
+// OpenAIRealClientOutputStarted 只表示真实 OpenAI SSE 事件已经下发。
+// SSE 注释心跳会提交 HTTP 200，但不应阻断真实输出前的账号 failover。
+func OpenAIRealClientOutputStarted(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	started, _ := c.Get(openAIRealClientOutputStartedContextKey)
+	return started == true
+}
+
 func openAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
 	if localStarted {
 		return true
 	}
-	return c != nil && c.Writer != nil && c.Writer.Written()
+	return OpenAIRealClientOutputStarted(c)
+}
+
+func flushOpenAIInitialSSEHeartbeat(w io.Writer, flusher http.Flusher) error {
+	if _, err := io.WriteString(w, ":\n\n"); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
 }
 
 func openAIStreamEventIsPreamble(eventType string) bool {
@@ -4993,6 +5019,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
 	clientDisconnected := false
+	if err := flushOpenAIInitialSSEHeartbeat(w, flusher); err != nil {
+		clientDisconnected = true
+		logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during initial heartbeat, continue draining upstream for usage: account=%d", account.ID)
+	}
 	sawDone := false
 	sawTerminalEvent := false
 	sawFailedEvent := false
@@ -5085,6 +5115,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
 			} else {
 				clientOutputStarted = true
+				markOpenAIRealClientOutputStarted(c)
 				flusher.Flush()
 			}
 		}
@@ -5813,6 +5844,15 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Con
 	// 否则下游 SDK（例如 OpenCode）会因为类型校验失败而报错。
 	errorEventSent := false
 	clientDisconnected := false // 客户端断开后继续 drain 上游以收集 usage
+	if _, err := bufferedWriter.WriteString(":\n\n"); err != nil {
+		clientDisconnected = true
+		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during initial heartbeat, continuing to drain upstream for billing")
+	} else if err := flushBuffered(); err != nil {
+		clientDisconnected = true
+		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during initial heartbeat flush, continuing to drain upstream for billing")
+	} else {
+		lastDownstreamWriteAt = time.Now()
+	}
 	sawTerminalEvent := false
 	sawFailedEvent := false
 	failedMessage := ""
@@ -5839,6 +5879,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Con
 			return
 		}
 		clientOutputStarted = true
+		markOpenAIRealClientOutputStarted(c)
 		lastDownstreamWriteAt = time.Now()
 	}
 
@@ -5876,6 +5917,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Con
 				logger.LegacyPrintf("service.openai_gateway", "Client disconnected during final flush, returning collected usage")
 			} else if hadBufferedData {
 				clientOutputStarted = true
+				markOpenAIRealClientOutputStarted(c)
 				lastDownstreamWriteAt = time.Now()
 			}
 		}
@@ -5987,6 +6029,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Con
 						logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
 					} else {
 						clientOutputStarted = true
+						markOpenAIRealClientOutputStarted(c)
 						lastDownstreamWriteAt = time.Now()
 					}
 				}
@@ -6015,6 +6058,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Con
 					logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming flush, continuing to drain upstream for billing")
 				} else {
 					clientOutputStarted = true
+					markOpenAIRealClientOutputStarted(c)
 					lastDownstreamWriteAt = time.Now()
 				}
 			}
