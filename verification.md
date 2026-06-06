@@ -2127,3 +2127,27 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - `/admin/accounts` 返回 HTTP 200，响应大小 2671。
 - 未登录访问 `GET /api/v1/admin/accounts?page=1&page_size=1` 返回 HTTP 401，认证拦截正常。
 - 容器日志近 260 行未匹配 `panic`、`fatal`、迁移错误或 checksum mismatch。
+
+---
+
+日期：2026-06-06
+执行者：Devil
+
+## OpenAI HTTP stream 断流调度避让
+
+本轮修复 HTTP `/responses` 流式响应已经向下游写出内容后，上游 read error 没有进入 OpenAI path-health 的问题。由于同一条 HTTP SSE 响应已经开始输出后不能透明拼接到另一个上游，修复目标是把断流记入账号级和实际 baseURL 级健康状态，让后续客户端重试由现有调度器和 circuit breaker 自动避开坏账号。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestOpenAIStreamingReadErrorAfterOutputRecordsPathHealthFailure" -count=1`
+- `go test -tags unit ./internal/service -run "TestOpenAIStreamingReadErrorAfterOutputRecordsPathHealthFailure|TestOpenAIStreamingHTTP2ReadErrorAfterOutputRecordsProtocolFailure|TestOpenAIStreamingReadErrorBeforeOutputReturnsFailover|TestBuildOpenAIAccountLoadPlanHalfOpenOnlyForProbe" -count=1`
+- `go test -tags unit ./internal/service -run "TestOpenAI.*Stream|TestBuildOpenAIAccountLoadPlan|TestOpenAIPathHealth|TestClassifyUpstreamError" -count=1`
+- `go test -tags unit ./internal/service -count=1`
+
+## 校验结果
+
+- 新增 TDD 用例先红后绿：红灯失败于账号级 path-health `FailureCount=0`；修复后断流会记录到 `OpenAIPathHealthKeyForAccount(..., https_sse)`。
+- HTTP/2 `stream ID ... INTERNAL_ERROR` 用例通过，断流原因归一为 `http2_protocol_error`，并同时写入实际 `requestBaseURL` 的 path-health key。
+- 已输出前断流仍走原有 failover 行为，半开账号仍只进入 probe profile，调度器过滤逻辑未被改变。
+- 聚焦和更宽切片测试均通过。
+- 整包 `internal/service` 单包测试运行 244 秒超时，未得到失败断言；本轮不把整包测试计为通过。

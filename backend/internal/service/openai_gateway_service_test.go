@@ -1164,6 +1164,110 @@ func TestOpenAIStreamingReadErrorBeforeOutputReturnsFailover(t *testing.T) {
 	require.Empty(t, rec.Body.String())
 }
 
+func TestOpenAIStreamingReadErrorAfterOutputRecordsPathHealthFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:               true,
+		CircuitBreakerEnabled: true,
+	})
+	svc := &OpenAIGatewayService{cfg: cfg, openaiPathHealth: tracker}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	account := &Account{
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Name:     "stream-flaky",
+		Credentials: map[string]any{
+			"base_url": "https://stream-flaky.example.com/v1",
+		},
+	}
+	pr, pw := io.Pipe()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{"X-Request-Id": []string{"rid-stream-eof"}},
+	}
+	go func() {
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"))
+		_ = pw.CloseWithError(io.ErrUnexpectedEOF)
+	}()
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+	_ = pr.Close()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "stream read error")
+	require.True(t, c.Writer.Written())
+
+	accountSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE)))
+	require.Equal(t, int64(1), accountSnapshot.FailureCount)
+	require.Equal(t, OpenAIPathFailureEOF, accountSnapshot.LastFailureReason)
+}
+
+func TestOpenAIStreamingHTTP2ReadErrorAfterOutputRecordsProtocolFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:               true,
+		CircuitBreakerEnabled: true,
+	})
+	svc := &OpenAIGatewayService{cfg: cfg, openaiPathHealth: tracker}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	account := &Account{
+		ID:       43,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Name:     "http2-flaky",
+		Credentials: map[string]any{
+			"base_url": "https://primary.example.com/v1",
+		},
+	}
+	requestBaseURL := "https://selected.example.com/v1"
+	pr, pw := io.Pipe()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{"X-Request-Id": []string{"rid-stream-h2"}},
+	}
+	go func() {
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"))
+		_ = pw.CloseWithError(errors.New("stream error: stream ID 11; INTERNAL_ERROR"))
+	}()
+
+	_, err := svc.handleStreamingResponseWithPolicy(c.Request.Context(), resp, c, account, time.Now(), "model", "model", openAICodexStabilityPolicy{}, requestBaseURL)
+	_ = pr.Close()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "stream read error")
+
+	accountSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE)))
+	require.Equal(t, int64(1), accountSnapshot.FailureCount)
+	require.Equal(t, OpenAIPathFailureHTTP2ProtocolError, accountSnapshot.LastFailureReason)
+
+	baseURLSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), requestBaseURL))
+	require.Equal(t, int64(1), baseURLSnapshot.FailureCount)
+	require.Equal(t, OpenAIPathFailureHTTP2ProtocolError, baseURLSnapshot.LastFailureReason)
+}
+
 func TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1504,6 +1608,7 @@ func TestOpenAIStreamingWaitGuardTimeoutBeforeOutputReturnsFailover(t *testing.T
 			MaxStreamSilentSeconds:      1,
 			ProtectAfterOutput:          true,
 		},
+		"",
 	)
 	_ = pr.Close()
 	require.NotNil(t, result)

@@ -3387,7 +3387,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		imageCount := 0
 		var imageOutputSizes []string
 		if reqStream {
-			streamResult, err := s.handleStreamingResponseWithPolicy(ctx, resp, c, account, startTime, originalModel, upstreamModel, stabilityPolicy)
+			streamResult, err := s.handleStreamingResponseWithPolicy(ctx, resp, c, account, startTime, originalModel, upstreamModel, stabilityPolicy, requestBaseURL)
 			if err != nil {
 				return nil, err
 			}
@@ -4784,6 +4784,39 @@ func (s *OpenAIGatewayService) recordOpenAIPathHealthFirstToken(account *Account
 	s.openaiPathHealth.RecordSuccess(key, firstTokenMs, nil)
 }
 
+func (s *OpenAIGatewayService) recordOpenAIPathHealthStreamReadError(account *Account, requestBaseURL string, err error) {
+	if s == nil || s.openaiPathHealth == nil || account == nil || err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	reason := openAIPathHealthReasonForStreamReadError(err)
+	accountKey := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	s.openaiPathHealth.RecordFailure(accountKey, reason, nil)
+	baseURLKey := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), requestBaseURL)
+	if baseURLKey != accountKey {
+		s.openaiPathHealth.RecordFailure(baseURLKey, reason, nil)
+	}
+}
+
+func openAIPathHealthReasonForStreamReadError(err error) string {
+	classification := ClassifyUpstreamError(UpstreamErrorInput{Err: err})
+	reason := firstNonEmptyString(classification.PathHealthReason, classification.Category, err.Error())
+	msg := strings.ToLower(strings.TrimSpace(reason))
+	if err != nil {
+		msg = strings.TrimSpace(msg + " " + strings.ToLower(err.Error()))
+	}
+	if strings.Contains(msg, "http2") ||
+		strings.Contains(msg, "stream id") ||
+		strings.Contains(msg, "internal_error") ||
+		strings.Contains(msg, "protocol error") ||
+		strings.Contains(msg, "goaway") {
+		return OpenAIPathFailureHTTP2ProtocolError
+	}
+	return reason
+}
+
 type openAIRequestCancelOnCloseBody struct {
 	io.ReadCloser
 	cancel context.CancelFunc
@@ -5655,10 +5688,10 @@ type openaiNonStreamingResult struct {
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
-	return s.handleStreamingResponseWithPolicy(ctx, resp, c, account, startTime, originalModel, mappedModel, openAICodexStabilityPolicy{})
+	return s.handleStreamingResponseWithPolicy(ctx, resp, c, account, startTime, originalModel, mappedModel, openAICodexStabilityPolicy{}, "")
 }
 
-func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string, stabilityPolicy openAICodexStabilityPolicy) (*openaiStreamingResult, error) {
+func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string, stabilityPolicy openAICodexStabilityPolicy, requestBaseURL string) (*openaiStreamingResult, error) {
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
@@ -5843,6 +5876,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Con
 		if clientDisconnected {
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect: %w", scanErr), true
 		}
+		s.recordOpenAIPathHealthStreamReadError(account, requestBaseURL, scanErr)
 		sendErrorEvent("stream_read_error")
 		return resultWithUsage(), fmt.Errorf("stream read error: %w", scanErr), true
 	}
