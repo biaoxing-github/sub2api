@@ -2238,3 +2238,44 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 前端 `vue-tsc --noEmit` 通过，设置页新增 Codex direct TLS 指纹下拉框和类型字段。
 - `git diff --check` 通过，仅提示 docs JSONL 文件未来可能被 Git 转为 CRLF。
 - 更宽的 `go test -tags unit ./internal/handler -run "TestOpenAI" -count=1` 失败，失败点在既有 OpenAI handler 用例：`TestOpenAIEnsureForwardErrorResponse_DoesNotOverrideWrittenResponse`、panic fallback response overwrite、`TestOpenAIResponsesWebSocket_ContinuityReplayForwardsSanitizedBodyToNextAccount`。这些失败不在本轮 Codex direct TLS 指纹设置路径上，本轮未修改对应 handler 行为。
+
+---
+
+日期：2026-06-06
+执行者：Devil
+
+## OpenAI request-phase failover 与 Codex direct TLS 指纹部署验证
+
+本轮将已提交状态 `bf918f20b975` 通过 `git archive HEAD` 导出干净构建上下文，构建并部署到本地 `sub2api` 容器。该提交包含 HTTP `/responses` 请求阶段 `context canceled` 自动切换修复，以及 Codex direct TLS 指纹选择设置。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestOpenAI(UpstreamTLSProfileCodexDirectAppliesToOAuthAndAPIKey|BuildUpstreamRequestCodexDirectCompatibilityHeaders)|TestOpenAIGatewayService_Forward(RequestHeaderTimeoutReturnsFailover|RequestPhaseContextCanceled.*|APIKeyRequestBaseURLFailoverBeforeAccountFailover)|TestOpenAIStreaming(ReadErrorAfterOutputRecordsPathHealthFailure|MissingTerminalEventRecordsPathHealthFailure)" -count=1`
+- `go test -tags unit ./internal/service -run "TestSettingService_(UpdateSettings_OpenAIOAuthCompatModeRefreshesGatewayConfig|ParseSettings_OpenAIOAuthCompatModeTakesPrecedence|ParseSettings_OpenAICodexDirectTLSFingerprintProfileIDFallsBackToConfig|LoadRuntimeSettingsRefreshesGatewayConfig)" -count=1`
+- `go test -tags unit ./internal/handler/admin -run "Test.*Setting" -count=1`
+- `go build ./cmd/server`
+- `npm run typecheck`
+- `git diff --check`
+- JSONL parse check for `docs/feature_list.jsonl` and `docs/process_list.jsonl`
+- `git archive --format=tar -o <temp>\sub2api-bf918f20b975.tar HEAD`
+- `docker build --pull=false -t sub2api:multi-key-local --build-arg COMMIT=bf918f20b975 <temp>\sub2api-bf918f20b975`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `docker inspect sub2api --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}} {{.Image}}'`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" http://127.0.0.1:8080/health`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" http://127.0.0.1:8080/admin/accounts`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" "http://127.0.0.1:8080/api/v1/admin/accounts?page=1&page_size=1"`
+- `docker logs sub2api --since 2026-06-06T16:17:31+08:00 --tail 500 2>&1 | Select-String -Pattern "panic|fatal|migration.*error|checksum mismatch"`
+
+## 校验结果
+
+- request-phase `context canceled` 自动切换、stream path-health 回归、Codex direct TLS 指纹解析、setting service 热刷新、admin settings handler 聚焦测试均通过。
+- 后端 `go build ./cmd/server` 通过，前端 `npm run typecheck` 通过，`git diff --check` 通过，docs JSONL 可解析。
+- Docker build 成功，镜像 `sub2api:multi-key-local` manifest list digest 为 `sha256:732a2816dde1623af15102c5f0574d7cfdf4770fde2b394d0ec09d7a1a9ac552`。
+- `docker compose` force-recreate 成功，Postgres 和 Redis healthy，`sub2api` 启动成功。
+- `docker inspect` 显示 `sub2api` 为 `running healthy`，运行镜像为 `sha256:732a2816dde1623af15102c5f0574d7cfdf4770fde2b394d0ec09d7a1a9ac552`。
+- `/health` 返回 HTTP 200，响应大小 15。
+- `/admin/accounts` 返回 HTTP 200，响应大小 2671。
+- 未登录访问 `GET /api/v1/admin/accounts?page=1&page_size=1` 返回 HTTP 401，认证拦截正常。
+- 容器日志关键启动错误过滤未匹配 `panic`、`fatal`、迁移错误或 checksum mismatch。
+- 部署后真实 `/responses` 流量返回 HTTP 200；日志中的 `Upstream scan ended after terminal event: context canceled` 是 terminal event 后的流式收尾，不是 request-phase 502。
+- 启动日志中有一次远程价格表 hash 拉取 `context deadline exceeded`，属于外部 GitHub 访问超时；服务继续启动并保持 healthy。
