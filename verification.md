@@ -2096,3 +2096,34 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - handler 聚焦测试通过，确认 failover exhausted 相关路径可编译并保持现有流保护测试通过。
 - 前端 `vue-tsc --noEmit` 通过。
 - `git diff --check` 通过。
+
+---
+
+日期：2026-06-06
+执行者：Devil
+
+## OpenAI 响应文本异常关键词提交构建部署验证
+
+本轮将 OpenAI 指定账号响应文本异常关键词功能提交为 `d035c39e feat(openai): flag configured response text`，随后从已提交状态生成干净构建上下文完成 Docker 构建、compose 重建和本地冒烟验证。首次 Docker build 因 Docker Hub direct registry 拉取显式 `postgres:18-alpine` 超时失败；复用本地缓存默认镜像 tag 并指定 `--pull=false` 后构建成功。
+
+## 校验方式
+
+- `git commit -m "feat(openai): flag configured response text"`
+- `git archive --format=tar -o <temp>\sub2api-d035c39ecfd0.tar HEAD`
+- `docker build --pull=false -t sub2api:multi-key-local --build-arg COMMIT=d035c39ecfd0 <temp>\sub2api-d035c39ecfd0`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `docker inspect sub2api --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}} {{.Image}}'`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" http://127.0.0.1:8080/health`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" http://127.0.0.1:8080/admin/accounts`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" "http://127.0.0.1:8080/api/v1/admin/accounts?page=1&page_size=1"`
+- `docker logs sub2api --tail 260 | Select-String -Pattern "panic|fatal|migration.*error|checksum mismatch"`
+
+## 校验结果
+
+- Docker build 成功，镜像 `sub2api:multi-key-local` digest 为 `sha256:9b24d19111347710a1a03310adb719aaf4aba291a991ef953d23c957b7645c53`。
+- `docker compose` force-recreate 成功，Postgres 和 Redis healthy，`sub2api` 启动成功。
+- `docker inspect` 显示 `sub2api` 为 `running healthy`，运行镜像为 `sha256:9b24d19111347710a1a03310adb719aaf4aba291a991ef953d23c957b7645c53`。
+- `/health` 返回 HTTP 200，响应大小 15。
+- `/admin/accounts` 返回 HTTP 200，响应大小 2671。
+- 未登录访问 `GET /api/v1/admin/accounts?page=1&page_size=1` 返回 HTTP 401，认证拦截正常。
+- 容器日志近 260 行未匹配 `panic`、`fatal`、迁移错误或 checksum mismatch。
