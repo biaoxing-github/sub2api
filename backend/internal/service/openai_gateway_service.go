@@ -346,6 +346,7 @@ type OpenAIGatewayService struct {
 	channelService         *ChannelService
 	balanceNotifyService   *BalanceNotifyService
 	settingService         *SettingService
+	tlsFPProfileService    *TLSFingerprintProfileService
 	contextJournal         ContextJournal
 	realtimeBalanceChecker *RealtimeBalanceChecker
 	openaiPathHealth       *OpenAIPathHealthTracker
@@ -398,6 +399,7 @@ func NewOpenAIGatewayService(
 	contextJournal ContextJournal,
 	realtimeBalanceChecker *RealtimeBalanceChecker,
 	requestSnapshotService *OpenAIRequestSnapshotService,
+	tlsFPProfileService *TLSFingerprintProfileService,
 ) *OpenAIGatewayService {
 	svc := &OpenAIGatewayService{
 		accountRepo:         accountRepo,
@@ -429,6 +431,7 @@ func NewOpenAIGatewayService(
 		channelService:         channelService,
 		balanceNotifyService:   balanceNotifyService,
 		settingService:         settingService,
+		tlsFPProfileService:    tlsFPProfileService,
 		contextJournal:         contextJournal,
 		realtimeBalanceChecker: realtimeBalanceChecker,
 		requestSnapshotService: requestSnapshotService,
@@ -3254,7 +3257,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
-			if shouldFailoverOpenAIRequestPhaseError(stabilityPolicy, err) {
+			if shouldFailoverOpenAIRequestPhaseError(stabilityPolicy, openAIClientRequestContext(c), err) {
 				if urlIdx+1 < len(requestBaseURLs) {
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 						Platform:           account.Platform,
@@ -3677,7 +3680,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
-			if shouldFailoverOpenAIRequestPhaseError(stabilityPolicy, err) {
+			if shouldFailoverOpenAIRequestPhaseError(stabilityPolicy, openAIClientRequestContext(c), err) {
 				if urlIdx+1 < len(requestBaseURLs) {
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 						Platform:           account.Platform,
@@ -4209,7 +4212,17 @@ func isOpenAIRequestPhaseTransientError(err error) bool {
 		classification.Category == UpstreamErrorCategoryTimeout
 }
 
-func shouldFailoverOpenAIRequestPhaseError(policy openAICodexStabilityPolicy, err error) bool {
+func openAIClientRequestContext(c *gin.Context) context.Context {
+	if c == nil || c.Request == nil {
+		return nil
+	}
+	return c.Request.Context()
+}
+
+func shouldFailoverOpenAIRequestPhaseError(policy openAICodexStabilityPolicy, clientCtx context.Context, err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return clientCtx == nil || clientCtx.Err() == nil
+	}
 	if !isOpenAIRequestPhaseTransientError(err) {
 		return false
 	}
@@ -4540,10 +4553,21 @@ func (s *OpenAIGatewayService) openAIUpstreamTLSProfile(account *Account) *tlsfi
 	if s == nil || account == nil {
 		return nil
 	}
-	if account.Type == AccountTypeOAuth && s.isOpenAICodexDirectCompatEnabled() {
-		return &tlsfingerprint.Profile{Name: "Built-in Default (Node.js 24.x)"}
+	if s.isOpenAICodexDirectCompatEnabled() {
+		return s.resolveOpenAICodexDirectTLSProfile()
 	}
 	return nil
+}
+
+func (s *OpenAIGatewayService) resolveOpenAICodexDirectTLSProfile() *tlsfingerprint.Profile {
+	profileID := int64(0)
+	if s != nil && s.cfg != nil {
+		profileID = s.cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID
+	}
+	if s != nil && s.tlsFPProfileService != nil {
+		return s.tlsFPProfileService.ResolveProfileID(profileID)
+	}
+	return BuiltInDefaultTLSFingerprintProfile()
 }
 
 func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(

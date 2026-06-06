@@ -186,6 +186,7 @@ type SystemSettings struct {
 	OpenAICockpitToolsCompat                   bool    `json:"openai_cockpit_tools_compat"`
 	OpenAIOAuthCompatMode                      string  `json:"openai_oauth_compat_mode"`
 	OpenAICodexDirectForceWS                   bool    `json:"openai_codex_direct_force_ws"`
+	OpenAICodexDirectTLSFingerprintProfileID   int64   `json:"openai_codex_direct_tls_fingerprint_profile_id"`
 	ClientRequestDebugLogEnabled               bool    `json:"client_request_debug_log_enabled"`
 	CodexStabilityMode                         string  `json:"codex_stability_mode"`
 	CodexStabilityDynamicHeaderTimeoutEnabled  bool    `json:"codex_stability_dynamic_header_timeout_enabled"`

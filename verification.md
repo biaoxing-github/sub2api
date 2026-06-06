@@ -2184,3 +2184,57 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 未登录访问 `GET /api/v1/admin/accounts?page=1&page_size=1` 返回 HTTP 401，认证拦截正常。
 - 容器日志关键启动错误过滤未匹配 `panic`、`fatal`、迁移错误或 checksum mismatch。
 - 部署后真实 `/responses` 流量日志捕获到 HTTP/2 `stream ID ... INTERNAL_ERROR` 断流，新版本已在线承接该类 read error；同一 HTTP 响应仍不会中途拼接切换，后续客户端重试由 path-health 与 scheduler 自动避让。
+- 本轮额外验证了 free5 的 Codex 访问形态：真实 Codex CLI 直连 free5 成功，且把捕获到的真实 Codex body 用 Node fetch / Node HTTP2 重放后同样成功；非流式极简请求仍会得到 `403 codex_access_restricted`。这说明 upstream 要的是 Codex CLI 风格流式 `/v1/responses` 请求，不是简单桌面 UA 伪装。
+
+---
+
+日期：2026-06-06
+执行者：Devil
+
+## OpenAI HTTP request-phase context canceled 自动切换
+
+本轮修复 HTTP `/responses` 请求阶段上游返回 `context canceled` 时没有触发账号切换的问题。此前这类错误会被写成普通 502 `Upstream request failed`，handler 拿不到 `UpstreamFailoverError`，所以即使调度池还有可用账号也不会继续切换。本轮将入站客户端请求 context 纳入请求阶段错误判断：客户端仍连接时，`context.Canceled` 视为请求阶段上游瞬时错误并返回 failover；客户端已经取消/断开时，保持原非 failover 行为，避免把真实客户端断开误判为上游故障。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestOpenAIGatewayService_ForwardRequestPhaseContextCanceled" -count=1`
+- `go test -tags unit ./internal/service -run "TestOpenAIGatewayService_Forward(RequestHeaderTimeoutReturnsFailover|RequestPhaseContextCanceled.*|APIKeyRequestBaseURLFailoverBeforeAccountFailover)" -count=1`
+- `go test -tags unit ./internal/service -run "TestOpenAIStreaming(ReadErrorAfterOutputRecordsPathHealthFailure|MissingTerminalEventRecordsPathHealthFailure)|TestOpenAIGatewayService_Forward(RequestHeaderTimeoutReturnsFailover|RequestPhaseContextCanceled.*|APIKeyRequestBaseURLFailoverBeforeAccountFailover)" -count=1`
+- `go build ./cmd/server`
+
+## 校验结果
+
+- TDD 红测先失败于错误链只有 `upstream request failed: context canceled`，没有 `*UpstreamFailoverError`。
+- 修复后客户端仍连接的 request-phase `context.Canceled` 返回 `UpstreamFailoverError`，调度层可以继续切账号；客户端请求 context 已取消时仍写 502 且不返回 failover。
+- 原有 request header timeout failover、API Key request baseURL failover、stream read error path-health 和 missing terminal event path-health 回归测试通过。
+- 后端 `go build ./cmd/server` 通过。
+- 本轮未提交、未部署；当前工作树还叠有 TLS fingerprint/admin settings 相关未提交改动，避免把不属于本问题的改动混入本次提交。
+
+---
+
+日期：2026-06-06
+执行者：Devil
+
+## Codex 直连 TLS 指纹默认启用
+
+本轮将 Codex 模拟选项补齐 TLS 指纹选择能力。新增后台设置 `openai_codex_direct_tls_fingerprint_profile_id`，默认值为 `0`，表示在 Codex 直连模式下启用内置 `Built-in Default (Node.js 24.x)` TLS 指纹；`-1` 表示随机已有模板，正数表示使用指定 TLS 指纹模板。运行时仅在 `openai_oauth_compat_mode=codex_direct` 时生效，并覆盖 OpenAI 上游 HTTP 请求的 OAuth 与 API key 账号路径，free5 这类 API key 账号也会走 Codex direct TLS 指纹；`off` 和 `cockpit_tools` 模式不启用该全局指纹。
+
+## 校验方式
+
+- `go test -tags unit ./internal/service -run "TestSettingService_(UpdateSettings_OpenAIOAuthCompatModeRefreshesGatewayConfig|ParseSettings_OpenAIOAuthCompatModeTakesPrecedence|ParseSettings_OpenAICodexDirectTLSFingerprintProfileIDFallsBackToConfig|LoadRuntimeSettingsRefreshesGatewayConfig)" -count=1`
+- `go test -tags unit ./internal/service -run "TestOpenAI(UpstreamTLSProfileCodexDirectAppliesToOAuthAndAPIKey|BuildUpstreamRequestCodexDirectCompatibilityHeaders)" -count=1`
+- `go test -tags unit ./internal/handler/admin -run "Test.*Setting" -count=1`
+- `go test -tags unit ./cmd/server -run TestDoesNotExist -count=1`
+- `go test -tags unit ./internal/config -run '^$' -count=1`
+- `npm run typecheck`
+- `git diff --check`
+- `go test -tags unit ./internal/handler -run "TestOpenAI" -count=1`
+
+## 校验结果
+
+- 后端 setting service 聚焦测试通过，确认新设置会写入 repo、热刷新到 `cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID`，缺失/非法值会按配置默认值回退。
+- OpenAI gateway 聚焦测试通过，确认 Codex direct 模式下 OAuth 与 API key 账号都会解析到内置 TLS 指纹，指定模板 ID 时会使用所选模板；关闭 Codex direct 时返回 `nil`，不启用 TLS 指纹。
+- admin setting handler 聚焦测试通过，server wire 包和 config 包编译切片通过。
+- 前端 `vue-tsc --noEmit` 通过，设置页新增 Codex direct TLS 指纹下拉框和类型字段。
+- `git diff --check` 通过，仅提示 docs JSONL 文件未来可能被 Git 转为 CRLF。
+- 更宽的 `go test -tags unit ./internal/handler -run "TestOpenAI" -count=1` 失败，失败点在既有 OpenAI handler 用例：`TestOpenAIEnsureForwardErrorResponse_DoesNotOverrideWrittenResponse`、panic fallback response overwrite、`TestOpenAIResponsesWebSocket_ContinuityReplayForwardsSanitizedBodyToNextAccount`。这些失败不在本轮 Codex direct TLS 指纹设置路径上，本轮未修改对应 handler 行为。

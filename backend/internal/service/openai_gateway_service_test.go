@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/cespare/xxhash/v2"
 	"github.com/gin-gonic/gin"
@@ -1308,6 +1309,89 @@ func TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover(t *test
 	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", upstream.lastReq.URL.String())
 }
 
+func TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledReturnsFailoverWhenClientStillConnected(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	originalBody := []byte(`{"model":"gpt-5.5","stream":false,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{err: context.Canceled}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{OpenAIRequestHeaderTimeoutSeconds: 60}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          123,
+		Name:        "acc",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, originalBody)
+	require.Error(t, err)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", upstream.lastReq.URL.String())
+}
+
+func TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledDoesNotFailoverWhenClientCanceled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	originalBody := []byte(`{"model":"gpt-5.5","stream":false,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
+	req.Header.Set("Content-Type", "application/json")
+	clientCtx, cancel := context.WithCancel(req.Context())
+	cancel()
+	c.Request = req.WithContext(clientCtx)
+
+	upstream := &httpUpstreamRecorder{err: context.Canceled}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Gateway: config.GatewayConfig{OpenAIRequestHeaderTimeoutSeconds: 60}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          123,
+		Name:        "acc",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, originalBody)
+	require.Error(t, err)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.True(t, c.Writer.Written())
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Contains(t, rec.Body.String(), "Upstream request failed")
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", upstream.lastReq.URL.String())
+}
+
 func TestOpenAIGatewayService_APIKeyRequestBaseURLFailoverBeforeAccountFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -2499,6 +2583,39 @@ func TestOpenAIBuildUpstreamRequestCodexDirectCompatibilityHeaders(t *testing.T)
 	require.Empty(t, req.Header.Get("X-Forwarded-For"))
 	require.Empty(t, req.Header.Get("Forwarded"))
 	require.Empty(t, req.Header.Get("Via"))
+}
+
+func TestOpenAIUpstreamTLSProfileCodexDirectAppliesToOAuthAndAPIKey(t *testing.T) {
+	oauthAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	apiKeyAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	offSvc := &OpenAIGatewayService{cfg: &config.Config{
+		Gateway: config.GatewayConfig{OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeOff},
+	}}
+	require.Nil(t, offSvc.openAIUpstreamTLSProfile(oauthAccount))
+	require.Nil(t, offSvc.openAIUpstreamTLSProfile(apiKeyAccount))
+
+	codexSvc := &OpenAIGatewayService{cfg: &config.Config{
+		Gateway: config.GatewayConfig{OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect},
+	}}
+	require.Equal(t, builtInDefaultTLSFingerprintProfileName, codexSvc.openAIUpstreamTLSProfile(oauthAccount).Name)
+	require.Equal(t, builtInDefaultTLSFingerprintProfileName, codexSvc.openAIUpstreamTLSProfile(apiKeyAccount).Name)
+
+	profileSvc := &TLSFingerprintProfileService{
+		localCache: map[int64]*model.TLSFingerprintProfile{
+			42: {ID: 42, Name: "Custom Codex TLS"},
+		},
+	}
+	customSvc := &OpenAIGatewayService{
+		cfg: &config.Config{
+			Gateway: config.GatewayConfig{
+				OpenAIOAuthCompatMode:                    config.GatewayOpenAIOAuthCompatModeCodexDirect,
+				OpenAICodexDirectTLSFingerprintProfileID: 42,
+			},
+		},
+		tlsFPProfileService: profileSvc,
+	}
+	require.Equal(t, "Custom Codex TLS", customSvc.openAIUpstreamTLSProfile(apiKeyAccount).Name)
 }
 
 // ==================== P1-08 修复：model 替换性能优化测试 ====================

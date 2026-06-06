@@ -329,16 +329,19 @@ func TestSettingService_UpdateSettings_OpenAIOAuthCompatModeRefreshesGatewayConf
 	svc := NewSettingService(repo, cfg)
 
 	err := svc.UpdateSettings(context.Background(), &SystemSettings{
-		OpenAIOAuthCompatMode:    config.GatewayOpenAIOAuthCompatModeCodexDirect,
-		OpenAICodexDirectForceWS: true,
+		OpenAIOAuthCompatMode:                    config.GatewayOpenAIOAuthCompatModeCodexDirect,
+		OpenAICodexDirectForceWS:                 true,
+		OpenAICodexDirectTLSFingerprintProfileID: 42,
 	})
 	require.NoError(t, err)
 	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, repo.updates[SettingKeyOpenAIOAuthCompatMode])
 	require.Equal(t, "false", repo.updates[SettingKeyOpenAICockpitToolsCompat])
 	require.Equal(t, "true", repo.updates[SettingKeyOpenAICodexDirectForceWS])
+	require.Equal(t, "42", repo.updates[SettingKeyOpenAICodexDirectTLSFingerprintProfileID])
 	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, cfg.Gateway.OpenAIOAuthCompatMode)
 	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
 	require.True(t, cfg.Gateway.OpenAICodexDirectForceWS)
+	require.Equal(t, int64(42), cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID)
 }
 
 func TestSettingService_UpdateSettings_GatewayRuntimeStabilityRefreshesConfig(t *testing.T) {
@@ -462,16 +465,33 @@ func TestSettingService_ParseSettings_OpenAIOAuthCompatModeTakesPrecedence(t *te
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAICockpitToolsCompat = true
 	cfg.Gateway.OpenAICodexDirectForceWS = true
+	cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID = -1
 	svc := NewSettingService(&settingUpdateRepoStub{}, cfg)
 
 	got := svc.parseSettings(map[string]string{
-		SettingKeyOpenAIOAuthCompatMode:    config.GatewayOpenAIOAuthCompatModeCodexDirect,
-		SettingKeyOpenAICodexDirectForceWS: "false",
+		SettingKeyOpenAIOAuthCompatMode:                    config.GatewayOpenAIOAuthCompatModeCodexDirect,
+		SettingKeyOpenAICodexDirectForceWS:                 "false",
+		SettingKeyOpenAICodexDirectTLSFingerprintProfileID: "42",
 	})
 
 	require.False(t, got.OpenAICockpitToolsCompat)
 	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, got.OpenAIOAuthCompatMode)
 	require.False(t, got.OpenAICodexDirectForceWS)
+	require.Equal(t, int64(42), got.OpenAICodexDirectTLSFingerprintProfileID)
+}
+
+func TestSettingService_ParseSettings_OpenAICodexDirectTLSFingerprintProfileIDFallsBackToConfig(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID = -1
+	svc := NewSettingService(&settingUpdateRepoStub{}, cfg)
+
+	got := svc.parseSettings(map[string]string{})
+	require.Equal(t, int64(-1), got.OpenAICodexDirectTLSFingerprintProfileID)
+
+	got = svc.parseSettings(map[string]string{
+		SettingKeyOpenAICodexDirectTLSFingerprintProfileID: "-2",
+	})
+	require.Equal(t, int64(-1), got.OpenAICodexDirectTLSFingerprintProfileID)
 }
 
 func TestSettingService_LoadRuntimeSettingsRefreshesGatewayConfig(t *testing.T) {
@@ -480,6 +500,7 @@ func TestSettingService_LoadRuntimeSettingsRefreshesGatewayConfig(t *testing.T) 
 	cfg.Gateway.OpenAICockpitToolsCompat = true
 	cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCockpitTools
 	cfg.Gateway.OpenAICodexDirectForceWS = false
+	cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID = 0
 	cfg.Gateway.CodexStability.Mode = config.GatewayCodexStabilityModeOff
 	cfg.Gateway.CodexStability.DynamicHeaderTimeoutEnabled = false
 	cfg.Gateway.OpenAIPathHealth.Enabled = false
@@ -491,6 +512,7 @@ func TestSettingService_LoadRuntimeSettingsRefreshesGatewayConfig(t *testing.T) 
 		SettingKeyOpenAIOAuthCompatMode:                     config.GatewayOpenAIOAuthCompatModeCodexDirect,
 		SettingKeyOpenAICockpitToolsCompat:                  "false",
 		SettingKeyOpenAICodexDirectForceWS:                  "true",
+		SettingKeyOpenAICodexDirectTLSFingerprintProfileID:  "-1",
 		SettingKeyCodexStabilityMode:                        config.GatewayCodexStabilityModeCodex,
 		SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled: "true",
 		SettingKeyOpenAIPathHealthEnabled:                   "true",
@@ -506,6 +528,7 @@ func TestSettingService_LoadRuntimeSettingsRefreshesGatewayConfig(t *testing.T) 
 	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCodexDirect, cfg.Gateway.OpenAIOAuthCompatMode)
 	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
 	require.True(t, cfg.Gateway.OpenAICodexDirectForceWS)
+	require.Equal(t, int64(-1), cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID)
 	require.Equal(t, config.GatewayCodexStabilityModeCodex, cfg.Gateway.CodexStability.Mode)
 	require.True(t, cfg.Gateway.CodexStability.DynamicHeaderTimeoutEnabled)
 	require.True(t, cfg.Gateway.OpenAIPathHealth.Enabled)

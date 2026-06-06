@@ -417,6 +417,8 @@ const (
 	SettingKeyOpenAIOAuthCompatMode = "openai_oauth_compat_mode"
 	// SettingKeyOpenAICodexDirectForceWS Codex 直连模式下是否允许 HTTP/SSE 入站请求强制转上游 WSv2。
 	SettingKeyOpenAICodexDirectForceWS = "openai_codex_direct_force_ws"
+	// SettingKeyOpenAICodexDirectTLSFingerprintProfileID Codex 直连模式上游 HTTP 请求使用的 TLS 指纹模板 ID。
+	SettingKeyOpenAICodexDirectTLSFingerprintProfileID = "openai_codex_direct_tls_fingerprint_profile_id"
 	// SettingKeyClientRequestDebugLogEnabled 是否把客户端打到本服务的完整请求体写入本地日志（默认 false）。
 	SettingKeyClientRequestDebugLogEnabled = "client_request_debug_log_enabled"
 	// SettingKeyCodexStabilityMode Codex 稳定模式档位：off/codex/all_openai_responses。

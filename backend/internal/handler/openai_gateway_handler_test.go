@@ -1541,6 +1541,7 @@ func newOpenAIContinuityHandlerCase(t *testing.T, checker *service.RealtimeBalan
 		journal,
 		checker,
 		nil,
+		nil,
 	)
 	_ = gatewaySvc.BindStickySession(ctx, &groupID, sessionHash, accountA.ID)
 
@@ -1753,6 +1754,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		nil,
 		nil,
 		channelSvc,
+		nil,
 		nil,
 		nil,
 		nil,

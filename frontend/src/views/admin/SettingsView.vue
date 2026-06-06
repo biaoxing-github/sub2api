@@ -3891,27 +3891,77 @@
 
               <div
                 v-if="form.openai_oauth_compat_mode === 'codex_direct'"
-                class="flex items-center justify-between gap-4"
+                class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700"
               >
+                <div class="flex items-center justify-between gap-4">
+                  <div>
+                    <label
+                      class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiCodexDirectForceWS",
+                        )
+                      }}
+                    </label>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiCodexDirectForceWSHint",
+                        )
+                      }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.openai_codex_direct_force_ws" />
+                </div>
+
                 <div>
                   <label
-                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
                   >
                     {{
                       t(
-                        "admin.settings.gatewayForwarding.openaiCodexDirectForceWS",
+                        "admin.settings.gatewayForwarding.openaiCodexDirectTLSFingerprintProfile",
                       )
                     }}
                   </label>
-                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  <select
+                    v-model.number="form.openai_codex_direct_tls_fingerprint_profile_id"
+                    class="input w-full"
+                  >
+                    <option :value="0">
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiCodexDirectTLSFingerprintBuiltIn",
+                        )
+                      }}
+                    </option>
+                    <option
+                      v-if="codexDirectTLSFingerprintProfiles.length > 0"
+                      :value="-1"
+                    >
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiCodexDirectTLSFingerprintRandom",
+                        )
+                      }}
+                    </option>
+                    <option
+                      v-for="profile in codexDirectTLSFingerprintProfiles"
+                      :key="profile.id"
+                      :value="profile.id"
+                    >
+                      {{ profile.name }}
+                    </option>
+                  </select>
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                     {{
                       t(
-                        "admin.settings.gatewayForwarding.openaiCodexDirectForceWSHint",
+                        "admin.settings.gatewayForwarding.openaiCodexDirectTLSFingerprintProfileHint",
                       )
                     }}
                   </p>
                 </div>
-                <Toggle v-model="form.openai_codex_direct_force_ws" />
               </div>
 
               <div class="flex items-center justify-between">
@@ -6907,6 +6957,7 @@ import type {
   WebSearchProviderConfig,
   WebSearchTestResult,
 } from "@/api/admin/settings";
+import type { TLSFingerprintProfile } from "@/api/admin/tlsFingerprintProfile";
 import type {
   AdminGroup,
   LoginAgreementDocument,
@@ -7054,6 +7105,7 @@ const adminApiKeyMasked = ref("");
 const adminApiKeyOperating = ref(false);
 const newAdminApiKey = ref("");
 const subscriptionGroups = ref<AdminGroup[]>([]);
+const codexDirectTLSFingerprintProfiles = ref<TLSFingerprintProfile[]>([]);
 
 // Overload Cooldown (529) 状态
 const overloadCooldownLoading = ref(true);
@@ -7200,6 +7252,8 @@ type SettingsForm = Omit<
   openai_cockpit_tools_compat: boolean;
   // Codex 直连模式下允许把 Codex HTTP/SSE 入站强制转为上游 WSv2。
   openai_codex_direct_force_ws: boolean;
+  // Codex 直连模式下上游 HTTP 请求使用的 TLS 指纹模板 ID，0 表示内置默认。
+  openai_codex_direct_tls_fingerprint_profile_id: number;
   client_request_debug_log_enabled: boolean;
   codex_stability_mode: "off" | "codex" | "all_openai_responses" | string;
   codex_stability_dynamic_header_timeout_enabled: boolean;
@@ -7416,6 +7470,7 @@ const form = reactive<SettingsForm>({
   openai_oauth_compat_mode: "off",
   openai_cockpit_tools_compat: false,
   openai_codex_direct_force_ws: false,
+  openai_codex_direct_tls_fingerprint_profile_id: 0,
   client_request_debug_log_enabled: false,
   codex_stability_mode: "codex",
   codex_stability_dynamic_header_timeout_enabled: true,
@@ -8059,6 +8114,11 @@ async function loadSettings() {
       form.openai_oauth_compat_mode === "cockpit_tools";
     form.openai_codex_direct_force_ws =
       settings.openai_codex_direct_force_ws === true;
+    form.openai_codex_direct_tls_fingerprint_profile_id =
+      typeof settings.openai_codex_direct_tls_fingerprint_profile_id ===
+      "number"
+        ? settings.openai_codex_direct_tls_fingerprint_profile_id
+        : 0;
     form.login_agreement_mode =
       settings.login_agreement_mode === "checkbox" ? "checkbox" : "modal";
     form.login_agreement_updated_at =
@@ -8177,6 +8237,15 @@ async function loadSettings() {
     );
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadCodexDirectTLSFingerprintProfiles() {
+  try {
+    codexDirectTLSFingerprintProfiles.value =
+      await adminAPI.tlsFingerprintProfiles.list();
+  } catch (_error: unknown) {
+    codexDirectTLSFingerprintProfiles.value = [];
   }
 }
 
@@ -8553,6 +8622,17 @@ async function saveSettings() {
       openai_codex_direct_force_ws:
         form.openai_oauth_compat_mode === "codex_direct" &&
         form.openai_codex_direct_force_ws,
+      openai_codex_direct_tls_fingerprint_profile_id:
+        form.openai_oauth_compat_mode === "codex_direct"
+          ? Math.max(
+              -1,
+              Math.floor(
+                Number(
+                  form.openai_codex_direct_tls_fingerprint_profile_id,
+                ) || 0,
+              ),
+            )
+          : 0,
       client_request_debug_log_enabled: form.client_request_debug_log_enabled,
       codex_stability_mode: form.codex_stability_mode || "codex",
       codex_stability_dynamic_header_timeout_enabled:
@@ -8690,6 +8770,11 @@ async function saveSettings() {
       form.openai_oauth_compat_mode === "cockpit_tools";
     form.openai_codex_direct_force_ws =
       updated.openai_codex_direct_force_ws === true;
+    form.openai_codex_direct_tls_fingerprint_profile_id =
+      typeof updated.openai_codex_direct_tls_fingerprint_profile_id ===
+      "number"
+        ? updated.openai_codex_direct_tls_fingerprint_profile_id
+        : 0;
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     registrationEmailSuffixWhitelistTags.value =
       normalizeRegistrationEmailSuffixDomains(
@@ -9626,6 +9711,7 @@ async function handleDeleteProvider() {
 onMounted(() => {
   loadSettings();
   loadSubscriptionGroups();
+  loadCodexDirectTLSFingerprintProfiles();
   loadAdminApiKey();
   loadOverloadCooldownSettings();
   loadRateLimit429CooldownSettings();

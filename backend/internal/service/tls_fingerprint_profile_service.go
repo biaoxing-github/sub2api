@@ -11,6 +11,8 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 )
 
+const builtInDefaultTLSFingerprintProfileName = "Built-in Default (Node.js 24.x)"
+
 // TLSFingerprintProfileRepository 定义 TLS 指纹模板的数据访问接口
 type TLSFingerprintProfileRepository interface {
 	List(ctx context.Context) ([]*model.TLSFingerprintProfile, error)
@@ -168,6 +170,27 @@ func (s *TLSFingerprintProfileService) getRandomProfile() *tlsfingerprint.Profil
 	return profiles[rand.IntN(len(profiles))].ToTLSProfile()
 }
 
+// ResolveProfileID 根据配置中的模板 ID 解析运行时 TLS Profile。
+// id=0 表示启用内置默认指纹；id=-1 表示随机选择一个已有模板；id>0 表示指定模板。
+func (s *TLSFingerprintProfileService) ResolveProfileID(id int64) *tlsfingerprint.Profile {
+	if id > 0 && s != nil {
+		if p := s.GetProfileByID(id); p != nil {
+			return p
+		}
+	}
+	if id == -1 && s != nil {
+		if p := s.getRandomProfile(); p != nil {
+			return p
+		}
+	}
+	return BuiltInDefaultTLSFingerprintProfile()
+}
+
+// BuiltInDefaultTLSFingerprintProfile 返回内置 Node.js 24.x TLS 指纹。
+func BuiltInDefaultTLSFingerprintProfile() *tlsfingerprint.Profile {
+	return &tlsfingerprint.Profile{Name: builtInDefaultTLSFingerprintProfileName}
+}
+
 // ResolveTLSProfile 根据 Account 的配置解析出运行时 TLS Profile
 //
 // 逻辑：
@@ -178,20 +201,7 @@ func (s *TLSFingerprintProfileService) ResolveTLSProfile(account *Account) *tlsf
 	if account == nil || !account.IsTLSFingerprintEnabled() {
 		return nil
 	}
-	id := account.GetTLSFingerprintProfileID()
-	if id > 0 {
-		if p := s.GetProfileByID(id); p != nil {
-			return p
-		}
-	}
-	if id == -1 {
-		// 随机选择一个 profile
-		if p := s.getRandomProfile(); p != nil {
-			return p
-		}
-	}
-	// TLS 启用但无绑定 profile → 空 Profile → dialer 使用内置默认值
-	return &tlsfingerprint.Profile{Name: "Built-in Default (Node.js 24.x)"}
+	return s.ResolveProfileID(account.GetTLSFingerprintProfileID())
 }
 
 // --- 缓存管理 ---

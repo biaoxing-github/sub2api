@@ -804,6 +804,9 @@ type GatewayConfig struct {
 	// OpenAICodexDirectForceWS: Codex 直连模式下允许 HTTP/SSE 入站请求强制转为上游 WSv2。
 	// 默认关闭，开启后仍受 gateway.openai_ws.enabled/oauth_enabled/force_http 约束。
 	OpenAICodexDirectForceWS bool `mapstructure:"openai_codex_direct_force_ws"`
+	// OpenAICodexDirectTLSFingerprintProfileID: Codex 直连模式上游 HTTP 请求的 TLS 指纹模板 ID。
+	// 0=内置默认 Node.js 24.x，-1=随机已有模板，>0=指定模板。
+	OpenAICodexDirectTLSFingerprintProfileID int64 `mapstructure:"openai_codex_direct_tls_fingerprint_profile_id"`
 	// CodexImageGenerationBridgeEnabled: 是否为 Codex `/v1/responses` 自动注入 image_generation 工具和桥接指令。
 	// 默认关闭，避免纯文本 Codex 请求被意外改写；显式携带 image_generation 工具的请求仍按分组能力转发。
 	CodexImageGenerationBridgeEnabled bool `mapstructure:"codex_image_generation_bridge_enabled"`
@@ -1869,6 +1872,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_oauth_compat_mode", GatewayOpenAIOAuthCompatModeOff)
 	viper.SetDefault("gateway.openai_cockpit_tools_compat", false)
 	viper.SetDefault("gateway.openai_codex_direct_force_ws", false)
+	viper.SetDefault("gateway.openai_codex_direct_tls_fingerprint_profile_id", 0)
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	// OpenAI Responses WebSocket（默认开启；可通过 force_http 紧急回滚）
@@ -2575,6 +2579,9 @@ func (c *Config) Validate() error {
 			GatewayOpenAIOAuthCompatModeOff,
 			GatewayOpenAIOAuthCompatModeCockpitTools,
 			GatewayOpenAIOAuthCompatModeCodexDirect)
+	}
+	if c.Gateway.OpenAICodexDirectTLSFingerprintProfileID < -1 {
+		return fmt.Errorf("gateway.openai_codex_direct_tls_fingerprint_profile_id must be -1 or greater")
 	}
 	c.Gateway.CodexStability.Mode = strings.ToLower(strings.TrimSpace(c.Gateway.CodexStability.Mode))
 	if c.Gateway.CodexStability.Mode == "" {

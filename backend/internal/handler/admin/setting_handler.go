@@ -259,6 +259,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		OpenAICockpitToolsCompat:                   settings.OpenAICockpitToolsCompat,
 		OpenAIOAuthCompatMode:                      settings.OpenAIOAuthCompatMode,
 		OpenAICodexDirectForceWS:                   settings.OpenAICodexDirectForceWS,
+		OpenAICodexDirectTLSFingerprintProfileID:   settings.OpenAICodexDirectTLSFingerprintProfileID,
 		ClientRequestDebugLogEnabled:               settings.ClientRequestDebugLogEnabled,
 		CodexStabilityMode:                         settings.CodexStabilityMode,
 		CodexStabilityDynamicHeaderTimeoutEnabled:  settings.CodexStabilityDynamicHeaderTimeoutEnabled,
@@ -627,6 +628,7 @@ type UpdateSettingsRequest struct {
 	OpenAICockpitToolsCompat                   *bool    `json:"openai_cockpit_tools_compat"`
 	OpenAIOAuthCompatMode                      *string  `json:"openai_oauth_compat_mode"`
 	OpenAICodexDirectForceWS                   *bool    `json:"openai_codex_direct_force_ws"`
+	OpenAICodexDirectTLSFingerprintProfileID   *int64   `json:"openai_codex_direct_tls_fingerprint_profile_id"`
 	ClientRequestDebugLogEnabled               *bool    `json:"client_request_debug_log_enabled"`
 	CodexStabilityMode                         *string  `json:"codex_stability_mode"`
 	CodexStabilityDynamicHeaderTimeoutEnabled  *bool    `json:"codex_stability_dynamic_header_timeout_enabled"`
@@ -1777,8 +1779,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAIOAuthCompatMode
 		}(),
-		OpenAICodexDirectForceWS:     boolValueOrDefault(req.OpenAICodexDirectForceWS, previousSettings.OpenAICodexDirectForceWS),
-		ClientRequestDebugLogEnabled: boolValueOrDefault(req.ClientRequestDebugLogEnabled, previousSettings.ClientRequestDebugLogEnabled),
+		OpenAICodexDirectForceWS:                 boolValueOrDefault(req.OpenAICodexDirectForceWS, previousSettings.OpenAICodexDirectForceWS),
+		OpenAICodexDirectTLSFingerprintProfileID: int64ValueOrDefault(req.OpenAICodexDirectTLSFingerprintProfileID, previousSettings.OpenAICodexDirectTLSFingerprintProfileID),
+		ClientRequestDebugLogEnabled:             boolValueOrDefault(req.ClientRequestDebugLogEnabled, previousSettings.ClientRequestDebugLogEnabled),
 		CodexStabilityMode: func() string {
 			if req.CodexStabilityMode != nil {
 				return *req.CodexStabilityMode
@@ -2202,6 +2205,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICockpitToolsCompat:                   updatedSettings.OpenAICockpitToolsCompat,
 		OpenAIOAuthCompatMode:                      updatedSettings.OpenAIOAuthCompatMode,
 		OpenAICodexDirectForceWS:                   updatedSettings.OpenAICodexDirectForceWS,
+		OpenAICodexDirectTLSFingerprintProfileID:   updatedSettings.OpenAICodexDirectTLSFingerprintProfileID,
 		ClientRequestDebugLogEnabled:               updatedSettings.ClientRequestDebugLogEnabled,
 		CodexStabilityMode:                         updatedSettings.CodexStabilityMode,
 		CodexStabilityDynamicHeaderTimeoutEnabled:  updatedSettings.CodexStabilityDynamicHeaderTimeoutEnabled,
@@ -2717,6 +2721,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAICodexDirectForceWS != after.OpenAICodexDirectForceWS {
 		changed = append(changed, "openai_codex_direct_force_ws")
 	}
+	if before.OpenAICodexDirectTLSFingerprintProfileID != after.OpenAICodexDirectTLSFingerprintProfileID {
+		changed = append(changed, "openai_codex_direct_tls_fingerprint_profile_id")
+	}
 	if before.ClientRequestDebugLogEnabled != after.ClientRequestDebugLogEnabled {
 		changed = append(changed, "client_request_debug_log_enabled")
 	}
@@ -3062,6 +3069,9 @@ func validateNonNegativeSettings(req UpdateSettingsRequest) error {
 	}
 	if req.ContextJournalMaxSessionBytes != nil && *req.ContextJournalMaxSessionBytes < 0 {
 		return fmt.Errorf("context_journal_max_session_bytes must be non-negative")
+	}
+	if req.OpenAICodexDirectTLSFingerprintProfileID != nil && *req.OpenAICodexDirectTLSFingerprintProfileID < -1 {
+		return fmt.Errorf("openai_codex_direct_tls_fingerprint_profile_id must be -1 or greater")
 	}
 	return nil
 }

@@ -1820,6 +1820,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAIOAuthCompatMode] = settings.OpenAIOAuthCompatMode
 	updates[SettingKeyOpenAICockpitToolsCompat] = strconv.FormatBool(settings.OpenAICockpitToolsCompat)
 	updates[SettingKeyOpenAICodexDirectForceWS] = strconv.FormatBool(settings.OpenAICodexDirectForceWS)
+	updates[SettingKeyOpenAICodexDirectTLSFingerprintProfileID] = strconv.FormatInt(tlsFingerprintProfileIDOrDefault(settings.OpenAICodexDirectTLSFingerprintProfileID, 0), 10)
 	updates[SettingKeyClientRequestDebugLogEnabled] = strconv.FormatBool(settings.ClientRequestDebugLogEnabled)
 	updates[SettingKeyCodexStabilityMode] = normalizeCodexStabilityMode(settings.CodexStabilityMode)
 	updates[SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled] = strconv.FormatBool(settings.CodexStabilityDynamicHeaderTimeoutEnabled)
@@ -1971,6 +1972,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		s.cfg.Gateway.OpenAIOAuthCompatMode = normalizeOpenAIOAuthCompatMode(settings.OpenAIOAuthCompatMode, settings.OpenAICockpitToolsCompat)
 		s.cfg.Gateway.OpenAICockpitToolsCompat = settings.OpenAICockpitToolsCompat
 		s.cfg.Gateway.OpenAICodexDirectForceWS = settings.OpenAICodexDirectForceWS
+		s.cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID = tlsFingerprintProfileIDOrDefault(settings.OpenAICodexDirectTLSFingerprintProfileID, 0)
 		s.cfg.Gateway.CodexStability.Mode = normalizeCodexStabilityMode(settings.CodexStabilityMode)
 		s.cfg.Gateway.CodexStability.DynamicHeaderTimeoutEnabled = settings.CodexStabilityDynamicHeaderTimeoutEnabled
 		s.cfg.Gateway.CodexStability.RequestPhaseFailoverEnabled = settings.CodexStabilityRequestPhaseFailoverEnabled
@@ -2044,6 +2046,13 @@ func (s *SettingService) defaultOpenAIOAuthCompatMode() string {
 
 func (s *SettingService) defaultOpenAICodexDirectForceWS() bool {
 	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAICodexDirectForceWS
+}
+
+func (s *SettingService) defaultOpenAICodexDirectTLSFingerprintProfileID() int64 {
+	if s != nil && s.cfg != nil && s.cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID >= -1 {
+		return s.cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID
+	}
+	return 0
 }
 
 func (s *SettingService) validateDefaultSubscriptionGroups(ctx context.Context, items []DefaultSubscriptionSetting) error {
@@ -2886,6 +2895,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAIOAuthCompatMode:                      s.defaultOpenAIOAuthCompatMode(),
 		SettingKeyOpenAICockpitToolsCompat:                   strconv.FormatBool(s.defaultOpenAICockpitToolsCompat()),
 		SettingKeyOpenAICodexDirectForceWS:                   strconv.FormatBool(s.defaultOpenAICodexDirectForceWS()),
+		SettingKeyOpenAICodexDirectTLSFingerprintProfileID:   strconv.FormatInt(s.defaultOpenAICodexDirectTLSFingerprintProfileID(), 10),
 		SettingKeyClientRequestDebugLogEnabled:               "false",
 		SettingKeyCodexStabilityMode:                         config.GatewayCodexStabilityModeCodex,
 		SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled:  "true",
@@ -3489,6 +3499,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAIOAuthCompatMode = normalizeOpenAIOAuthCompatMode(settings[SettingKeyOpenAIOAuthCompatMode], legacyCockpitCompat)
 	result.OpenAICockpitToolsCompat = result.OpenAIOAuthCompatMode == config.GatewayOpenAIOAuthCompatModeCockpitTools
 	result.OpenAICodexDirectForceWS = boolSettingWithDefault(settings[SettingKeyOpenAICodexDirectForceWS], s.defaultOpenAICodexDirectForceWS())
+	result.OpenAICodexDirectTLSFingerprintProfileID = tlsFingerprintProfileIDSettingWithDefault(settings[SettingKeyOpenAICodexDirectTLSFingerprintProfileID], s.defaultOpenAICodexDirectTLSFingerprintProfileID())
 	result.OpenAIHeaderRaceEnabled = settings[SettingKeyOpenAIHeaderRaceEnabled] == "true"
 	result.OpenAIHeaderRaceDelayMs = intSettingWithDefault(settings[SettingKeyOpenAIHeaderRaceDelayMs], 3500)
 	result.OpenAIHeaderRaceDailyBudget = intSettingWithDefault(settings[SettingKeyOpenAIHeaderRaceDailyBudget], 0)
@@ -3694,6 +3705,20 @@ func intSettingWithDefault(value string, fallback int) int {
 func int64SettingWithDefault(value string, fallback int64) int64 {
 	if v, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && v >= 0 {
 		return v
+	}
+	return fallback
+}
+
+func tlsFingerprintProfileIDSettingWithDefault(value string, fallback int64) int64 {
+	if v, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && v >= -1 {
+		return v
+	}
+	return tlsFingerprintProfileIDOrDefault(fallback, 0)
+}
+
+func tlsFingerprintProfileIDOrDefault(value, fallback int64) int64 {
+	if value >= -1 {
+		return value
 	}
 	return fallback
 }
