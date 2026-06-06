@@ -387,6 +387,10 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
 		return nil, nil
 	}
+	if s.isAccountPathHealthBlocked(account, req) {
+		_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
+		return nil, nil
+	}
 
 	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr == nil && result != nil && result.Acquired {
@@ -1094,6 +1098,21 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 		return false
 	}
 	return account.SupportsOpenAIImageCapability(req.RequiredImageCapability)
+}
+
+// isAccountPathHealthBlocked 用 path-health 的熔断状态判断当前 sticky 账号是否应被跳过。
+// open_circuit 一律跳过；half_open 仅允许探针流量命中。
+func (s *defaultOpenAIAccountScheduler) isAccountPathHealthBlocked(account *Account, req OpenAIAccountScheduleRequest) bool {
+	if s == nil || s.service == nil || account == nil || !s.service.openAIPathHealthCircuitBreakerEnabled() {
+		return false
+	}
+	key := OpenAIPathHealthKeyForAccount(account, string(req.RequiredTransport))
+	snapshot := s.service.openaiPathHealth.Snapshot(key)
+	if snapshot.State == OpenAIPathHealthStateOpenCircuit {
+		return true
+	}
+	return snapshot.State == OpenAIPathHealthStateHalfOpen &&
+		openAIAccountScheduleProfileFromRequest(req) != openAIAccountScheduleProfileProbe
 }
 
 func (s *OpenAIGatewayService) openAIPathHealthCircuitBreakerEnabled() bool {

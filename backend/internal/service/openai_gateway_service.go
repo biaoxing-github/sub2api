@@ -4792,6 +4792,18 @@ func (s *OpenAIGatewayService) recordOpenAIPathHealthStreamReadError(account *Ac
 		return
 	}
 	reason := openAIPathHealthReasonForStreamReadError(err)
+	s.recordOpenAIPathHealthFailure(account, requestBaseURL, reason)
+}
+
+// recordOpenAIPathHealthStreamIncomplete 将“流结束但没有 terminal event”的协议不完整情况计入路径健康。
+func (s *OpenAIGatewayService) recordOpenAIPathHealthStreamIncomplete(account *Account, requestBaseURL string) {
+	s.recordOpenAIPathHealthFailure(account, requestBaseURL, OpenAIPathFailureEOF)
+}
+
+func (s *OpenAIGatewayService) recordOpenAIPathHealthFailure(account *Account, requestBaseURL string, reason string) {
+	if s == nil || s.openaiPathHealth == nil || account == nil {
+		return
+	}
 	accountKey := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
 	s.openaiPathHealth.RecordFailure(accountKey, reason, nil)
 	baseURLKey := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), requestBaseURL)
@@ -5817,6 +5829,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(ctx context.Con
 	}
 	finalizeStream := func() (*openaiStreamingResult, error) {
 		if !sawTerminalEvent {
+			s.recordOpenAIPathHealthStreamIncomplete(account, requestBaseURL)
 			if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
 				return resultWithUsage(), s.newOpenAIStreamFailoverError(
 					c,

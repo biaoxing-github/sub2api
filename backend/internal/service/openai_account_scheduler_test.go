@@ -1195,6 +1195,59 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionSticky(t *testin
 	}
 }
 
+func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyOpenCircuitFallsBackToFreshCandidate(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10105)
+	sticky := Account{ID: 35001, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0}
+	backup := Account{ID: 35002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5}
+	cache := &schedulerTestGatewayCache{
+		sessionBindings: map[string]int64{
+			"openai:session_hash_path_open": sticky.ID,
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIPathHealth.Enabled = true
+	cfg.Gateway.OpenAIPathHealth.CircuitBreakerEnabled = true
+	cfg.Gateway.OpenAIWS.LBTopK = 2
+	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:               true,
+		CircuitBreakerEnabled: true,
+		OpenFailureThreshold:  1,
+		Cooldown:              time.Minute,
+	})
+	pathHealth.RecordFailure(OpenAIPathHealthKeyForAccount(&sticky, string(OpenAIUpstreamTransportHTTPSSE)), OpenAIPathFailureEOF, nil)
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{sticky, backup}},
+		cache:              cache,
+		cfg:                cfg,
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+		openaiPathHealth:   pathHealth,
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(
+		ctx,
+		&groupID,
+		"",
+		"session_hash_path_open",
+		"gpt-5.1",
+		nil,
+		OpenAIUpstreamTransportHTTPSSE,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, backup.ID, selection.Account.ID)
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.False(t, decision.StickySessionHit)
+	require.Equal(t, 1, cache.deletedSessions["openai:session_hash_path_open"])
+	require.Equal(t, backup.ID, cache.sessionBindings["openai:session_hash_path_open"])
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyBusyKeepsSticky(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10100)

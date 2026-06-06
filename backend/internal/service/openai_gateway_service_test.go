@@ -1735,6 +1735,54 @@ func TestOpenAIStreamingMissingTerminalEventReturnsIncompleteError(t *testing.T)
 	}
 }
 
+func TestOpenAIStreamingMissingTerminalEventRecordsPathHealthFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:               true,
+		CircuitBreakerEnabled: true,
+	})
+	svc := &OpenAIGatewayService{cfg: cfg, openaiPathHealth: tracker}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	account := &Account{
+		ID:       44,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Name:     "terminal-missing",
+		Credentials: map[string]any{
+			"base_url": "https://terminal-missing.example.com/v1",
+		},
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+		)),
+		Header: http.Header{"X-Request-Id": []string{"rid-missing-terminal"}},
+	}
+
+	_, err := svc.handleStreamingResponseWithPolicy(c.Request.Context(), resp, c, account, time.Now(), "model", "model", openAICodexStabilityPolicy{}, "https://selected-terminal.example.com/v1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing terminal event")
+
+	accountSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE)))
+	require.Equal(t, int64(1), accountSnapshot.FailureCount)
+	require.Equal(t, OpenAIPathFailureEOF, accountSnapshot.LastFailureReason)
+	baseURLSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), "https://selected-terminal.example.com/v1"))
+	require.Equal(t, int64(1), baseURLSnapshot.FailureCount)
+	require.Equal(t, OpenAIPathFailureEOF, baseURLSnapshot.LastFailureReason)
+}
+
 func TestOpenAIStreamingPassthroughMissingTerminalEventReturnsIncompleteError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
