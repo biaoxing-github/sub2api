@@ -176,6 +176,57 @@ describe('AccountProbeReportsView', () => {
     expect(wrapper.find('[data-test="open-batch-model-probe-dialog"]').exists()).toBe(false)
   })
 
+  it('requests fastest-first ordering for latency probe report sort options', async () => {
+    listAccountProbeRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, summary: {} })
+
+    const wrapper = mount(AccountProbeReportsView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          Pagination: PaginationStub,
+          BaseDialog: BaseDialogStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    const sortSelect = wrapper.findAll('select').find(select =>
+      select.findAll('option').some(option => option.attributes('value') === 'avg_latency_ms')
+    )
+    expect(sortSelect).toBeTruthy()
+
+    await sortSelect!.setValue('success_rate')
+    await flushPromises()
+    expect(listAccountProbeRuns).toHaveBeenLastCalledWith(1, 20, expect.objectContaining({
+      sort_by: 'success_rate',
+      sort_order: 'desc',
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+
+    await sortSelect!.setValue('avg_latency_ms')
+    await flushPromises()
+    expect(listAccountProbeRuns).toHaveBeenLastCalledWith(1, 20, expect.objectContaining({
+      sort_by: 'avg_latency_ms',
+      sort_order: 'asc',
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+
+    await sortSelect!.setValue('p95_ms')
+    await flushPromises()
+    expect(listAccountProbeRuns).toHaveBeenLastCalledWith(1, 20, expect.objectContaining({
+      sort_by: 'p95_ms',
+      sort_order: 'asc',
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+
+    await sortSelect!.setValue('first_token_ms')
+    await flushPromises()
+    expect(listAccountProbeRuns).toHaveBeenLastCalledWith(1, 20, expect.objectContaining({
+      sort_by: 'first_token_ms',
+      sort_order: 'asc',
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+  })
+
   it('opens ranking in a dialog without occupying the report table area', async () => {
     listAccountProbeRanking.mockResolvedValueOnce([
       {

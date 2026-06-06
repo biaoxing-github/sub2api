@@ -657,6 +657,9 @@ const sortState = reactive({
   sort_order: 'desc' as 'asc' | 'desc',
 })
 
+// 耗时类指标越小越快，选择这些指标时默认按升序查看最快记录。
+const fastestFirstSortFields = new Set<AccountProbeRunSortBy>(['avg_latency_ms', 'p95_ms', 'first_token_ms'])
+
 const batchForm = reactive({
   mode: 'standard',
   request_mode: 'stream',
@@ -1111,8 +1114,12 @@ function resetFilters() {
   applyFilters()
 }
 
+function defaultSortOrderFor(sortBy: AccountProbeRunSortBy): 'asc' | 'desc' {
+  return fastestFirstSortFields.has(sortBy) ? 'asc' : 'desc'
+}
+
 function handleSortOptionChange() {
-  sortState.sort_order = 'desc'
+  sortState.sort_order = defaultSortOrderFor(sortState.sort_by)
   applyFilters()
 }
 
