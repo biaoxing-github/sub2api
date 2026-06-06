@@ -2151,3 +2151,36 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 已输出前断流仍走原有 failover 行为，半开账号仍只进入 probe profile，调度器过滤逻辑未被改变。
 - 聚焦和更宽切片测试均通过。
 - 整包 `internal/service` 单包测试运行 244 秒超时，未得到失败断言；本轮不把整包测试计为通过。
+
+---
+
+日期：2026-06-06
+执行者：Devil
+
+## OpenAI HTTP stream 断流调度避让提交构建部署验证
+
+本轮将 OpenAI HTTP stream 断流调度避让修复提交为 `be69c3be fix(openai): record stream read failures for scheduling`，随后从已提交状态生成干净构建上下文完成 Docker 构建、compose 重建和本地 smoke。构建部署全程排除 `.codegraph/` 与 `.playwright-mcp/` 工具目录。
+
+## 校验方式
+
+- `git commit -m "fix(openai): record stream read failures for scheduling"`
+- `git archive --format=tar -o <temp>\sub2api-be69c3be07d8.tar HEAD`
+- `docker build --pull=false -t sub2api:multi-key-local --build-arg COMMIT=be69c3be07d8 <temp>\sub2api-be69c3be07d8`
+- `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --force-recreate sub2api`
+- `docker inspect sub2api --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}} {{.Image}}'`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" http://127.0.0.1:8080/health`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" http://127.0.0.1:8080/admin/accounts`
+- `curl.exe -s -o NUL -w "%{http_code} %{size_download}\n" "http://127.0.0.1:8080/api/v1/admin/accounts?page=1&page_size=1"`
+- `docker logs sub2api --since 2026-06-06T11:27:50 --tail 400 2>&1 | Select-String -Pattern "panic|fatal|migration.*error|checksum mismatch"`
+
+## 校验结果
+
+- 提交前聚焦 Go 测试通过，`git diff --check` 通过，`docs/feature_list.jsonl` 与 `docs/process_list.jsonl` 可解析为 JSONL。
+- Docker build 成功，镜像 `sub2api:multi-key-local` manifest list digest 为 `sha256:512bfb2869d12c7111ab540ad85ea11c5f51edd661e89003c0e9389ca260ec84`。
+- `docker compose` force-recreate 成功，Postgres 和 Redis healthy，`sub2api` 启动成功。
+- `docker inspect` 显示 `sub2api` 为 `running healthy`，运行镜像为 `sha256:512bfb2869d12c7111ab540ad85ea11c5f51edd661e89003c0e9389ca260ec84`。
+- `/health` 返回 HTTP 200，响应大小 15。
+- `/admin/accounts` 返回 HTTP 200，响应大小 2671。
+- 未登录访问 `GET /api/v1/admin/accounts?page=1&page_size=1` 返回 HTTP 401，认证拦截正常。
+- 容器日志关键启动错误过滤未匹配 `panic`、`fatal`、迁移错误或 checksum mismatch。
+- 部署后真实 `/responses` 流量日志捕获到 HTTP/2 `stream ID ... INTERNAL_ERROR` 断流，新版本已在线承接该类 read error；同一 HTTP 响应仍不会中途拼接切换，后续客户端重试由 path-health 与 scheduler 自动避让。
