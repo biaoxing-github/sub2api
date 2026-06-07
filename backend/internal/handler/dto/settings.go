@@ -183,6 +183,7 @@ type SystemSettings struct {
 	RewriteMessageCacheControl                 bool    `json:"rewrite_message_cache_control"`
 	AntigravityUserAgentVersion                string  `json:"antigravity_user_agent_version"`
 	OpenAICodexUserAgent                       string  `json:"openai_codex_user_agent"`
+	OpenAIAllowClaudeCodeCodexPlugin           bool    `json:"openai_allow_claude_code_codex_plugin"`
 	OpenAICockpitToolsCompat                   bool    `json:"openai_cockpit_tools_compat"`
 	OpenAIOAuthCompatMode                      string  `json:"openai_oauth_compat_mode"`
 	OpenAICodexDirectForceWS                   bool    `json:"openai_codex_direct_force_ws"`

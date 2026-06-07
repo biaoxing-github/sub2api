@@ -1991,6 +1991,38 @@ func (a *Account) IsCodexCLIOnlyEnabled() bool {
 	return ok && enabled
 }
 
+// GetCodexCLIOnlyAllowedClients 返回 codex_cli_only 之上额外放行的命名客户端预设 ID 列表。
+// 仅 OpenAI OAuth 账号生效；预设 ID 的具体匹配规则由 openai 包固化。
+func (a *Account) GetCodexCLIOnlyAllowedClients() []string {
+	if a == nil || !a.IsOpenAIOAuth() || a.Extra == nil {
+		return nil
+	}
+	raw, ok := a.Extra["codex_cli_only_allowed_clients"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if strings.TrimSpace(item) != "" {
+				result = append(result, item)
+			}
+		}
+		return result
+	case []any:
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				result = append(result, s)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
 // WindowCostSchedulability 窗口费用调度状态
 type WindowCostSchedulability int
 

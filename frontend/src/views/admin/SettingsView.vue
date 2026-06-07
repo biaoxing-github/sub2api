@@ -3844,6 +3844,30 @@
                 </p>
               </div>
 
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.openaiAllowClaudeCodeCodexPlugin",
+                      )
+                    }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.openaiAllowClaudeCodeCodexPluginDesc",
+                      )
+                    }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.openai_allow_claude_code_codex_plugin"
+                />
+              </div>
+
               <div>
                 <label
                   class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -7467,6 +7491,7 @@ const form = reactive<SettingsForm>({
   rewrite_message_cache_control: false,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  openai_allow_claude_code_codex_plugin: false,
   openai_oauth_compat_mode: "off",
   openai_cockpit_tools_compat: false,
   openai_codex_direct_force_ws: false,
@@ -8616,6 +8641,8 @@ async function saveSettings() {
         form.antigravity_user_agent_version?.trim() || "",
       openai_codex_user_agent:
         form.openai_codex_user_agent?.trim() || "",
+      openai_allow_claude_code_codex_plugin:
+        form.openai_allow_claude_code_codex_plugin,
       openai_oauth_compat_mode: form.openai_oauth_compat_mode || "off",
       openai_cockpit_tools_compat:
         form.openai_oauth_compat_mode === "cockpit_tools",

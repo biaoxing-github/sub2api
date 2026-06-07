@@ -195,6 +195,7 @@ type SystemSettings struct {
 	RewriteMessageCacheControl                 bool   // 是否改写 messages[*].content[*].cache_control（默认 false）
 	AntigravityUserAgentVersion                string // Antigravity 上游 User-Agent 版本号；空值使用配置/默认值
 	OpenAICodexUserAgent                       string // OpenAI Codex 上游完整 User-Agent；空值使用内置默认
+	OpenAIAllowClaudeCodeCodexPlugin           bool   // 是否允许 Claude Code 的 Codex 插件访问仅 Codex 官方客户端账号
 	OpenAICockpitToolsCompat                   bool   // 是否按 cockpit-tools 方式发送 OpenAI OAuth Responses 请求
 	OpenAIOAuthCompatMode                      string // OpenAI OAuth 上游兼容模式：off/cockpit_tools/codex_direct
 	OpenAICodexDirectForceWS                   bool   // Codex 直连模式下是否强制 OAuth 上游走 WSv2

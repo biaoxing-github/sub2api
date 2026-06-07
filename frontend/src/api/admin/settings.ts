@@ -519,6 +519,7 @@ export interface SystemSettings {
   rewrite_message_cache_control: boolean;
   antigravity_user_agent_version: string;
   openai_codex_user_agent: string;
+  openai_allow_claude_code_codex_plugin: boolean;
   openai_oauth_compat_mode: OpenAIOAuthCompatMode;
   openai_cockpit_tools_compat: boolean;
   openai_codex_direct_force_ws: boolean;
@@ -765,6 +766,7 @@ export interface UpdateSettingsRequest {
   rewrite_message_cache_control?: boolean;
   antigravity_user_agent_version?: string;
   openai_codex_user_agent?: string;
+  openai_allow_claude_code_codex_plugin?: boolean;
   openai_oauth_compat_mode?: OpenAIOAuthCompatMode;
   openai_cockpit_tools_compat?: boolean;
   openai_codex_direct_force_ws?: boolean;

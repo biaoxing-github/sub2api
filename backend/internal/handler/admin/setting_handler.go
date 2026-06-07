@@ -256,6 +256,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		RewriteMessageCacheControl:                 settings.RewriteMessageCacheControl,
 		AntigravityUserAgentVersion:                settings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                       settings.OpenAICodexUserAgent,
+		OpenAIAllowClaudeCodeCodexPlugin:           settings.OpenAIAllowClaudeCodeCodexPlugin,
 		OpenAICockpitToolsCompat:                   settings.OpenAICockpitToolsCompat,
 		OpenAIOAuthCompatMode:                      settings.OpenAIOAuthCompatMode,
 		OpenAICodexDirectForceWS:                   settings.OpenAICodexDirectForceWS,
@@ -625,6 +626,7 @@ type UpdateSettingsRequest struct {
 	RewriteMessageCacheControl                 *bool    `json:"rewrite_message_cache_control"`
 	AntigravityUserAgentVersion                *string  `json:"antigravity_user_agent_version"`
 	OpenAICodexUserAgent                       *string  `json:"openai_codex_user_agent"`
+	OpenAIAllowClaudeCodeCodexPlugin           *bool    `json:"openai_allow_claude_code_codex_plugin"`
 	OpenAICockpitToolsCompat                   *bool    `json:"openai_cockpit_tools_compat"`
 	OpenAIOAuthCompatMode                      *string  `json:"openai_oauth_compat_mode"`
 	OpenAICodexDirectForceWS                   *bool    `json:"openai_codex_direct_force_ws"`
@@ -1766,7 +1768,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAICodexUserAgent
 		}(),
-		OpenAICockpitToolsCompat: boolValueOrDefault(req.OpenAICockpitToolsCompat, previousSettings.OpenAICockpitToolsCompat),
+		OpenAIAllowClaudeCodeCodexPlugin: boolValueOrDefault(req.OpenAIAllowClaudeCodeCodexPlugin, previousSettings.OpenAIAllowClaudeCodeCodexPlugin),
+		OpenAICockpitToolsCompat:         boolValueOrDefault(req.OpenAICockpitToolsCompat, previousSettings.OpenAICockpitToolsCompat),
 		OpenAIOAuthCompatMode: func() string {
 			if req.OpenAIOAuthCompatMode != nil {
 				return *req.OpenAIOAuthCompatMode
@@ -2202,6 +2205,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		RewriteMessageCacheControl:                 updatedSettings.RewriteMessageCacheControl,
 		AntigravityUserAgentVersion:                updatedSettings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                       updatedSettings.OpenAICodexUserAgent,
+		OpenAIAllowClaudeCodeCodexPlugin:           updatedSettings.OpenAIAllowClaudeCodeCodexPlugin,
 		OpenAICockpitToolsCompat:                   updatedSettings.OpenAICockpitToolsCompat,
 		OpenAIOAuthCompatMode:                      updatedSettings.OpenAIOAuthCompatMode,
 		OpenAICodexDirectForceWS:                   updatedSettings.OpenAICodexDirectForceWS,
@@ -2711,6 +2715,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.OpenAICodexUserAgent != after.OpenAICodexUserAgent {
 		changed = append(changed, "openai_codex_user_agent")
+	}
+	if before.OpenAIAllowClaudeCodeCodexPlugin != after.OpenAIAllowClaudeCodeCodexPlugin {
+		changed = append(changed, "openai_allow_claude_code_codex_plugin")
 	}
 	if before.OpenAICockpitToolsCompat != after.OpenAICockpitToolsCompat {
 		changed = append(changed, "openai_cockpit_tools_compat")

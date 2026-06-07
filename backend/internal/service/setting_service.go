@@ -141,6 +141,16 @@ const openAICodexUserAgentCacheTTL = 60 * time.Second
 const openAICodexUserAgentErrorTTL = 5 * time.Second
 const openAICodexUserAgentDBTimeout = 5 * time.Second
 
+// cachedOpenAIAllowCodexPlugin 缓存 Claude Code Codex 插件放行开关，避免请求热路径频繁读 DB。
+type cachedOpenAIAllowCodexPlugin struct {
+	value     bool
+	expiresAt int64 // unix nano
+}
+
+const openAIAllowCodexPluginCacheTTL = 60 * time.Second
+const openAIAllowCodexPluginErrorTTL = 5 * time.Second
+const openAIAllowCodexPluginDBTimeout = 5 * time.Second
+
 type cachedClientRequestDebugLog struct {
 	value     bool
 	expiresAt int64 // unix nano
@@ -149,6 +159,16 @@ type cachedClientRequestDebugLog struct {
 const clientRequestDebugLogCacheTTL = 60 * time.Second
 const clientRequestDebugLogErrorTTL = 5 * time.Second
 const clientRequestDebugLogDBTimeout = 5 * time.Second
+
+type cachedOpenAIQuotaAutoPauseSettings struct {
+	settings  OpsOpenAIAccountQuotaAutoPauseSettings
+	expiresAt int64 // unix nano
+}
+
+const openAIQuotaAutoPauseSettingsCacheTTL = 60 * time.Second
+const openAIQuotaAutoPauseSettingsErrorTTL = 5 * time.Second
+const openAIQuotaAutoPauseSettingsDBTimeout = 5 * time.Second
+const openAIQuotaAutoPauseSettingsRefreshKey = "openai_quota_auto_pause_settings"
 
 // DefaultSubscriptionGroupReader validates group references used by default subscriptions.
 type DefaultSubscriptionGroupReader interface {
@@ -172,8 +192,12 @@ type SettingService struct {
 	antigravityUAVersionSF    singleflight.Group
 	openAICodexUACache        atomic.Value // *cachedOpenAICodexUserAgent
 	openAICodexUASF           singleflight.Group
+	openAIAllowCodexCache     atomic.Value // *cachedOpenAIAllowCodexPlugin
+	openAIAllowCodexSF        singleflight.Group
 	clientRequestDebugCache   atomic.Value // *cachedClientRequestDebugLog
 	clientRequestDebugSF      singleflight.Group
+	openAIQuotaAutoPauseCache atomic.Value // *cachedOpenAIQuotaAutoPauseSettings
+	openAIQuotaAutoPauseSF    singleflight.Group
 }
 
 type ProviderDefaultGrantSettings struct {
@@ -1014,6 +1038,56 @@ func (s *SettingService) GetOpenAICodexUserAgent(ctx context.Context) string {
 	return fallback
 }
 
+// IsOpenAIAllowClaudeCodeCodexPluginEnabled 返回是否允许 Claude Code 的 Codex 插件访问 codex_cli_only 账号。
+// 调用方已在请求热路径确认账号需要官方客户端限制，这里使用短 TTL 缓存降低设置读取成本。
+func (s *SettingService) IsOpenAIAllowClaudeCodeCodexPluginEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	if cached, ok := s.openAIAllowCodexCache.Load().(*cachedOpenAIAllowCodexPlugin); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.value
+		}
+	}
+
+	result, _, _ := s.openAIAllowCodexSF.Do("openai_allow_codex_plugin_enabled", func() (any, error) {
+		if cached, ok := s.openAIAllowCodexCache.Load().(*cachedOpenAIAllowCodexPlugin); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.value, nil
+			}
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAIAllowCodexPluginDBTimeout)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAIAllowClaudeCodeCodexPlugin)
+		if err != nil {
+			ttl := openAIAllowCodexPluginErrorTTL
+			if errors.Is(err, ErrSettingNotFound) {
+				ttl = openAIAllowCodexPluginCacheTTL
+			} else {
+				slog.Warn("failed to get openai_allow_claude_code_codex_plugin setting", "error", err)
+			}
+			s.openAIAllowCodexCache.Store(&cachedOpenAIAllowCodexPlugin{
+				value:     false,
+				expiresAt: time.Now().Add(ttl).UnixNano(),
+			})
+			return false, nil
+		}
+		enabled := strings.TrimSpace(value) == "true"
+		s.openAIAllowCodexCache.Store(&cachedOpenAIAllowCodexPlugin{
+			value:     enabled,
+			expiresAt: time.Now().Add(openAIAllowCodexPluginCacheTTL).UnixNano(),
+		})
+		return enabled, nil
+	})
+	if enabled, ok := result.(bool); ok {
+		return enabled
+	}
+	return false
+}
+
 // SetOnUpdateCallback sets a callback function to be called when settings are updated
 // This is used for cache invalidation (e.g., HTML cache in frontend server)
 func (s *SettingService) SetOnUpdateCallback(callback func()) {
@@ -1815,6 +1889,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyRewriteMessageCacheControl] = strconv.FormatBool(settings.RewriteMessageCacheControl)
 	updates[SettingKeyAntigravityUserAgentVersion] = antigravity.NormalizeUserAgentVersion(settings.AntigravityUserAgentVersion)
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
+	updates[SettingKeyOpenAIAllowClaudeCodeCodexPlugin] = strconv.FormatBool(settings.OpenAIAllowClaudeCodeCodexPlugin)
 	settings.OpenAIOAuthCompatMode = normalizeOpenAIOAuthCompatMode(settings.OpenAIOAuthCompatMode, settings.OpenAICockpitToolsCompat)
 	settings.OpenAICockpitToolsCompat = settings.OpenAIOAuthCompatMode == config.GatewayOpenAIOAuthCompatModeCockpitTools
 	updates[SettingKeyOpenAIOAuthCompatMode] = settings.OpenAIOAuthCompatMode
@@ -1957,11 +2032,23 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		value:     codexUA,
 		expiresAt: time.Now().Add(openAICodexUserAgentCacheTTL).UnixNano(),
 	})
+	s.openAIAllowCodexSF.Forget("openai_allow_codex_plugin_enabled")
+	s.openAIAllowCodexCache.Store(&cachedOpenAIAllowCodexPlugin{
+		value:     settings.OpenAIAllowClaudeCodeCodexPlugin,
+		expiresAt: time.Now().Add(openAIAllowCodexPluginCacheTTL).UnixNano(),
+	})
 	s.clientRequestDebugSF.Forget("client_request_debug_log")
 	s.clientRequestDebugCache.Store(&cachedClientRequestDebugLog{
 		value:     settings.ClientRequestDebugLogEnabled,
 		expiresAt: time.Now().Add(clientRequestDebugLogCacheTTL).UnixNano(),
 	})
+	s.openAIQuotaAutoPauseSF.Forget(openAIQuotaAutoPauseSettingsRefreshKey)
+	if cached, _ := s.openAIQuotaAutoPauseCache.Load().(*cachedOpenAIQuotaAutoPauseSettings); cached != nil {
+		s.openAIQuotaAutoPauseCache.Store(&cachedOpenAIQuotaAutoPauseSettings{
+			settings:  cached.settings,
+			expiresAt: 0,
+		})
+	}
 	openAIAdvancedSchedulerSettingSF.Forget(openAIAdvancedSchedulerSettingKey)
 	openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 		enabled:   settings.OpenAIAdvancedSchedulerEnabled,
@@ -2892,6 +2979,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRewriteMessageCacheControl:                 strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyAntigravityUserAgentVersion:                "",
 		SettingKeyOpenAICodexUserAgent:                       "",
+		SettingKeyOpenAIAllowClaudeCodeCodexPlugin:           "false",
 		SettingKeyOpenAIOAuthCompatMode:                      s.defaultOpenAIOAuthCompatMode(),
 		SettingKeyOpenAICockpitToolsCompat:                   strconv.FormatBool(s.defaultOpenAICockpitToolsCompat()),
 		SettingKeyOpenAICodexDirectForceWS:                   strconv.FormatBool(s.defaultOpenAICodexDirectForceWS()),
@@ -3460,6 +3548,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result.AntigravityUserAgentVersion = antigravity.NormalizeUserAgentVersion(settings[SettingKeyAntigravityUserAgentVersion])
 	result.OpenAICodexUserAgent = strings.TrimSpace(settings[SettingKeyOpenAICodexUserAgent])
+	result.OpenAIAllowClaudeCodeCodexPlugin = settings[SettingKeyOpenAIAllowClaudeCodeCodexPlugin] == "true"
 	result.ClientRequestDebugLogEnabled = settings[SettingKeyClientRequestDebugLogEnabled] == "true"
 	result.CodexStabilityMode = normalizeCodexStabilityMode(settings[SettingKeyCodexStabilityMode])
 	result.CodexStabilityDynamicHeaderTimeoutEnabled = !isFalseSettingValue(settings[SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled])
@@ -5077,6 +5166,83 @@ func (s *SettingService) SetOpenAIPromptCacheSettings(ctx context.Context, setti
 		return fmt.Errorf("marshal openai prompt cache settings: %w", err)
 	}
 	return s.settingRepo.Set(ctx, SettingKeyOpenAIPromptCacheSettings, string(data))
+}
+
+// GetOpenAIQuotaAutoPauseSettings 返回 OpenAI quota 自动暂停全局默认阈值。
+// 该方法位于请求调度热路径，只读内存缓存；缓存过期时异步刷新，不阻塞真实请求。
+func (s *SettingService) GetOpenAIQuotaAutoPauseSettings(ctx context.Context) OpsOpenAIAccountQuotaAutoPauseSettings {
+	if s == nil {
+		return OpsOpenAIAccountQuotaAutoPauseSettings{}
+	}
+	cached, _ := s.openAIQuotaAutoPauseCache.Load().(*cachedOpenAIQuotaAutoPauseSettings)
+	now := time.Now().UnixNano()
+	if cached != nil && now < cached.expiresAt {
+		return cached.settings
+	}
+	s.openAIQuotaAutoPauseSF.DoChan(openAIQuotaAutoPauseSettingsRefreshKey, func() (any, error) {
+		s.refreshOpenAIQuotaAutoPauseSettings(context.Background())
+		return nil, nil
+	})
+	if cached != nil {
+		return cached.settings
+	}
+	return OpsOpenAIAccountQuotaAutoPauseSettings{}
+}
+
+// WarmOpenAIQuotaAutoPauseSettings 同步加载 quota 自动暂停设置到内存缓存。
+func (s *SettingService) WarmOpenAIQuotaAutoPauseSettings(ctx context.Context) OpsOpenAIAccountQuotaAutoPauseSettings {
+	if s == nil {
+		return OpsOpenAIAccountQuotaAutoPauseSettings{}
+	}
+	s.refreshOpenAIQuotaAutoPauseSettings(ctx)
+	cached, _ := s.openAIQuotaAutoPauseCache.Load().(*cachedOpenAIQuotaAutoPauseSettings)
+	if cached == nil {
+		return OpsOpenAIAccountQuotaAutoPauseSettings{}
+	}
+	return cached.settings
+}
+
+// refreshOpenAIQuotaAutoPauseSettings 从 ops_advanced_settings 读取最新阈值并写入内存缓存。
+func (s *SettingService) refreshOpenAIQuotaAutoPauseSettings(ctx context.Context) {
+	if s == nil || s.settingRepo == nil {
+		return
+	}
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), openAIQuotaAutoPauseSettingsDBTimeout)
+	defer cancel()
+
+	settings := OpsOpenAIAccountQuotaAutoPauseSettings{}
+	ttl := openAIQuotaAutoPauseSettingsCacheTTL
+	raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpsAdvancedSettings)
+	if err == nil {
+		cfg := defaultOpsAdvancedSettings()
+		if strings.TrimSpace(raw) != "" {
+			if jsonErr := json.Unmarshal([]byte(raw), cfg); jsonErr == nil {
+				normalizeOpsAdvancedSettings(cfg)
+			}
+		}
+		settings = cfg.OpenAIAccountQuotaAutoPause
+	} else if !errors.Is(err, ErrSettingNotFound) {
+		if prior, _ := s.openAIQuotaAutoPauseCache.Load().(*cachedOpenAIQuotaAutoPauseSettings); prior != nil {
+			settings = prior.settings
+		}
+		ttl = openAIQuotaAutoPauseSettingsErrorTTL
+	}
+
+	s.openAIQuotaAutoPauseCache.Store(&cachedOpenAIQuotaAutoPauseSettings{
+		settings:  settings,
+		expiresAt: time.Now().Add(ttl).UnixNano(),
+	})
+}
+
+// SetOpenAIQuotaAutoPauseSettings 直接写入内存缓存，供 Ops 高级设置保存后即时生效。
+func (s *SettingService) SetOpenAIQuotaAutoPauseSettings(settings OpsOpenAIAccountQuotaAutoPauseSettings) {
+	if s == nil {
+		return
+	}
+	s.openAIQuotaAutoPauseCache.Store(&cachedOpenAIQuotaAutoPauseSettings{
+		settings:  settings,
+		expiresAt: time.Now().Add(openAIQuotaAutoPauseSettingsCacheTTL).UnixNano(),
+	})
 }
 
 // SetStreamTimeoutSettings 设置流超时处理配置

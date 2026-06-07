@@ -372,6 +372,7 @@ const baseSettingsResponse = {
   rewrite_message_cache_control: false,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
+  openai_allow_claude_code_codex_plugin: false,
   payment_enabled: true,
   payment_min_amount: 1,
   payment_max_amount: 10000,
