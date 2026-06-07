@@ -114,3 +114,50 @@ func TestRateLimitService_HandleUpstreamError_OpenAIImageGenerationPermissionSki
 	require.Empty(t, blocker.accounts)
 	require.Equal(t, []int64{1}, counter.counts)
 }
+
+func TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceDisablesSelectedAPIKey(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	counter := &openAI403CounterCacheStub{counts: []int64{1}}
+	blocker := &runtimeBlockRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetOpenAI403CounterCache(counter)
+	service.SetAccountRuntimeBlocker(blocker)
+	account := &Account{
+		ID:       304,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys":                   []any{"key-a", "key-b"},
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       403,
+					"keywords":         []any{"insufficient account balance"},
+					"duration_minutes": 10,
+				},
+			},
+		},
+	}
+	require.Equal(t, "key-a", account.GetAPIKey())
+
+	shouldDisable := service.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusForbidden,
+		http.Header{},
+		[]byte(`{"error":{"code":"insufficient_quota","message":"insufficient account balance"}}`),
+	)
+
+	require.False(t, shouldDisable)
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, 0, repo.rateLimitedCalls)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.NotNil(t, repo.lastCredentials)
+	disabled, ok := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, disabled, FingerprintAPIKey("key-a"))
+	require.Equal(t, []string{"key-b"}, account.GetAPIKeys())
+	require.Empty(t, blocker.accounts)
+	require.Equal(t, []int64{1}, counter.counts)
+}

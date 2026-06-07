@@ -169,6 +169,18 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		return false
 	}
 
+	// API Key 列表账号的单 Key 错误必须先写入 key 状态，避免通用临时不可调度规则误伤整个账号。
+	apiKeyDisabled := false
+	if account.Type == AccountTypeAPIKey && shouldDisableCurrentAPIKey(statusCode, responseBody) {
+		apiKeyDisabled = disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody))
+		if apiKeyDisabled && statusCode != 401 {
+			return false
+		}
+		if apiKeyDisabled && len(account.GetAPIKeys()) > 0 {
+			return false
+		}
+	}
+
 	// 先尝试临时不可调度规则（401除外）
 	// 如果匹配成功，直接返回，不执行后续禁用逻辑
 	if statusCode != 401 {
@@ -203,7 +215,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		}
 		// 其他 400 错误（如参数问题）不处理，不禁用账号
 	case 401:
-		if account.Type == AccountTypeAPIKey && disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody)) {
+		if !apiKeyDisabled && account.Type == AccountTypeAPIKey && disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody)) {
 			shouldDisable = len(account.GetAPIKeys()) == 0
 			if !shouldDisable {
 				break
@@ -321,7 +333,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		)
 		shouldDisable = s.handle403(ctx, account, upstreamMsg, responseBody)
 	case 429:
-		if account.Type == AccountTypeAPIKey {
+		if !apiKeyDisabled && account.Type == AccountTypeAPIKey {
 			if disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody)) {
 				shouldDisable = false
 				break

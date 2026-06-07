@@ -142,3 +142,36 @@ func TestHandleUpstreamError429_OpenAIAPIKeyDisablesSelectedKeyOnly(t *testing.T
 	require.Contains(t, disabled, FingerprintAPIKey("key-a"))
 	require.Equal(t, []string{"key-b"}, account.GetAPIKeys())
 }
+
+// 确认 API Key 列表账号配置了临时不可调度规则时，429 仍优先停用本次 Key，不把整个账号打入冷却。
+func TestHandleUpstreamError429_OpenAIAPIKeyDisablesSelectedKeyBeforeTempUnschedulable(t *testing.T) {
+	accountRepo := &rateLimit429AccountRepoStub{}
+	svc := NewRateLimitService(accountRepo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:       46,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys":                   []any{"key-a", "key-b"},
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       429,
+					"keywords":         []any{"slow down"},
+					"duration_minutes": 10,
+				},
+			},
+		},
+	}
+	require.Equal(t, "key-a", account.GetAPIKey())
+
+	shouldDisable := svc.HandleUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, []byte(`{"error":{"message":"slow down"}}`))
+
+	require.False(t, shouldDisable)
+	require.Zero(t, accountRepo.rateLimitCalls)
+	require.NotNil(t, accountRepo.updatedCredentials)
+	disabled, ok := accountRepo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, disabled, FingerprintAPIKey("key-a"))
+	require.Equal(t, []string{"key-b"}, account.GetAPIKeys())
+}

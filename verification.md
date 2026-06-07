@@ -2392,3 +2392,11 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 目标：并行完成 `docs/JUHE_AI_FEATURE_20250605_BORROWABLE_FEATURES_CN.md` 中 P1 的半开/运行态阻塞可见化、异步副作用队列复用确认、断流审计元数据补齐。
 - 变更：`OpenAIGatewayService` 增加运行态阻塞 reason 快照；账号有效可用性新增 `precheck_pending`、`local_suppressed`、`precheck_failed` 并进入管理端 `effective_availability` 徽章；断流审计 `action_metadata` 新增 `stream_action`、`avoidance_scope`、`path_health_state`、`retry_after`；复核 `/responses` usage 记录继续复用 `UsageRecordWorkerPool`，不新增独立 side-effect queue。
 - 验证：`go test -tags unit ./internal/service -run "TestOpenAIRuntimeBlock_SnapshotIncludesReasonAndUntil|TestDeriveAccountEffectiveAvailability|TestOpenAIStreamActionMetadataIncludesPathHealthAuditFields|TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata" -count=1` 通过；相关 OpenAI path-health/scheduler/gateway 切片通过；`go test ./internal/service -run TestDoesNotExist -count=1`、`go test ./cmd/server -run TestDoesNotExist -count=1` 通过；前端 `npm run typecheck` 通过。
+
+## 账号 API Key 列表 429/403 单 Key 优先停用验证
+
+- 日期：2026-06-07T18:15:59+08:00
+- 执行者：Devil
+- 目标：修复 API Key 列表账号中单个 Key 返回 429 或 403 余额不足时，Key 状态不变且账号被限流/临时不可调度的问题；确认每个账号的 Key 列表删除能力仍可用。
+- 变更：`RateLimitService.HandleUpstreamError` 在通用 `tryTempUnschedulable` 前先处理 `shouldDisableCurrentAPIKey` 覆盖的 API Key 错误，429 与 403 余额不足会优先把 `LastSelectedAPIKey()` 写入 `api_keys_disabled`；新增 429/403 temp rule 场景回归测试。
+- 验证：红测命令先失败于 `account_temp_unschedulable` 抢先处理；修复后同命令通过。`go test -tags unit ./internal/service -run "TestHandleUpstreamError429|TestHandle429|TestRateLimitService_HandleUpstreamError_OpenAI403|TestAdminService_DeleteAccountAPIKey|TestAccountRemoveAPIKey|TestGatewayServiceGetAccessTokenUsesCredentialAPIKeys" -count=1` 通过；`go test ./internal/service -run TestDoesNotExist -count=1` 通过；`npm run test:run -- src/components/account/__tests__/EditAccountModal.spec.ts` 通过 15/15；`npm run typecheck` 通过。
