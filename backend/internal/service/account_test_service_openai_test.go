@@ -614,3 +614,107 @@ func TestAccountTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *tes
 	require.Contains(t, recorder.Body.String(), "/v1/chat/completions")
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
+
+func TestAccountTestService_OpenAIChatCompletionsPathDisablesCurrentAPIKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := newTestContext()
+
+	repo := &openAIAccountTestRepo{}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(http.StatusUnauthorized, `{"error":{"message":"invalid api key"}}`),
+	}}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          95,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-chat-bad", "key-chat-ok"},
+			"base_url": "https://compat-upstream.example",
+		},
+		Extra: map[string]any{openai_compat.ExtraKeyResponsesSupported: false},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	require.Error(t, err)
+	require.Zero(t, repo.setErrorID)
+	require.NotNil(t, repo.updatedCredentials)
+	disabled, ok := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, disabled, FingerprintAPIKey("key-chat-bad"))
+	require.Equal(t, []string{"key-chat-ok"}, account.GetAPIKeys())
+}
+
+func TestAccountTestService_OpenAICompactPathDisablesCurrentAPIKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := newTestContext()
+
+	repo := &openAIAccountTestRepo{}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(http.StatusTooManyRequests, `{"error":{"message":"slow down"}}`),
+	}}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          96,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-compact-bad", "key-compact-ok"},
+			"base_url": "https://compat-upstream.example",
+		},
+	}
+
+	err := svc.testOpenAICompactConnection(ctx, account, "gpt-5.4")
+	require.Error(t, err)
+	require.Zero(t, repo.rateLimitedID)
+	require.Zero(t, repo.setErrorID)
+	require.NotNil(t, repo.updatedCredentials)
+	disabled, ok := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, disabled, FingerprintAPIKey("key-compact-bad"))
+	require.Equal(t, []string{"key-compact-ok"}, account.GetAPIKeys())
+}
+
+func TestAccountTestService_OpenAIImagePathDisablesCurrentAPIKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := newTestContext()
+
+	repo := &openAIAccountTestRepo{}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(http.StatusBadRequest, `{"error":{"code":"insufficient_quota","message":"insufficient balance"}}`),
+	}}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          97,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-image-bad", "key-image-ok"},
+			"base_url": "https://compat-upstream.example",
+		},
+	}
+
+	err := svc.testOpenAIImageAPIKey(ctx, context.Background(), account, "gpt-image-1", "test image")
+	require.Error(t, err)
+	require.Zero(t, repo.setErrorID)
+	require.NotNil(t, repo.updatedCredentials)
+	disabled, ok := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, disabled, FingerprintAPIKey("key-image-bad"))
+	require.Equal(t, []string{"key-image-ok"}, account.GetAPIKeys())
+}

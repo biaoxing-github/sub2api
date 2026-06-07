@@ -386,6 +386,78 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyInsufficientBalance403
 	require.Equal(t, 0, repo.updateCredentialsCalls)
 }
 
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyBadRequestQuotaDisablesSelectedKey(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:       205,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-bad-quota", "key-ok"},
+		},
+	}
+	require.Equal(t, "key-bad-quota", account.GetAPIKey())
+
+	shouldDisable := service.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusBadRequest,
+		http.Header{},
+		[]byte(`{"error":{"code":"insufficient_quota","message":"insufficient balance"}}`),
+	)
+
+	require.False(t, shouldDisable)
+	require.Equal(t, 0, repo.rateLimitedCalls)
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	disabled, ok := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, disabled, FingerprintAPIKey("key-bad-quota"))
+	require.Equal(t, []string{"key-ok"}, account.GetAPIKeys())
+}
+
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyForbiddenInvalidKeyDisablesSelectedKey(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	counter := &openAI403CounterCacheStub{counts: []int64{1}}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetOpenAI403CounterCache(counter)
+	account := &Account{
+		ID:       206,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-revoked", "key-ok"},
+		},
+	}
+	require.Equal(t, "key-revoked", account.GetAPIKey())
+
+	shouldDisable := service.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusForbidden,
+		http.Header{},
+		[]byte(`{"error":{"message":"This API key has been disabled"}}`),
+	)
+
+	require.False(t, shouldDisable)
+	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	disabled, ok := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, disabled, FingerprintAPIKey("key-revoked"))
+	require.Equal(t, []string{"key-ok"}, account.GetAPIKeys())
+	require.Equal(t, []int64{1}, counter.counts)
+}
+
+func TestShouldDisableCurrentAPIKeySkipsForbiddenPolicy(t *testing.T) {
+	require.False(t, shouldDisableCurrentAPIKey(
+		http.StatusForbidden,
+		[]byte(`{"error":{"message":"workspace forbidden by policy","type":"invalid_request_error"}}`),
+	))
+}
+
 func TestNormalizedCodexLimits_OnlySecondaryData(t *testing.T) {
 	// Test when only secondary has data, no window_minutes
 	sUsed := 60.0

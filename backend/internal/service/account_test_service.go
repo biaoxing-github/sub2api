@@ -669,18 +669,15 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 				if account.Type == AccountTypeAPIKey && shouldFailoverOpenAIRequestBaseURLResponse(resp.StatusCode, extractUpstreamErrorMessage(body), body) && urlIdx+1 < len(urlsForAttempt) {
 					continue
 				}
+				keyDisabled := s.disableOpenAIAPIKeyFromTestError(ctx, account, authToken, resp.StatusCode, body)
 				if resp.StatusCode == http.StatusTooManyRequests {
 					s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 				}
-				if account.Type == AccountTypeAPIKey && shouldDisableCurrentAPIKey(resp.StatusCode, body) {
-					if disabled := disableAccountAPIKey(ctx, s.accountRepo, account, authToken, disableAPIKeyReason(resp.StatusCode, body)); disabled {
-						if len(account.GetAPIKeys()) > 0 {
-							break
-						}
-					}
+				if keyDisabled && len(account.GetAPIKeys()) > 0 {
+					break
 				}
 				// 401 Unauthorized: 标记账号为永久错误
-				if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+				if !keyDisabled && resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
 					errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 					_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 				}
@@ -742,10 +739,11 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusTooManyRequests {
+		keyDisabled := s.disableOpenAIAPIKeyFromTestError(ctx, account, authToken, resp.StatusCode, body)
+		if !keyDisabled && resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+		if !keyDisabled && resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
 			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
@@ -842,6 +840,8 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 
+	keyDisabled := s.disableOpenAIAPIKeyFromTestError(ctx, account, authToken, resp.StatusCode, body)
+
 	if s.accountRepo != nil {
 		updates := buildOpenAICompactProbeExtraUpdates(resp, body, nil, time.Now())
 		if codexUpdates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(codexUpdates) > 0 {
@@ -853,13 +853,13 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 			s.applyCodexSnapshotRateLimit(ctx, account, updates)
 		}
 		// 探测如返回 429,主动同步限流状态,避免后续短时间内继续选中。
-		if resp.StatusCode == http.StatusTooManyRequests {
+		if !keyDisabled && resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+		if !keyDisabled && resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
@@ -869,6 +869,14 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	s.sendEvent(c, TestEvent{Type: "content", Text: "Compact probe succeeded"})
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 	return nil
+}
+
+// disableOpenAIAPIKeyFromTestError 在账号测试旁路中把可归因到当前 Key 的错误写入禁用列表。
+func (s *AccountTestService) disableOpenAIAPIKeyFromTestError(ctx context.Context, account *Account, apiKey string, statusCode int, body []byte) bool {
+	if account == nil || account.Type != AccountTypeAPIKey || !shouldDisableCurrentAPIKey(statusCode, body) {
+		return false
+	}
+	return disableAccountAPIKey(ctx, s.accountRepo, account, apiKey, disableAPIKeyReason(statusCode, body))
 }
 
 func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, account *Account, headers http.Header, body []byte) {
@@ -1621,6 +1629,7 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		s.disableOpenAIAPIKeyFromTestError(ctx, account, authToken, resp.StatusCode, body)
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
