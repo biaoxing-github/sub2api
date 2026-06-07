@@ -2506,3 +2506,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 变更：`AGENTS.md` 的发布规则改为当前版本线从 `sub2api:v0.1.134` 向 `sub2api:v0.1.134.N` 补丁延伸，本轮目标版本固定为 `sub2api:v0.1.134.1`；构建示例同步改为 `$version = "v0.1.134.1"`。
 - 清理：误建的本地 Git tag `v0.1.135` 已删除；误构建的本地镜像 `sub2api:v0.1.135` 已删除，后续不使用该版本。
 - 验证：`git tag --list 'v0.1.134*' 'v0.1.135'` 仅保留 `v0.1.134`；`docker images` 已查不到 `sub2api:v0.1.134` 或 `sub2api:v0.1.135` 发布镜像。
+
+## 2026-06-07 22:45 +08:00 - 8080 502 恢复与 blue/green 发布流程修正
+
+- 执行者：Devil
+- 问题：部署时直接重建了当前 active 的 `sub2api-green`，没有先起新的 idle 容器验证，导致 nginx upstream 指向的旧容器连接失效，公网 `http://localhost:8080/responses` 一度返回 `502 Bad Gateway`。
+- 恢复：执行 `docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 后，`http://127.0.0.1:8080/health`、`http://127.0.0.1:18081/health`、`http://127.0.0.1:18082/health` 均恢复 200。
+- 流程修正：新增 `D:\sub2api-deploy\docker-compose.blue.yml`，启动独立 `sub2api-blue`，默认镜像为上一回滚版本 `sub2api:v0134-absorption-check`，端口为 `127.0.0.1:18083:8080`。当前 active upstream 保持 `sub2api-green:8080`，后续当 active 为 green 时，下一版必须先部署到 blue、验证 blue、再修改 `active.conf` 并 reload nginx，禁止重建 active green。
+- 当前状态：`sub2api-green` 运行 `sub2api:v0.1.134.1` 且 healthy；`sub2api-blue` 运行 `sub2api:v0134-absorption-check` 且 healthy；`sub2api-proxy` 继续绑定 `0.0.0.0:8080` 和 `127.0.0.1:18081`；未重启 PostgreSQL 与 Redis。
+- 验证：稳定等待 65 秒后，`8080/health`、`18081/health`、`18082/health`、`18083/health`、根路径均返回 200；`GET /api/v1/admin/dashboard/stats` 未登录返回 401；`POST /responses` 未登录返回 401，确认不再是 nginx 502。
+- 日志：宽泛 `bind` 关键字命中 4 条 `openai.ws_bind_response_account_failed` WARN，内容为客户端取消导致的 `context canceled`，不是端口绑定失败；更精确过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 对 `sub2api-green`、`sub2api-blue`、`sub2api-proxy` 均为 0。
