@@ -2524,3 +2524,12 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 变更：`AGENTS.md` 明确发布前必须先读取 `D:\sub2api-deploy\proxy\upstreams\active.conf` 判断 active 颜色；新版本只能部署到相反颜色的 idle 容器；idle 容器完全启动、候选端口可访问、健康稳定并完成冒烟后，才允许修改 upstream 并 reload nginx；切流后旧 active 必须继续运行作为回滚目标。文档中补充了 green 新/blue 旧时下一次发 blue，再下一次发 green 的交替示例。
 - 版本：`backend/cmd/server/VERSION` 从 `0.1.133` 改为 `0.1.134`，运行时默认版本来源仍为 `cmd/server/main.go` embed 的 `VERSION` 文件，构建期 `-ldflags main.Version=...` 仍可覆盖。
 - 验证：`go test ./cmd/server -run TestDoesNotExist -count=1` 通过；`go run ./cmd/server --version` 输出 `Sub2API 0.1.134 (commit: unknown, built: unknown)`；`git diff --check -- AGENTS.md backend/cmd/server/VERSION` 通过，仅输出既有 LF-to-CRLF 工作区提示。
+
+## 2026-06-07 23:09 +08:00 - v0.1.134.2 blue 部署与切流验证
+
+- 执行者：Devil
+- 提交与标签：`ac81d0b95 docs(deploy): 固化蓝绿交替发布规则`；Git tag `v0.1.134.2` 指向该提交。
+- 构建：首次按默认基础镜像构建时，Docker Hub 阿里镜像源对 `node:24-alpine`、`golang:1.26.3-alpine`、`alpine:3.21` 元数据请求返回 403；随后使用 `m.daocloud.io/docker.io/library/...` 基础镜像参数重试成功，生成 `sub2api:v0.1.134.2`，label revision 为 `ac81d0b9535e`，运行时版本为 `0.1.134`。
+- 部署：部署前 `active.conf` 指向 `sub2api-green:8080`，因此按新规则只重建 idle 的 `sub2api-blue`；`D:\sub2api-deploy\docker-compose.blue.yml` 默认镜像更新为 `sub2api:v0.1.134.2`，执行 `docker compose -f docker-compose.blue.yml up -d --no-deps --force-recreate sub2api-blue`。未重启 PostgreSQL、Redis、proxy 或 active green。
+- blue 候选验证：等待 65 秒后，`http://127.0.0.1:18083/health` 返回 200，根路径 200，`GET /api/v1/admin/dashboard/stats` 未登录返回 401，`POST /responses` 未登录返回 401；`docker exec sub2api-blue /app/sub2api --version` 输出 `Sub2API 0.1.134 (commit: ac81d0b9535e, built: 2026-06-07T15:05:08Z)`；精确错误日志过滤为 0。
+- 切流验证：将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-green:8080` 改为 `sub2api-blue:8080`，`docker exec sub2api-proxy nginx -t` 与 reload 通过；公网 `http://127.0.0.1:8080/health` 200，`18081/health` 200，`18083/health` 200，保留的 green `18082/health` 200，根路径 200，admin 未登录 401，`POST /responses` 未登录 401；`sub2api-blue` 为 active healthy，`sub2api-green` 仍运行 `sub2api:v0.1.134.1` 作为回滚。
