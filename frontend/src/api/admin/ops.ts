@@ -8,6 +8,7 @@ import { apiClient } from '../client'
 import type { PaginatedResponse } from '@/types'
 
 export type OpsQueryMode = 'auto' | 'raw' | 'preagg'
+export type OpsStreamActionLabel = 'retry_no_avoidance' | 'retry_next_account' | 'avoid_account_ttl' | 'avoid_upstream_bucket_ttl'
 
 export interface OpsRequestOptions {
   signal?: AbortSignal
@@ -23,7 +24,7 @@ export type OpsUpstreamErrorEvent = {
   upstream_request_id?: string
   upstream_url?: string
   kind?: string
-  action_label?: string
+  action_label?: OpsStreamActionLabel | string
   action_metadata?: Record<string, string>
   message?: string
   detail?: string

@@ -7,6 +7,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { useAppStore } from '@/stores'
 import { opsAPI, type OpsCodexDiagnosis, type OpsRequestDetailsParams, type OpsRequestDetail } from '@/api/admin/ops'
 import { parseTimeRangeMinutes, formatDateTime } from '../utils/opsFormatters'
+import { resolveOpsStreamActionTemplate, summarizeOpsActionMetadata, type OpsActionMetadataField, type OpsActionTemplate } from '../utils/actionTemplates'
 
 export interface OpsRequestDetailsPreset {
   title: string
@@ -243,6 +244,38 @@ function formatDiagnosisValue(key: string, value: unknown): string {
   if (typeof value === 'object') return JSON.stringify(value, null, 2)
   return String(value)
 }
+
+function timelineDetails(event: { details?: Record<string, unknown> }): Record<string, unknown> {
+  return event.details && typeof event.details === 'object' ? event.details : {}
+}
+
+function timelineActionMetadata(event: { details?: Record<string, unknown> }): Record<string, unknown> {
+  const details = timelineDetails(event)
+  const raw = details.action_metadata
+  const metadata = raw && typeof raw === 'object' && !Array.isArray(raw) ? { ...(raw as Record<string, unknown>) } : {}
+  const actionLabel = details.action_label || metadata.action_label || metadata.stream_action
+  if (actionLabel) {
+    metadata.action_label = String(actionLabel)
+  }
+  return metadata
+}
+
+function timelineActionLabel(event: { details?: Record<string, unknown> }): string {
+  const metadata = timelineActionMetadata(event)
+  return String(metadata.action_label || metadata.stream_action || '')
+}
+
+function timelineActionTemplate(event: { details?: Record<string, unknown> }): OpsActionTemplate {
+  return resolveOpsStreamActionTemplate(timelineActionLabel(event))
+}
+
+function timelineActionFields(event: { details?: Record<string, unknown> }): OpsActionMetadataField[] {
+  return summarizeOpsActionMetadata(timelineActionMetadata(event))
+}
+
+function hasTimelineActionTemplate(event: { details?: Record<string, unknown> }): boolean {
+  return timelineActionLabel(event) !== '' || timelineActionFields(event).length > 0
+}
 </script>
 
 <template>
@@ -468,7 +501,30 @@ function formatDiagnosisValue(key: string, value: unknown): string {
                     {{ event.phase }} / {{ event.event_type }}
                   </td>
                   <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
-                    {{ event.reason || '-' }}
+                    <div class="space-y-2">
+                      <div>{{ event.reason || '-' }}</div>
+                      <div
+                        v-if="hasTimelineActionTemplate(event)"
+                        class="rounded-md border border-blue-100 bg-blue-50/70 px-2.5 py-2 text-[11px] leading-5 text-blue-900 dark:border-blue-900/40 dark:bg-blue-900/10 dark:text-blue-100"
+                      >
+                        <div class="font-bold">
+                          {{ t(timelineActionTemplate(event).labelKey) }}
+                        </div>
+                        <div class="mt-0.5 text-blue-800 dark:text-blue-200">
+                          {{ t(timelineActionTemplate(event).descriptionKey) }}
+                        </div>
+                        <div v-if="timelineActionFields(event).length > 0" class="mt-1 flex flex-wrap gap-1.5">
+                          <span
+                            v-for="field in timelineActionFields(event)"
+                            :key="field.key"
+                            class="inline-flex max-w-full items-center gap-1 rounded bg-white/80 px-1.5 py-0.5 font-mono text-[10px] text-blue-900 ring-1 ring-blue-100 dark:bg-dark-800/70 dark:text-blue-100 dark:ring-blue-900/40"
+                          >
+                            <span class="shrink-0 font-sans font-semibold">{{ t(field.labelKey) }}:</span>
+                            <span class="truncate">{{ field.value }}</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </td>
                 </tr>
               </tbody>

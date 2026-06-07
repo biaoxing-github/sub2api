@@ -120,6 +120,21 @@ func TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata(t *testin
 	require.Equal(t, "request", err.ActionMetadata["avoidance_scope"])
 }
 
+func TestOpenAIHTTPResponsePolicyCarriesActionMetadata(t *testing.T) {
+	account := &Account{ID: 23, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	policy := openAIHTTPResponseErrorPolicy(http.StatusTooManyRequests, "rate limit exceeded", nil)
+	metadata := (&OpenAIGatewayService{}).openAIHTTPResponseActionMetadata(policy, false, account, "req_http_1", http.StatusTooManyRequests)
+
+	require.Equal(t, OpenAIStreamActionAvoidAccountTTL, policy.ActionLabel)
+	require.Equal(t, string(OpenAIStreamActionAvoidAccountTTL), metadata["action_label"])
+	require.Equal(t, string(OpenAIStreamActionAvoidAccountTTL), metadata["stream_action"])
+	require.Equal(t, string(openAIUpstreamErrorPolicyPhaseHTTPResponse), metadata["reason_scope"])
+	require.Equal(t, string(openAIUpstreamErrorPolicyPhaseHTTPResponse), metadata["error_phase"])
+	require.Equal(t, "account", metadata["avoidance_scope"])
+	require.Equal(t, "429", metadata["upstream_status"])
+	require.Equal(t, "req_http_1", metadata["upstream_request_id"])
+}
+
 func TestOpenAIStreamActionMetadataIncludesPathHealthAuditFields(t *testing.T) {
 	retryAfter := time.Now().UTC().Add(2 * time.Minute)
 	account := &Account{ID: 12, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}

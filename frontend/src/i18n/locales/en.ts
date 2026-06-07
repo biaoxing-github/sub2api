@@ -5108,6 +5108,38 @@ export default {
       errorTrend: 'Error Trend',
       errorDistribution: 'Error Distribution',
       switchRate: 'Avg switches',
+      actionTemplates: {
+        title: 'Action templates',
+        actions: {
+          observe: {
+            label: 'Observe only',
+            description: 'Records the upstream signal without avoiding an account or path.'
+          },
+          retryNoAvoidance: {
+            label: 'Return retryable failure',
+            description: 'Keeps SSE consistency after client output and returns a retryable failure without cooldown.'
+          },
+          retryNextAccount: {
+            label: 'Retry next account',
+            description: 'Avoids the failed account for this request and tries the next account without long-lived cooldown.'
+          },
+          avoidAccountTtl: {
+            label: 'Avoid account briefly',
+            description: 'Applies a short TTL account cooldown for quota, auth, or rate-limit failures.'
+          },
+          avoidUpstreamBucketTtl: {
+            label: 'Avoid upstream bucket briefly',
+            description: 'Applies a short TTL downgrade to the related proxy, baseURL, or transport path bucket.'
+          }
+        },
+        fields: {
+          streamRule: 'Stream rule',
+          avoidanceScope: 'Avoidance scope',
+          reasonScope: 'Reason phase',
+          retryAfter: 'Retry after',
+          pathHealthState: 'Path state'
+        }
+      },
       // Health Score & Diagnosis
       health: 'Health',
       healthCondition: 'Health Condition',

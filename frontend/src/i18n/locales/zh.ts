@@ -5264,6 +5264,38 @@ export default {
       errorTrend: '错误趋势',
       errorDistribution: '错误分布',
       switchRate: '平均账号切换',
+      actionTemplates: {
+        title: '动作说明',
+        actions: {
+          observe: {
+            label: '观察记录',
+            description: '仅记录本次上游现象，不触发账号或线路避让。'
+          },
+          retryNoAvoidance: {
+            label: '返回可重试失败',
+            description: '已向客户端输出后保持 SSE 一致性，仅返回可重试失败，不冷却账号或线路。'
+          },
+          retryNextAccount: {
+            label: '切换下一个账号',
+            description: '当前请求避开本次失败账号并尝试下一账号，不写入长期冷却。'
+          },
+          avoidAccountTtl: {
+            label: '账号短期避让',
+            description: '命中额度、授权或限流类问题时，当前账号进入短 TTL 冷却。'
+          },
+          avoidUpstreamBucketTtl: {
+            label: '上游桶短期避让',
+            description: '命中线路、代理、baseURL 或传输类问题时，同路径桶短期降权。'
+          }
+        },
+        fields: {
+          streamRule: '流规则',
+          avoidanceScope: '避让范围',
+          reasonScope: '原因阶段',
+          retryAfter: '恢复时间',
+          pathHealthState: '线路状态'
+        }
+      },
       // Health Score & Diagnosis
       health: '健康',
       healthCondition: '健康状况',
