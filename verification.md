@@ -2516,3 +2516,11 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 当前状态：`sub2api-green` 运行 `sub2api:v0.1.134.1` 且 healthy；`sub2api-blue` 运行 `sub2api:v0134-absorption-check` 且 healthy；`sub2api-proxy` 继续绑定 `0.0.0.0:8080` 和 `127.0.0.1:18081`；未重启 PostgreSQL 与 Redis。
 - 验证：稳定等待 65 秒后，`8080/health`、`18081/health`、`18082/health`、`18083/health`、根路径均返回 200；`GET /api/v1/admin/dashboard/stats` 未登录返回 401；`POST /responses` 未登录返回 401，确认不再是 nginx 502。
 - 日志：宽泛 `bind` 关键字命中 4 条 `openai.ws_bind_response_account_failed` WARN，内容为客户端取消导致的 `context canceled`，不是端口绑定失败；更精确过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 对 `sub2api-green`、`sub2api-blue`、`sub2api-proxy` 均为 0。
+
+## 2026-06-07 22:53 +08:00 - 蓝绿交替规则固化与本地版本号校正
+
+- 执行者：Devil
+- 目标：按用户要求，把 blue/green 交替发布规则写入 `AGENTS.md`，并把本地 sub2api 代码内置版本从 `0.1.133` 改为 `0.1.134`。
+- 变更：`AGENTS.md` 明确发布前必须先读取 `D:\sub2api-deploy\proxy\upstreams\active.conf` 判断 active 颜色；新版本只能部署到相反颜色的 idle 容器；idle 容器完全启动、候选端口可访问、健康稳定并完成冒烟后，才允许修改 upstream 并 reload nginx；切流后旧 active 必须继续运行作为回滚目标。文档中补充了 green 新/blue 旧时下一次发 blue，再下一次发 green 的交替示例。
+- 版本：`backend/cmd/server/VERSION` 从 `0.1.133` 改为 `0.1.134`，运行时默认版本来源仍为 `cmd/server/main.go` embed 的 `VERSION` 文件，构建期 `-ldflags main.Version=...` 仍可覆盖。
+- 验证：`go test ./cmd/server -run TestDoesNotExist -count=1` 通过；`go run ./cmd/server --version` 输出 `Sub2API 0.1.134 (commit: unknown, built: unknown)`；`git diff --check -- AGENTS.md backend/cmd/server/VERSION` 通过，仅输出既有 LF-to-CRLF 工作区提示。
