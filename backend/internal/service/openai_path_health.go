@@ -145,6 +145,21 @@ func OpenAIPathHealthKeyForAccountBaseURL(account *Account, transport string, re
 	return key
 }
 
+// OpenAIPathHealthBucketKeyForAccount 构造同代理、同上游、同传输的聚合健康桶 key。
+// 聚合桶不带 AccountID，便于一个账号触发的路径熔断影响同路径其他账号。
+func OpenAIPathHealthBucketKeyForAccount(account *Account, transport string) OpenAIPathHealthKey {
+	key := OpenAIPathHealthKeyForAccount(account, transport)
+	key.AccountID = 0
+	return key
+}
+
+// OpenAIPathHealthBucketKeyForAccountBaseURL 构造指定 request_base_url 的聚合健康桶 key。
+func OpenAIPathHealthBucketKeyForAccountBaseURL(account *Account, transport string, requestBaseURL string) OpenAIPathHealthKey {
+	key := OpenAIPathHealthKeyForAccountBaseURL(account, transport, requestBaseURL)
+	key.AccountID = 0
+	return key
+}
+
 func (s *OpenAIGatewayService) SnapshotOpenAIPathHealthForAccount(account *Account, transport OpenAIUpstreamTransport) (OpenAIPathHealthRecord, bool) {
 	if s == nil || s.openaiPathHealth == nil || account == nil {
 		return OpenAIPathHealthRecord{}, false
@@ -437,6 +452,28 @@ func normalizeOpenAIPathHealthKey(key OpenAIPathHealthKey) OpenAIPathHealthKey {
 	key.Upstream = normalizeOpenAIPathHealthPart(key.Upstream)
 	key.Transport = normalizeOpenAIPathHealthTransport(key.Transport)
 	return key
+}
+
+// openAIPathHealthWorseState 返回两个 path-health 状态中对调度影响更重的一个。
+func openAIPathHealthWorseState(left string, right string) string {
+	if openAIPathHealthStateRank(right) > openAIPathHealthStateRank(left) {
+		return right
+	}
+	return left
+}
+
+// openAIPathHealthStateRank 将状态映射为调度严重度，数值越大越应避让。
+func openAIPathHealthStateRank(state string) int {
+	switch state {
+	case OpenAIPathHealthStateOpenCircuit:
+		return 3
+	case OpenAIPathHealthStateHalfOpen:
+		return 2
+	case OpenAIPathHealthStateDegraded:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func normalizeOpenAIPathHealthPart(value string) string {

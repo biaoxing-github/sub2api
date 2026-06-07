@@ -389,3 +389,31 @@ func TestOpenAIPathHealthKeyForAccountBaseURLUsesRequestURL(t *testing.T) {
 		t.Fatalf("Upstream = %q", key.Upstream)
 	}
 }
+
+func TestOpenAIPathHealthBucketKeyForAccountClearsAccountID(t *testing.T) {
+	proxyID := int64(55)
+	account := &Account{
+		ID:       12,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		ProxyID:  &proxyID,
+		Credentials: map[string]any{
+			"base_url": "https://primary.example.com/v1",
+		},
+	}
+
+	key := OpenAIPathHealthBucketKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+
+	if key.AccountID != 0 {
+		t.Fatalf("AccountID = %d, want bucket key without account", key.AccountID)
+	}
+	if key.ProxyID != proxyID {
+		t.Fatalf("ProxyID = %d, want %d", key.ProxyID, proxyID)
+	}
+	if key.Upstream != "https://primary.example.com/v1" {
+		t.Fatalf("Upstream = %q", key.Upstream)
+	}
+	if key.Transport != string(OpenAIUpstreamTransportHTTPSSE) {
+		t.Fatalf("Transport = %q", key.Transport)
+	}
+}

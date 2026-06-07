@@ -261,9 +261,9 @@ type OpenAIForwardResult struct {
 type OpenAIStreamActionLabel string
 
 const (
-	OpenAIStreamActionRetryNoAvoidance      OpenAIStreamActionLabel = "retry_no_avoidance"
-	OpenAIStreamActionRetryNextAccount      OpenAIStreamActionLabel = "retry_next_account"
-	OpenAIStreamActionAvoidAccountTTL       OpenAIStreamActionLabel = "avoid_account_ttl"
+	OpenAIStreamActionRetryNoAvoidance       OpenAIStreamActionLabel = "retry_no_avoidance"
+	OpenAIStreamActionRetryNextAccount       OpenAIStreamActionLabel = "retry_next_account"
+	OpenAIStreamActionAvoidAccountTTL        OpenAIStreamActionLabel = "avoid_account_ttl"
 	OpenAIStreamActionAvoidUpstreamBucketTTL OpenAIStreamActionLabel = "avoid_upstream_bucket_ttl"
 )
 
@@ -1568,8 +1568,11 @@ func (s *OpenAIGatewayService) orderedOpenAIRequestBaseURLsForForward(account *A
 		item := scoredBaseURL{url: baseURL, index: i}
 		if s != nil && s.openaiPathHealth != nil {
 			key := OpenAIPathHealthKeyForAccountBaseURL(account, string(transport), baseURL)
+			bucketKey := OpenAIPathHealthBucketKeyForAccountBaseURL(account, string(transport), baseURL)
 			snapshot := s.openaiPathHealth.Snapshot(key)
-			item.open = snapshot.State == OpenAIPathHealthStateOpenCircuit
+			bucketSnapshot := s.openaiPathHealth.Snapshot(bucketKey)
+			pathState := openAIPathHealthWorseState(snapshot.State, bucketSnapshot.State)
+			item.open = pathState == OpenAIPathHealthStateOpenCircuit
 			if s.cfg != nil && s.cfg.Gateway.OpenAIFastLane.Enabled {
 				item.boost, item.hasSample = s.openaiPathHealth.ScoreBoost(
 					key,
@@ -1577,6 +1580,17 @@ func (s *OpenAIGatewayService) orderedOpenAIRequestBaseURLsForForward(account *A
 					s.openAIFastLaneTTFTWeight(),
 					s.openAIFastLaneHeaderWaitWeight(),
 				)
+				if bucketBoost, hasBucketSample := s.openaiPathHealth.ScoreBoost(
+					bucketKey,
+					int64(s.openAIFastLaneMinSamples()),
+					s.openAIFastLaneTTFTWeight(),
+					s.openAIFastLaneHeaderWaitWeight(),
+				); hasBucketSample {
+					if !item.hasSample || bucketBoost < item.boost {
+						item.boost = bucketBoost
+						item.hasSample = true
+					}
+				}
 			}
 		}
 		scored = append(scored, item)
@@ -1626,6 +1640,11 @@ func (s *OpenAIGatewayService) recordOpenAIPathHealthFailure(account *Account, r
 	baseURLKey := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), requestBaseURL)
 	if baseURLKey != accountKey {
 		s.openaiPathHealth.RecordFailureWithAction(baseURLKey, reason, string(OpenAIStreamActionAvoidUpstreamBucketTTL), nil)
+	}
+	// 聚合 bucket 不带账号 ID，用于让同代理/同 baseURL/同传输的其他账号也短期避让。
+	bucketKey := OpenAIPathHealthBucketKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), requestBaseURL)
+	if bucketKey != accountKey && bucketKey != baseURLKey {
+		s.openaiPathHealth.RecordFailureWithAction(bucketKey, reason, string(OpenAIStreamActionAvoidUpstreamBucketTTL), nil)
 	}
 }
 
@@ -4365,11 +4384,11 @@ func newOpenAIRequestPhaseFailoverError(err error) *UpstreamFailoverError {
 		},
 	})
 	return &UpstreamFailoverError{
-		StatusCode:     http.StatusBadGateway,
-		ResponseBody:   body,
-		ActionLabel:    OpenAIStreamActionRetryNextAccount,
+		StatusCode:   http.StatusBadGateway,
+		ResponseBody: body,
+		ActionLabel:  OpenAIStreamActionRetryNextAccount,
 		ActionMetadata: map[string]string{
-			"action_label":  string(OpenAIStreamActionRetryNextAccount),
+			"action_label": string(OpenAIStreamActionRetryNextAccount),
 			"reason_scope": "request_phase",
 		},
 	}

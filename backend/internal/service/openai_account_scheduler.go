@@ -674,18 +674,31 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		if s.stats != nil {
 			errorRate, ttft, hasTTFT = s.stats.snapshot(account.ID)
 		}
+		// 同时参考账号 key 与聚合 bucket key，避免同代理/同上游路径持续故障时只惩罚单个账号。
 		pathKey := OpenAIPathHealthKeyForAccount(account, string(req.RequiredTransport))
+		bucketKey := OpenAIPathHealthBucketKeyForAccount(account, string(req.RequiredTransport))
 		pathState := OpenAIPathHealthStateHealthy
 		pathBoost, hasPathSample := 0.0, false
 		if s.service != nil && s.service.openaiPathHealth != nil {
 			snapshot := s.service.openaiPathHealth.Snapshot(pathKey)
 			pathState = snapshot.State
+			bucketSnapshot := s.service.openaiPathHealth.Snapshot(bucketKey)
+			pathState = openAIPathHealthWorseState(pathState, bucketSnapshot.State)
+			minSamples := int64(s.service.openAIFastLaneMinSamples())
+			ttftWeight := s.service.openAIFastLaneTTFTWeight()
+			headerWaitWeight := s.service.openAIFastLaneHeaderWaitWeight()
 			pathBoost, hasPathSample = s.service.openaiPathHealth.ScoreBoost(
 				pathKey,
-				int64(s.service.openAIFastLaneMinSamples()),
-				s.service.openAIFastLaneTTFTWeight(),
-				s.service.openAIFastLaneHeaderWaitWeight(),
+				minSamples,
+				ttftWeight,
+				headerWaitWeight,
 			)
+			if bucketBoost, hasBucketSample := s.service.openaiPathHealth.ScoreBoost(bucketKey, minSamples, ttftWeight, headerWaitWeight); hasBucketSample {
+				if !hasPathSample || bucketBoost < pathBoost {
+					pathBoost = bucketBoost
+					hasPathSample = true
+				}
+			}
 		}
 		allCandidates = append(allCandidates, openAIAccountCandidateScore{
 			account:       account,
@@ -1108,10 +1121,12 @@ func (s *defaultOpenAIAccountScheduler) isAccountPathHealthBlocked(account *Acco
 	}
 	key := OpenAIPathHealthKeyForAccount(account, string(req.RequiredTransport))
 	snapshot := s.service.openaiPathHealth.Snapshot(key)
-	if snapshot.State == OpenAIPathHealthStateOpenCircuit {
+	bucketSnapshot := s.service.openaiPathHealth.Snapshot(OpenAIPathHealthBucketKeyForAccount(account, string(req.RequiredTransport)))
+	state := openAIPathHealthWorseState(snapshot.State, bucketSnapshot.State)
+	if state == OpenAIPathHealthStateOpenCircuit {
 		return true
 	}
-	return snapshot.State == OpenAIPathHealthStateHalfOpen &&
+	return state == OpenAIPathHealthStateHalfOpen &&
 		openAIAccountScheduleProfileFromRequest(req) != openAIAccountScheduleProfileProbe
 }
 

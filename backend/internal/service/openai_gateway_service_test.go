@@ -140,6 +140,10 @@ func TestOpenAIGatewayServiceRecordOpenAIPathHealthFailureLabelsAccountAndBucket
 
 	baseURLSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), "https://alt-bucket.example.com/v1"))
 	require.Equal(t, string(OpenAIStreamActionAvoidUpstreamBucketTTL), baseURLSnapshot.LastActionLabel)
+
+	bucketSnapshot := tracker.Snapshot(OpenAIPathHealthBucketKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), "https://alt-bucket.example.com/v1"))
+	require.Equal(t, string(OpenAIStreamActionAvoidUpstreamBucketTTL), bucketSnapshot.LastActionLabel)
+	require.Zero(t, bucketSnapshot.Key.AccountID)
 }
 
 type stubConcurrencyCache struct {

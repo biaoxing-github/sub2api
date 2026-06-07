@@ -1962,6 +1962,92 @@ func TestBuildOpenAIAccountLoadPlanHalfOpenOnlyForProbe(t *testing.T) {
 	require.Len(t, probePlan.candidates, 2)
 }
 
+func TestBuildOpenAIAccountLoadPlanSkipsOpenBucketAcrossAccounts(t *testing.T) {
+	groupID := int64(42)
+	proxyID := int64(9001)
+	otherProxyID := int64(9002)
+	accounts := []*Account{
+		{
+			ID:          6111,
+			Name:        "failed-bucket-origin",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    1,
+			ProxyID:     &proxyID,
+			Credentials: map[string]any{"base_url": "https://bucket.example.com/v1"},
+		},
+		{
+			ID:          6112,
+			Name:        "same-bucket-peer",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    1,
+			ProxyID:     &proxyID,
+			Credentials: map[string]any{"base_url": "https://bucket.example.com/v1"},
+		},
+		{
+			ID:          6113,
+			Name:        "healthy-other-bucket",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    1,
+			ProxyID:     &proxyID,
+			Credentials: map[string]any{"base_url": "https://healthy.example.com/v1"},
+		},
+		{
+			ID:          6114,
+			Name:        "same-upstream-other-proxy",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Priority:    1,
+			ProxyID:     &otherProxyID,
+			Credentials: map[string]any{"base_url": "https://bucket.example.com/v1"},
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIPathHealth.Enabled = true
+	cfg.Gateway.OpenAIPathHealth.CircuitBreakerEnabled = true
+	cfg.Gateway.OpenAIWS.LBTopK = 3
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 1
+	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true, CircuitBreakerEnabled: true, Cooldown: time.Minute})
+	bucketKey := OpenAIPathHealthBucketKeyForAccount(accounts[0], string(OpenAIUpstreamTransportHTTPSSE))
+	pathHealth.records[bucketKey] = &OpenAIPathHealthRecord{Key: bucketKey, State: OpenAIPathHealthStateOpenCircuit, Samples: 3}
+
+	scheduler := &defaultOpenAIAccountScheduler{
+		service: &OpenAIGatewayService{
+			cfg:              cfg,
+			openaiPathHealth: pathHealth,
+		},
+		stats: newOpenAIAccountRuntimeStats(),
+	}
+	loadMap := map[int64]*AccountLoadInfo{
+		6111: {AccountID: 6111, LoadRate: 0},
+		6112: {AccountID: 6112, LoadRate: 0},
+		6113: {AccountID: 6113, LoadRate: 0},
+		6114: {AccountID: 6114, LoadRate: 0},
+	}
+
+	plan := scheduler.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{GroupID: &groupID, RequiredTransport: OpenAIUpstreamTransportHTTPSSE}, accounts, loadMap)
+
+	require.Len(t, plan.candidates, 2)
+	require.NotContains(t, []int64{plan.candidates[0].account.ID, plan.candidates[1].account.ID}, int64(6111))
+	require.NotContains(t, []int64{plan.candidates[0].account.ID, plan.candidates[1].account.ID}, int64(6112))
+	require.Contains(t, []int64{plan.candidates[0].account.ID, plan.candidates[1].account.ID}, int64(6113))
+	require.Contains(t, []int64{plan.candidates[0].account.ID, plan.candidates[1].account.ID}, int64(6114))
+}
+
 func TestBuildOpenAIAccountLoadPlanProfilesScoreSpeedVsStability(t *testing.T) {
 	groupID := int64(42)
 	accounts := []*Account{
