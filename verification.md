@@ -2533,3 +2533,19 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 部署：部署前 `active.conf` 指向 `sub2api-green:8080`，因此按新规则只重建 idle 的 `sub2api-blue`；`D:\sub2api-deploy\docker-compose.blue.yml` 默认镜像更新为 `sub2api:v0.1.134.2`，执行 `docker compose -f docker-compose.blue.yml up -d --no-deps --force-recreate sub2api-blue`。未重启 PostgreSQL、Redis、proxy 或 active green。
 - blue 候选验证：等待 65 秒后，`http://127.0.0.1:18083/health` 返回 200，根路径 200，`GET /api/v1/admin/dashboard/stats` 未登录返回 401，`POST /responses` 未登录返回 401；`docker exec sub2api-blue /app/sub2api --version` 输出 `Sub2API 0.1.134 (commit: ac81d0b9535e, built: 2026-06-07T15:05:08Z)`；精确错误日志过滤为 0。
 - 切流验证：将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-green:8080` 改为 `sub2api-blue:8080`，`docker exec sub2api-proxy nginx -t` 与 reload 通过；公网 `http://127.0.0.1:8080/health` 200，`18081/health` 200，`18083/health` 200，保留的 green `18082/health` 200，根路径 200，admin 未登录 401，`POST /responses` 未登录 401；`sub2api-blue` 为 active healthy，`sub2api-green` 仍运行 `sub2api:v0.1.134.1` 作为回滚。
+
+## 2026-06-07 23:57 +08:00 - JUHE_AI P2 功能开发验证
+
+- 执行者：Devil
+- 目标：并行完成 `docs/JUHE_AI_FEATURE_20250605_BORROWABLE_FEATURES_CN.md` 中剩余三个 P2：可配置流式拦截策略、错误处理策略规则、管理端动作模板说明。
+- 变更：新增 `backend/internal/service/openai_stream_policy.go`，用固定内置规则覆盖 OpenAI `response.failed` 的 quota/billing、capacity/overload、policy/invalid_request；`openai_gateway_service.go` 将 request/http_response/stream 三个阶段都写入动作标签和 action_metadata；前端新增 `actionTemplates.ts`、Vitest 单测和中英文 i18n，Ops Codex 诊断时间线展示动作说明和关键元数据；JUHE 清单三个 P2 已标记 `[x]`。
+- 验证：`go test ./internal/service -run "TestOpenAIStreamInterceptDecisionUsesBuiltInRules|TestOpenAIUpstreamErrorPolicySeparatesPhasesAndActions" -count=1` 通过；`go test ./internal/service -run "TestOpenAIStream|TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata|TestOpenAIHTTPResponsePolicyCarriesActionMetadata|TestOpenAIUpstreamErrorPolicy|TestClassifyUpstreamError" -count=1` 通过；`npm run test:run -- src/views/admin/ops/utils/__tests__/actionTemplates.spec.ts` 通过；`npm run typecheck` 通过。
+- 风险：当前“可配置流式拦截策略”按清单适配方式先实现为固定内置规则，尚未开放管理端动态配置；后续可复用现有规则结构和 action_metadata 扩展配置仓储。
+
+## 2026-06-08 00:24 +08:00 - OpenAI `/responses` 可调度账号耗尽探测恢复
+
+- 执行者：Devil
+- 目标：修正 OpenAI `/responses` 调度器在“没有可调度账号”时直接把 429/调度耗尽错误返回客户端的问题；默认先对同一调度范围内账号做小请求探测，每个候选账号最多 6 次；新增全局开关允许持续探测等待直到账号恢复。
+- 变更：新增 `OpenAIGatewayService.RecoverOpenAISchedulerExhaustion`，当 handler 调度失败且本次请求还没有失败账号时触发；候选账号限定在同一调度范围，保留 active、schedulable、模型和 `/responses` 能力过滤，但不使用运行时 `IsSchedulable()`，因此可探测 rate-limit/temp-unsched/runtime block 状态中的账号。探测成功后清理运行时调度屏蔽、恢复 rate-limit 状态、写 path health 成功并重新进入真实调度。新增 `openai_scheduler_exhaustion_probe_infinite_wait_enabled` 全局设置，管理端可开关，默认关闭。
+- 验证：`gofmt` 已执行；旧长命名扫描无命中；后端设置热刷新、探测次数/成功/无限等待、相邻 service failover、handler `/responses` 聚焦用例均通过；前端 `npm run typecheck` 通过；`git diff --check` 退出 0，仅提示既有 `docs/feature_list.jsonl` 与 `docs/process_list.jsonl` LF-to-CRLF。
+- 已知无关失败：更宽的 `go test ./internal/handler -run "TestOpenAI" -count=1` 仍失败于既有 WebSocket continuity 用例 `TestOpenAIResponsesWebSocket_ContinuityReplayForwardsSanitizedBodyToNextAccount`，期望 `resp_handler_continuity_replayed`，实际 `resp_should_not_use_exhausted`；本轮未改 WebSocket continuity 路径。
