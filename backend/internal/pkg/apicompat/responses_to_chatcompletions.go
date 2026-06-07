@@ -333,7 +333,7 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 				finishReason = "tool_calls"
 			}
 		}
-	} else if state.SawToolCall {
+	} else if evt.Type != "response.failed" && state.SawToolCall {
 		finishReason = "tool_calls"
 	}
 	if usage == nil {

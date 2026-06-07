@@ -109,6 +109,35 @@ func openAIJSONToolsContainImageGeneration(tools gjson.Result) bool {
 	return found
 }
 
+func openAIRequestBodyHasImageGenerationTool(body []byte) bool {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return false
+	}
+	return openAIJSONToolsContainImageGeneration(gjson.GetBytes(body, "tools"))
+}
+
+func openAIRequestBodyImageGenerationToolNeedsNormalization(body []byte) bool {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return false
+	}
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.IsArray() {
+		return false
+	}
+	needsNormalization := false
+	tools.ForEach(func(_, item gjson.Result) bool {
+		if strings.TrimSpace(item.Get("type").String()) != "image_generation" {
+			return true
+		}
+		if item.Get("format").Exists() || item.Get("compression").Exists() {
+			needsNormalization = true
+			return false
+		}
+		return true
+	})
+	return needsNormalization
+}
+
 func openAIJSONToolChoiceSelectsImageGeneration(choice gjson.Result) bool {
 	if !choice.Exists() {
 		return false

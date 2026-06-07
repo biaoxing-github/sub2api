@@ -11,6 +11,7 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,38 @@ func (w *failingOpenAIImageWriter) Write(p []byte) (int, error) {
 	}
 	w.writes++
 	return w.ResponseWriter.Write(p)
+}
+
+type openAIImagesRateLimitRepo struct {
+	AccountRepository
+	rateLimitCalls      []time.Time
+	modelRateLimitCalls []openAIImagesModelRateLimitCall
+	setErrorCalls       []string
+}
+
+type openAIImagesModelRateLimitCall struct {
+	accountID int64
+	scope     string
+	resetAt   time.Time
+}
+
+func (r *openAIImagesRateLimitRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
+	r.rateLimitCalls = append(r.rateLimitCalls, resetAt)
+	return nil
+}
+
+func (r *openAIImagesRateLimitRepo) SetModelRateLimit(_ context.Context, id int64, scope string, resetAt time.Time) error {
+	r.modelRateLimitCalls = append(r.modelRateLimitCalls, openAIImagesModelRateLimitCall{
+		accountID: id,
+		scope:     scope,
+		resetAt:   resetAt,
+	})
+	return nil
+}
+
+func (r *openAIImagesRateLimitRepo) SetError(_ context.Context, _ int64, errorMsg string) error {
+	r.setErrorCalls = append(r.setErrorCalls, errorMsg)
+	return nil
 }
 
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_JSON(t *testing.T) {
@@ -398,7 +431,7 @@ func TestCollectOpenAIImagePointers_RecognizesDirectAssets(t *testing.T) {
 func TestResolveOpenAIImageBytes_PrefersInlineBase64(t *testing.T) {
 	data, err := resolveOpenAIImageBytes(context.Background(), nil, nil, "", openAIImagePointerInfo{
 		B64JSON: "data:image/png;base64,QUJD",
-	})
+	}, 0)
 	require.NoError(t, err)
 	require.Equal(t, []byte("ABC"), data)
 }

@@ -484,6 +484,29 @@ func TestChatCompletionsToResponses_AssistantReasoningContentPreserved(t *testin
 	assert.Contains(t, parts[0].Text, "final answer")
 }
 
+func TestChatCompletionsToResponses_ReasoningOnlyFallsBackToVisibleText(t *testing.T) {
+	resp := &ChatCompletionsResponse{
+		ID:     "chatcmpl_reasoning_only",
+		Object: "chat.completion",
+		Model:  "gpt-4o",
+		Choices: []ChatChoice{{
+			Index: 0,
+			Message: ChatMessage{
+				Role:             "assistant",
+				ReasoningContent: "internal answer",
+			},
+			FinishReason: "stop",
+		}},
+	}
+
+	out := ChatCompletionsResponseToResponses(resp, "gpt-4o")
+	require.Len(t, out.Output, 2)
+	assert.Equal(t, "reasoning", out.Output[0].Type)
+	assert.Equal(t, "message", out.Output[1].Type)
+	require.Len(t, out.Output[1].Content, 1)
+	assert.Equal(t, "internal answer", out.Output[1].Content[0].Text)
+}
+
 // ---------------------------------------------------------------------------
 // ResponsesToChatCompletions tests
 // ---------------------------------------------------------------------------
@@ -932,6 +955,27 @@ func TestResponsesEventToChatChunks_ResponseDoneIncomplete(t *testing.T) {
 	assert.Nil(t, FinalizeResponsesChatStream(state))
 }
 
+func TestResponsesEventToChatChunks_FailedDoesNotImplyToolCalls(t *testing.T) {
+	state := NewResponsesEventToChatState()
+	state.Model = "gpt-4o"
+	state.SawToolCall = true
+
+	chunks := ResponsesEventToChatChunks(&ResponsesStreamEvent{
+		Type: "response.failed",
+		Response: &ResponsesResponse{
+			Status: "failed",
+			Error: &ResponsesError{
+				Code:    "server_error",
+				Message: "boom",
+			},
+		},
+	}, state)
+
+	require.Len(t, chunks, 1)
+	require.NotNil(t, chunks[0].Choices[0].FinishReason)
+	assert.Equal(t, "stop", *chunks[0].Choices[0].FinishReason)
+}
+
 func TestResponsesEventToChatChunks_CompletedWithToolCalls(t *testing.T) {
 	state := NewResponsesEventToChatState()
 	state.Model = "gpt-4o"
@@ -987,6 +1031,31 @@ func TestResponsesEventToChatChunks_ReasoningThenTextAutoCloseTag(t *testing.T) 
 	require.Len(t, chunks, 1)
 	require.NotNil(t, chunks[0].Choices[0].Delta.Content)
 	assert.Equal(t, "answer", *chunks[0].Choices[0].Delta.Content)
+}
+
+func TestFinalizeChatCompletionsResponsesStream_ReasoningOnlySurfacesText(t *testing.T) {
+	state := NewChatCompletionsToResponsesStreamState("gpt-4o")
+	chunks := ChatCompletionsChunkToResponsesEvents(&ChatCompletionsChunk{
+		ID:     "chatcmpl_reasoning_stream",
+		Object: "chat.completion.chunk",
+		Model:  "gpt-4o",
+		Choices: []ChatChunkChoice{{
+			Index: 0,
+			Delta: ChatDelta{ReasoningContent: stringPtr("think first")},
+		}},
+	}, state)
+	require.NotEmpty(t, chunks)
+
+	events := FinalizeChatCompletionsResponsesStream(state)
+	require.NotEmpty(t, events)
+
+	var sawVisibleText bool
+	for _, evt := range events {
+		if evt.Type == "response.output_text.delta" && evt.Delta == "think first" {
+			sawVisibleText = true
+		}
+	}
+	assert.True(t, sawVisibleText)
 }
 
 func TestFinalizeResponsesChatStream(t *testing.T) {

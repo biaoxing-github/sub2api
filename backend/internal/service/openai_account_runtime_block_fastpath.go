@@ -32,8 +32,12 @@ func isOpenAIAccount(account *Account) bool {
 	return account != nil && account.Platform == PlatformOpenAI
 }
 
-func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) bool {
-	return s.handleOpenAIAccountUpstreamErrorForModel(ctx, account, statusCode, headers, responseBody, "")
+func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) bool {
+	model := ""
+	if len(requestedModel) > 0 {
+		model = requestedModel[0]
+	}
+	return s.handleOpenAIAccountUpstreamErrorForModel(ctx, account, statusCode, headers, responseBody, model)
 }
 
 func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorForModel(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel string) bool {

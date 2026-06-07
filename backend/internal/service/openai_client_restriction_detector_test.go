@@ -30,7 +30,7 @@ func TestOpenAICodexClientRestrictionDetector_Detect(t *testing.T) {
 		detector := NewOpenAICodexClientRestrictionDetector(nil)
 		account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{}}
 
-		result := detector.Detect(newCodexDetectorTestContext("curl/8.0", ""), account)
+		result := detector.Detect(newCodexDetectorTestContext("curl/8.0", ""), account, nil)
 		require.False(t, result.Enabled)
 		require.False(t, result.Matched)
 		require.Equal(t, CodexClientRestrictionReasonDisabled, result.Reason)
@@ -44,7 +44,7 @@ func TestOpenAICodexClientRestrictionDetector_Detect(t *testing.T) {
 			Extra:    map[string]any{"codex_cli_only": true},
 		}
 
-		result := detector.Detect(newCodexDetectorTestContext("codex_cli_rs/0.99.0", ""), account)
+		result := detector.Detect(newCodexDetectorTestContext("codex_cli_rs/0.99.0", ""), account, nil)
 		require.True(t, result.Enabled)
 		require.True(t, result.Matched)
 		require.Equal(t, CodexClientRestrictionReasonMatchedUA, result.Reason)
@@ -58,7 +58,7 @@ func TestOpenAICodexClientRestrictionDetector_Detect(t *testing.T) {
 			Extra:    map[string]any{"codex_cli_only": true},
 		}
 
-		result := detector.Detect(newCodexDetectorTestContext("codex_vscode/1.0.0", ""), account)
+		result := detector.Detect(newCodexDetectorTestContext("codex_vscode/1.0.0", ""), account, nil)
 		require.True(t, result.Enabled)
 		require.True(t, result.Matched)
 		require.Equal(t, CodexClientRestrictionReasonMatchedUA, result.Reason)
@@ -72,7 +72,7 @@ func TestOpenAICodexClientRestrictionDetector_Detect(t *testing.T) {
 			Extra:    map[string]any{"codex_cli_only": true},
 		}
 
-		result := detector.Detect(newCodexDetectorTestContext("codex_app/2.1.0", ""), account)
+		result := detector.Detect(newCodexDetectorTestContext("codex_app/2.1.0", ""), account, nil)
 		require.True(t, result.Enabled)
 		require.True(t, result.Matched)
 		require.Equal(t, CodexClientRestrictionReasonMatchedUA, result.Reason)
@@ -86,7 +86,7 @@ func TestOpenAICodexClientRestrictionDetector_Detect(t *testing.T) {
 			Extra:    map[string]any{"codex_cli_only": true},
 		}
 
-		result := detector.Detect(newCodexDetectorTestContext("curl/8.0", "codex_chatgpt_desktop"), account)
+		result := detector.Detect(newCodexDetectorTestContext("curl/8.0", "codex_chatgpt_desktop"), account, nil)
 		require.True(t, result.Enabled)
 		require.True(t, result.Matched)
 		require.Equal(t, CodexClientRestrictionReasonMatchedOriginator, result.Reason)
@@ -100,7 +100,7 @@ func TestOpenAICodexClientRestrictionDetector_Detect(t *testing.T) {
 			Extra:    map[string]any{"codex_cli_only": true},
 		}
 
-		result := detector.Detect(newCodexDetectorTestContext("curl/8.0", "my_client"), account)
+		result := detector.Detect(newCodexDetectorTestContext("curl/8.0", "my_client"), account, nil)
 		require.True(t, result.Enabled)
 		require.False(t, result.Matched)
 		require.Equal(t, CodexClientRestrictionReasonNotMatchedUA, result.Reason)
@@ -116,7 +116,7 @@ func TestOpenAICodexClientRestrictionDetector_Detect(t *testing.T) {
 			Extra:    map[string]any{"codex_cli_only": true},
 		}
 
-		result := detector.Detect(newCodexDetectorTestContext("curl/8.0", "my_client"), account)
+		result := detector.Detect(newCodexDetectorTestContext("curl/8.0", "my_client"), account, nil)
 		require.True(t, result.Enabled)
 		require.True(t, result.Matched)
 		require.Equal(t, CodexClientRestrictionReasonForceCodexCLI, result.Reason)

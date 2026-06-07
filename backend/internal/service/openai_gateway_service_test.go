@@ -22,6 +22,11 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+const (
+	cockpitToolsUserAgent = codexCLIUserAgent
+	codexDesktopUserAgent = codexCLIUserAgent
+)
+
 // 编译期接口断言
 var _ AccountRepository = (*stubOpenAIAccountRepo)(nil)
 var _ GatewayCache = (*stubGatewayCache)(nil)
@@ -102,6 +107,39 @@ func TestOpenAIGatewayServiceHandleErrorResponseMaps413ToClient413(t *testing.T)
 	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
 	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
 	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "Request body is too large")
+}
+
+func TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata(t *testing.T) {
+	err := newOpenAIRequestPhaseFailoverError(errors.New("http2: timeout awaiting response headers"))
+
+	require.NotNil(t, err)
+	require.Equal(t, OpenAIStreamActionRetryNextAccount, err.ActionLabel)
+	require.Equal(t, "request_phase", err.ActionMetadata["reason_scope"])
+	require.Equal(t, string(OpenAIStreamActionRetryNextAccount), err.ActionMetadata["action_label"])
+}
+
+func TestOpenAIGatewayServiceRecordOpenAIPathHealthFailureLabelsAccountAndBucket(t *testing.T) {
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:               true,
+		CircuitBreakerEnabled: true,
+	})
+	svc := &OpenAIGatewayService{openaiPathHealth: tracker}
+	account := &Account{
+		ID:       88,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://bucket.example.com/v1",
+		},
+	}
+
+	svc.recordOpenAIPathHealthFailure(account, "https://alt-bucket.example.com/v1", OpenAIPathFailureEOF)
+
+	accountSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE)))
+	require.Equal(t, string(OpenAIStreamActionAvoidAccountTTL), accountSnapshot.LastActionLabel)
+
+	baseURLSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), "https://alt-bucket.example.com/v1"))
+	require.Equal(t, string(OpenAIStreamActionAvoidUpstreamBucketTTL), baseURLSnapshot.LastActionLabel)
 }
 
 type stubConcurrencyCache struct {
@@ -2360,7 +2398,7 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *test
 	svc := &OpenAIGatewayService{}
 	account := &Account{Type: AccountTypeOAuth}
 
-	req, err := svc.buildUpstreamRequestOpenAIPassthrough(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", openAICodexStabilityPolicy{})
+	req, err := svc.buildUpstreamRequestOpenAIPassthrough(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token")
 	require.NoError(t, err)
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
@@ -2535,7 +2573,7 @@ func TestOpenAIPassthroughCockpitToolsCompatibilityHeaders(t *testing.T) {
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
 	}
 
-	req, err := svc.buildUpstreamRequestOpenAIPassthrough(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", openAICodexStabilityPolicy{})
+	req, err := svc.buildUpstreamRequestOpenAIPassthrough(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token")
 	require.NoError(t, err)
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
@@ -2944,7 +2982,7 @@ func TestHandleSSEToJSON_CompletedEventReturnsJSON(t *testing.T) {
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, nil, body, "gpt-4o", "gpt-4o")
+	usage, err := svc.handleSSEToJSON(resp, c, body, "gpt-4o", "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 7, usage.InputTokens)
@@ -3044,7 +3082,7 @@ func TestHandleSSEToJSON_ReconstructsImageGenerationOutputItemDone(t *testing.T)
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, nil, body, "gpt-5.4", "gpt-5.4")
+	usage, err := svc.handleSSEToJSON(resp, c, body, "gpt-5.4", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 4, usage.ImageOutputTokens)
@@ -3070,7 +3108,7 @@ func TestHandleSSEToJSON_NoFinalResponseKeepsSSEBody(t *testing.T) {
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, nil, body, "gpt-4o", "gpt-4o")
+	usage, err := svc.handleSSEToJSON(resp, c, body, "gpt-4o", "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 0, usage.InputTokens)
@@ -3094,7 +3132,7 @@ func TestHandleSSEToJSON_ResponseFailedReturnsProtocolError(t *testing.T) {
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, nil, body, "gpt-4o", "gpt-4o")
+	usage, err := svc.handleSSEToJSON(resp, c, body, "gpt-4o", "gpt-4o")
 	require.Nil(t, usage)
 	require.Error(t, err)
 	require.Equal(t, http.StatusBadGateway, rec.Code)

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -185,13 +186,9 @@ func TestSetClaudeCodeClientContext_ReuseParsedRequestAndContextCache(t *testing
 		c.Request.Header.Set("anthropic-beta", "message-batches-2024-09-24")
 		c.Request.Header.Set("anthropic-version", "2023-06-01")
 
-		parsedReq := &service.ParsedRequest{
-			Model: "claude-3-5-sonnet-20241022",
-			System: []any{
-				map[string]any{"text": "You are Claude Code, Anthropic's official CLI for Claude."},
-			},
-			MetadataUserID: "user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_account__session_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-		}
+		body := []byte(`{"model":"claude-3-5-sonnet-20241022","system":[{"text":"You are Claude Code, Anthropic's official CLI for Claude."}],"metadata":{"user_id":"user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_account__session_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}}`)
+		parsedReq, err := service.ParseGatewayRequest(service.NewRequestBodyRef(body), domain.PlatformAnthropic)
+		require.NoError(t, err)
 
 		// body 非法 JSON，如果函数复用 parsedReq 成功则仍应判定为 Claude Code。
 		SetClaudeCodeClientContext(c, []byte(`{invalid`), parsedReq)

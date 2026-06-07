@@ -73,6 +73,29 @@ func TestResponsesToChatCompletionsRequest_InstructionsAndInputDeveloperRole(t *
 	assert.JSONEq(t, `"Hello"`, string(out.Messages[2].Content))
 }
 
+func TestResponsesInputToChatMessages_ReasoningAndToolPairing(t *testing.T) {
+	input := json.RawMessage(`[
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"plan"}]},
+		{"type":"function_call","call_id":"call_1","name":"ping","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_1","output":"pong"},
+		{"type":"function_call","call_id":"call_2","name":"skip_me","arguments":"{}"}
+	]`)
+
+	messages, err := responsesInputToChatMessages("", input)
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+
+	assert.Equal(t, "assistant", messages[0].Role)
+	assert.Equal(t, "plan", messages[0].ReasoningContent)
+	require.Len(t, messages[0].ToolCalls, 1)
+	assert.Equal(t, "call_1", messages[0].ToolCalls[0].ID)
+	assert.Equal(t, "ping", messages[0].ToolCalls[0].Function.Name)
+
+	assert.Equal(t, "tool", messages[1].Role)
+	assert.Equal(t, "call_1", messages[1].ToolCallID)
+	assert.JSONEq(t, `"pong"`, string(messages[1].Content))
+}
+
 func chatMessageRoles(messages []ChatMessage) []string {
 	roles := make([]string, 0, len(messages))
 	for _, message := range messages {

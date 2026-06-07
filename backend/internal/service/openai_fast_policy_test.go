@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 type openAIFastPolicyRepoStub struct {
@@ -86,6 +88,48 @@ func newOpenAIGatewayServiceWithPromptCacheSettings(t *testing.T, settings *Open
 	return &OpenAIGatewayService{
 		settingService: NewSettingService(repo, &config.Config{}),
 	}
+}
+
+func (s *OpenAIGatewayService) applyOpenAIPromptCacheSettingsToBody(ctx context.Context, model string, body []byte) ([]byte, error) {
+	if s == nil || s.settingService == nil || len(body) == 0 || strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()) != "" {
+		return body, nil
+	}
+	settings, err := s.settingService.GetOpenAIPromptCacheSettings(ctx)
+	if err != nil || settings == nil {
+		return body, err
+	}
+	model = strings.TrimSpace(model)
+	for _, rule := range settings.Rules {
+		key := strings.TrimSpace(rule.PromptCacheKey)
+		if key == "" || !openAIPromptCacheRuleMatchesModelForTest(rule, model) {
+			continue
+		}
+		updated, setErr := sjson.SetBytes(body, "prompt_cache_key", key)
+		if setErr != nil {
+			return body, setErr
+		}
+		if retention := strings.TrimSpace(rule.PromptCacheRetention); retention != "" &&
+			!gjson.GetBytes(updated, "prompt_cache_retention").Exists() {
+			updated, setErr = sjson.SetBytes(updated, "prompt_cache_retention", retention)
+			if setErr != nil {
+				return body, setErr
+			}
+		}
+		return updated, nil
+	}
+	return body, nil
+}
+
+func openAIPromptCacheRuleMatchesModelForTest(rule OpenAIPromptCacheRule, model string) bool {
+	if len(rule.ModelWhitelist) == 0 {
+		return true
+	}
+	for _, pattern := range rule.ModelWhitelist {
+		if matchWildcard(strings.TrimSpace(pattern), model) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestApplyOpenAIPromptCacheSettingsToBody_InjectsConfiguredKey(t *testing.T) {

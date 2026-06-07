@@ -248,6 +248,19 @@ func TestOpenAIHandleFailoverExhausted_AppendsResponsesFailedAfterHeartbeat(t *t
 	require.NotContains(t, body, `{"error":`)
 }
 
+func TestOpenAIForwardErrorAlreadyCommunicated_HeartbeatIsNotRealOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	_, err := fmt.Fprint(c.Writer, ":\n\n")
+	require.NoError(t, err)
+
+	require.False(t, service.OpenAIRealClientOutputStarted(c))
+	require.False(t, openAIForwardErrorAlreadyCommunicated(c, errors.New("upstream response failed: boom")))
+}
+
 func TestOpenAIResponses_RejectsOversizedUpstreamBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -414,7 +427,7 @@ func TestOpenAIRecoverResponsesPanic_NoPanicNoWrite(t *testing.T) {
 	assert.Equal(t, "", w.Body.String())
 }
 
-func TestOpenAIRecoverResponsesPanic_DoesNotOverrideWrittenResponse(t *testing.T) {
+func TestOpenAIRecoverResponsesPanic_AppendsTerminalEventAfterWrittenResponsesStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
@@ -432,7 +445,11 @@ func TestOpenAIRecoverResponsesPanic_DoesNotOverrideWrittenResponse(t *testing.T
 	})
 
 	require.Equal(t, http.StatusTeapot, w.Code)
-	assert.Equal(t, "already written", w.Body.String())
+	body := w.Body.String()
+	assert.True(t, strings.HasPrefix(body, "already written"))
+	assert.Contains(t, body, "event: response.failed")
+	assert.Contains(t, body, `"type":"response.failed"`)
+	assert.Contains(t, body, "Upstream request failed")
 }
 
 func TestOpenAIMissingResponsesDependencies(t *testing.T) {

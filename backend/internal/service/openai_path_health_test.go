@@ -310,6 +310,21 @@ func TestOpenAIPathHealthConcurrentRecord(t *testing.T) {
 	}
 }
 
+func TestOpenAIPathHealthRecordFailureWithActionStoresLastActionLabel(t *testing.T) {
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:               true,
+		CircuitBreakerEnabled: true,
+	})
+	key := OpenAIPathHealthKey{AccountID: 101}
+
+	tracker.RecordFailureWithAction(key, OpenAIPathFailureEOF, string(OpenAIStreamActionAvoidAccountTTL), nil)
+
+	snapshot := tracker.Snapshot(key)
+	if snapshot.LastActionLabel != string(OpenAIStreamActionAvoidAccountTTL) {
+		t.Fatalf("LastActionLabel = %q, want %q", snapshot.LastActionLabel, OpenAIStreamActionAvoidAccountTTL)
+	}
+}
+
 func TestOpenAIPathHealthScoreBoostUsesTTFT(t *testing.T) {
 	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true})
 	fast := OpenAIPathHealthKey{AccountID: 1}

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 const (
@@ -48,6 +50,7 @@ type OpenAIPathHealthRecord struct {
 	HeaderWaitEWMAMs        float64             `json:"header_wait_ewma_ms,omitempty"`
 	Samples                 int64               `json:"samples"`
 	LastFailureReason       string              `json:"last_failure_reason,omitempty"`
+	LastActionLabel         string              `json:"last_action_label,omitempty"`
 	LastFailureAt           *time.Time          `json:"last_failure_at,omitempty"`
 	CooldownUntil           *time.Time          `json:"cooldown_until,omitempty"`
 	ConsecutiveSuccesses    int64               `json:"consecutive_successes"`
@@ -97,6 +100,30 @@ func NewOpenAIPathHealthTracker(options OpenAIPathHealthOptions) *OpenAIPathHeal
 	}
 }
 
+func newOpenAIPathHealthTrackerFromConfig(cfg *config.Config) *OpenAIPathHealthTracker {
+	pathHealth := config.GatewayOpenAIPathHealthConfig{
+		Enabled:               true,
+		CircuitBreakerEnabled: true,
+		FailureWindowSeconds:  120,
+		CooldownSeconds:       60,
+		DegradedFailures:      2,
+		OpenFailures:          4,
+		HalfOpenMaxProbes:     2,
+	}
+	if cfg != nil {
+		pathHealth = cfg.Gateway.OpenAIPathHealth
+	}
+	return NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:                  pathHealth.Enabled,
+		CircuitBreakerEnabled:    pathHealth.CircuitBreakerEnabled,
+		FailureWindow:            time.Duration(pathHealth.FailureWindowSeconds) * time.Second,
+		Cooldown:                 time.Duration(pathHealth.CooldownSeconds) * time.Second,
+		DegradedFailureThreshold: int64(pathHealth.DegradedFailures),
+		OpenFailureThreshold:     int64(pathHealth.OpenFailures),
+		HalfOpenMaxProbes:        int64(pathHealth.HalfOpenMaxProbes),
+	})
+}
+
 func OpenAIPathHealthKeyForAccount(account *Account, transport string) OpenAIPathHealthKey {
 	key := OpenAIPathHealthKey{Transport: normalizeOpenAIPathHealthTransport(transport)}
 	if account == nil {
@@ -116,6 +143,21 @@ func OpenAIPathHealthKeyForAccountBaseURL(account *Account, transport string, re
 		key.Upstream = normalizeOpenAIPathHealthPart(upstream)
 	}
 	return key
+}
+
+func (s *OpenAIGatewayService) SnapshotOpenAIPathHealthForAccount(account *Account, transport OpenAIUpstreamTransport) (OpenAIPathHealthRecord, bool) {
+	if s == nil || s.openaiPathHealth == nil || account == nil {
+		return OpenAIPathHealthRecord{}, false
+	}
+	key := OpenAIPathHealthKeyForAccount(account, string(transport))
+	return s.openaiPathHealth.Snapshot(key), true
+}
+
+func (s *OpenAIGatewayService) OpenAIPathHealthTracker() *OpenAIPathHealthTracker {
+	if s == nil {
+		return nil
+	}
+	return s.openaiPathHealth
 }
 
 func (t *OpenAIPathHealthTracker) Snapshot(key OpenAIPathHealthKey) OpenAIPathHealthRecord {
@@ -160,6 +202,10 @@ func (t *OpenAIPathHealthTracker) RecordSuccess(key OpenAIPathHealthKey, ttftMs 
 }
 
 func (t *OpenAIPathHealthTracker) RecordFailure(key OpenAIPathHealthKey, reason string, headerWaitMs *int64) {
+	t.RecordFailureWithAction(key, reason, "", headerWaitMs)
+}
+
+func (t *OpenAIPathHealthTracker) RecordFailureWithAction(key OpenAIPathHealthKey, reason string, actionLabel string, headerWaitMs *int64) {
 	if t == nil || !t.options.Enabled {
 		return
 	}
@@ -185,6 +231,7 @@ func (t *OpenAIPathHealthTracker) RecordFailure(key OpenAIPathHealthKey, reason 
 	}
 	record.ConsecutiveSuccesses = 0
 	record.LastFailureReason = reason
+	record.LastActionLabel = strings.TrimSpace(actionLabel)
 	record.LastFailureAt = &now
 	if headerWaitMs != nil && *headerWaitMs > 0 {
 		record.HeaderWaitEWMAMs = updateOpenAIPathEWMA(record.HeaderWaitEWMAMs, float64(*headerWaitMs), t.options.EWMAAlpha)
@@ -362,6 +409,28 @@ func NormalizeOpenAIPathFailureReason(reason string) string {
 		}
 		return msg
 	}
+}
+
+func openAIPathHealthReasonForHTTPAttempt(reason string, err error, attempt *HTTPUpstreamAttemptInfo) string {
+	if attempt == nil || attempt.ProtocolMode != HTTPUpstreamProtocolModeOpenAIH2 {
+		return reason
+	}
+
+	classification := ClassifyUpstreamError(UpstreamErrorInput{Message: reason, Err: err})
+	if classification.Category == UpstreamErrorCategoryHeaderTimeout {
+		return OpenAIPathFailureHTTP2HeaderTimeout
+	}
+
+	errText := ""
+	if err != nil {
+		errText = strings.ToLower(err.Error())
+	}
+	if classification.Category == UpstreamErrorCategoryUnexpectedEOF ||
+		strings.Contains(errText, "stream id") ||
+		strings.Contains(errText, "internal_error") {
+		return OpenAIPathFailureHTTP2ProtocolError
+	}
+	return reason
 }
 
 func normalizeOpenAIPathHealthKey(key OpenAIPathHealthKey) OpenAIPathHealthKey {

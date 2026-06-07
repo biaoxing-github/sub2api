@@ -394,6 +394,40 @@ func TestCodexInputItemRequiresNameTypesAllowCallID(t *testing.T) {
 	}
 }
 
+func TestApplyCodexOAuthTransform_AddsReasoningEncryptedContentInclude(t *testing.T) {
+	reqBody := map[string]any{
+		"model":     "gpt-5.4",
+		"reasoning": map[string]any{"effort": "medium"},
+		"include":   []any{"message.output_text.logprobs"},
+		"input":     []any{},
+	}
+
+	result := applyCodexOAuthTransform(reqBody, true, false)
+
+	require.True(t, result.Modified)
+	include, ok := reqBody["include"].([]any)
+	require.True(t, ok)
+	require.Equal(t, []any{"message.output_text.logprobs", "reasoning.encrypted_content"}, include)
+
+	result = applyCodexOAuthTransform(reqBody, true, false)
+	require.True(t, result.Modified)
+	include, ok = reqBody["include"].([]any)
+	require.True(t, ok)
+	require.Equal(t, []any{"message.output_text.logprobs", "reasoning.encrypted_content"}, include)
+}
+
+func TestApplyCodexOAuthTransform_CompactSkipsReasoningEncryptedContentInclude(t *testing.T) {
+	reqBody := map[string]any{
+		"model":     "gpt-5.4",
+		"reasoning": map[string]any{"effort": "medium"},
+		"input":     []any{},
+	}
+
+	applyCodexOAuthTransform(reqBody, true, true)
+
+	require.NotContains(t, reqBody, "include")
+}
+
 func TestApplyCodexOAuthTransform_ExplicitStoreFalsePreserved(t *testing.T) {
 	// 续链场景：显式 store=false 不再强制为 true，保持 false。
 
