@@ -42,6 +42,9 @@ var (
 	// ARGV[3] = sessionUUID
 	// 返回: 1 = 允许, 0 = 拒绝
 	registerSessionScript = redis.NewScript(`
+		-- Redis 3.2-4.x 兼容：显式启用 effects replication，确保 redis.call('TIME')
+		-- 在老版本上也能正确复制。Redis 5.0+ 下该调用为默认行为。
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local maxSessions = tonumber(ARGV[1])
 		local idleTimeout = tonumber(ARGV[2])
@@ -82,6 +85,9 @@ var (
 	// ARGV[1] = idleTimeout（秒）
 	// ARGV[2] = sessionUUID
 	refreshSessionScript = redis.NewScript(`
+		-- Redis 3.2-4.x 兼容：显式启用 effects replication，确保 redis.call('TIME')
+		-- 在老版本上也能正确复制。Redis 5.0+ 下该调用为默认行为。
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local idleTimeout = tonumber(ARGV[1])
 		local sessionUUID = ARGV[2]
@@ -102,6 +108,9 @@ var (
 	// KEYS[1] = session_limit:account:{accountID}
 	// ARGV[1] = idleTimeout（秒）
 	getActiveSessionCountScript = redis.NewScript(`
+		-- Redis 3.2-4.x 兼容：显式启用 effects replication，确保 redis.call('TIME')
+		-- 在老版本上也能正确复制。Redis 5.0+ 下该调用为默认行为。
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local idleTimeout = tonumber(ARGV[1])
 
@@ -120,6 +129,9 @@ var (
 	// ARGV[1] = idleTimeout（秒）
 	// ARGV[2] = sessionUUID
 	isSessionActiveScript = redis.NewScript(`
+		-- Redis 3.2-4.x 兼容：显式启用 effects replication，确保 redis.call('TIME')
+		-- 在老版本上也能正确复制。Redis 5.0+ 下该调用为默认行为。
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local idleTimeout = tonumber(ARGV[1])
 		local sessionUUID = ARGV[2]

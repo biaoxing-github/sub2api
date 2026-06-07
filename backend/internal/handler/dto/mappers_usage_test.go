@@ -3,6 +3,7 @@ package dto
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -146,6 +147,28 @@ func TestUsageLogFromService_FallsBackToLegacyModelWhenRequestedModelMissing(t *
 
 	require.Equal(t, "claude-3", userDTO.Model)
 	require.Equal(t, "claude-3", adminDTO.Model)
+}
+
+func TestUsageLogFromServiceAdmin_IncludesDeletedUserMarker(t *testing.T) {
+	t.Parallel()
+
+	deletedAt := time.Date(2026, time.June, 7, 10, 30, 0, 0, time.UTC)
+	log := &service.UsageLog{
+		RequestID: "req_deleted_user",
+		Model:     "gpt-5",
+		User: &service.User{
+			ID:        42,
+			Email:     "deleted@example.com",
+			Username:  "deleted",
+			DeletedAt: &deletedAt,
+		},
+	}
+
+	adminDTO := UsageLogFromServiceAdmin(log)
+	require.NotNil(t, adminDTO.User)
+	require.Equal(t, "deleted@example.com", adminDTO.User.Email)
+	require.NotNil(t, adminDTO.User.DeletedAt)
+	require.Equal(t, deletedAt, *adminDTO.User.DeletedAt)
 }
 
 func TestUsageLogFromService_IncludesImageBillingMetadataForUserAndAdmin(t *testing.T) {

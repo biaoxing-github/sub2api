@@ -62,11 +62,16 @@ func NewUserMessageQueueService(cache UserMsgQueueCache, rpmCache RPMCache, cfg 
 // 2. 最后一条消息 role == "user"
 // 3. 最后一条消息 content（如果是数组）中不含 type:"tool_result" / "tool_use_result"
 func IsRealUserMessage(parsed *ParsedRequest) bool {
-	if parsed == nil || len(parsed.Messages) == 0 {
+	if parsed == nil {
 		return false
 	}
 
-	lastMsg := parsed.Messages[len(parsed.Messages)-1]
+	var messages []any
+	if err := parsed.DecodeMessages(&messages); err != nil || len(messages) == 0 {
+		return false
+	}
+
+	lastMsg := messages[len(messages)-1]
 	msgMap, ok := lastMsg.(map[string]any)
 	if !ok {
 		return false

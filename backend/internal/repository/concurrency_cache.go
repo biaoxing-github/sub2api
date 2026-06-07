@@ -44,6 +44,9 @@ var (
 	// ARGV[2] = TTL（秒）
 	// ARGV[3] = requestID
 	acquireScript = redis.NewScript(`
+		-- Redis 3.2-4.x 兼容：显式启用 effects replication，确保 redis.call('TIME')
+		-- 在老版本上也能正确复制。Redis 5.0+ 下该调用为默认行为。
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local maxConcurrency = tonumber(ARGV[1])
 		local ttl = tonumber(ARGV[2])
@@ -81,6 +84,9 @@ var (
 	// KEYS[1] = 有序集合键
 	// ARGV[1] = TTL（秒）
 	getCountScript = redis.NewScript(`
+		-- Redis 3.2-4.x 兼容：显式启用 effects replication，确保 redis.call('TIME')
+		-- 在老版本上也能正确复制。Redis 5.0+ 下该调用为默认行为。
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local ttl = tonumber(ARGV[1])
 
@@ -151,6 +157,9 @@ var (
 	// KEYS[1] = 有序集合键
 	// ARGV[1] = TTL（秒）
 	cleanupExpiredSlotsScript = redis.NewScript(`
+		-- Redis 3.2-4.x 兼容：显式启用 effects replication，确保 redis.call('TIME')
+		-- 在老版本上也能正确复制。Redis 5.0+ 下该调用为默认行为。
+		redis.replicate_commands()
 		local key = KEYS[1]
 		local ttl = tonumber(ARGV[1])
 		local timeResult = redis.call('TIME')

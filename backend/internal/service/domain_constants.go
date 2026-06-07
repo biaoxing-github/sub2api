@@ -411,6 +411,8 @@ const (
 	// 当客户端 UA 被识别为浏览器（Chrome/Firefox/Safari/Edge 等）时，转发给 OpenAI 上游前会替换为此值，
 	// 用于避免 Cloudflare 对浏览器型 UA 的质询拦截。
 	SettingKeyOpenAICodexUserAgent = "openai_codex_user_agent"
+	// SettingKeyOpenAIAllowClaudeCodeCodexPlugin 是否允许 Claude Code 的 Codex 插件访问仅 Codex 官方客户端账号。
+	SettingKeyOpenAIAllowClaudeCodeCodexPlugin = "openai_allow_claude_code_codex_plugin"
 	// SettingKeyOpenAICockpitToolsCompat 是否按 cockpit-tools 的 Codex HTTP executor 方式发送 OpenAI OAuth Responses 请求。
 	SettingKeyOpenAICockpitToolsCompat = "openai_cockpit_tools_compat"
 	// SettingKeyOpenAIOAuthCompatMode OpenAI OAuth 上游兼容模式：off/cockpit_tools/codex_direct。

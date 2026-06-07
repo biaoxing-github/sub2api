@@ -35,9 +35,13 @@ const (
 
 	// Client-side configuration denials should remain visible in ops_error_logs,
 	// but should be excluded from SLA/error-rate calculations.
-	OpsClientBusinessLimitedKey                 = "ops_client_business_limited"
-	OpsClientBusinessLimitedReasonKey           = "ops_client_business_limited_reason"
-	OpsClientBusinessLimitedReasonIPRestriction = "api_key_ip_restriction"
+	OpsClientBusinessLimitedKey                          = "ops_client_business_limited"
+	OpsClientBusinessLimitedReasonKey                    = "ops_client_business_limited_reason"
+	OpsClientBusinessLimitedReasonIPRestriction          = "api_key_ip_restriction"
+	OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable = "api_key_group_unavailable"
+	OpsClientBusinessLimitedReasonAPIKeyGroupUnassigned  = "api_key_group_unassigned"
+	OpsClientBusinessLimitedReasonLocalFeatureGate       = "local_feature_gate"
+	OpsClientBusinessLimitedReasonLocalPolicyDenied      = "local_policy_denied"
 )
 
 func SetOpsLatencyMs(c *gin.Context, key string, value int64) {
@@ -155,6 +159,11 @@ type OpsUpstreamErrorEvent struct {
 	// Kind: http_error | request_error | retry_exhausted | failover
 	Kind string `json:"kind,omitempty"`
 
+	// ActionLabel 表示这次上游失败对应的动作语义，例如 retry_next_account。
+	ActionLabel string `json:"action_label,omitempty"`
+	// ActionMetadata 记录动作的补充解释信息，便于审计和排障。
+	ActionMetadata map[string]string `json:"action_metadata,omitempty"`
+
 	Message string `json:"message,omitempty"`
 	Detail  string `json:"detail,omitempty"`
 }
@@ -170,6 +179,21 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	ev.UpstreamRequestID = strings.TrimSpace(ev.UpstreamRequestID)
 	ev.UpstreamResponseBody = strings.TrimSpace(ev.UpstreamResponseBody)
 	ev.Kind = strings.TrimSpace(ev.Kind)
+	ev.ActionLabel = strings.TrimSpace(ev.ActionLabel)
+	if len(ev.ActionMetadata) > 0 {
+		metadata := make(map[string]string, len(ev.ActionMetadata))
+		for k, v := range ev.ActionMetadata {
+			k = strings.TrimSpace(k)
+			v = strings.TrimSpace(v)
+			if k == "" || v == "" {
+				continue
+			}
+			metadata[k] = v
+		}
+		ev.ActionMetadata = metadata
+	} else {
+		ev.ActionMetadata = nil
+	}
 	ev.UpstreamURL = strings.TrimSpace(ev.UpstreamURL)
 	ev.Message = strings.TrimSpace(ev.Message)
 	ev.Detail = strings.TrimSpace(ev.Detail)

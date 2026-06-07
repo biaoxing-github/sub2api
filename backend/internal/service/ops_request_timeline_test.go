@@ -91,6 +91,8 @@ func TestOpsServiceGetRequestTimelineIncludesLatencyAndUpstreamErrors(t *testing
 					AccountName:        "encore",
 					Kind:               "failover",
 					Message:            "context deadline exceeded",
+					ActionLabel:        string(OpenAIStreamActionRetryNextAccount),
+					ActionMetadata:     map[string]string{"action_label": string(OpenAIStreamActionRetryNextAccount), "reason_scope": "stream"},
 					UpstreamStatusCode: 0,
 					UpstreamURL:        "https://api.okcodex.cn/v1/responses",
 				}},
@@ -114,6 +116,9 @@ func TestOpsServiceGetRequestTimelineIncludesLatencyAndUpstreamErrors(t *testing
 		}
 		if event.Phase == "upstream" && event.EventType == "upstream_failover" && event.Reason == "context deadline exceeded" {
 			sawUpstreamError = true
+			if event.Details["action_label"] != string(OpenAIStreamActionRetryNextAccount) {
+				t.Fatalf("event details = %#v", event.Details)
+			}
 		}
 	}
 	if !sawUpstreamLatency || !sawUpstreamError {
@@ -161,12 +166,13 @@ func TestOpsServiceGetCodexDiagnosisIncludesBaseURLFailover(t *testing.T) {
 				Message:    "unexpected EOF",
 				Stream:     true,
 				UpstreamErrors: []*OpsUpstreamErrorEvent{{
-					AtUnixMs:  startedAt.Add(time.Second).UnixMilli(),
-					Platform:  PlatformOpenAI,
-					Kind:      "base_url_failover",
-					Message:   "unexpected EOF",
-					Detail:    "https://bad.example.com/v1",
-					AccountID: 99,
+					AtUnixMs:    startedAt.Add(time.Second).UnixMilli(),
+					Platform:    PlatformOpenAI,
+					Kind:        "base_url_failover",
+					Message:     "unexpected EOF",
+					Detail:      "https://bad.example.com/v1",
+					AccountID:   99,
+					ActionLabel: string(OpenAIStreamActionAvoidUpstreamBucketTTL),
 				}},
 			}}, 1, nil
 		},
@@ -181,5 +187,42 @@ func TestOpsServiceGetCodexDiagnosisIncludesBaseURLFailover(t *testing.T) {
 	}
 	if diagnosis.Path["last_base_url_failover_detail"] != "https://bad.example.com/v1" {
 		t.Fatalf("path = %+v", diagnosis.Path)
+	}
+}
+
+func TestOpsServiceGetCodexDiagnosisIncludesActionMetadata(t *testing.T) {
+	startedAt := time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC)
+	svc := NewOpsService(&opsRepoMock{
+		ListRequestDetailsFn: func(ctx context.Context, filter *OpsRequestDetailFilter) ([]*OpsRequestDetail, int64, error) {
+			return []*OpsRequestDetail{
+				{
+					Kind:      OpsRequestKindError,
+					CreatedAt: startedAt,
+					RequestID: "req_action_metadata",
+					Platform:  PlatformOpenAI,
+					Message:   "stream failed",
+					Stream:    true,
+					UpstreamErrors: []*OpsUpstreamErrorEvent{{
+						AtUnixMs:       startedAt.Add(time.Second).UnixMilli(),
+						Platform:       PlatformOpenAI,
+						Kind:           "failover",
+						Message:        "stream failed",
+						ActionLabel:    string(OpenAIStreamActionRetryNextAccount),
+						ActionMetadata: map[string]string{"action_label": string(OpenAIStreamActionRetryNextAccount), "reason_scope": "stream"},
+					}},
+				},
+			}, 1, nil
+		},
+	}, nil, &config.Config{Ops: config.OpsConfig{Enabled: true}}, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	diagnosis, err := svc.GetCodexDiagnosis(context.Background(), "req_action_metadata")
+	if err != nil {
+		t.Fatalf("GetCodexDiagnosis() error = %v", err)
+	}
+	if diagnosis.Path["action_label"] != string(OpenAIStreamActionRetryNextAccount) {
+		t.Fatalf("path = %+v", diagnosis.Path)
+	}
+	if len(diagnosis.Timeline) < 2 || diagnosis.Timeline[1].Details["action_label"] != string(OpenAIStreamActionRetryNextAccount) {
+		t.Fatalf("timeline = %#v", diagnosis.Timeline)
 	}
 }

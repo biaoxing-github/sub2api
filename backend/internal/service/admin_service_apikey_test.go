@@ -36,6 +36,9 @@ func (s *userRepoStubForGroupUpdate) Create(context.Context, *User) error { pani
 func (s *userRepoStubForGroupUpdate) GetByID(context.Context, int64) (*User, error) {
 	panic("unexpected")
 }
+func (s *userRepoStubForGroupUpdate) GetByIDIncludeDeleted(context.Context, int64) (*User, error) {
+	panic("unexpected")
+}
 func (s *userRepoStubForGroupUpdate) GetByEmail(context.Context, string) (*User, error) {
 	panic("unexpected")
 }

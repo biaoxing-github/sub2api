@@ -99,4 +99,16 @@ type AccountAvailability struct {
 	PathHealthHeaderTimeoutCount  int64      `json:"path_health_header_timeout_count,omitempty"`
 	PathHealthTTFTEWMAMs          float64    `json:"path_health_ttft_ewma_ms,omitempty"`
 	PathHealthHeaderWaitEWMAMs    float64    `json:"path_health_header_wait_ewma_ms,omitempty"`
+
+	EffectiveAvailability *AccountEffectiveAvailability `json:"effective_availability,omitempty"`
+}
+
+// AccountEffectiveAvailability summarizes the effective state an ops frontend should render.
+//
+// State uses a small, stable vocabulary so consumers do not need to re-derive the precedence
+// chain from raw account fields.
+type AccountEffectiveAvailability struct {
+	State  string     `json:"state"`
+	Reason string     `json:"reason,omitempty"`
+	Until  *time.Time `json:"until,omitempty"`
 }

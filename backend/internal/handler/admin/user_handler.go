@@ -175,13 +175,22 @@ func parseAttributeFilters(c *gin.Context) map[int64]string {
 // GetByID handles getting a user by ID
 // GET /api/v1/admin/users/:id
 func (h *UserHandler) GetByID(c *gin.Context) {
-	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
+	userID, parseErr := strconv.ParseInt(c.Param("id"), 10, 64)
+	if parseErr != nil {
 		response.BadRequest(c, "Invalid user ID")
 		return
 	}
 
-	user, err := h.adminService.GetUser(c.Request.Context(), userID)
+	includeDeleted := strings.EqualFold(strings.TrimSpace(c.Query("include_deleted")), "true")
+	var (
+		user *service.User
+		err  error
+	)
+	if includeDeleted {
+		user, err = h.adminService.GetUserIncludeDeleted(c.Request.Context(), userID)
+	} else {
+		user, err = h.adminService.GetUser(c.Request.Context(), userID)
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

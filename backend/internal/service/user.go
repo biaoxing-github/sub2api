@@ -32,6 +32,7 @@ type User struct {
 	LastUsedAt           *time.Time
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+	DeletedAt            *time.Time // 软删除时间；用于管理员历史数据回看标记
 
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]rateMultiplier

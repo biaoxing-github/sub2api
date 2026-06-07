@@ -53,6 +53,10 @@ func (s *userRepoStub) GetByID(ctx context.Context, id int64) (*User, error) {
 	return s.user, nil
 }
 
+func (s *userRepoStub) GetByIDIncludeDeleted(ctx context.Context, id int64) (*User, error) {
+	return s.GetByID(ctx, id)
+}
+
 func (s *userRepoStub) GetByEmail(ctx context.Context, email string) (*User, error) {
 	if s.getByEmailErr != nil {
 		return nil, s.getByEmailErr

@@ -15,12 +15,16 @@ export interface OpsRequestOptions {
 
 export type OpsUpstreamErrorEvent = {
   at_unix_ms?: number
+  passthrough?: boolean
   platform?: string
   account_id?: number
   account_name?: string
   upstream_status_code?: number
   upstream_request_id?: string
+  upstream_url?: string
   kind?: string
+  action_label?: string
+  action_metadata?: Record<string, string>
   message?: string
   detail?: string
 }
@@ -435,6 +439,7 @@ export interface AccountAvailability {
   is_overloaded: boolean
   overload_until?: string
   overload_remaining_sec?: number
+  temp_unschedulable_until?: string
   has_error: boolean
   error_message?: string
   path_health_state?: string

@@ -6,6 +6,19 @@ import (
 	"time"
 )
 
+const (
+	AccountEffectiveAvailabilityHealthy           = "healthy"
+	AccountEffectiveAvailabilityPathOpenCircuit   = "path_open_circuit"
+	AccountEffectiveAvailabilityPathHalfOpen      = "path_half_open"
+	AccountEffectiveAvailabilityPathDegraded      = "path_degraded"
+	AccountEffectiveAvailabilityTempUnschedulable = "temp_unschedulable"
+	AccountEffectiveAvailabilityRateLimited       = "rate_limited"
+	AccountEffectiveAvailabilityOverloaded        = "overloaded"
+	AccountEffectiveAvailabilityError             = "error"
+	AccountEffectiveAvailabilityDisabled          = "disabled"
+	AccountEffectiveAvailabilityUnschedulable     = "unschedulable"
+)
+
 // GetAccountAvailabilityStats returns current account availability stats.
 //
 // Query-level filtering is intentionally limited to platform/group to match the dashboard scope.
@@ -59,17 +72,9 @@ func (s *OpsService) GetAccountAvailabilityStats(ctx context.Context, platformFi
 		isOverloaded := acc.OverloadUntil != nil && now.Before(*acc.OverloadUntil)
 		hasError := acc.Status == StatusError
 
-		// Normalize exclusive status flags so the UI doesn't show conflicting badges.
-		if hasError {
-			isRateLimited = false
-			isOverloaded = false
-		}
-
-		isAvailable := acc.Status == StatusActive && acc.Schedulable && !isRateLimited && !isOverloaded && !isTempUnsched
 		pathHealth, hasPathHealth := s.openAIPathHealthForAvailability(&acc)
-		if hasPathHealth && pathHealth.State == OpenAIPathHealthStateOpenCircuit {
-			isAvailable = false
-		}
+		effectiveAvailability := deriveAccountEffectiveAvailability(&acc, now, pathHealth, hasPathHealth)
+		isAvailable := effectiveAvailability.State == AccountEffectiveAvailabilityHealthy
 
 		if acc.Platform != "" {
 			if _, ok := platform[acc.Platform]; !ok {
@@ -82,7 +87,7 @@ func (s *OpsService) GetAccountAvailabilityStats(ctx context.Context, platformFi
 			if isAvailable {
 				p.AvailableCount++
 			}
-			if isRateLimited {
+			if effectiveAvailability.State == AccountEffectiveAvailabilityRateLimited {
 				p.RateLimitCount++
 			}
 			if hasError {
@@ -106,7 +111,7 @@ func (s *OpsService) GetAccountAvailabilityStats(ctx context.Context, platformFi
 			if isAvailable {
 				g.AvailableCount++
 			}
-			if isRateLimited {
+			if effectiveAvailability.State == AccountEffectiveAvailabilityRateLimited {
 				g.RateLimitCount++
 			}
 			if hasError {
@@ -134,7 +139,8 @@ func (s *OpsService) GetAccountAvailabilityStats(ctx context.Context, platformFi
 			IsOverloaded:  isOverloaded,
 			HasError:      hasError,
 
-			ErrorMessage: acc.ErrorMessage,
+			ErrorMessage:          acc.ErrorMessage,
+			EffectiveAvailability: &effectiveAvailability,
 		}
 
 		if isRateLimited && acc.RateLimitResetAt != nil {
@@ -213,4 +219,87 @@ func (s *OpsService) openAIPathHealthForAvailability(account *Account) (OpenAIPa
 		return OpenAIPathHealthRecord{}, false
 	}
 	return s.openAIGatewayService.SnapshotOpenAIPathHealthForAccount(account, OpenAIUpstreamTransportHTTPSSE)
+}
+
+func deriveAccountEffectiveAvailability(account *Account, now time.Time, pathHealth OpenAIPathHealthRecord, hasPathHealth bool) AccountEffectiveAvailability {
+	if account == nil {
+		return AccountEffectiveAvailability{State: AccountEffectiveAvailabilityDisabled, Reason: "account_missing"}
+	}
+
+	if hasPathHealth {
+		switch pathHealth.State {
+		case OpenAIPathHealthStateOpenCircuit:
+			return AccountEffectiveAvailability{
+				State:  AccountEffectiveAvailabilityPathOpenCircuit,
+				Reason: pathHealth.LastFailureReason,
+				Until:  pathHealth.CooldownUntil,
+			}
+		case OpenAIPathHealthStateHalfOpen:
+			return AccountEffectiveAvailability{
+				State:  AccountEffectiveAvailabilityPathHalfOpen,
+				Reason: pathHealth.LastFailureReason,
+				Until:  pathHealth.CooldownUntil,
+			}
+		case OpenAIPathHealthStateDegraded:
+			return AccountEffectiveAvailability{
+				State:  AccountEffectiveAvailabilityPathDegraded,
+				Reason: pathHealth.LastFailureReason,
+			}
+		}
+	}
+
+	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
+		reason := account.TempUnschedulableReason
+		if reason == "" {
+			reason = "temp_unschedulable_until"
+		}
+		return AccountEffectiveAvailability{
+			State:  AccountEffectiveAvailabilityTempUnschedulable,
+			Reason: reason,
+			Until:  account.TempUnschedulableUntil,
+		}
+	}
+
+	if account.RateLimitResetAt != nil && now.Before(*account.RateLimitResetAt) {
+		return AccountEffectiveAvailability{
+			State:  AccountEffectiveAvailabilityRateLimited,
+			Reason: "rate_limit_reset_at",
+			Until:  account.RateLimitResetAt,
+		}
+	}
+
+	if account.OverloadUntil != nil && now.Before(*account.OverloadUntil) {
+		return AccountEffectiveAvailability{
+			State:  AccountEffectiveAvailabilityOverloaded,
+			Reason: "overload_until",
+			Until:  account.OverloadUntil,
+		}
+	}
+
+	if account.Status == StatusError {
+		reason := account.ErrorMessage
+		if reason == "" {
+			reason = "status_error"
+		}
+		return AccountEffectiveAvailability{
+			State:  AccountEffectiveAvailabilityError,
+			Reason: reason,
+		}
+	}
+
+	if account.Status != StatusActive {
+		return AccountEffectiveAvailability{
+			State:  AccountEffectiveAvailabilityDisabled,
+			Reason: "status_not_active",
+		}
+	}
+
+	if !account.Schedulable {
+		return AccountEffectiveAvailability{
+			State:  AccountEffectiveAvailabilityUnschedulable,
+			Reason: "schedulable_disabled",
+		}
+	}
+
+	return AccountEffectiveAvailability{State: AccountEffectiveAvailabilityHealthy}
 }

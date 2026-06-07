@@ -327,7 +327,7 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 		}
 		for key, value := range event.Details {
 			switch key {
-			case "status_code", "stream", "model", "platform", "upstream_status_code", "upstream_error_message", "upstream_error_detail", "upstream_request_id", "request_base_url", "selected_base_url", "base_url", "base_url_score", "base_url_state", "path_health_state", "path_health_samples", "path_health_ttft_ewma_ms", "path_health_header_wait_ewma_ms", "base_url_failover", "base_url_failover_count", "last_base_url_failover_reason", "last_base_url_failover_detail", "last_base_url_failover_url":
+			case "status_code", "stream", "model", "platform", "upstream_status_code", "upstream_error_message", "upstream_error_detail", "upstream_request_id", "request_base_url", "selected_base_url", "base_url", "base_url_score", "base_url_state", "path_health_state", "path_health_samples", "path_health_ttft_ewma_ms", "path_health_header_wait_ewma_ms", "base_url_failover", "base_url_failover_count", "last_base_url_failover_reason", "last_base_url_failover_detail", "last_base_url_failover_url", "action_label", "action_metadata":
 				diagnosis.Path[key] = value
 				if key == "upstream_error_detail" {
 					mergeCodexDiagnosisDetailMaps(diagnosis, value)
@@ -470,6 +470,22 @@ func appendOpsRequestUpstreamErrorEvents(timeline *OpsRequestTimeline, item *Ops
 			v := ev.AccountID
 			accountID = &v
 		}
+		details := map[string]any{
+			"kind":                 strings.TrimSpace(ev.Kind),
+			"passthrough":          ev.Passthrough,
+			"platform":             strings.TrimSpace(ev.Platform),
+			"upstream_status_code": ev.UpstreamStatusCode,
+			"upstream_request_id":  strings.TrimSpace(ev.UpstreamRequestID),
+			"upstream_url":         strings.TrimSpace(ev.UpstreamURL),
+			"detail":               strings.TrimSpace(ev.Detail),
+			"message":              reason,
+		}
+		if actionLabel := strings.TrimSpace(ev.ActionLabel); actionLabel != "" {
+			details["action_label"] = actionLabel
+		}
+		if len(ev.ActionMetadata) > 0 {
+			details["action_metadata"] = ev.ActionMetadata
+		}
 		timeline.Events = append(timeline.Events, OpsRequestTimelineEvent{
 			At:          at,
 			Phase:       "upstream",
@@ -477,16 +493,7 @@ func appendOpsRequestUpstreamErrorEvents(timeline *OpsRequestTimeline, item *Ops
 			AccountID:   accountID,
 			AccountName: strings.TrimSpace(ev.AccountName),
 			Reason:      reason,
-			Details: map[string]any{
-				"kind":                 strings.TrimSpace(ev.Kind),
-				"passthrough":          ev.Passthrough,
-				"platform":             strings.TrimSpace(ev.Platform),
-				"upstream_status_code": ev.UpstreamStatusCode,
-				"upstream_request_id":  strings.TrimSpace(ev.UpstreamRequestID),
-				"upstream_url":         strings.TrimSpace(ev.UpstreamURL),
-				"detail":               strings.TrimSpace(ev.Detail),
-				"message":              reason,
-			},
+			Details:     details,
 		})
 	}
 }

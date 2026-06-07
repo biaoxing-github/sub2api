@@ -37,8 +37,8 @@
 
     <div v-if="!expanded && summary" class="grid gap-0 md:grid-cols-7">
       <MetricCell :label="t('admin.accounts.usageSummary.accounts')" :value="formatNumber(summary.total_accounts)" />
-      <MetricCell :label="t('admin.accounts.usageSummary.fiveHourRemaining')" :value="formatWindowPercent(summary.five_hour.remaining_percent_sum, summary.five_hour)" />
-      <MetricCell :label="t('admin.accounts.usageSummary.sevenDayRemaining')" :value="formatWindowPercent(summary.seven_day.remaining_percent_sum, summary.seven_day)" />
+      <MetricCell :label="t('admin.accounts.usageSummary.fiveHourRemaining')" :value="formatWindowPercent(summary.five_hour.remaining_percent_sum, summary.five_hour)" :title="t('admin.accounts.usageSummary.fiveHourTooltip')" />
+      <MetricCell :label="t('admin.accounts.usageSummary.sevenDayRemaining')" :value="formatWindowPercent(summary.seven_day.remaining_percent_sum, summary.seven_day)" :title="t('admin.accounts.usageSummary.sevenDayTooltip')" />
       <MetricCell :label="t('admin.accounts.usageSummary.upstreamActualBalance')" :value="formatCost(summary.upstream_balance?.available || 0)" tone="blue" />
       <MetricCell :label="t('admin.accounts.usageSummary.upstreamUsableBalance')" :value="formatCost(upstreamUsableBalance(summary.upstream_balance))" tone="emerald" />
       <MetricCell :label="t('admin.accounts.usageSummary.missingCodexSnapshots')" :value="formatNumber(missingCodexSnapshots(summary))" tone="slate" />
@@ -59,8 +59,8 @@
       </div>
 
       <div class="grid gap-0 lg:grid-cols-2">
-        <WindowBlock :title="t('admin.accounts.usageSummary.fiveHour')" :window="summary.five_hour" />
-        <WindowBlock :title="t('admin.accounts.usageSummary.sevenDay')" :window="summary.seven_day" />
+        <WindowBlock :title="t('admin.accounts.usageSummary.fiveHour')" :tooltip="t('admin.accounts.usageSummary.fiveHourTooltip')" :window="summary.five_hour" />
+        <WindowBlock :title="t('admin.accounts.usageSummary.sevenDay')" :tooltip="t('admin.accounts.usageSummary.sevenDayTooltip')" :window="summary.seven_day" />
       </div>
 
       <div class="grid gap-0 md:grid-cols-5">
@@ -81,8 +81,8 @@
             <tr>
               <th class="px-4 py-2 text-left">{{ t('admin.accounts.usageSummary.plan') }}</th>
               <th class="px-4 py-2 text-left">{{ t('admin.accounts.usageSummary.accounts') }}</th>
-              <th class="px-4 py-2 text-left">{{ t('admin.accounts.usageSummary.fiveHour') }}</th>
-              <th class="px-4 py-2 text-left">{{ t('admin.accounts.usageSummary.sevenDay') }}</th>
+              <th class="px-4 py-2 text-left" :title="t('admin.accounts.usageSummary.fiveHourTooltip')">{{ t('admin.accounts.usageSummary.fiveHour') }}</th>
+              <th class="px-4 py-2 text-left" :title="t('admin.accounts.usageSummary.sevenDayTooltip')">{{ t('admin.accounts.usageSummary.sevenDay') }}</th>
               <th class="px-4 py-2 text-left">{{ t('admin.accounts.usageSummary.upstreamBalance') }}</th>
               <th class="px-4 py-2 text-left">{{ t('admin.accounts.usageSummary.typeBreakdown') }}</th>
             </tr>
@@ -269,6 +269,7 @@ const MetricCell = defineComponent({
   props: {
     label: { type: String, required: true },
     value: { type: String, required: true },
+    title: { type: String, default: '' },
     tone: { type: String as PropType<'emerald' | 'amber' | 'slate' | 'blue'>, default: 'emerald' },
   },
   setup(cellProps) {
@@ -279,7 +280,7 @@ const MetricCell = defineComponent({
       blue: 'text-blue-700 dark:text-blue-300',
     }[cellProps.tone]))
 
-    return () => h('div', { class: 'border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-gray-700 md:border-b-0 md:border-r md:last:border-r-0' }, [
+    return () => h('div', { class: 'border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-gray-700 md:border-b-0 md:border-r md:last:border-r-0', title: cellProps.title || undefined }, [
       h('div', { class: 'text-xs font-medium text-gray-500 dark:text-gray-400' }, cellProps.label),
       h('div', { class: ['mt-1 text-xl font-semibold', toneClass.value] }, cellProps.value),
     ])
@@ -309,10 +310,11 @@ const WindowMini = defineComponent({
 const WindowBlock = defineComponent({
   props: {
     title: { type: String, required: true },
+    tooltip: { type: String, default: '' },
     window: { type: Object as PropType<AccountPoolUsageSummaryWindow>, required: true },
   },
   setup(blockProps) {
-    return () => h('div', { class: 'border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-gray-700 lg:border-b-0 lg:border-r lg:last:border-r-0' }, [
+    return () => h('div', { class: 'border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-gray-700 lg:border-b-0 lg:border-r lg:last:border-r-0', title: blockProps.tooltip || undefined }, [
       h('div', { class: 'flex items-center justify-between gap-3' }, [
         h('div', { class: 'text-sm font-semibold text-gray-900 dark:text-gray-100' }, blockProps.title),
         h('div', { class: 'text-sm font-semibold text-emerald-700 dark:text-emerald-300' }, formatWindowUsedPercent(blockProps.window)),

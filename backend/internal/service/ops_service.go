@@ -41,6 +41,10 @@ type OpsService struct {
 	// cleanupReloader 由 wire 在 OpsCleanupService 构造完成后通过 SetCleanupReloader 注入。
 	// 解耦避免 OpsService -> OpsCleanupService 的硬依赖（cleanup 也读 settings，会循环）。
 	cleanupReloader CleanupReloader
+
+	// quotaAutoPauseSink 由 wire 注入（通常是 SettingService.SetOpenAIQuotaAutoPauseSettings）。
+	// UpdateOpsAdvancedSettings 写入新配置后调用，让调度热路径立刻读到最新默认阈值。
+	quotaAutoPauseSink func(OpsOpenAIAccountQuotaAutoPauseSettings)
 }
 
 // CleanupReloader 由 OpsCleanupService 实现。
@@ -55,6 +59,14 @@ func (s *OpsService) SetCleanupReloader(r CleanupReloader) {
 		return
 	}
 	s.cleanupReloader = r
+}
+
+// SetOpenAIQuotaAutoPauseSettingsSink 注入 quota auto-pause 默认阈值缓存刷新回调。
+func (s *OpsService) SetOpenAIQuotaAutoPauseSettingsSink(sink func(OpsOpenAIAccountQuotaAutoPauseSettings)) {
+	if s == nil {
+		return
+	}
+	s.quotaAutoPauseSink = sink
 }
 
 func NewOpsService(
@@ -323,6 +335,45 @@ func (s *OpsService) GetErrorLogs(ctx context.Context, filter *OpsErrorLogFilter
 	return result, nil
 }
 
+// ListUserErrorRequests 返回当前用户自己的失败请求列表，并裁剪为用户安全视图。
+func (s *OpsService) ListUserErrorRequests(ctx context.Context, userID int64, filter *OpsErrorLogFilter) (*UserErrorRequestList, error) {
+	if err := s.RequireMonitoringEnabled(ctx); err != nil {
+		return nil, err
+	}
+	if s.opsRepo == nil {
+		return &UserErrorRequestList{Items: []*UserErrorRequest{}, Total: 0, Page: 1, PageSize: 20}, nil
+	}
+	if filter == nil {
+		filter = &OpsErrorLogFilter{}
+	}
+	f := *filter
+	f.UserID = &userID
+	f.View = "all"
+	f.ExcludeCountTokens = true
+	f.ModelFuzzy = true
+	f.UserQuery = ""
+	f.Owner = ""
+	f.Source = ""
+	f.Phase = ""
+
+	list, err := s.opsRepo.ListErrorLogs(ctx, &f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*UserErrorRequest, 0, len(list.Errors))
+	for _, e := range list.Errors {
+		if item := ToUserErrorRequest(e); item != nil {
+			items = append(items, item)
+		}
+	}
+	return &UserErrorRequestList{
+		Items:    items,
+		Total:    list.Total,
+		Page:     list.Page,
+		PageSize: list.PageSize,
+	}, nil
+}
+
 func (s *OpsService) GetErrorLogByID(ctx context.Context, id int64) (*OpsErrorLogDetail, error) {
 	if err := s.RequireMonitoringEnabled(ctx); err != nil {
 		return nil, err
@@ -338,6 +389,30 @@ func (s *OpsService) GetErrorLogByID(ctx context.Context, id int64) (*OpsErrorLo
 		return nil, infraerrors.InternalServer("OPS_ERROR_LOAD_FAILED", "Failed to load ops error log").WithCause(err)
 	}
 	return detail, nil
+}
+
+// GetUserErrorRequestDetail 返回当前用户自己的失败请求详情；非本人记录按不存在处理。
+func (s *OpsService) GetUserErrorRequestDetail(ctx context.Context, userID, id int64) (*UserErrorRequestDetail, error) {
+	if err := s.RequireMonitoringEnabled(ctx); err != nil {
+		return nil, err
+	}
+	if s.opsRepo == nil {
+		return nil, infraerrors.NotFound("OPS_ERROR_NOT_FOUND", "ops error log not found")
+	}
+	if id <= 0 {
+		return nil, infraerrors.BadRequest("OPS_ERROR_INVALID_ID", "invalid error id")
+	}
+	detail, err := s.opsRepo.GetErrorLogByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, infraerrors.NotFound("OPS_ERROR_NOT_FOUND", "ops error log not found")
+		}
+		return nil, infraerrors.InternalServer("OPS_ERROR_LOAD_FAILED", "Failed to load ops error log").WithCause(err)
+	}
+	if detail.UserID == nil || *detail.UserID != userID {
+		return nil, infraerrors.NotFound("OPS_ERROR_NOT_FOUND", "ops error log not found")
+	}
+	return ToUserErrorRequestDetail(detail), nil
 }
 
 func (s *OpsService) UpdateErrorResolution(ctx context.Context, errorID int64, resolved bool, resolvedByUserID *int64) error {

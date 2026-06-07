@@ -485,6 +485,9 @@ func (s *OpsService) UpdateOpsAdvancedSettings(ctx context.Context, cfg *OpsAdva
 				"[OpsSettings] cleanup reload after advanced-settings update failed: %v", rerr)
 		}
 	}
+	if s.quotaAutoPauseSink != nil {
+		s.quotaAutoPauseSink(cfg.OpenAIAccountQuotaAutoPause)
+	}
 
 	updated := &OpsAdvancedSettings{}
 	_ = json.Unmarshal(raw, updated)

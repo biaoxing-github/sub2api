@@ -18,15 +18,49 @@ import (
 
 // UsageHandler handles usage-related requests
 type UsageHandler struct {
-	usageService  *service.UsageService
-	apiKeyService *service.APIKeyService
+	usageService   *service.UsageService
+	apiKeyService  *service.APIKeyService
+	opsService     *service.OpsService
+	settingService *service.SettingService
 }
 
 // NewUsageHandler creates a new UsageHandler
-func NewUsageHandler(usageService *service.UsageService, apiKeyService *service.APIKeyService) *UsageHandler {
+func NewUsageHandler(
+	usageService *service.UsageService,
+	apiKeyService *service.APIKeyService,
+	optionalDeps ...any,
+) *UsageHandler {
+	var (
+		opsService     *service.OpsService
+		settingService *service.SettingService
+	)
+	for _, dep := range optionalDeps {
+		switch v := dep.(type) {
+		case *service.OpsService:
+			opsService = v
+		case *service.SettingService:
+			settingService = v
+		}
+	}
 	return &UsageHandler{
-		usageService:  usageService,
+		usageService:   usageService,
 		apiKeyService: apiKeyService,
+		opsService:     opsService,
+		settingService: settingService,
+	}
+}
+
+// SetOpsService 注入用户侧失败请求查询依赖；用于避免重排大型 Wire 初始化图。
+func (h *UsageHandler) SetOpsService(opsService *service.OpsService) {
+	if h != nil {
+		h.opsService = opsService
+	}
+}
+
+// SetSettingService 注入运行设置依赖；保留给用户侧用量页后续配置判断使用。
+func (h *UsageHandler) SetSettingService(settingService *service.SettingService) {
+	if h != nil {
+		h.settingService = settingService
 	}
 }
 
@@ -387,6 +421,93 @@ func (h *UsageHandler) DashboardModels(c *gin.Context) {
 		"start_date": startTime.Format("2006-01-02"),
 		"end_date":   endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 	})
+}
+
+// ListErrors handles listing the current user's failed requests.
+// GET /api/v1/usage/errors
+func (h *UsageHandler) ListErrors(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if h.opsService == nil {
+		response.Error(c, 503, "Ops service not available")
+		return
+	}
+
+	page, pageSize := response.ParsePagination(c)
+	filter := &service.OpsErrorLogFilter{Page: page, PageSize: pageSize}
+	userTZ := c.Query("timezone")
+	if startDateStr := c.Query("start_date"); startDateStr != "" {
+		t, err := timezone.ParseInUserLocation("2006-01-02", startDateStr, userTZ)
+		if err != nil {
+			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD")
+			return
+		}
+		filter.StartTime = &t
+	}
+	if endDateStr := c.Query("end_date"); endDateStr != "" {
+		t, err := timezone.ParseInUserLocation("2006-01-02", endDateStr, userTZ)
+		if err != nil {
+			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD")
+			return
+		}
+		t = t.AddDate(0, 0, 1)
+		filter.EndTime = &t
+	}
+	filter.Model = strings.TrimSpace(c.Query("model"))
+	if apiKeyIDStr := strings.TrimSpace(c.Query("api_key_id")); apiKeyIDStr != "" {
+		id, err := strconv.ParseInt(apiKeyIDStr, 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "Invalid api_key_id")
+			return
+		}
+		filter.APIKeyID = &id
+	}
+	if cat := strings.TrimSpace(c.Query("category")); cat != "" {
+		filter.ErrorPhasesAny, filter.ErrorTypesAny = service.CategoryToFilter(cat)
+	}
+	if sc := strings.TrimSpace(c.Query("status_code")); sc != "" {
+		code, err := strconv.Atoi(sc)
+		if err != nil || code < 0 {
+			response.BadRequest(c, "Invalid status_code")
+			return
+		}
+		filter.StatusCodes = []int{code}
+	}
+
+	result, err := h.opsService.ListUserErrorRequests(c.Request.Context(), subject.UserID, filter)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Paginated(c, result.Items, int64(result.Total), result.Page, result.PageSize)
+}
+
+// GetErrorDetail handles fetching one failed request detail for the current user.
+// GET /api/v1/usage/errors/:id
+func (h *UsageHandler) GetErrorDetail(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if h.opsService == nil {
+		response.Error(c, 503, "Ops service not available")
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid id")
+		return
+	}
+	detail, err := h.opsService.GetUserErrorRequestDetail(c.Request.Context(), subject.UserID, id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, detail)
 }
 
 // BatchAPIKeysUsageRequest represents the request for batch API keys usage

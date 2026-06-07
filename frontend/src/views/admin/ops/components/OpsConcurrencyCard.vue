@@ -78,6 +78,7 @@ interface AccountRow {
   waiting_in_queue: number
   load_percentage: number
   // 状态
+  status: string
   is_available: boolean
   is_rate_limited: boolean
   rate_limit_remaining_sec?: number
@@ -94,6 +95,7 @@ interface AccountRow {
   path_health_header_timeout_count?: number
   path_health_ttft_ewma_ms?: number
   path_health_header_wait_ewma_ms?: number
+  temp_unschedulable_until?: string
 }
 
 // 用户行数据
@@ -212,6 +214,7 @@ const accountRows = computed((): AccountRow[] => {
         max_capacity: safeNumber(conc.max_capacity),
         waiting_in_queue: safeNumber(conc.waiting_in_queue),
         load_percentage: safeNumber(conc.load_percentage),
+        status: String(avail.status || ''),
         is_available: avail.is_available || false,
         is_rate_limited: avail.is_rate_limited || false,
         rate_limit_remaining_sec: avail.rate_limit_remaining_sec,
@@ -227,7 +230,8 @@ const accountRows = computed((): AccountRow[] => {
         path_health_eof_count: avail.path_health_eof_count,
         path_health_header_timeout_count: avail.path_health_header_timeout_count,
         path_health_ttft_ewma_ms: avail.path_health_ttft_ewma_ms,
-        path_health_header_wait_ewma_ms: avail.path_health_header_wait_ewma_ms
+        path_health_header_wait_ewma_ms: avail.path_health_header_wait_ewma_ms,
+        temp_unschedulable_until: avail.temp_unschedulable_until
       }
     })
     .filter((row): row is NonNullable<typeof row> => row !== null)
@@ -351,21 +355,6 @@ function formatMs(value?: number): string {
   return `${Math.round(value)}ms`
 }
 
-function getPathHealthClass(state?: string): string {
-  switch (state) {
-    case 'open_circuit':
-      return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-    case 'degraded':
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-    case 'half_open':
-      return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-    case 'healthy':
-      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-    default:
-      return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
-  }
-}
-
 function getPathHealthLabel(state?: string): string {
   const key = state && ['healthy', 'degraded', 'open_circuit', 'half_open'].includes(state) ? state : 'unknown'
   return t(`admin.ops.accountAvailability.pathHealth.${key}`)
@@ -381,6 +370,104 @@ function getPathHealthTitle(row: AccountRow): string {
     `Header wait: ${formatMs(row.path_health_header_wait_ewma_ms)}`
   ]
   return parts.join('\n')
+}
+
+type UnifiedAvailabilityTone = 'success' | 'warning' | 'danger' | 'neutral'
+
+interface UnifiedAvailabilitySummary {
+  tone: UnifiedAvailabilityTone
+  label: string
+  title?: string
+}
+
+function isFutureTime(value?: string): boolean {
+  if (!value) return false
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) && time > Date.now()
+}
+
+function formatUntil(value?: string): string {
+  if (!value) return ''
+  const time = new Date(value)
+  return Number.isFinite(time.getTime()) ? time.toLocaleString() : ''
+}
+
+function getUnifiedAvailabilitySummary(row: AccountRow): UnifiedAvailabilitySummary {
+  const pathHealthState = row.path_health_state
+  const pathHealthUnavailable = (!!pathHealthState && pathHealthState !== 'healthy') || isFutureTime(row.path_health_cooldown_until)
+  const tempUnschedulable = isFutureTime(row.temp_unschedulable_until)
+
+  if (row.has_error) {
+    return {
+      tone: 'danger',
+      label: t('admin.ops.accountAvailability.accountError'),
+      title: row.error_message || row.path_health_last_failure_reason || ''
+    }
+  }
+
+  if (row.status && row.status !== 'active') {
+    return {
+      tone: 'neutral',
+      label: t(`admin.accounts.status.${row.status}`),
+      title: row.path_health_last_failure_reason || row.error_message || ''
+    }
+  }
+
+  if (tempUnschedulable) {
+    return {
+      tone: 'warning',
+      label: t('admin.accounts.status.tempUnschedulable'),
+      title: formatUntil(row.temp_unschedulable_until)
+    }
+  }
+
+  if (row.is_rate_limited) {
+    return {
+      tone: 'warning',
+      label: t('admin.accounts.status.rateLimited'),
+      title: row.rate_limit_remaining_sec ? formatDuration(row.rate_limit_remaining_sec) : row.path_health_last_failure_reason || ''
+    }
+  }
+
+  if (row.is_overloaded) {
+    return {
+      tone: 'danger',
+      label: t('admin.ops.accountAvailability.unavailable'),
+      title: row.overload_remaining_sec ? formatDuration(row.overload_remaining_sec) : row.path_health_last_failure_reason || ''
+    }
+  }
+
+  if (pathHealthUnavailable) {
+    const pathLabel = pathHealthState && pathHealthState !== 'healthy'
+      ? getPathHealthLabel(pathHealthState)
+      : t('admin.ops.accountAvailability.pathHealth.open_circuit')
+    return {
+      tone: pathHealthState === 'open_circuit' ? 'danger' : pathHealthState === 'half_open' ? 'warning' : 'warning',
+      label: pathLabel,
+      title: getPathHealthTitle(row)
+    }
+  }
+
+  if (row.is_available) {
+    return {
+      tone: 'success',
+      label: t('admin.ops.accountAvailability.available'),
+      title: row.group_name || row.platform || ''
+    }
+  }
+
+  return {
+    tone: 'neutral',
+    label: t('admin.ops.accountAvailability.unavailable'),
+    title: row.path_health_last_failure_reason || row.error_message || row.path_health_cooldown_until || ''
+  }
+}
+
+function getUnifiedAvailabilityClass(tone: UnifiedAvailabilityTone): string {
+  if (tone === 'success') return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+  if (tone === 'warning') return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+  if (tone === 'danger') return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+  return 'bg-gray-100 text-gray-700 dark:bg-dark-800 dark:text-gray-400'
 }
 
 
@@ -588,59 +675,25 @@ watch(
               <span class="font-mono text-[11px] font-bold text-gray-900 dark:text-white"> {{ row.current_in_use }}/{{ row.max_capacity }} </span>
               <!-- 状态徽章 -->
               <span
-                v-if="row.path_health_state && row.path_health_state !== 'healthy'"
                 class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium"
-                :class="getPathHealthClass(row.path_health_state)"
-                :title="getPathHealthTitle(row)"
+                :class="getUnifiedAvailabilityClass(getUnifiedAvailabilitySummary(row).tone)"
+                :title="getUnifiedAvailabilitySummary(row).title || undefined"
               >
-                {{ getPathHealthLabel(row.path_health_state) }}
-              </span>
-              <span
-                v-else-if="row.is_available"
-                class="inline-flex items-center gap-1 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
-              >
-                <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg v-if="getUnifiedAvailabilitySummary(row).tone === 'success'" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
-                {{ t('admin.ops.accountAvailability.available') }}
-              </span>
-              <span
-                v-else-if="row.is_rate_limited"
-                class="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-              >
-                <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                {{ formatDuration(row.rate_limit_remaining_sec || 0) }}
-              </span>
-              <span
-                v-else-if="row.is_overloaded"
-                class="inline-flex items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400"
-              >
-                <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg v-else-if="getUnifiedAvailabilitySummary(row).tone === 'warning'" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
                     stroke-linecap="round"
                     stroke-linejoin="round"
                     stroke-width="2"
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
-                {{ formatDuration(row.overload_remaining_sec || 0) }}
-              </span>
-              <span
-                v-else-if="row.has_error"
-                class="inline-flex items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400"
-              >
-                <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg v-else-if="getUnifiedAvailabilitySummary(row).tone === 'danger'" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
-                {{ t('admin.ops.accountAvailability.accountError') }}
-              </span>
-              <span
-                v-else
-                class="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-400"
-              >
-                {{ t('admin.ops.accountAvailability.unavailable') }}
+                {{ getUnifiedAvailabilitySummary(row).label }}
               </span>
             </div>
           </div>

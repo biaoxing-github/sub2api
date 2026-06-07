@@ -64,6 +64,10 @@ type OpsErrorLog struct {
 	RequestedModel   string `json:"requested_model"`
 	UpstreamModel    string `json:"upstream_model"`
 	RequestType      *int16 `json:"request_type"`
+
+	// APIKeyName/APIKeyDeleted 来自 api_keys 左连接；软删 key 仍保留名称，方便用户识别失败请求来源。
+	APIKeyName    string `json:"api_key_name,omitempty"`
+	APIKeyDeleted bool   `json:"api_key_deleted,omitempty"`
 }
 
 type OpsErrorLogDetail struct {
@@ -109,6 +113,22 @@ type OpsErrorLogFilter struct {
 	// Optional correlation keys for exact matching.
 	RequestID       string
 	ClientRequestID string
+
+	// User-scoped filters are used by the user-facing failed-request endpoint.
+	UserID   *int64
+	APIKeyID *int64
+
+	// Model matches requested_model first, then model.
+	Model string
+	// ModelFuzzy enables ILIKE matching for user-facing model filters.
+	ModelFuzzy bool
+
+	// ExcludeCountTokens drops count_tokens probe errors from user-facing lists.
+	ExcludeCountTokens bool
+
+	// ErrorPhasesAny/ErrorTypesAny map user-facing categories to plain ANY filters.
+	ErrorPhasesAny []string
+	ErrorTypesAny  []string
 
 	// View controls error categorization for list endpoints.
 	// - errors: show actionable errors (exclude business-limited / 429 / 529)

@@ -52,6 +52,10 @@ func (s *emailSyncRepoStub) GetByID(_ context.Context, _ int64) (*User, error) {
 	return &cloned, nil
 }
 
+func (s *emailSyncRepoStub) GetByIDIncludeDeleted(ctx context.Context, id int64) (*User, error) {
+	return s.GetByID(ctx, id)
+}
+
 func (s *emailSyncRepoStub) GetByEmail(_ context.Context, _ string) (*User, error) {
 	return nil, ErrUserNotFound
 }
@@ -113,8 +117,12 @@ func (s *emailSyncRepoStub) RemoveGroupFromAllowedGroups(context.Context, int64)
 	return 0, nil
 }
 
-func (s *emailSyncRepoStub) BatchSetConcurrency(context.Context, []int64, int) (int, error) { return 0, nil }
-func (s *emailSyncRepoStub) BatchAddConcurrency(context.Context, []int64, int) (int, error) { return 0, nil }
+func (s *emailSyncRepoStub) BatchSetConcurrency(context.Context, []int64, int) (int, error) {
+	return 0, nil
+}
+func (s *emailSyncRepoStub) BatchAddConcurrency(context.Context, []int64, int) (int, error) {
+	return 0, nil
+}
 
 func (s *emailSyncRepoStub) AddGroupToAllowedGroups(context.Context, int64, int64) error { return nil }
 

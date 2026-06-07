@@ -149,7 +149,17 @@
       </template>
 
       <template #table>
-        <DataTable
+        <div v-if="errorViewEnabled" class="mb-0 flex gap-2 border-b border-gray-200 px-4 pt-3 dark:border-dark-700">
+          <button class="tab" :class="{ 'tab-active': activeTab === 'usage' }" @click="activeTab = 'usage'">
+            {{ t('usage.tabs.usage') }}
+          </button>
+          <button class="tab" :class="{ 'tab-active': activeTab === 'errors' }" @click="switchToErrors">
+            {{ t('usage.tabs.errors') }}
+          </button>
+        </div>
+
+        <div v-show="activeTab === 'usage'" class="flex min-h-0 flex-1 flex-col">
+          <DataTable
           :columns="columns"
           :data="usageLogs"
           :loading="loading"
@@ -330,13 +340,28 @@
 
           <template #empty>
             <EmptyState :message="t('usage.noRecords')" />
-          </template>
-        </DataTable>
+            </template>
+          </DataTable>
+        </div>
+
+        <div v-if="errorViewEnabled" v-show="activeTab === 'errors'" class="flex min-h-0 flex-1 flex-col">
+          <UserErrorRequestsTable
+            :rows="errorRows"
+            :total="errorTotal"
+            :loading="errorLoading"
+            :page="errorPage"
+            :page-size="errorPageSize"
+            :api-keys="apiKeys"
+            @filter="onErrorFilter"
+            @update:page="onErrorPage"
+            @update:pageSize="onErrorPageSize"
+          />
+        </div>
       </template>
 
       <template #pagination>
         <Pagination
-          v-if="pagination.total > 0"
+          v-if="pagination.total > 0 && activeTab === 'usage'"
           :page="pagination.page"
           :total="pagination.total"
           :page-size="pagination.page_size"
@@ -550,7 +575,8 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Select from '@/components/common/Select.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { UsageLog, ApiKey, UsageQueryParams, UsageStatsResponse } from '@/types'
+import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
+import type { UsageLog, ApiKey, UsageQueryParams, UsageStatsResponse, UserErrorRequest } from '@/types'
 import type { Column } from '@/components/common/types'
 import { formatDateTime, formatReasoningEffort } from '@/utils/format'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
@@ -589,6 +615,14 @@ const tokenTooltipData = ref<UsageLog | null>(null)
 
 // Usage stats from API
 const usageStats = ref<UsageStatsResponse | null>(null)
+const activeTab = ref<'usage' | 'errors'>('usage')
+const errorViewEnabled = computed(() => appStore.cachedPublicSettings?.allow_user_view_error_requests ?? false)
+const errorRows = ref<UserErrorRequest[]>([])
+const errorLoading = ref(false)
+const errorPage = ref(1)
+const errorPageSize = ref(20)
+const errorTotal = ref(0)
+const errorFilter = ref<{ model: string; category: string; api_key_id: number | null }>({ model: '', category: '', api_key_id: null })
 
 const columns = computed<Column[]>(() => [
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
@@ -809,6 +843,12 @@ const applyFilters = () => {
   pagination.page = 1
   loadUsageLogs()
   loadUsageStats()
+  errorPage.value = 1
+  if (activeTab.value === 'errors') {
+    loadErrors()
+  } else {
+    errorRows.value = []
+  }
 }
 
 const resetFilters = () => {
@@ -839,6 +879,41 @@ const handlePageSizeChange = (pageSize: number) => {
   pagination.page_size = pageSize
   pagination.page = 1
   loadUsageLogs()
+}
+
+const loadErrors = async () => {
+  errorLoading.value = true
+  try {
+    const resp = await usageAPI.listMyErrorRequests({
+      page: errorPage.value,
+      page_size: errorPageSize.value,
+      start_date: startDate.value,
+      end_date: endDate.value,
+      model: errorFilter.value.model || undefined,
+      category: errorFilter.value.category || undefined,
+      api_key_id: errorFilter.value.api_key_id ?? undefined
+    })
+    errorRows.value = resp.items
+    errorTotal.value = resp.total
+  } catch (error) {
+    console.error('[UsageView] loadErrors failed:', error)
+    appStore.showError(t('usage.errors.failedToLoad'))
+  } finally {
+    errorLoading.value = false
+  }
+}
+
+const onErrorFilter = (f: { model: string; category: string; api_key_id: number | null }) => {
+  errorFilter.value = f
+  errorPage.value = 1
+  loadErrors()
+}
+const onErrorPage = (p: number) => { errorPage.value = p; loadErrors() }
+const onErrorPageSize = (s: number) => { errorPageSize.value = s; errorPage.value = 1; loadErrors() }
+
+const switchToErrors = () => {
+  activeTab.value = 'errors'
+  if (errorRows.value.length === 0) loadErrors()
 }
 
 const handleSort = (key: string, order: 'asc' | 'desc') => {

@@ -231,12 +231,15 @@ SELECT
   COALESCE(e.upstream_endpoint, ''),
   COALESCE(e.requested_model, ''),
   COALESCE(e.upstream_model, ''),
-  e.request_type
+  e.request_type,
+  COALESCE(ak.name, ''),
+  ak.deleted_at
 FROM ops_error_logs e
 LEFT JOIN accounts a ON e.account_id = a.id
 LEFT JOIN groups g ON e.group_id = g.id
 LEFT JOIN users u ON e.user_id = u.id
 LEFT JOIN users u2 ON e.resolved_by_user_id = u2.id
+LEFT JOIN api_keys ak ON ak.id = e.api_key_id
 ` + where + `
 ORDER BY e.created_at DESC
 LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
@@ -263,6 +266,8 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 		var resolvedBy sql.NullInt64
 		var resolvedByName string
 		var requestType sql.NullInt64
+		var apiKeyName string
+		var apiKeyDeletedAt sql.NullTime
 		if err := rows.Scan(
 			&item.ID,
 			&item.CreatedAt,
@@ -296,6 +301,8 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 			&item.RequestedModel,
 			&item.UpstreamModel,
 			&requestType,
+			&apiKeyName,
+			&apiKeyDeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -336,6 +343,8 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 			v := int16(requestType.Int64)
 			item.RequestType = &v
 		}
+		item.APIKeyName = apiKeyName
+		item.APIKeyDeleted = apiKeyDeletedAt.Valid
 		out = append(out, &item)
 	}
 	if err := rows.Err(); err != nil {
@@ -402,11 +411,14 @@ SELECT
   e.routing_latency_ms,
   e.upstream_latency_ms,
   e.response_latency_ms,
-  e.time_to_first_token_ms
+  e.time_to_first_token_ms,
+  COALESCE(ak.name, ''),
+  ak.deleted_at
 FROM ops_error_logs e
 LEFT JOIN users u ON e.user_id = u.id
 LEFT JOIN accounts a ON e.account_id = a.id
 LEFT JOIN groups g ON e.group_id = g.id
+LEFT JOIN api_keys ak ON ak.id = e.api_key_id
 WHERE e.id = $1
 LIMIT 1`
 
@@ -426,6 +438,8 @@ LIMIT 1`
 	var responseLatency sql.NullInt64
 	var ttft sql.NullInt64
 	var requestType sql.NullInt64
+	var apiKeyName string
+	var apiKeyDeletedAt sql.NullTime
 
 	err := r.db.QueryRowContext(ctx, q, id).Scan(
 		&out.ID,
@@ -471,6 +485,8 @@ LIMIT 1`
 		&upstreamLatency,
 		&responseLatency,
 		&ttft,
+		&apiKeyName,
+		&apiKeyDeletedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -533,6 +549,8 @@ LIMIT 1`
 		v := int16(requestType.Int64)
 		out.RequestType = &v
 	}
+	out.APIKeyName = apiKeyName
+	out.APIKeyDeleted = apiKeyDeletedAt.Valid
 
 	// Normalize upstream_errors to empty string when stored as JSON null.
 	out.UpstreamErrors = strings.TrimSpace(out.UpstreamErrors)
@@ -831,6 +849,18 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	if filter != nil {
 		resolvedFilter = filter.Resolved
 	}
+	userFilter := (*int64)(nil)
+	apiKeyFilter := (*int64)(nil)
+	modelFilter := ""
+	modelFuzzy := false
+	excludeCountTokens := false
+	if filter != nil {
+		userFilter = filter.UserID
+		apiKeyFilter = filter.APIKeyID
+		modelFilter = strings.TrimSpace(filter.Model)
+		modelFuzzy = filter.ModelFuzzy
+		excludeCountTokens = filter.ExcludeCountTokens
+	}
 	// Keep list endpoints scoped to client errors unless explicitly filtering upstream phase.
 	if phaseFilter != "upstream" {
 		clauses = append(clauses, "COALESCE(e.status_code, 0) >= 400")
@@ -857,6 +887,14 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, *filter.AccountID)
 		clauses = append(clauses, "e.account_id = $"+itoa(len(args)))
 	}
+	if userFilter != nil && *userFilter > 0 {
+		args = append(args, *userFilter)
+		clauses = append(clauses, "e.user_id = $"+itoa(len(args)))
+	}
+	if apiKeyFilter != nil && *apiKeyFilter > 0 {
+		args = append(args, *apiKeyFilter)
+		clauses = append(clauses, "e.api_key_id = $"+itoa(len(args)))
+	}
 	if phase := phaseFilter; phase != "" {
 		args = append(args, phase)
 		clauses = append(clauses, "e.error_phase = $"+itoa(len(args)))
@@ -874,6 +912,26 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	if resolvedFilter != nil {
 		args = append(args, *resolvedFilter)
 		clauses = append(clauses, "COALESCE(e.resolved,false) = $"+itoa(len(args)))
+	}
+	if excludeCountTokens {
+		clauses = append(clauses, "COALESCE(e.is_count_tokens,false) = false")
+	}
+	if len(filter.ErrorPhasesAny) > 0 {
+		args = append(args, pq.Array(filter.ErrorPhasesAny))
+		clauses = append(clauses, "e.error_phase = ANY($"+itoa(len(args))+")")
+	}
+	if len(filter.ErrorTypesAny) > 0 {
+		args = append(args, pq.Array(filter.ErrorTypesAny))
+		clauses = append(clauses, "e.error_type = ANY($"+itoa(len(args))+")")
+	}
+	if modelFilter != "" {
+		args = append(args, modelFilter)
+		n := itoa(len(args))
+		if modelFuzzy {
+			clauses = append(clauses, "(COALESCE(e.requested_model,'') ILIKE $"+n+" OR COALESCE(e.model,'') ILIKE $"+n+")")
+		} else {
+			clauses = append(clauses, "(COALESCE(e.requested_model,'') = $"+n+" OR COALESCE(e.model,'') = $"+n+")")
+		}
 	}
 
 	// View filter: errors vs excluded vs all.
@@ -894,10 +952,10 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		// treat unknown as default 'errors'
 		clauses = append(clauses, "COALESCE(e.is_business_limited,false) = false")
 	}
-	if len(filter.StatusCodes) > 0 {
+	if filter != nil && len(filter.StatusCodes) > 0 {
 		args = append(args, pq.Array(filter.StatusCodes))
 		clauses = append(clauses, "COALESCE(e.upstream_status_code, e.status_code, 0) = ANY($"+itoa(len(args))+")")
-	} else if filter.StatusCodesOther {
+	} else if filter != nil && filter.StatusCodesOther {
 		// "Other" means: status codes not in the common list.
 		known := []int{400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504, 529}
 		args = append(args, pq.Array(known))
@@ -913,14 +971,16 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		clauses = append(clauses, "COALESCE(e.client_request_id,'') = $"+itoa(len(args)))
 	}
 
-	if q := strings.TrimSpace(filter.Query); q != "" {
+	if filter != nil && strings.TrimSpace(filter.Query) != "" {
+		q := strings.TrimSpace(filter.Query)
 		like := "%" + q + "%"
 		args = append(args, like)
 		n := itoa(len(args))
 		clauses = append(clauses, "(e.request_id ILIKE $"+n+" OR e.client_request_id ILIKE $"+n+" OR e.error_message ILIKE $"+n+")")
 	}
 
-	if userQuery := strings.TrimSpace(filter.UserQuery); userQuery != "" {
+	if filter != nil && strings.TrimSpace(filter.UserQuery) != "" {
+		userQuery := strings.TrimSpace(filter.UserQuery)
 		like := "%" + userQuery + "%"
 		args = append(args, like)
 		n := itoa(len(args))
