@@ -2368,3 +2368,19 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 目标：支持管理端删除账号 Key 列表里的单个 Key，并让 API Key 列表账号遇到某个 Key 返回 429 时只停用该 Key，不把整个账号设为不可用。
 - 变更：`backend/internal/service/account.go` 新增按指纹删除 Key 并清理停用元数据；`backend/internal/service/admin_service.go`、`backend/internal/handler/admin/account_handler.go`、`backend/internal/server/routes/admin.go` 增加删除接口；`frontend/src/api/admin/accounts.ts` 和 `frontend/src/components/account/EditAccountModal.vue` 增加前端删除动作；`backend/internal/service/ratelimit_service.go` 对 429 优先停用本次选中的 Key；`backend/internal/service/gateway_service.go` 改用 `GetAPIKey()` 取 API Key，确保通用路径也记录 `LastSelectedAPIKey()`。
 - 验证：`go test -tags unit ./internal/service -run "TestAccount(GetAPIKey|RemoveAPIKey)|TestGatewayServiceGetAccessTokenUsesCredentialAPIKeys|TestHandleUpstreamError429_OpenAIAPIKeyDisablesSelectedKeyOnly|TestAdminService_DeleteAccountAPIKey" -count=1` 通过；`go test -tags unit ./internal/service -run "TestRateLimitService|TestHandleUpstreamError|TestAccount(GetAPIKey|RemoveAPIKey)|TestGatewayServiceGetAccessTokenUsesCredentialAPIKeys|TestAdminService_DeleteAccountAPIKey" -count=1` 通过；`go test ./internal/handler/admin -run TestDoesNotExist -count=1`、`go test ./internal/server/routes -run TestDoesNotExist -count=1`、`go test -tags unit ./cmd/server -run TestDoesNotExist -count=1` 通过；`npm run test:run -- src/components/account/__tests__/EditAccountModal.spec.ts` 通过 15/15；`npm run typecheck` 通过。
+
+## juhe-ai 上游桶级避让聚合调度验证
+
+- 日期：2026-06-07T16:59:00+08:00
+- 执行者：Devil
+- 目标：完成 `docs/JUHE_AI_FEATURE_20250605_BORROWABLE_FEATURES_CN.md` Phase 3 的上游桶级避让，让同 proxy/baseURL/transport 的路径故障能影响同 bucket 账号，而不是只惩罚单个账号。
+- 变更：`OpenAIPathHealthKey` 新增不带 `AccountID` 的聚合 bucket key helper；OpenAI 断流失败会同时记录账号 key、baseURL key 和聚合 bucket key；账号调度候选、sticky 命中校验、`request_base_urls` 排序都参考账号 key 与 bucket key 中更严重的 path-health 状态。
+- 验证：红测 `go test ./internal/service -run TestBuildOpenAIAccountLoadPlanSkipsOpenBucketAcrossAccounts -count=1` 先失败于缺少 `OpenAIPathHealthBucketKeyForAccount`；修复后聚焦测试、相关 path-health/scheduler/streaming 切片、`go test ./internal/service -run TestDoesNotExist -count=1` 和 `go test ./cmd/server -run TestDoesNotExist -count=1` 均通过。
+
+## 单服务部署操作规范验证
+
+- 日期：2026-06-07T17:13:51+08:00
+- 执行者：Devil
+- 目标：把提交、构建、部署、验证的固定操作步骤写入 `AGENTS.md`，并固化常规部署不重启 Redis/PostgreSQL 的边界。
+- 变更：`AGENTS.md` 新增“提交、构建、部署、验证约定”，包含中文拆分提交、`docker build` 镜像构建、`docker compose` 只重建 `sub2api`、新 SQL 仅对运行中 PostgreSQL 定向写入、部署后接口和日志验证清单。
+- 验证：复查命令均为 PowerShell 可执行形式；常规部署命令明确使用 `--no-deps --force-recreate sub2api`，没有包含 `postgres` 或 `redis` 服务名；本轮 Go 聚焦测试 `go test ./internal/service -run "Test(OpenAIPathHealthBucketKeyForAccountClearsAccountID|OpenAIGatewayServiceRecordOpenAIPathHealthFailureLabelsAccountAndBucket|BuildOpenAIAccountLoadPlanSkipsOpenBucketAcrossAccounts)" -count=1`、`go test ./internal/service -run TestDoesNotExist -count=1`、`go test ./cmd/server -run TestDoesNotExist -count=1` 均通过。
