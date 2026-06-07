@@ -405,6 +405,32 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				infiniteProbe := h.cfg != nil && h.cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled
+				recovered, probeErr := h.gatewayService.RecoverOpenAISchedulerExhaustion(
+					c.Request.Context(),
+					service.OpenAISchedulerExhaustionProbeOptions{
+						GroupID:        apiKey.GroupID,
+						RequestedModel: reqModel,
+						RequireCompact: requireCompact,
+						Infinite:       infiniteProbe,
+					},
+				)
+				if recovered {
+					reqLog.Warn("openai.scheduler_exhaustion_probe_recovered",
+						zap.String("model", reqModel),
+						zap.Bool("require_compact", requireCompact),
+						zap.Bool("infinite_wait", infiniteProbe),
+					)
+					continue
+				}
+				if probeErr != nil {
+					reqLog.Warn("openai.scheduler_exhaustion_probe_failed",
+						zap.Error(probeErr),
+						zap.String("model", reqModel),
+						zap.Bool("require_compact", requireCompact),
+						zap.Bool("infinite_wait", infiniteProbe),
+					)
+				}
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				if errors.Is(err, service.ErrNoAvailableCompactAccounts) {
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "compact_not_supported", "No available OpenAI accounts support /responses/compact", streamStarted)

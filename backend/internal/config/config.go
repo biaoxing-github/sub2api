@@ -811,6 +811,9 @@ type GatewayConfig struct {
 	// OpenAICodexDirectTLSFingerprintProfileID: Codex 直连模式上游 HTTP 请求的 TLS 指纹模板 ID。
 	// 0=内置默认 Node.js 24.x，-1=随机已有模板，>0=指定模板。
 	OpenAICodexDirectTLSFingerprintProfileID int64 `mapstructure:"openai_codex_direct_tls_fingerprint_profile_id"`
+	// OpenAISchedulerProbeInfiniteWaitEnabled: OpenAI 调度耗尽时是否无限小请求探测等待。
+	// 关闭时每个候选账号探测 6 次后返回真实调度错误；开启后持续探测直到请求上下文取消或账号恢复。
+	OpenAISchedulerProbeInfiniteWaitEnabled bool `mapstructure:"openai_scheduler_exhaustion_probe_infinite_wait_enabled"`
 	// CodexImageGenerationBridgeEnabled: 是否为 Codex `/v1/responses` 自动注入 image_generation 工具和桥接指令。
 	// 默认关闭，避免纯文本 Codex 请求被意外改写；显式携带 image_generation 工具的请求仍按分组能力转发。
 	CodexImageGenerationBridgeEnabled bool `mapstructure:"codex_image_generation_bridge_enabled"`
@@ -1984,6 +1987,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_fast_lane.header_wait_weight", 0.2)
 	viper.SetDefault("gateway.openai_fast_lane.min_samples", 3)
 	viper.SetDefault("gateway.openai_fast_lane.explore_ratio", 0.1)
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_infinite_wait_enabled", false)
 	viper.SetDefault("gateway.realtime_balance_prewarm.enabled", true)
 	viper.SetDefault("gateway.realtime_balance_prewarm.interval_seconds", 60)
 	viper.SetDefault("gateway.realtime_balance_prewarm.active_account_limit", 20)

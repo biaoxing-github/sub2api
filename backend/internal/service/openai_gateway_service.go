@@ -393,6 +393,9 @@ type OpenAIGatewayService struct {
 	codexSnapshotThrottle               *accountWriteThrottle
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
+
+	openAISchedulerExhaustionProbeFunc  func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error
+	openAISchedulerExhaustionProbeSleep func(ctx context.Context, d time.Duration) error
 }
 
 type openAIHeaderRaceBudget struct {

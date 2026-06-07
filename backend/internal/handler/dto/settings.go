@@ -188,6 +188,7 @@ type SystemSettings struct {
 	OpenAIOAuthCompatMode                      string  `json:"openai_oauth_compat_mode"`
 	OpenAICodexDirectForceWS                   bool    `json:"openai_codex_direct_force_ws"`
 	OpenAICodexDirectTLSFingerprintProfileID   int64   `json:"openai_codex_direct_tls_fingerprint_profile_id"`
+	OpenAISchedulerProbeInfiniteWaitEnabled    bool    `json:"openai_scheduler_exhaustion_probe_infinite_wait_enabled"`
 	ClientRequestDebugLogEnabled               bool    `json:"client_request_debug_log_enabled"`
 	CodexStabilityMode                         string  `json:"codex_stability_mode"`
 	CodexStabilityDynamicHeaderTimeoutEnabled  bool    `json:"codex_stability_dynamic_header_timeout_enabled"`

@@ -200,6 +200,7 @@ type SystemSettings struct {
 	OpenAIOAuthCompatMode                      string // OpenAI OAuth 上游兼容模式：off/cockpit_tools/codex_direct
 	OpenAICodexDirectForceWS                   bool   // Codex 直连模式下是否强制 OAuth 上游走 WSv2
 	OpenAICodexDirectTLSFingerprintProfileID   int64  // Codex 直连模式上游 HTTP 请求使用的 TLS 指纹模板 ID：0=内置默认，-1=随机
+	OpenAISchedulerProbeInfiniteWaitEnabled    bool   // OpenAI 可调度账号耗尽后是否无限小请求探测等待
 	ClientRequestDebugLogEnabled               bool
 	CodexStabilityMode                         string
 	CodexStabilityDynamicHeaderTimeoutEnabled  bool

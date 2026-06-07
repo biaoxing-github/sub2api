@@ -261,6 +261,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		OpenAIOAuthCompatMode:                      settings.OpenAIOAuthCompatMode,
 		OpenAICodexDirectForceWS:                   settings.OpenAICodexDirectForceWS,
 		OpenAICodexDirectTLSFingerprintProfileID:   settings.OpenAICodexDirectTLSFingerprintProfileID,
+		OpenAISchedulerProbeInfiniteWaitEnabled:    settings.OpenAISchedulerProbeInfiniteWaitEnabled,
 		ClientRequestDebugLogEnabled:               settings.ClientRequestDebugLogEnabled,
 		CodexStabilityMode:                         settings.CodexStabilityMode,
 		CodexStabilityDynamicHeaderTimeoutEnabled:  settings.CodexStabilityDynamicHeaderTimeoutEnabled,
@@ -631,6 +632,7 @@ type UpdateSettingsRequest struct {
 	OpenAIOAuthCompatMode                      *string  `json:"openai_oauth_compat_mode"`
 	OpenAICodexDirectForceWS                   *bool    `json:"openai_codex_direct_force_ws"`
 	OpenAICodexDirectTLSFingerprintProfileID   *int64   `json:"openai_codex_direct_tls_fingerprint_profile_id"`
+	OpenAISchedulerProbeInfiniteWaitEnabled    *bool    `json:"openai_scheduler_exhaustion_probe_infinite_wait_enabled"`
 	ClientRequestDebugLogEnabled               *bool    `json:"client_request_debug_log_enabled"`
 	CodexStabilityMode                         *string  `json:"codex_stability_mode"`
 	CodexStabilityDynamicHeaderTimeoutEnabled  *bool    `json:"codex_stability_dynamic_header_timeout_enabled"`
@@ -1784,6 +1786,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}(),
 		OpenAICodexDirectForceWS:                 boolValueOrDefault(req.OpenAICodexDirectForceWS, previousSettings.OpenAICodexDirectForceWS),
 		OpenAICodexDirectTLSFingerprintProfileID: int64ValueOrDefault(req.OpenAICodexDirectTLSFingerprintProfileID, previousSettings.OpenAICodexDirectTLSFingerprintProfileID),
+		OpenAISchedulerProbeInfiniteWaitEnabled:  boolValueOrDefault(req.OpenAISchedulerProbeInfiniteWaitEnabled, previousSettings.OpenAISchedulerProbeInfiniteWaitEnabled),
 		ClientRequestDebugLogEnabled:             boolValueOrDefault(req.ClientRequestDebugLogEnabled, previousSettings.ClientRequestDebugLogEnabled),
 		CodexStabilityMode: func() string {
 			if req.CodexStabilityMode != nil {
@@ -2939,6 +2942,9 @@ func appendGatewayRuntimeSettingChanges(changed []string, before *service.System
 	}
 	if before.OpenAIRequestSnapshotRetentionHours != after.OpenAIRequestSnapshotRetentionHours {
 		changed = append(changed, "openai_request_snapshot_retention_hours")
+	}
+	if before.OpenAISchedulerProbeInfiniteWaitEnabled != after.OpenAISchedulerProbeInfiniteWaitEnabled {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_infinite_wait_enabled")
 	}
 	if before.CodexWaitGuardEnabled != after.CodexWaitGuardEnabled {
 		changed = append(changed, "codex_wait_guard_enabled")

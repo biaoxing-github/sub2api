@@ -344,6 +344,19 @@ func TestSettingService_UpdateSettings_OpenAIOAuthCompatModeRefreshesGatewayConf
 	require.Equal(t, int64(42), cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID)
 }
 
+func TestSettingService_UpdateSettings_OpenAISchedulerExhaustionProbeRefreshesGatewayConfig(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	cfg := &config.Config{}
+	svc := NewSettingService(repo, cfg)
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		OpenAISchedulerProbeInfiniteWaitEnabled: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled])
+	require.True(t, cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled)
+}
+
 func TestSettingService_UpdateSettings_GatewayRuntimeStabilityRefreshesConfig(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	cfg := &config.Config{}

@@ -7096,6 +7096,10 @@ export default {
         title: 'OpenAI 高级调度',
         description: '默认关闭。开启后使用粘性会话、响应链路和分层负载均衡选择 OpenAI 账号；只影响本网关账号选择，不代表上游 OpenAI 官方能力。'
       },
+      openaiSchedulerExhaustionProbeInfiniteWait: {
+        title: '调度耗尽无限探测等待',
+        description: '默认关闭。开启后当 OpenAI 没有可调度账号时，会持续发送小请求探测同一调度范围内账号，直到账号恢复后再继续真实请求。'
+      },
       saveSettings: '保存设置',
       saving: '保存中...',
       settingsSaved: '设置保存成功',

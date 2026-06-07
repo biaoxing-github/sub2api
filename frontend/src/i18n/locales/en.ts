@@ -6939,6 +6939,10 @@ export default {
         title: 'OpenAI advanced scheduling',
         description: "Disabled by default. When enabled, OpenAI accounts are selected with sticky sessions, response affinity, and layered load balancing; this only changes this gateway's account selection and does not indicate an upstream OpenAI capability."
       },
+      openaiSchedulerExhaustionProbeInfiniteWait: {
+        title: 'Infinite probe wait on scheduler exhaustion',
+        description: 'Disabled by default. When no OpenAI account is schedulable, keep sending tiny probe requests within the same scheduling scope until an account recovers, then continue the real request.'
+      },
       saveSettings: 'Save Settings',
       saving: 'Saving...',
       settingsSaved: 'Settings saved successfully',

@@ -3661,6 +3661,32 @@
                 </div>
                 <Toggle v-model="form.openai_advanced_scheduler_enabled" />
               </div>
+
+              <div class="flex items-center justify-between">
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{
+                      t(
+                        "admin.settings.openaiSchedulerExhaustionProbeInfiniteWait.title",
+                      )
+                    }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      t(
+                        "admin.settings.openaiSchedulerExhaustionProbeInfiniteWait.description",
+                      )
+                    }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="
+                    form.openai_scheduler_exhaustion_probe_infinite_wait_enabled
+                  "
+                />
+              </div>
             </div>
           </div>
 
@@ -7271,6 +7297,7 @@ type SettingsForm = Omit<
   google_oauth_client_secret: string;
   force_email_on_third_party_signup: boolean;
   openai_advanced_scheduler_enabled: boolean;
+  openai_scheduler_exhaustion_probe_infinite_wait_enabled: boolean;
   // OpenAI OAuth 上游兼容模式：关闭、Cockpit Tools 或 Codex Desktop 直连形态。
   openai_oauth_compat_mode: OpenAIOAuthCompatMode;
   openai_cockpit_tools_compat: boolean;
@@ -7483,6 +7510,7 @@ const form = reactive<SettingsForm>({
   // 分组隔离
   allow_ungrouped_key_scheduling: false,
   openai_advanced_scheduler_enabled: false,
+  openai_scheduler_exhaustion_probe_infinite_wait_enabled: false,
   // Gateway forwarding behavior
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
@@ -8731,6 +8759,8 @@ async function saveSettings() {
         form.payment_cancel_rate_limit_window_mode,
       payment_alipay_force_qrcode: form.payment_alipay_force_qrcode,
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,
+      openai_scheduler_exhaustion_probe_infinite_wait_enabled:
+        form.openai_scheduler_exhaustion_probe_infinite_wait_enabled,
       // 余额、订阅到期与账号限额通知
       balance_low_notify_enabled: form.balance_low_notify_enabled,
       balance_low_notify_threshold:
