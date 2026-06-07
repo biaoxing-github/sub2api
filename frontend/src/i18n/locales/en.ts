@@ -966,7 +966,41 @@ export default {
     exportExcelSuccess: 'Usage data exported successfully (Excel format)',
     exportExcelFailed: 'Failed to export usage data',
     imageUnit: ' images',
-    userAgent: 'User-Agent'
+    userAgent: 'User-Agent',
+    tabs: { usage: 'Usage', errors: 'Error Requests' },
+    errors: {
+      time: 'Time',
+      model: 'Model',
+      endpoint: 'Endpoint',
+      status: 'Status',
+      category: 'Category',
+      platform: 'Platform',
+      message: 'Message',
+      keyName: 'Key Name',
+      keyDeleted: 'Deleted',
+      allKeys: 'All keys',
+      allModels: 'All models',
+      modelPlaceholder: 'Search model',
+      allCategories: 'All categories',
+      empty: 'No error requests',
+      failedToLoad: 'Failed to load error requests',
+      categories: {
+        auth: 'Auth failed',
+        rate_limit: 'Rate limited',
+        quota: 'Balance/Subscription',
+        invalid_request: 'Invalid request',
+        service_unavailable: 'Service unavailable',
+        upstream: 'Upstream error',
+        internal: 'Platform error',
+        other: 'Other'
+      },
+      detail: {
+        title: 'Error Request Detail',
+        responseBody: 'Response Body',
+        upstreamStatus: 'Upstream Status',
+        loadFailed: 'Failed to load detail, please try again'
+      }
+    }
   },
 
   // Shared keys for channel monitor (admin + user views)
@@ -2936,9 +2970,11 @@ export default {
         fiveHour: '5 hours',
         fiveHourShort: '5h',
         fiveHourRemaining: '5h remaining',
+        fiveHourTooltip: 'The 5h window is estimated from account usage percentage snapshots. Used cost, estimated limit, used percent total, and remaining percent total indicate short-window scheduling pressure.',
         sevenDay: '7 days',
         sevenDayShort: '7d',
         sevenDayRemaining: '7d remaining',
+        sevenDayTooltip: 'The 7d window is estimated from account usage percentage snapshots. Use it to inspect weekly remaining capacity, earliest reset, and long-window scheduling pressure.',
         upstreamBalance: 'Upstream balance',
         upstreamActualBalance: 'Actual balance',
         upstreamUsableBalance: 'Usable balance',
@@ -4683,6 +4719,8 @@ export default {
       allBillingModes: 'All Billing Modes',
       ipAddress: 'IP',
       clickToViewBalance: 'Click to view balance history',
+      deletedUser: 'Deleted user',
+      deletedUserHint: 'This user was deleted at {time}; this row is historical usage.',
       failedToLoadUser: 'Failed to load user info',
       cleanup: {
         button: 'Cleanup',
@@ -6088,6 +6126,8 @@ export default {
         openaiCodexUserAgent: 'OpenAI Codex UA',
         openaiCodexUserAgentPlaceholder: 'codex-tui/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.125.0)',
         openaiCodexUserAgentHint: 'Used to bypass Cloudflare browser-UA challenges on the OpenAI upstream. Only applies when the client User-Agent is detected as a browser (Mozilla/...). Leave empty to use the built-in default.',
+        openaiAllowClaudeCodeCodexPlugin: 'Allow Claude Code Codex plugin',
+        openaiAllowClaudeCodeCodexPluginDesc: 'Only affects OpenAI OAuth accounts with Codex official clients only enabled. When on, requests with originator=Claude Code from the Codex plugin are additionally allowed.',
         openaiCockpitToolsCompat: 'Cockpit-tools compatibility mode',
         openaiCockpitToolsCompatHint: 'When enabled, OpenAI OAuth /responses requests use ChatGPT Codex HTTP/SSE and rebuild upstream headers like cockpit-tools Codex HTTP executor.',
         openaiOAuthCompatMode: 'OpenAI OAuth Compatibility Mode',

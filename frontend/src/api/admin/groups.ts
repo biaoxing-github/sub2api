@@ -77,6 +77,22 @@ export async function getById(id: number): Promise<AdminGroup> {
 }
 
 /**
+ * 获取分组自定义模型列表候选项
+ * @param id - 分组 ID
+ * @param platform - 平台标识
+ * @returns 候选模型 ID 列表
+ */
+export async function getModelsListCandidates(
+  id: number,
+  platform?: GroupPlatform
+): Promise<string[]> {
+  const { data } = await apiClient.get<string[]>(`/admin/groups/${id}/models-list-candidates`, {
+    params: platform ? { platform } : undefined
+  })
+  return data
+}
+
+/**
  * Create new group
  * @param groupData - Group data
  * @returns Created group
@@ -320,7 +336,8 @@ export const groupsAPI = {
   batchSetGroupRPMOverrides,
   updateSortOrder,
   getUsageSummary,
-  getCapacitySummary
+  getCapacitySummary,
+  getModelsListCandidates
 }
 
 export default groupsAPI

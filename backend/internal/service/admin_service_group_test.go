@@ -309,7 +309,7 @@ func TestAdminService_UpdateGroup_PreservesImageGenerationControlsWhenOmitted(t 
 	svc := &adminServiceImpl{groupRepo: repo}
 
 	group, err := svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{
-		Description: "updated",
+		Description: ptrString("updated"),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, group)
@@ -317,6 +317,26 @@ func TestAdminService_UpdateGroup_PreservesImageGenerationControlsWhenOmitted(t 
 	require.True(t, repo.updated.AllowImageGeneration)
 	require.True(t, repo.updated.ImageRateIndependent)
 	require.InDelta(t, 0.5, repo.updated.ImageRateMultiplier, 1e-12)
+}
+
+func TestAdminService_UpdateGroup_AllowsClearingDescription(t *testing.T) {
+	existingGroup := &Group{
+		ID:          1,
+		Name:        "existing-group",
+		Description: "旧描述",
+		Platform:    PlatformOpenAI,
+		Status:      StatusActive,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	group, err := svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{
+		Description: ptrString(""),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.NotNil(t, repo.updated)
+	require.Empty(t, repo.updated.Description)
 }
 
 func TestAdminService_UpdateGroup_RejectsNegativeImageRateMultiplier(t *testing.T) {

@@ -971,7 +971,41 @@ export default {
     exportExcelSuccess: '使用数据导出成功（Excel格式）',
     exportExcelFailed: '使用数据导出失败',
     imageUnit: '张',
-    userAgent: 'User-Agent'
+    userAgent: 'User-Agent',
+    tabs: { usage: '用量明细', errors: '错误请求' },
+    errors: {
+      time: '时间',
+      model: '模型',
+      endpoint: '端点',
+      status: '状态码',
+      category: '分类',
+      platform: '平台',
+      message: '错误信息',
+      keyName: 'Key 名称',
+      keyDeleted: '已删除',
+      allKeys: '全部 Key',
+      allModels: '全部模型',
+      modelPlaceholder: '搜索模型',
+      allCategories: '全部分类',
+      empty: '暂无错误请求',
+      failedToLoad: '加载错误请求失败',
+      categories: {
+        auth: '认证失败',
+        rate_limit: '限流',
+        quota: '余额/订阅',
+        invalid_request: '参数错误',
+        service_unavailable: '服务暂时不可用',
+        upstream: '上游错误',
+        internal: '平台错误',
+        other: '其他'
+      },
+      detail: {
+        title: '错误请求详情',
+        responseBody: '上游响应内容',
+        upstreamStatus: '上游状态码',
+        loadFailed: '加载详情失败，请稍后重试'
+      }
+    }
   },
 
   // Shared keys for channel monitor (admin + user views)
@@ -3011,9 +3045,11 @@ export default {
         fiveHour: '5 小时',
         fiveHourShort: '5h',
         fiveHourRemaining: '5 小时剩余',
+        fiveHourTooltip: '5 小时窗口基于账号用量百分比快照估算：已消耗、估算总额度、已用百分比合计与剩余百分比合计用于判断短窗口调度压力。',
         sevenDay: '7 天',
         sevenDayShort: '7d',
         sevenDayRemaining: '7 天剩余',
+        sevenDayTooltip: '7 天窗口基于账号用量百分比快照估算：用于观察跨周用量余量、最早重置时间和账号池长期调度压力。',
         upstreamBalance: '上游余额',
         upstreamActualBalance: '真实余额',
         upstreamUsableBalance: '可用余额',
@@ -4838,6 +4874,8 @@ export default {
       allBillingModes: '全部计费模式',
       ipAddress: 'IP',
       clickToViewBalance: '点击查看充值记录',
+      deletedUser: '已删除用户',
+      deletedUserHint: '该用户已于 {time} 删除，当前行为历史用量记录',
       failedToLoadUser: '加载用户信息失败',
       cleanup: {
         button: '清理',
@@ -6244,6 +6282,8 @@ export default {
         openaiCodexUserAgent: 'OpenAI Codex UA',
         openaiCodexUserAgentPlaceholder: 'codex-tui/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.125.0)',
         openaiCodexUserAgentHint: '用于规避 OpenAI 上游 Cloudflare 对浏览器 UA 的访问质询。仅在检测到客户端 User-Agent 为浏览器（Mozilla/...）时生效，其他客户端原样透传。留空使用内置默认值。',
+        openaiAllowClaudeCodeCodexPlugin: '允许 Claude Code 使用 Codex 插件',
+        openaiAllowClaudeCodeCodexPluginDesc: '仅对已开启「仅允许 Codex 官方客户端」的 OpenAI OAuth 账号生效。开启后会额外放行 originator=Claude Code 的 Codex 插件请求。',
         openaiCockpitToolsCompat: 'Cockpit-tools 兼容模式',
         openaiCockpitToolsCompatHint: '开启后，OpenAI OAuth /responses 请求强制走 ChatGPT Codex HTTP/SSE，并按 cockpit-tools 的 Codex HTTP executor 重建上游请求头。',
         openaiOAuthCompatMode: 'OpenAI OAuth 兼容模式',

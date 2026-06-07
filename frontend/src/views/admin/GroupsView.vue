@@ -69,7 +69,7 @@
               {{ t("admin.groups.sortOrder") }}
             </button>
             <button
-              @click="showCreateModal = true"
+              @click="openCreateModal"
               class="btn btn-primary"
               data-tour="groups-create-btn"
             >
@@ -329,7 +329,7 @@
               :title="t('admin.groups.noGroupsYet')"
               :description="t('admin.groups.createFirstGroup')"
               :action-text="t('admin.groups.createGroup')"
-              @action="showCreateModal = true"
+              @action="openCreateModal"
             />
           </template>
         </DataTable>
@@ -1178,6 +1178,81 @@
                     <Icon name="plus" size="sm" />
                     {{ t("admin.groups.openaiMessages.addExactMapping") }}
                   </button>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="mt-5 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-600 dark:bg-dark-800"
+            >
+              <div class="border-b border-gray-100 px-4 py-3 dark:border-dark-700">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <div class="h-2 w-2 rounded-full bg-emerald-500"></div>
+                      <label class="text-sm font-medium text-gray-900 dark:text-white">
+                        Model list
+                      </label>
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Custom `/v1/models` response for this group.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    @click="toggleModelsListEnabled(createModelsListState)"
+                    class="relative inline-flex h-6 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                    :class="
+                      createModelsListState.enabled
+                        ? 'bg-primary-500'
+                        : 'bg-gray-300 dark:bg-dark-600'
+                    "
+                  >
+                    <span
+                      class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                      :class="
+                        createModelsListState.enabled
+                          ? 'translate-x-6'
+                          : 'translate-x-1'
+                      "
+                    />
+                  </button>
+                </div>
+              </div>
+              <div class="p-4">
+                <div class="mb-3 flex flex-wrap items-center gap-2">
+                  <button type="button" class="btn btn-secondary" @click="selectAllModelsListItemsInState(createModelsListState)">
+                    <Icon name="check" size="sm" class="mr-2" />
+                    Select all
+                  </button>
+                  <button type="button" class="btn btn-secondary" @click="invertModelsListSelectionInState(createModelsListState)">
+                    <Icon name="refresh" size="sm" class="mr-2" />
+                    Invert
+                  </button>
+                </div>
+                <div v-if="createModelsListState.items.length > 0" class="space-y-2">
+                  <div
+                    v-for="(item, index) in createModelsListState.items"
+                    :key="item.id"
+                    class="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-600 dark:bg-dark-700"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="item.selected"
+                      @change="toggleModelsListItemSelection(createModelsListState, item.id)"
+                      class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span class="flex-1 truncate text-sm text-gray-700 dark:text-gray-200">{{ item.id }}</span>
+                    <button type="button" class="btn btn-secondary" :disabled="index === 0" @click="moveModelsListItemInState(createModelsListState, index, index - 1)">
+                      <Icon name="arrowUp" size="sm" />
+                    </button>
+                    <button type="button" class="btn btn-secondary" :disabled="index === createModelsListState.items.length - 1" @click="moveModelsListItemInState(createModelsListState, index, index + 1)">
+                      <Icon name="arrowDown" size="sm" />
+                    </button>
+                  </div>
+                </div>
+                <div v-else class="text-sm text-gray-500 dark:text-gray-400">
+                  No candidates loaded.
                 </div>
               </div>
             </div>
@@ -2362,6 +2437,81 @@
                 </div>
               </div>
             </div>
+
+            <div
+              class="mt-5 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-dark-600 dark:bg-dark-800"
+            >
+              <div class="border-b border-gray-100 px-4 py-3 dark:border-dark-700">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <div class="h-2 w-2 rounded-full bg-emerald-500"></div>
+                      <label class="text-sm font-medium text-gray-900 dark:text-white">
+                        Model list
+                      </label>
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Custom `/v1/models` response for this group.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    @click="toggleModelsListEnabled(editModelsListState)"
+                    class="relative inline-flex h-6 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                    :class="
+                      editModelsListState.enabled
+                        ? 'bg-primary-500'
+                        : 'bg-gray-300 dark:bg-dark-600'
+                    "
+                  >
+                    <span
+                      class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                      :class="
+                        editModelsListState.enabled
+                          ? 'translate-x-6'
+                          : 'translate-x-1'
+                      "
+                    />
+                  </button>
+                </div>
+              </div>
+              <div class="p-4">
+                <div class="mb-3 flex flex-wrap items-center gap-2">
+                  <button type="button" class="btn btn-secondary" @click="selectAllModelsListItemsInState(editModelsListState)">
+                    <Icon name="check" size="sm" class="mr-2" />
+                    Select all
+                  </button>
+                  <button type="button" class="btn btn-secondary" @click="invertModelsListSelectionInState(editModelsListState)">
+                    <Icon name="refresh" size="sm" class="mr-2" />
+                    Invert
+                  </button>
+                </div>
+                <div v-if="editModelsListState.items.length > 0" class="space-y-2">
+                  <div
+                    v-for="(item, index) in editModelsListState.items"
+                    :key="item.id"
+                    class="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-600 dark:bg-dark-700"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="item.selected"
+                      @change="toggleModelsListItemSelection(editModelsListState, item.id)"
+                      class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span class="flex-1 truncate text-sm text-gray-700 dark:text-gray-200">{{ item.id }}</span>
+                    <button type="button" class="btn btn-secondary" :disabled="index === 0" @click="moveModelsListItemInState(editModelsListState, index, index - 1)">
+                      <Icon name="arrowUp" size="sm" />
+                    </button>
+                    <button type="button" class="btn btn-secondary" :disabled="index === editModelsListState.items.length - 1" @click="moveModelsListItemInState(editModelsListState, index, index + 1)">
+                      <Icon name="arrowDown" size="sm" />
+                    </button>
+                  </div>
+                </div>
+                <div v-else class="text-sm text-gray-500 dark:text-gray-400">
+                  No candidates loaded.
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -2862,6 +3012,20 @@ import {
   resetMessagesDispatchFormState,
   type MessagesDispatchMappingRow,
 } from "./groupsMessagesDispatch";
+import {
+  buildModelsListConfig as buildGroupModelsListConfig,
+  createModelsListState as createGroupModelsListState,
+  invertModelsListSelection,
+  moveModelsListItem,
+  setModelsListCandidates as setGroupModelsListCandidates,
+  selectAllModelsListItems,
+  toggleModelsListItem,
+  type ModelsListState,
+} from "./groupsModelsList";
+import {
+  createModelsListCandidatesTracker,
+  type ModelsListCandidatesMode,
+} from "./groupsModelsListCandidates";
 import { normalizeSupportedModelScopesForPlatform } from "./groupsSupportedModelScopes";
 
 const { t } = useI18n();
@@ -3096,6 +3260,13 @@ const rpmOverridesGroup = ref<AdminGroup | null>(null);
 const sortableGroups = ref<AdminGroup[]>([]);
 const createMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
 const editMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
+const createModelsListState = reactive<ModelsListState>(
+  createGroupModelsListState(),
+);
+const editModelsListState = reactive<ModelsListState>(
+  createGroupModelsListState(),
+);
+const modelsListCandidatesTracker = createModelsListCandidatesTracker();
 
 const createForm = reactive({
   name: "",
@@ -3138,6 +3309,83 @@ const createForm = reactive({
   // 分组级 RPM 限制（每用户每分钟最大请求数；0 = 不限制）
   rpm_limit: 0 as number,
 });
+
+const resetModelsListState = (state: ModelsListState) => {
+  state.enabled = false;
+  state.savedModels = [];
+  state.items = [];
+};
+
+const openCreateModal = async () => {
+  showCreateModal.value = true;
+  await syncModelsListConfig("create", 0, createForm.platform);
+};
+
+const toggleModelsListEnabled = (state: ModelsListState) => {
+  state.enabled = !state.enabled;
+};
+
+const toggleModelsListItemSelection = (
+  state: ModelsListState,
+  modelID: string,
+) => {
+  toggleModelsListItem(state, modelID);
+};
+
+const selectAllModelsListItemsInState = (state: ModelsListState) => {
+  selectAllModelsListItems(state);
+};
+
+const invertModelsListSelectionInState = (state: ModelsListState) => {
+  invertModelsListSelection(state);
+};
+
+const moveModelsListItemInState = (
+  state: ModelsListState,
+  fromIndex: number,
+  toIndex: number,
+) => {
+  moveModelsListItem(state, fromIndex, toIndex);
+};
+
+const syncModelsListConfig = async (
+  mode: ModelsListCandidatesMode,
+  groupID: number,
+  platform: GroupPlatform,
+) => {
+  const state = mode === "create" ? createModelsListState : editModelsListState;
+  if (platform !== "openai") {
+    resetModelsListState(state);
+    return;
+  }
+
+  const requestID = modelsListCandidatesTracker.next({ mode, groupID, platform });
+  try {
+    const config =
+      mode === "create" ? null : editingGroup.value?.models_list_config ?? null;
+    if (mode === "create") {
+      const candidates = await adminAPI.groups.getModelsListCandidates(0, platform);
+      if (!modelsListCandidatesTracker.isCurrent(requestID, { mode, groupID, platform })) {
+        return;
+      }
+      state.enabled = config?.enabled ?? false;
+      state.savedModels = [...(config?.models ?? [])];
+      setGroupModelsListCandidates(state, candidates);
+      return;
+    }
+
+    const candidates = await adminAPI.groups.getModelsListCandidates(groupID, platform);
+    if (!modelsListCandidatesTracker.isCurrent(requestID, { mode, groupID, platform })) {
+      return;
+    }
+    state.enabled = config?.enabled ?? false;
+    state.savedModels = [...(config?.models ?? [])];
+    setGroupModelsListCandidates(state, candidates);
+  } catch (error) {
+    console.error("Failed to load models list candidates:", error);
+    resetModelsListState(state);
+  }
+};
 
 // 简单账号类型（用于模型路由选择）
 interface SimpleAccount {
@@ -3722,6 +3970,10 @@ const handleCreateGroup = async () => {
               exact_model_mappings: createForm.exact_model_mappings,
             })
           : undefined,
+      models_list_config:
+        createForm.platform === "openai"
+          ? buildGroupModelsListConfig(createModelsListState)
+          : undefined,
     };
     // v-model.number 清空输入框时产生 ""，转为 null 让后端设为无限制
     const emptyToNull = (v: any) => (v === "" ? null : v);
@@ -3794,6 +4046,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.mcp_xml_inject = group.mcp_xml_inject ?? true;
   editForm.copy_accounts_from_group_ids = []; // 复制账号字段每次编辑时重置为空
   editForm.rpm_limit = group.rpm_limit ?? 0;
+  await syncModelsListConfig("edit", group.id, group.platform);
   // 加载模型路由规则（异步加载账号名称）
   editModelRoutingRules.value = await convertApiFormatToRoutingRules(
     group.model_routing,
@@ -3811,6 +4064,7 @@ const closeEditModal = () => {
   editModelRoutingRules.value = [];
   editForm.copy_accounts_from_group_ids = [];
   resetMessagesDispatchFormState(editForm);
+  resetModelsListState(editModelsListState);
 };
 
 const handleUpdateGroup = async () => {
@@ -3856,6 +4110,10 @@ const handleUpdateGroup = async () => {
               haiku_mapped_model: editForm.haiku_mapped_model,
               exact_model_mappings: editForm.exact_model_mappings,
             })
+          : undefined,
+      models_list_config:
+        editForm.platform === "openai"
+          ? buildGroupModelsListConfig(editModelsListState)
           : undefined,
     };
     // v-model.number 清空输入框时产生 ""，转为 null 让后端设为无限制
@@ -3955,6 +4213,9 @@ watch(
     }
     if (newVal !== "openai") {
       resetMessagesDispatchFormState(createForm);
+      resetModelsListState(createModelsListState);
+    } else if (showCreateModal.value) {
+      syncModelsListConfig("create", 0, newVal);
     }
     if (!["openai", "antigravity", "anthropic", "gemini"].includes(newVal)) {
       createForm.require_oauth_only = false;
@@ -3971,6 +4232,9 @@ watch(
     }
     if (newVal !== "openai") {
       resetMessagesDispatchFormState(editForm);
+      resetModelsListState(editModelsListState);
+    } else if (showEditModal.value && editingGroup.value) {
+      syncModelsListConfig("edit", editingGroup.value.id, newVal);
     }
     if (!["openai", "antigravity", "anthropic", "gemini"].includes(newVal)) {
       editForm.require_oauth_only = false;
@@ -3978,19 +4242,6 @@ watch(
     }
   },
 );
-
-watch(
-  () => editForm.platform,
-  (newVal) => {
-    if (!['anthropic', 'antigravity'].includes(newVal)) {
-      editForm.fallback_group_id_on_invalid_request = null
-    }
-    if (newVal !== 'openai') {
-      editForm.allow_messages_dispatch = false
-      editForm.default_mapped_model = ''
-    }
-  }
-)
 
 // 点击外部关闭账号搜索下拉框
 const handleClickOutside = (event: MouseEvent) => {
