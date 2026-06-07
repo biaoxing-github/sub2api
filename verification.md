@@ -2400,3 +2400,39 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 目标：修复 API Key 列表账号中单个 Key 返回 429 或 403 余额不足时，Key 状态不变且账号被限流/临时不可调度的问题；确认每个账号的 Key 列表删除能力仍可用。
 - 变更：`RateLimitService.HandleUpstreamError` 在通用 `tryTempUnschedulable` 前先处理 `shouldDisableCurrentAPIKey` 覆盖的 API Key 错误，429 与 403 余额不足会优先把 `LastSelectedAPIKey()` 写入 `api_keys_disabled`；新增 429/403 temp rule 场景回归测试。
 - 验证：红测命令先失败于 `account_temp_unschedulable` 抢先处理；修复后同命令通过。`go test -tags unit ./internal/service -run "TestHandleUpstreamError429|TestHandle429|TestRateLimitService_HandleUpstreamError_OpenAI403|TestAdminService_DeleteAccountAPIKey|TestAccountRemoveAPIKey|TestGatewayServiceGetAccessTokenUsesCredentialAPIKeys" -count=1` 通过；`go test ./internal/service -run TestDoesNotExist -count=1` 通过；`npm run test:run -- src/components/account/__tests__/EditAccountModal.spec.ts` 通过 15/15；`npm run typecheck` 通过。
+
+## 固定入口代理旁路试运行验证
+
+- 日期：2026-06-07T18:22:43+08:00
+- 执行者：Devil
+- 目标：先增加固定入口代理，但不切换当前 `8080` 主链路，避免当前 Codex 网关连接因应用容器异常而中断。
+- 变更：在 `D:\sub2api-deploy` 新增独立代理 Compose：`docker-compose.proxy.yml`、`proxy/nginx.conf`、`proxy/upstreams/active.conf`。代理容器 `sub2api-proxy` 加入现有 `sub2api-deploy_sub2api-network`，默认绑定 `127.0.0.1:18081->8080`，upstream 指向当前运行容器 `sub2api:8080`。
+- 验证：`docker compose -f D:\sub2api-deploy\docker-compose.proxy.yml config` 通过；`docker exec sub2api-proxy nginx -t` 通过；`http://127.0.0.1:18081/health` 返回 200 `{"status":"ok"}`；`http://127.0.0.1:18081/` 返回 200；未登录访问 `http://127.0.0.1:18081/api/v1/admin/accounts?page=1&page_size=1` 返回 401；原主入口 `http://127.0.0.1:8080/health` 仍返回 200；当前应用容器仍为 `sub2api:v0134-absorption-check` 且 `Health=healthy`。
+
+## OpenAI 本地账号并发饱和切号验证
+
+- 日期：2026-06-07T18:28:03+08:00
+- 执行者：Devil
+- 目标：修复选中账号本地等待队列满或账号 slot 等待超时时，当前请求直接返回 429 而没有继续调度其他可用账号的问题。
+- 变更：`acquireResponsesAccountSlot` 改为结构化结果；本地账号队列满和账号 slot 等待超时会生成 `source=local_concurrency`、`stream_action=retry_next_account` 的 failover 结果。Responses、Anthropic Messages、Chat Completions、Images 四个入口收到该结果后会记录本次账号失败、记录切号、把账号加入排除集合并继续调度。所有候选都被本地并发打满时，最终 429 文案明确为 `Local account concurrency saturated`。
+- 验证：红测先失败于旧函数签名；修复后 `go test ./internal/handler -run "TestOpenAIAcquireResponsesAccountSlot_(WaitQueueFullSwitchesAccount|WaitTimeoutSwitchesAccount)" -count=1` 通过。相关测试 `go test ./internal/handler -run "TestOpenAI(AcquireResponsesAccountSlot|HandleFailoverExhausted_LocalAccountConcurrency|HandleFailoverExhausted_AppendsResponsesFailedAfterHeartbeat|ForwardErrorAlreadyCommunicated)" -count=1` 通过；`go test ./internal/handler -run TestDoesNotExist -count=1`、`go test ./cmd/server -run TestDoesNotExist -count=1`、`go test ./internal/handler -run "TestConcurrencyHelper" -count=1` 通过；`git diff --check` 通过，仅有既有 LF-to-CRLF 警告。
+- 已知无关失败：`go test ./internal/handler -run "TestOpenAI" -count=1` 仍失败于既有 WebSocket continuity 测试 `TestOpenAIResponsesWebSocket_ContinuityReplayForwardsSanitizedBodyToNextAccount`，本轮没有修改 WebSocket 路径。
+
+## OpenAI API Key 更多异常单 Key 暂停验证
+
+- 日期：2026-06-07T18:49:24+08:00
+- 执行者：Devil
+- 目标：继续修复 aisz 类 OpenAI API Key 列表账号中，单个 Key 返回 400 配额/余额不足、403 Key disabled/revoked/invalid，或账号测试旁路返回 401/429/400 quota 时，Key 状态不变但账号被 SetError、限流或冷却的问题。
+- 变更：`shouldDisableCurrentAPIKey` 新增 400 quota 和 403 invalid/disabled/revoked key 判断，普通 workspace forbidden policy 不进入单 Key 停用；`AccountTestService` 新增 `disableOpenAIAPIKeyFromTestError`，并接入 `/v1/chat/completions`、`/responses/compact`、images 以及主 responses 探活错误分支。
+- 验证：`go test -tags unit ./internal/service -run "TestAccountTestService_OpenAI(ChatCompletionsPathDisablesCurrentAPIKey|CompactPathDisablesCurrentAPIKey|ImagePathDisablesCurrentAPIKey)|TestRateLimitService_HandleUpstreamError_OpenAIAPIKey(BadRequestQuotaDisablesSelectedKey|ForbiddenInvalidKeyDisablesSelectedKey)|TestShouldDisableCurrentAPIKeySkipsForbiddenPolicy" -count=1` 通过；`go test -tags unit ./internal/service -run "TestAccountTestService_OpenAI|TestRateLimitService_HandleUpstreamError_OpenAIAPIKey|TestHandleUpstreamError429|TestRateLimitService_HandleUpstreamError_OpenAI403|TestShouldDisableCurrentAPIKey" -count=1` 通过；`go test ./internal/service -run TestDoesNotExist -count=1` 通过；相关 `git diff --check` 通过。
+
+## Docker green 候选镜像首次递增版本验证
+
+- 日期：2026-06-07T18:48:38+08:00
+- 执行者：Devil
+- 目标：按用户确认的规则，将当前可用镜像判定为 `sub2api:v0134-absorption-check`，将最新本地构建源判定为 `sub2api:multi-key-local`，并基于该源生成首次不可变 green 候选版本。
+- 版本：`sub2api:multi-key-local` 与 `sub2api:v20260607.1-666797082235` 指向同一镜像 ID `8c12ff741670`；当前稳定容器 `sub2api` 仍运行 `sub2api:v0134-absorption-check` 且 `Health=healthy`。
+- 结果：`sub2api-green` 使用 `sub2api:v20260607.1-666797082235` 启动失败，已停止在 `Exited (1)` 状态，未执行代理 reload，未把 `18081` 切到 green。
+- 根因证据：green 日志报 `migration 157_user_platform_quotas.sql checksum mismatch`，数据库 `schema_migrations` 记录 checksum 为 `21cccff17048932c21048b4868f5b2685f9f7208607dcd3c62c89a9ea2d9a400`，失败镜像启动时报 file checksum 为 `fe485a0663f8948174819a2d36b06f260c2dd8a8e85b6e39cd85798b75090873`；当前源码按迁移 runner 的 trim 后 SHA256 计算结果与数据库一致，为 `21cccff17048932c21048b4868f5b2685f9f7208607dcd3c62c89a9ea2d9a400`。
+- 结论：首个候选版本 `sub2api:v20260607.1-666797082235` 判定失败并禁止复用；不能修改数据库 checksum 绕过，下一次应基于修正后的最新构建重新生成递增版本，例如 `v20260607.2-...`。
+- 安全验证：`http://127.0.0.1:8080/health` 返回 200 `{"status":"ok"}`；固定入口 `http://127.0.0.1:18081/health` 返回 200 `{"status":"ok"}`；`D:\sub2api-deploy\proxy\upstreams\active.conf` 仍指向 `sub2api:8080`。

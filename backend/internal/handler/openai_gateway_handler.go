@@ -443,10 +443,30 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 		setOpenAIContinuityHeaders(c, scheduleDecision, account.ID)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
-		if !acquired {
+		accountSlot := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		if !accountSlot.Acquired {
+			if accountSlot.SwitchAccount && accountSlot.FailoverErr != nil {
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				h.gatewayService.RecordOpenAIAccountSwitch()
+				failedAccountIDs[account.ID] = struct{}{}
+				lastFailoverErr = accountSlot.FailoverErr
+				if switchCount >= maxAccountSwitches {
+					h.handleFailoverExhausted(c, accountSlot.FailoverErr, streamStarted)
+					return
+				}
+				switchCount++
+				reqLog.Warn("openai.local_account_concurrency_switching",
+					zap.Int64("account_id", account.ID),
+					zap.Int("status_code", accountSlot.FailoverErr.StatusCode),
+					zap.String("reason", accountSlot.FailoverErr.ActionMetadata["reason"]),
+					zap.Int("switch_count", switchCount),
+					zap.Int("max_switches", maxAccountSwitches),
+				)
+				continue
+			}
 			return
 		}
+		accountReleaseFunc := accountSlot.ReleaseFunc
 
 		// Forward request
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
@@ -845,10 +865,30 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		setOpenAIContinuityHeaders(c, scheduleDecision, account.ID)
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
-		if !acquired {
+		accountSlot := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		if !accountSlot.Acquired {
+			if accountSlot.SwitchAccount && accountSlot.FailoverErr != nil {
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				h.gatewayService.RecordOpenAIAccountSwitch()
+				failedAccountIDs[account.ID] = struct{}{}
+				lastFailoverErr = accountSlot.FailoverErr
+				if switchCount >= maxAccountSwitches {
+					h.handleAnthropicFailoverExhausted(c, accountSlot.FailoverErr, streamStarted)
+					return
+				}
+				switchCount++
+				reqLog.Warn("openai_messages.local_account_concurrency_switching",
+					zap.Int64("account_id", account.ID),
+					zap.Int("status_code", accountSlot.FailoverErr.StatusCode),
+					zap.String("reason", accountSlot.FailoverErr.ActionMetadata["reason"]),
+					zap.Int("switch_count", switchCount),
+					zap.Int("max_switches", maxAccountSwitches),
+				)
+				continue
+			}
 			return
 		}
+		accountReleaseFunc := accountSlot.ReleaseFunc
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
@@ -1042,6 +1082,12 @@ func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, stat
 
 // handleAnthropicFailoverExhausted maps upstream failover errors to Anthropic format.
 func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	if isOpenAILocalAccountConcurrencyFailover(failoverErr) {
+		status, errType, errMsg := openAILocalAccountConcurrencyClientError(failoverErr)
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, errMsg, "")
+		h.anthropicStreamingAwareError(c, status, errType, errMsg, streamStarted)
+		return
+	}
 	status, errType, errMsg := h.mapUpstreamError(failoverErr.StatusCode)
 	h.anthropicStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
@@ -1169,6 +1215,20 @@ func (h *OpenAIGatewayHandler) acquireResponsesUserSlot(
 	return wrapReleaseOnDone(ctx, userReleaseFunc), true
 }
 
+type responsesAccountSlotAcquireResult struct {
+	ReleaseFunc   func()
+	Acquired      bool
+	SwitchAccount bool
+	FailoverErr   *service.UpstreamFailoverError
+}
+
+const (
+	openAILocalConcurrencySource       = "local_concurrency"
+	openAILocalAccountWaitQueueFull    = "local_account_wait_queue_full"
+	openAILocalAccountSlotWaitTimeout  = "local_account_slot_timeout"
+	openAILocalAccountConcurrencyScope = "local_concurrency"
+)
+
 func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	c *gin.Context,
 	groupID *int64,
@@ -1177,22 +1237,25 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	reqStream bool,
 	streamStarted *bool,
 	reqLog *zap.Logger,
-) (func(), bool) {
+) responsesAccountSlotAcquireResult {
 	if selection == nil || selection.Account == nil {
 		markOpsRoutingCapacityLimited(c)
 		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", *streamStarted)
-		return nil, false
+		return responsesAccountSlotAcquireResult{}
 	}
 
 	ctx := c.Request.Context()
 	account := selection.Account
 	if selection.Acquired {
-		return wrapReleaseOnDone(ctx, selection.ReleaseFunc), true
+		return responsesAccountSlotAcquireResult{
+			ReleaseFunc: wrapReleaseOnDone(ctx, selection.ReleaseFunc),
+			Acquired:    true,
+		}
 	}
 	if selection.WaitPlan == nil {
 		markOpsRoutingCapacityLimited(c)
 		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", *streamStarted)
-		return nil, false
+		return responsesAccountSlotAcquireResult{}
 	}
 
 	fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(
@@ -1203,13 +1266,16 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	if err != nil {
 		reqLog.Warn("openai.account_slot_quick_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		h.handleConcurrencyError(c, err, "account", *streamStarted)
-		return nil, false
+		return responsesAccountSlotAcquireResult{}
 	}
 	if fastAcquired {
 		if err := h.gatewayService.BindStickySession(ctx, groupID, sessionHash, account.ID); err != nil {
 			reqLog.Warn("openai.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 		}
-		return wrapReleaseOnDone(ctx, fastReleaseFunc), true
+		return responsesAccountSlotAcquireResult{
+			ReleaseFunc: wrapReleaseOnDone(ctx, fastReleaseFunc),
+			Acquired:    true,
+		}
 	}
 
 	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
@@ -1220,8 +1286,10 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 			zap.Int64("account_id", account.ID),
 			zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
 		)
-		h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", *streamStarted)
-		return nil, false
+		return responsesAccountSlotAcquireResult{
+			SwitchAccount: true,
+			FailoverErr:   newOpenAILocalAccountConcurrencyFailoverError(account, selection.WaitPlan, openAILocalAccountWaitQueueFull),
+		}
 	}
 
 	accountWaitCounted := waitErr == nil && canWait
@@ -1243,8 +1311,15 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	)
 	if err != nil {
 		reqLog.Warn("openai.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+		var concurrencyErr *ConcurrencyError
+		if errors.As(err, &concurrencyErr) && concurrencyErr.IsTimeout && concurrencyErr.SlotType == "account" && !service.OpenAIRealClientOutputStarted(c) {
+			return responsesAccountSlotAcquireResult{
+				SwitchAccount: true,
+				FailoverErr:   newOpenAILocalAccountConcurrencyFailoverError(account, selection.WaitPlan, openAILocalAccountSlotWaitTimeout),
+			}
+		}
 		h.handleConcurrencyError(c, err, "account", *streamStarted)
-		return nil, false
+		return responsesAccountSlotAcquireResult{}
 	}
 
 	// Slot acquired: no longer waiting in queue.
@@ -1252,7 +1327,70 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	if err := h.gatewayService.BindStickySession(ctx, groupID, sessionHash, account.ID); err != nil {
 		reqLog.Warn("openai.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 	}
-	return wrapReleaseOnDone(ctx, accountReleaseFunc), true
+	return responsesAccountSlotAcquireResult{
+		ReleaseFunc: wrapReleaseOnDone(ctx, accountReleaseFunc),
+		Acquired:    true,
+	}
+}
+
+func newOpenAILocalAccountConcurrencyFailoverError(account *service.Account, waitPlan *service.AccountWaitPlan, reason string) *service.UpstreamFailoverError {
+	message := openAILocalAccountConcurrencyMessage(reason)
+	body, _ := json.Marshal(gin.H{
+		"error": gin.H{
+			"type":    "rate_limit_error",
+			"message": message,
+		},
+	})
+
+	actionLabel := service.OpenAIStreamActionRetryNextAccount
+	metadata := map[string]string{
+		"action_label":    string(actionLabel),
+		"stream_action":   string(actionLabel),
+		"avoidance_scope": "account",
+		"reason_scope":    openAILocalAccountConcurrencyScope,
+		"source":          openAILocalConcurrencySource,
+		"reason":          reason,
+		"local_status":    strconv.Itoa(http.StatusTooManyRequests),
+	}
+	if account != nil {
+		metadata["account_id"] = strconv.FormatInt(account.ID, 10)
+		metadata["account_platform"] = strings.TrimSpace(account.Platform)
+	}
+	if waitPlan != nil {
+		metadata["max_concurrency"] = strconv.Itoa(waitPlan.MaxConcurrency)
+		metadata["max_waiting"] = strconv.Itoa(waitPlan.MaxWaiting)
+		metadata["wait_timeout_ms"] = strconv.FormatInt(waitPlan.Timeout.Milliseconds(), 10)
+	}
+	return &service.UpstreamFailoverError{
+		StatusCode:     http.StatusTooManyRequests,
+		ResponseBody:   body,
+		ActionLabel:    actionLabel,
+		ActionMetadata: metadata,
+	}
+}
+
+func openAILocalAccountConcurrencyMessage(reason string) string {
+	switch strings.TrimSpace(reason) {
+	case openAILocalAccountSlotWaitTimeout:
+		return "Local account concurrency wait timed out, please retry later"
+	default:
+		return "Local account concurrency saturated, please retry later"
+	}
+}
+
+func isOpenAILocalAccountConcurrencyFailover(failoverErr *service.UpstreamFailoverError) bool {
+	if failoverErr == nil {
+		return false
+	}
+	return failoverErr.ActionMetadata["source"] == openAILocalConcurrencySource
+}
+
+func openAILocalAccountConcurrencyClientError(failoverErr *service.UpstreamFailoverError) (int, string, string) {
+	message := strings.TrimSpace(service.ExtractUpstreamErrorMessage(failoverErr.ResponseBody))
+	if message == "" {
+		message = openAILocalAccountConcurrencyMessage(failoverErr.ActionMetadata["reason"])
+	}
+	return http.StatusTooManyRequests, "rate_limit_error", message
 }
 
 // ResponsesWebSocket handles OpenAI Responses API WebSocket ingress endpoint
@@ -1873,6 +2011,12 @@ func (h *OpenAIGatewayHandler) handleConcurrencyError(c *gin.Context, err error,
 }
 
 func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	if isOpenAILocalAccountConcurrencyFailover(failoverErr) {
+		status, errType, errMsg := openAILocalAccountConcurrencyClientError(failoverErr)
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, errMsg, "")
+		h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+		return
+	}
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
 	if service.IsOpenAISilentRefusalErrorBody(responseBody) {

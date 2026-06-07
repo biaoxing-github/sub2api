@@ -188,10 +188,30 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		reqLog.Debug("openai.images.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
-		if !acquired {
+		accountSlot := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
+		if !accountSlot.Acquired {
+			if accountSlot.SwitchAccount && accountSlot.FailoverErr != nil {
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				h.gatewayService.RecordOpenAIAccountSwitch()
+				failedAccountIDs[account.ID] = struct{}{}
+				lastFailoverErr = accountSlot.FailoverErr
+				if switchCount >= maxAccountSwitches {
+					h.handleFailoverExhausted(c, accountSlot.FailoverErr, streamStarted)
+					return
+				}
+				switchCount++
+				reqLog.Warn("openai.images.local_account_concurrency_switching",
+					zap.Int64("account_id", account.ID),
+					zap.Int("status_code", accountSlot.FailoverErr.StatusCode),
+					zap.String("reason", accountSlot.FailoverErr.ActionMetadata["reason"]),
+					zap.Int("switch_count", switchCount),
+					zap.Int("max_switches", maxAccountSwitches),
+				)
+				continue
+			}
 			return
 		}
+		accountReleaseFunc := accountSlot.ReleaseFunc
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()

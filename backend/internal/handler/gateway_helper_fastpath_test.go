@@ -11,10 +11,19 @@ import (
 )
 
 type concurrencyCacheMock struct {
-	acquireUserSlotFn    func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error)
-	acquireAccountSlotFn func(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error)
-	releaseUserCalled    int32
-	releaseAccountCalled int32
+	acquireUserSlotFn            func(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error)
+	acquireAccountSlotFn         func(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error)
+	incrementAccountWaitCountFn  func(ctx context.Context, accountID int64, maxWait int) (bool, error)
+	decrementAccountWaitCountFn  func(ctx context.Context, accountID int64) error
+	getAccountWaitingCountFn     func(ctx context.Context, accountID int64) (int, error)
+	getAccountsLoadBatchFn       func(ctx context.Context, accounts []service.AccountWithConcurrency) (map[int64]*service.AccountLoadInfo, error)
+	getAccountsLoadBatchFreshFn  func(ctx context.Context, accounts []service.AccountWithConcurrency) (map[int64]*service.AccountLoadInfo, error)
+	incrementUserWaitCountFn     func(ctx context.Context, userID int64, maxWait int) (bool, error)
+	decrementUserWaitCountFn     func(ctx context.Context, userID int64) error
+	getAccountConcurrencyBatchFn func(ctx context.Context, accountIDs []int64) (map[int64]int, error)
+	getAccountConcurrencyFn      func(ctx context.Context, accountID int64) (int, error)
+	releaseUserCalled            int32
+	releaseAccountCalled         int32
 }
 
 func (m *concurrencyCacheMock) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
@@ -30,10 +39,16 @@ func (m *concurrencyCacheMock) ReleaseAccountSlot(ctx context.Context, accountID
 }
 
 func (m *concurrencyCacheMock) GetAccountConcurrency(ctx context.Context, accountID int64) (int, error) {
+	if m.getAccountConcurrencyFn != nil {
+		return m.getAccountConcurrencyFn(ctx, accountID)
+	}
 	return 0, nil
 }
 
 func (m *concurrencyCacheMock) GetAccountConcurrencyBatch(ctx context.Context, accountIDs []int64) (map[int64]int, error) {
+	if m.getAccountConcurrencyBatchFn != nil {
+		return m.getAccountConcurrencyBatchFn(ctx, accountIDs)
+	}
 	result := make(map[int64]int, len(accountIDs))
 	for _, accountID := range accountIDs {
 		result[accountID] = 0
@@ -42,14 +57,23 @@ func (m *concurrencyCacheMock) GetAccountConcurrencyBatch(ctx context.Context, a
 }
 
 func (m *concurrencyCacheMock) IncrementAccountWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error) {
+	if m.incrementAccountWaitCountFn != nil {
+		return m.incrementAccountWaitCountFn(ctx, accountID, maxWait)
+	}
 	return true, nil
 }
 
 func (m *concurrencyCacheMock) DecrementAccountWaitCount(ctx context.Context, accountID int64) error {
+	if m.decrementAccountWaitCountFn != nil {
+		return m.decrementAccountWaitCountFn(ctx, accountID)
+	}
 	return nil
 }
 
 func (m *concurrencyCacheMock) GetAccountWaitingCount(ctx context.Context, accountID int64) (int, error) {
+	if m.getAccountWaitingCountFn != nil {
+		return m.getAccountWaitingCountFn(ctx, accountID)
+	}
 	return 0, nil
 }
 
@@ -70,15 +94,31 @@ func (m *concurrencyCacheMock) GetUserConcurrency(ctx context.Context, userID in
 }
 
 func (m *concurrencyCacheMock) IncrementWaitCount(ctx context.Context, userID int64, maxWait int) (bool, error) {
+	if m.incrementUserWaitCountFn != nil {
+		return m.incrementUserWaitCountFn(ctx, userID, maxWait)
+	}
 	return true, nil
 }
 
 func (m *concurrencyCacheMock) DecrementWaitCount(ctx context.Context, userID int64) error {
+	if m.decrementUserWaitCountFn != nil {
+		return m.decrementUserWaitCountFn(ctx, userID)
+	}
 	return nil
 }
 
 func (m *concurrencyCacheMock) GetAccountsLoadBatch(ctx context.Context, accounts []service.AccountWithConcurrency) (map[int64]*service.AccountLoadInfo, error) {
+	if m.getAccountsLoadBatchFn != nil {
+		return m.getAccountsLoadBatchFn(ctx, accounts)
+	}
 	return map[int64]*service.AccountLoadInfo{}, nil
+}
+
+func (m *concurrencyCacheMock) GetAccountsLoadBatchFresh(ctx context.Context, accounts []service.AccountWithConcurrency) (map[int64]*service.AccountLoadInfo, error) {
+	if m.getAccountsLoadBatchFreshFn != nil {
+		return m.getAccountsLoadBatchFreshFn(ctx, accounts)
+	}
+	return m.GetAccountsLoadBatch(ctx, accounts)
 }
 
 func (m *concurrencyCacheMock) GetUsersLoadBatch(ctx context.Context, users []service.UserWithConcurrency) (map[int64]*service.UserLoadInfo, error) {

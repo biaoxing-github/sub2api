@@ -167,10 +167,30 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
-		if !acquired {
+		accountSlot := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		if !accountSlot.Acquired {
+			if accountSlot.SwitchAccount && accountSlot.FailoverErr != nil {
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				h.gatewayService.RecordOpenAIAccountSwitch()
+				failedAccountIDs[account.ID] = struct{}{}
+				lastFailoverErr = accountSlot.FailoverErr
+				if switchCount >= maxAccountSwitches {
+					h.handleFailoverExhausted(c, accountSlot.FailoverErr, streamStarted)
+					return
+				}
+				switchCount++
+				reqLog.Warn("openai_chat_completions.local_account_concurrency_switching",
+					zap.Int64("account_id", account.ID),
+					zap.Int("status_code", accountSlot.FailoverErr.StatusCode),
+					zap.String("reason", accountSlot.FailoverErr.ActionMetadata["reason"]),
+					zap.Int("switch_count", switchCount),
+					zap.Int("max_switches", maxAccountSwitches),
+				)
+				continue
+			}
 			return
 		}
+		accountReleaseFunc := accountSlot.ReleaseFunc
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()

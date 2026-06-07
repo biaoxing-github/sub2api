@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"go.uber.org/zap"
 )
 
 func TestOpenAIHandleStreamingAwareError_JSONEscaping(t *testing.T) {
@@ -246,6 +248,112 @@ func TestOpenAIHandleFailoverExhausted_AppendsResponsesFailedAfterHeartbeat(t *t
 	require.Contains(t, body, `"type":"response.failed"`)
 	require.Contains(t, body, "Upstream service temporarily unavailable")
 	require.NotContains(t, body, `{"error":`)
+}
+
+func TestOpenAIHandleFailoverExhausted_LocalAccountConcurrencyKeepsLocalMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	h := &OpenAIGatewayHandler{}
+	failoverErr := newOpenAILocalAccountConcurrencyFailoverError(
+		&service.Account{ID: 416, Platform: service.PlatformOpenAI, Name: "full-account"},
+		&service.AccountWaitPlan{AccountID: 416, MaxConcurrency: 1, MaxWaiting: 3, Timeout: 10 * time.Millisecond},
+		openAILocalAccountWaitQueueFull,
+	)
+	h.handleFailoverExhausted(c, failoverErr, false)
+
+	require.Equal(t, http.StatusTooManyRequests, w.Code)
+	require.Contains(t, w.Body.String(), "Local account concurrency saturated")
+	require.NotContains(t, w.Body.String(), "Upstream rate limit exceeded")
+}
+
+func TestOpenAIAcquireResponsesAccountSlot_WaitQueueFullSwitchesAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	cache := &concurrencyCacheMock{
+		acquireAccountSlotFn: func(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+			require.Equal(t, int64(416), accountID)
+			require.Equal(t, 1, maxConcurrency)
+			return false, nil
+		},
+		incrementAccountWaitCountFn: func(ctx context.Context, accountID int64, maxWait int) (bool, error) {
+			require.Equal(t, int64(416), accountID)
+			require.Equal(t, 3, maxWait)
+			return false, nil
+		},
+	}
+	h := newOpenAIHandlerForPreviousResponseIDValidation(t, cache)
+	streamStarted := false
+
+	result := h.acquireResponsesAccountSlot(c, nil, "session-queue-full", &service.AccountSelectionResult{
+		Account: &service.Account{ID: 416, Platform: service.PlatformOpenAI, Name: "full-account"},
+		WaitPlan: &service.AccountWaitPlan{
+			AccountID:      416,
+			MaxConcurrency: 1,
+			MaxWaiting:     3,
+			Timeout:        10 * time.Millisecond,
+		},
+	}, true, &streamStarted, zap.NewNop())
+
+	require.False(t, result.Acquired)
+	require.True(t, result.SwitchAccount)
+	require.NotNil(t, result.FailoverErr)
+	require.Equal(t, http.StatusTooManyRequests, result.FailoverErr.StatusCode)
+	require.Equal(t, string(service.OpenAIStreamActionRetryNextAccount), result.FailoverErr.ActionMetadata["stream_action"])
+	require.Equal(t, "local_concurrency", result.FailoverErr.ActionMetadata["source"])
+	require.Equal(t, "local_account_wait_queue_full", result.FailoverErr.ActionMetadata["reason"])
+	require.Equal(t, "416", result.FailoverErr.ActionMetadata["account_id"])
+	require.Equal(t, "3", result.FailoverErr.ActionMetadata["max_waiting"])
+	require.False(t, w.Body.Len() > 0, "本地账号队列满应交给外层切号，不能提前写死当前响应")
+}
+
+func TestOpenAIAcquireResponsesAccountSlot_WaitTimeoutSwitchesAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	var decremented int32
+	cache := &concurrencyCacheMock{
+		acquireAccountSlotFn: func(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+			require.Equal(t, int64(417), accountID)
+			return false, nil
+		},
+		incrementAccountWaitCountFn: func(ctx context.Context, accountID int64, maxWait int) (bool, error) {
+			require.Equal(t, int64(417), accountID)
+			return true, nil
+		},
+		decrementAccountWaitCountFn: func(ctx context.Context, accountID int64) error {
+			require.Equal(t, int64(417), accountID)
+			atomic.AddInt32(&decremented, 1)
+			return nil
+		},
+	}
+	h := newOpenAIHandlerForPreviousResponseIDValidation(t, cache)
+	streamStarted := false
+
+	result := h.acquireResponsesAccountSlot(c, nil, "session-timeout", &service.AccountSelectionResult{
+		Account: &service.Account{ID: 417, Platform: service.PlatformOpenAI, Name: "timeout-account"},
+		WaitPlan: &service.AccountWaitPlan{
+			AccountID:      417,
+			MaxConcurrency: 1,
+			MaxWaiting:     3,
+			Timeout:        time.Nanosecond,
+		},
+	}, true, &streamStarted, zap.NewNop())
+
+	require.False(t, result.Acquired)
+	require.True(t, result.SwitchAccount)
+	require.NotNil(t, result.FailoverErr)
+	require.Equal(t, "local_account_slot_timeout", result.FailoverErr.ActionMetadata["reason"])
+	require.Equal(t, "417", result.FailoverErr.ActionMetadata["account_id"])
+	require.Equal(t, int32(1), atomic.LoadInt32(&decremented))
+	require.False(t, w.Body.Len() > 0, "本地账号 slot 等待超时应交给外层切号，不能提前写死当前响应")
 }
 
 func TestOpenAIForwardErrorAlreadyCommunicated_HeartbeatIsNotRealOutput(t *testing.T) {
