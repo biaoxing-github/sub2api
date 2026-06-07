@@ -155,3 +155,33 @@ func TestUpdateAccount_AppendsAPIKeysWithoutReturningExistingPlaintext(t *testin
 	require.NotContains(t, repo.account.Credentials, "api_keys_append")
 	require.Contains(t, repo.account.Credentials["api_keys_disabled"], FingerprintAPIKey(disabledKey))
 }
+
+func TestAdminService_DeleteAccountAPIKeyRemovesFingerprintFromStoredList(t *testing.T) {
+	accountID := int64(206)
+	deletedKey := "sk-delete"
+	keptKey := "sk-keep"
+	repo := &updateAccountCredsRepoStub{
+		account: &Account{
+			ID:       accountID,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Status:   StatusActive,
+			Credentials: map[string]any{
+				"api_keys": []any{deletedKey, keptKey},
+				"api_keys_disabled": map[string]any{
+					FingerprintAPIKey(deletedKey): map[string]any{"reason": "rate_limited"},
+				},
+			},
+		},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	updated, err := svc.DeleteAccountAPIKey(context.Background(), accountID, FingerprintAPIKey(deletedKey))
+
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	require.Equal(t, 1, repo.updateCalls)
+	require.Equal(t, []string{keptKey}, normalizeAPIKeys(repo.account.Credentials["api_keys"]))
+	disabled, _ := repo.account.Credentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.NotContains(t, disabled, FingerprintAPIKey(deletedKey))
+}

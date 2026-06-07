@@ -73,6 +73,7 @@ type AdminService interface {
 	CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error)
 	UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error)
 	DeleteAccount(ctx context.Context, id int64) error
+	DeleteAccountAPIKey(ctx context.Context, id int64, fingerprint string) (*Account, error)
 	RefreshAccountCredentials(ctx context.Context, id int64) (*Account, error)
 	ClearAccountError(ctx context.Context, id int64) (*Account, error)
 	SetAccountError(ctx context.Context, id int64, errorMsg string) error
@@ -2791,6 +2792,24 @@ func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
 		return err
 	}
 	return nil
+}
+
+func (s *adminServiceImpl) DeleteAccountAPIKey(ctx context.Context, id int64, fingerprint string) (*Account, error) {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if fingerprint == "" {
+		return nil, infraerrors.BadRequest("INVALID_API_KEY_FINGERPRINT", "api key fingerprint is required")
+	}
+	account, err := s.accountRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !account.RemoveAPIKeyByFingerprint(fingerprint) {
+		return nil, ErrAccountAPIKeyNotFound
+	}
+	if err := persistAccountCredentials(ctx, s.accountRepo, account, account.Credentials); err != nil {
+		return nil, err
+	}
+	return account, nil
 }
 
 func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int64) (*Account, error) {

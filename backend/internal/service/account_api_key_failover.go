@@ -15,6 +15,8 @@ func shouldDisableCurrentAPIKey(statusCode int, responseBody []byte) bool {
 	switch statusCode {
 	case http.StatusUnauthorized, http.StatusPaymentRequired:
 		return true
+	case http.StatusTooManyRequests:
+		return true
 	case http.StatusForbidden:
 		return isInsufficientBalanceBody(responseBody)
 	default:
@@ -31,6 +33,9 @@ func disableAPIKeyReason(statusCode int, responseBody []byte) string {
 	}
 	if statusCode == http.StatusPaymentRequired {
 		return "payment_required"
+	}
+	if statusCode == http.StatusTooManyRequests {
+		return "rate_limited"
 	}
 	return "upstream_error"
 }

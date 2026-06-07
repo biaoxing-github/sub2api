@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrAccountNotFound = infraerrors.NotFound("ACCOUNT_NOT_FOUND", "account not found")
-	ErrAccountNilInput = infraerrors.BadRequest("ACCOUNT_NIL_INPUT", "account input cannot be nil")
+	ErrAccountNotFound       = infraerrors.NotFound("ACCOUNT_NOT_FOUND", "account not found")
+	ErrAccountAPIKeyNotFound = infraerrors.NotFound("ACCOUNT_API_KEY_NOT_FOUND", "account api key not found")
+	ErrAccountNilInput       = infraerrors.BadRequest("ACCOUNT_NIL_INPUT", "account input cannot be nil")
 )
 
 const AccountListGroupUngrouped int64 = -1

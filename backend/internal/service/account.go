@@ -446,6 +446,71 @@ func (a *Account) DisableAPIKey(apiKey, reason string, now time.Time) bool {
 	return true
 }
 
+// RemoveAPIKeyByFingerprint 按非敏感指纹删除账号保存的 API Key，并同步清理停用元数据。
+func (a *Account) RemoveAPIKeyByFingerprint(fingerprint string) bool {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if a == nil || a.Credentials == nil || fingerprint == "" {
+		return false
+	}
+
+	changed := false
+	keys := normalizeAPIKeys(a.Credentials["api_keys"])
+	if len(keys) > 0 {
+		kept := make([]string, 0, len(keys))
+		for _, key := range keys {
+			if FingerprintAPIKey(key) == fingerprint {
+				changed = true
+				continue
+			}
+			kept = append(kept, key)
+		}
+		if changed {
+			if len(kept) > 0 {
+				a.Credentials["api_keys"] = kept
+			} else {
+				delete(a.Credentials, "api_keys")
+			}
+		}
+	}
+
+	if legacy := strings.TrimSpace(a.GetCredential("api_key")); legacy != "" && FingerprintAPIKey(legacy) == fingerprint {
+		delete(a.Credentials, "api_key")
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+
+	removeDisabledAPIKeyFingerprint(a.Credentials, fingerprint)
+	if FingerprintAPIKey(a.lastSelectedAPIKey) == fingerprint {
+		a.lastSelectedAPIKey = ""
+	}
+	return true
+}
+
+// removeDisabledAPIKeyFingerprint 清除已删除 Key 对应的停用记录，避免 DTO 继续暴露陈旧状态。
+func removeDisabledAPIKeyFingerprint(credentials map[string]any, fingerprint string) {
+	if credentials == nil {
+		return
+	}
+	switch disabled := credentials[CredentialAPIKeysDisabled].(type) {
+	case map[string]any:
+		delete(disabled, fingerprint)
+		if len(disabled) == 0 {
+			delete(credentials, CredentialAPIKeysDisabled)
+		} else {
+			credentials[CredentialAPIKeysDisabled] = disabled
+		}
+	case map[string]string:
+		delete(disabled, fingerprint)
+		if len(disabled) == 0 {
+			delete(credentials, CredentialAPIKeysDisabled)
+		} else {
+			credentials[CredentialAPIKeysDisabled] = disabled
+		}
+	}
+}
+
 func normalizeAPIKeys(raw any) []string {
 	add := func(out []string, v string) []string {
 		v = strings.TrimSpace(v)

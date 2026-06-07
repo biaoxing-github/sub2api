@@ -958,13 +958,20 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 
 ## 校验方式
 
-- tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeBatchCreateRunsManualValidationOnly" -count=1：先按 TDD 红灯运行，因 BatchCreateModelProbeRuns 不存在失败；补实现后通过。
-- tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts -t "starts batch manual account model probe runs"：先按 TDD 红灯运行，因 atchAccountModelProbeRuns 不存在失败；补 wrapper 后通过。
-- tk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts -t "starts batch model validation"：先按 TDD 红灯运行，因报告页按钮不存在失败；补入口后通过。
-- tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeCreateRunsManualValidationOnly|TestAccountModelProbeBatchCreateRunsManualValidationOnly|TestAccountProbeReportBatchCreate|TestAccountProbeCreate" -count=1
-- tk go test -tags unit ./internal/service -run "TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation|TestAccountProbeService_RunManualModelValidationStoresEvidence|TestScheduledTestRunnerRunsAccountProbePlan" -count=1
-- tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts src/views/admin/__tests__/AccountModelProbesView.spec.ts
-- tk npm run typecheck
+-
+tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeBatchCreateRunsManualValidationOnly" -count=1：先按 TDD 红灯运行，因 BatchCreateModelProbeRuns 不存在失败；补实现后通过。
+-
+tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts -t "starts batch manual account model probe runs"：先按 TDD 红灯运行，因 atchAccountModelProbeRuns 不存在失败；补 wrapper 后通过。
+-
+tk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts -t "starts batch model validation"：先按 TDD 红灯运行，因报告页按钮不存在失败；补入口后通过。
+-
+tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeCreateRunsManualValidationOnly|TestAccountModelProbeBatchCreateRunsManualValidationOnly|TestAccountProbeReportBatchCreate|TestAccountProbeCreate" -count=1
+-
+tk go test -tags unit ./internal/service -run "TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation|TestAccountProbeService_RunManualModelValidationStoresEvidence|TestScheduledTestRunnerRunsAccountProbePlan" -count=1
+-
+tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts src/views/admin/__tests__/AccountModelProbesView.spec.ts
+-
+tk npm run typecheck
 - git diff --check
 
 ## 校验结果
@@ -2334,3 +2341,11 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 构建：前端 `npm run build` 通过；从 `git archive HEAD` 清洁归档构建 Docker 镜像 `sub2api:multi-key-local` 通过，镜像 ID 为 `sha256:e6c782a3da021899154feff60fd058ab1d73528e062a55cca65eb2d02b293ee3`。
 - 部署：在 `D:\sub2api-deploy` 执行 `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --no-build --no-deps --force-recreate sub2api`，只重建应用容器，Postgres/Redis 保持运行。
 - 验证：`docker inspect sub2api` 显示 `Status=running`、`Health=healthy`、镜像 ID 匹配；`Invoke-WebRequest http://127.0.0.1:8080/health` 返回 200，内容为 `{"status":"ok"}`。
+
+## 账号 API Key 列表单 Key 删除与 429 单 Key 停用验证
+
+- 日期：2026-06-07T15:07:16+08:00
+- 执行者：Devil
+- 目标：支持管理端删除账号 Key 列表里的单个 Key，并让 API Key 列表账号遇到某个 Key 返回 429 时只停用该 Key，不把整个账号设为不可用。
+- 变更：`backend/internal/service/account.go` 新增按指纹删除 Key 并清理停用元数据；`backend/internal/service/admin_service.go`、`backend/internal/handler/admin/account_handler.go`、`backend/internal/server/routes/admin.go` 增加删除接口；`frontend/src/api/admin/accounts.ts` 和 `frontend/src/components/account/EditAccountModal.vue` 增加前端删除动作；`backend/internal/service/ratelimit_service.go` 对 429 优先停用本次选中的 Key；`backend/internal/service/gateway_service.go` 改用 `GetAPIKey()` 取 API Key，确保通用路径也记录 `LastSelectedAPIKey()`。
+- 验证：`go test -tags unit ./internal/service -run "TestAccount(GetAPIKey|RemoveAPIKey)|TestGatewayServiceGetAccessTokenUsesCredentialAPIKeys|TestHandleUpstreamError429_OpenAIAPIKeyDisablesSelectedKeyOnly|TestAdminService_DeleteAccountAPIKey" -count=1` 通过；`go test -tags unit ./internal/service -run "TestRateLimitService|TestHandleUpstreamError|TestAccount(GetAPIKey|RemoveAPIKey)|TestGatewayServiceGetAccessTokenUsesCredentialAPIKeys|TestAdminService_DeleteAccountAPIKey" -count=1` 通过；`go test ./internal/handler/admin -run TestDoesNotExist -count=1`、`go test ./internal/server/routes -run TestDoesNotExist -count=1`、`go test -tags unit ./cmd/server -run TestDoesNotExist -count=1` 通过；`npm run test:run -- src/components/account/__tests__/EditAccountModal.spec.ts` 通过 15/15；`npm run typecheck` 通过。

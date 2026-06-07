@@ -259,6 +259,14 @@ export async function update(id: number, updates: UpdateAccountRequest): Promise
 }
 
 /**
+ * 按非敏感指纹删除账号保存的 API Key。
+ */
+export async function deleteAccountAPIKey(id: number, fingerprint: string): Promise<Account> {
+  const { data } = await apiClient.delete<Account>(`/admin/accounts/${id}/api-keys/${encodeURIComponent(fingerprint)}`)
+  return data
+}
+
+/**
  * Check mixed-channel risk for account-group binding.
  */
 export async function checkMixedChannelRisk(
@@ -1049,6 +1057,7 @@ export const accountsAPI = {
   getById,
   create,
   update,
+  deleteAccountAPIKey,
   checkMixedChannelRisk,
   delete: deleteAccount,
   toggleStatus,

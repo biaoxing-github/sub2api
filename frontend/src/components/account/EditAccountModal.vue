@@ -114,6 +114,17 @@
               >
                 {{ item.masked }}
                 <span v-if="item.disabled" class="font-sans">{{ t('admin.accounts.apiKeyDisabled') }}</span>
+                <button
+                  v-if="item.fingerprint"
+                  type="button"
+                  class="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
+                  :title="t('admin.accounts.deleteApiKey')"
+                  :aria-label="t('admin.accounts.deleteApiKey')"
+                  :disabled="deletingApiKeyFingerprint === item.fingerprint"
+                  @click="handleDeleteAPIKey(item.fingerprint)"
+                >
+                  <Icon name="trash" size="xs" :stroke-width="2" />
+                </button>
               </span>
             </div>
           </div>
@@ -2668,6 +2679,7 @@ const editBalanceBaseUrl = ref('')
 const editApiKey = ref('')
 const editApiKeysText = ref('')
 const apiKeysEditMode = ref<'append' | 'replace'>('append')
+const deletingApiKeyFingerprint = ref<string | null>(null)
 const upstreamAuthUsername = ref('')
 const upstreamAuthPassword = ref('')
 const upstreamCommonRateMultiplier = ref<number | null>(null)
@@ -3825,6 +3837,23 @@ const handleClose = () => {
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
   emit('close')
+}
+
+// 按后端返回的非敏感指纹删除单个已保存 Key，并把更新后的账号状态交给父组件刷新。
+const handleDeleteAPIKey = async (fingerprint: string) => {
+  if (!props.account || !fingerprint || deletingApiKeyFingerprint.value) {
+    return
+  }
+  deletingApiKeyFingerprint.value = fingerprint
+  try {
+    const updatedAccount = await adminAPI.accounts.deleteAccountAPIKey(props.account.id, fingerprint)
+    appStore.showSuccess(t('admin.accounts.accountUpdated'))
+    emit('updated', updatedAccount)
+  } catch (error: any) {
+    appStore.showError(error.message || t('admin.accounts.failedToUpdate'))
+  } finally {
+    deletingApiKeyFingerprint.value = null
+  }
 }
 
 const submitUpdateAccount = async (accountID: number, updatePayload: Record<string, unknown>) => {

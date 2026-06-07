@@ -18,12 +18,18 @@ type rateLimit429AccountRepoStub struct {
 	rateLimitCalls     int
 	lastRateLimitID    int64
 	lastRateLimitReset time.Time
+	updatedCredentials map[string]any
 }
 
 func (r *rateLimit429AccountRepoStub) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
 	r.rateLimitCalls++
 	r.lastRateLimitID = id
 	r.lastRateLimitReset = resetAt
+	return nil
+}
+
+func (r *rateLimit429AccountRepoStub) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {
+	r.updatedCredentials = cloneCredentials(credentials)
 	return nil
 }
 
@@ -110,4 +116,29 @@ func TestHandle429_FallbackUsesDefaultSecondsWhenSettingServiceMissing(t *testin
 	require.Equal(t, 1, accountRepo.rateLimitCalls)
 	require.Equal(t, int64(44), accountRepo.lastRateLimitID)
 	require.True(t, !accountRepo.lastRateLimitReset.Before(before.Add(5*time.Second)) && !accountRepo.lastRateLimitReset.After(after.Add(5*time.Second)))
+}
+
+// 确认 API Key 列表账号遇到 429 时只停用本次选中的 Key，不进入账号级限流。
+func TestHandleUpstreamError429_OpenAIAPIKeyDisablesSelectedKeyOnly(t *testing.T) {
+	accountRepo := &rateLimit429AccountRepoStub{}
+	svc := NewRateLimitService(accountRepo, nil, &config.Config{}, nil, nil)
+	account := &Account{
+		ID:       45,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-a", "key-b"},
+		},
+	}
+	require.Equal(t, "key-a", account.GetAPIKey())
+
+	shouldDisable := svc.HandleUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, []byte(`{"error":{"message":"slow down"}}`))
+
+	require.False(t, shouldDisable)
+	require.Zero(t, accountRepo.rateLimitCalls)
+	require.NotNil(t, accountRepo.updatedCredentials)
+	disabled, ok := accountRepo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, disabled, FingerprintAPIKey("key-a"))
+	require.Equal(t, []string{"key-b"}, account.GetAPIKeys())
 }

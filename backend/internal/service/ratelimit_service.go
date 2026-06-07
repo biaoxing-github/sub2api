@@ -321,6 +321,12 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		)
 		shouldDisable = s.handle403(ctx, account, upstreamMsg, responseBody)
 	case 429:
+		if account.Type == AccountTypeAPIKey {
+			if disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody)) {
+				shouldDisable = false
+				break
+			}
+		}
 		s.handle429(ctx, account, headers, responseBody)
 		shouldDisable = false
 	case 529:

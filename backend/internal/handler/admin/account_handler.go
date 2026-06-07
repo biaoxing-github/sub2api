@@ -920,6 +920,29 @@ func (h *AccountHandler) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Account deleted successfully"})
 }
 
+// DeleteAPIKey 删除账号中指定指纹的单个已保存 API Key。
+// DELETE /api/v1/admin/accounts/:id/api-keys/:fingerprint
+func (h *AccountHandler) DeleteAPIKey(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	fingerprint := strings.TrimSpace(c.Param("fingerprint"))
+	if fingerprint == "" {
+		response.BadRequest(c, "Invalid API key fingerprint")
+		return
+	}
+
+	account, err := h.adminService.DeleteAccountAPIKey(c.Request.Context(), accountID, fingerprint)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
+}
+
 // TestAccountRequest represents the request body for testing an account
 type TestAccountRequest struct {
 	ModelID string `json:"model_id"`

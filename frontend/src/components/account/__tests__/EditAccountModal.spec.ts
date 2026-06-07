@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { defineComponent, nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock } = vi.hoisted(() => ({
+const { updateAccountMock, deleteAccountAPIKeyMock, checkMixedChannelRiskMock } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
+  deleteAccountAPIKeyMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn()
 }))
 
@@ -25,6 +26,7 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       update: updateAccountMock,
+      deleteAccountAPIKey: deleteAccountAPIKeyMock,
       checkMixedChannelRisk: checkMixedChannelRiskMock
     },
     settings: {
@@ -189,6 +191,30 @@ function mountModal(account = buildAccount()) {
 }
 
 describe('EditAccountModal', () => {
+  it('deletes an existing API key by fingerprint', async () => {
+    const account = {
+      ...buildAccount(),
+      api_key_items: [
+        { fingerprint: 'fp-delete', masked: 'sk-...lete' },
+        { fingerprint: 'fp-keep', masked: 'sk-...keep' }
+      ]
+    }
+    const updatedAccount = {
+      ...account,
+      api_key_items: [{ fingerprint: 'fp-keep', masked: 'sk-...keep' }]
+    }
+    deleteAccountAPIKeyMock.mockReset()
+    deleteAccountAPIKeyMock.mockResolvedValue(updatedAccount)
+
+    const wrapper = mountModal(account)
+
+    await wrapper.get('button[title="admin.accounts.deleteApiKey"]').trigger('click')
+    await flushPromises()
+
+    expect(deleteAccountAPIKeyMock).toHaveBeenCalledWith(1, 'fp-delete')
+    expect(wrapper.emitted('updated')?.[0]).toEqual([updatedAccount])
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()

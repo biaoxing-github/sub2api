@@ -386,6 +386,17 @@ func (s *stubAdminService) DeleteAccount(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (s *stubAdminService) DeleteAccountAPIKey(ctx context.Context, id int64, fingerprint string) (*service.Account, error) {
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			account := s.accounts[i]
+			return &account, nil
+		}
+	}
+	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
+	return &account, nil
+}
+
 func (s *stubAdminService) RefreshAccountCredentials(ctx context.Context, id int64) (*service.Account, error) {
 	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
 	return &account, nil

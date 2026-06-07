@@ -877,6 +877,9 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 	}
 
 	persistOpenAI429PlanType(ctx, s.accountRepo, account, body)
+	if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
+		return
+	}
 
 	var resetAt *time.Time
 	if calculated := calculateOpenAI429ResetTime(headers); calculated != nil {
