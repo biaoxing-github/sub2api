@@ -88,6 +88,7 @@ func provideCleanup(
 	pricing *service.PricingService,
 	emailQueue *service.EmailQueueService,
 	billingCache *service.BillingCacheService,
+	userPlatformQuotaFlusher *service.UserPlatformQuotaUsageFlusher,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
 	subscriptionService *service.SubscriptionService,
 	oauth *service.OAuthService,
@@ -200,6 +201,12 @@ func provideCleanup(
 			}},
 			{"BillingCacheService", func() error {
 				billingCache.Stop()
+				return nil
+			}},
+			{"UserPlatformQuotaUsageFlusher", func() error {
+				if userPlatformQuotaFlusher != nil {
+					userPlatformQuotaFlusher.Stop()
+				}
 				return nil
 			}},
 			{"UsageRecordWorkerPool", func() error {

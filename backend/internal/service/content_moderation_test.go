@@ -121,6 +121,10 @@ func (r *contentModerationTestUserRepo) GetByID(ctx context.Context, id int64) (
 	return &clone, nil
 }
 
+func (r *contentModerationTestUserRepo) GetByIDIncludeDeleted(ctx context.Context, id int64) (*User, error) {
+	return r.GetByID(ctx, id)
+}
+
 func (r *contentModerationTestUserRepo) GetByEmail(ctx context.Context, email string) (*User, error) {
 	panic("unexpected GetByEmail call")
 }
@@ -1298,6 +1302,32 @@ func TestContentModerationCheck_AsyncFlaggedWritesRedisHashCache(t *testing.T) {
 	require.False(t, decision.Blocked)
 	require.Len(t, hashCache.recorded, 1)
 	require.Len(t, repo.logs, 1)
+}
+
+func TestContentModerationApplyFlaggedSideEffectsSkipsAdminAutoban(t *testing.T) {
+	userID := int64(1001)
+	cfg := defaultContentModerationConfig()
+	cfg.AutoBanEnabled = true
+	cfg.BanThreshold = 1
+	cfg.ViolationWindowHours = 1
+	userRepo := &contentModerationTestUserRepo{
+		user: &User{ID: userID, Email: "admin@example.com", Role: RoleAdmin, Status: StatusActive},
+	}
+	invalidator := &contentModerationTestAuthCacheInvalidator{}
+	svc := NewContentModerationService(nil, &contentModerationTestRepo{}, nil, nil, userRepo, invalidator, nil)
+	log := &ContentModerationLog{
+		UserID:    &userID,
+		UserEmail: "admin@example.com",
+		Flagged:   true,
+	}
+
+	svc.applyFlaggedSideEffects(context.Background(), cfg, log)
+
+	require.Equal(t, 1, log.ViolationCount)
+	require.False(t, log.AutoBanned)
+	require.Equal(t, StatusActive, userRepo.user.Status)
+	require.Empty(t, userRepo.updated)
+	require.Empty(t, invalidator.userIDs)
 }
 
 func TestBuildContentModerationAccountDisabledEmailBody_ContainsBanDetails(t *testing.T) {

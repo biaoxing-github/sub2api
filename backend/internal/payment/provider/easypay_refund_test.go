@@ -179,6 +179,46 @@ func TestEasyPayRefundResponseErrors(t *testing.T) {
 	}
 }
 
+func TestEasyPayQueryOrderUsesTradeStatusAndTradeNo(t *testing.T) {
+	t.Parallel()
+
+	var gotForm url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api.php" {
+			t.Errorf("query path = %q, want /api.php", r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		gotForm = r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":1,"trade_status":"TRADE_SUCCESS","trade_no":"gateway-789","money":"2.50"}`))
+	}))
+	defer server.Close()
+
+	provider := newTestEasyPay(t, server.URL)
+	resp, err := provider.QueryOrder(context.Background(), "out-456")
+	if err != nil {
+		t.Fatalf("QueryOrder returned error: %v", err)
+	}
+
+	if got := gotForm.Get("act"); got != "order" {
+		t.Fatalf("form[act] = %q, want order (form=%v)", got, gotForm)
+	}
+	if got := gotForm.Get("out_trade_no"); got != "out-456" {
+		t.Fatalf("form[out_trade_no] = %q, want out-456 (form=%v)", got, gotForm)
+	}
+	if resp.Status != payment.ProviderStatusPaid {
+		t.Fatalf("status = %q, want paid", resp.Status)
+	}
+	if resp.TradeNo != "gateway-789" {
+		t.Fatalf("trade_no = %q, want gateway-789", resp.TradeNo)
+	}
+	if resp.Amount != 2.5 {
+		t.Fatalf("amount = %v, want 2.5", resp.Amount)
+	}
+}
+
 func newTestEasyPay(t *testing.T, apiBase string) *EasyPay {
 	t.Helper()
 

@@ -2,12 +2,22 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const expiryCheckTimeout = 30 * time.Second
+
+const (
+	// paymentOrderExpiryLeaderLockKey 避免多实例重复查询支付上游和更新订单状态。
+	paymentOrderExpiryLeaderLockKey = "payment:order:expiry:leader"
+	// paymentOrderExpiryLeaderLockTTL 覆盖查询与过期两个阶段的总超时。
+	paymentOrderExpiryLeaderLockTTL = 3 * time.Minute
+)
 
 // PaymentOrderExpiryService periodically expires timed-out payment orders.
 type PaymentOrderExpiryService struct {
@@ -16,6 +26,9 @@ type PaymentOrderExpiryService struct {
 	stopCh     chan struct{}
 	stopOnce   sync.Once
 	wg         sync.WaitGroup
+	lockCache  LeaderLockCache
+	db         *sql.DB
+	instanceID string
 }
 
 func NewPaymentOrderExpiryService(paymentSvc *PaymentService, interval time.Duration) *PaymentOrderExpiryService {
@@ -23,7 +36,17 @@ func NewPaymentOrderExpiryService(paymentSvc *PaymentService, interval time.Dura
 		paymentSvc: paymentSvc,
 		interval:   interval,
 		stopCh:     make(chan struct{}),
+		instanceID: uuid.NewString(),
 	}
+}
+
+// SetLeaderLock 注入订单过期任务的跨实例选主锁；无协调后端时按单实例模式运行。
+func (s *PaymentOrderExpiryService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if s == nil {
+		return
+	}
+	s.lockCache = lockCache
+	s.db = db
 }
 
 func (s *PaymentOrderExpiryService) Start() {
@@ -59,6 +82,14 @@ func (s *PaymentOrderExpiryService) Stop() {
 }
 
 func (s *PaymentOrderExpiryService) runOnce() {
+	lockCtx, lockCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	release, ok := tryAcquireSingletonLeaderLock(lockCtx, s.lockCache, s.db, paymentOrderExpiryLeaderLockKey, s.instanceID, paymentOrderExpiryLeaderLockTTL)
+	lockCancel()
+	if !ok {
+		return
+	}
+	defer release()
+
 	reconcileCtx, cancel := context.WithTimeout(context.Background(), expiryCheckTimeout)
 	recovered, err := s.paymentSvc.ReconcilePendingWxpayOrders(reconcileCtx)
 	cancel()

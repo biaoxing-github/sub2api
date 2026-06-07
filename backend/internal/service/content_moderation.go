@@ -1466,18 +1466,22 @@ func (s *ContentModerationService) applyFlaggedSideEffects(ctx context.Context, 
 			slog.Warn("content_moderation.ban_get_user_failed", "user_id", *log.UserID, "error", err)
 			return
 		}
-		if user.Status != StatusDisabled {
-			user.Status = StatusDisabled
-			if err := s.userRepo.Update(ctx, user); err != nil {
-				slog.Warn("content_moderation.ban_update_user_failed", "user_id", *log.UserID, "error", err)
-				return
+		if user.IsAdmin() {
+			slog.Warn("content_moderation.autoban_skipped_admin", "user_id", *log.UserID, "role", user.Role, "count", count, "threshold", cfg.BanThreshold)
+		} else {
+			if user.Status != StatusDisabled {
+				user.Status = StatusDisabled
+				if err := s.userRepo.Update(ctx, user); err != nil {
+					slog.Warn("content_moderation.ban_update_user_failed", "user_id", *log.UserID, "error", err)
+					return
+				}
+				if s.authCacheInvalidator != nil {
+					s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, *log.UserID)
+				}
+				autoBanJustApplied = true
 			}
-			if s.authCacheInvalidator != nil {
-				s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, *log.UserID)
-			}
-			autoBanJustApplied = true
+			log.AutoBanned = true
 		}
-		log.AutoBanned = true
 	}
 
 	if s.emailService == nil || strings.TrimSpace(log.UserEmail) == "" {

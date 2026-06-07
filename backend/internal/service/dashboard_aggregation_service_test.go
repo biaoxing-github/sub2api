@@ -88,6 +88,32 @@ func TestDashboardAggregationService_RunScheduledAggregation_EpochUsesRetentionS
 	require.Equal(t, truncateToDayUTC(repo.lastEnd.AddDate(0, 0, -1)), repo.lastStart)
 }
 
+func TestDashboardAggregationService_RunScheduledAggregation_SkipsWhenNotLeader(t *testing.T) {
+	cache := &fakeLeaderLockCache{}
+	_, _ = cache.TryAcquireLeaderLock(context.Background(), dashboardAggregationLeaderLockKey, "peer", time.Minute)
+
+	repo := &dashboardAggregationRepoTestStub{watermark: time.Unix(0, 0).UTC()}
+	svc := &DashboardAggregationService{
+		repo:      repo,
+		lockCache: cache,
+		cfg: config.DashboardAggregationConfig{
+			Enabled:         true,
+			IntervalSeconds: 60,
+			LookbackSeconds: 120,
+			Retention: config.DashboardAggregationRetentionConfig{
+				UsageLogsDays: 1,
+				HourlyDays:    1,
+				DailyDays:     1,
+			},
+		},
+	}
+
+	svc.runScheduledAggregation()
+
+	require.Zero(t, repo.aggregateCalls)
+	require.Zero(t, repo.ensurePartitionCalls)
+}
+
 func TestDashboardAggregationService_CleanupRetentionFailure_DoesNotRecord(t *testing.T) {
 	repo := &dashboardAggregationRepoTestStub{cleanupAggregatesErr: errors.New("清理失败")}
 	svc := &DashboardAggregationService{

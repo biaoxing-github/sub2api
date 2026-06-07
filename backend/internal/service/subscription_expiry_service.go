@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -10,6 +11,14 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/google/uuid"
+)
+
+const (
+	// subscriptionExpiryReminderLeaderLockKey 避免多实例重复全量扫描活跃订阅并重复发送提醒邮件。
+	subscriptionExpiryReminderLeaderLockKey = "subscription:expiry:reminder:leader"
+	// subscriptionExpiryReminderLeaderLockTTL 需要覆盖一次分页扫描的最坏耗时。
+	subscriptionExpiryReminderLeaderLockTTL = 5 * time.Minute
 )
 
 // SubscriptionExpiryService periodically updates expired subscription status.
@@ -21,6 +30,9 @@ type SubscriptionExpiryService struct {
 	stopCh                   chan struct{}
 	stopOnce                 sync.Once
 	wg                       sync.WaitGroup
+	lockCache                LeaderLockCache
+	db                       *sql.DB
+	instanceID               string
 }
 
 func NewSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, interval time.Duration) *SubscriptionExpiryService {
@@ -28,7 +40,17 @@ func NewSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, interv
 		userSubRepo: userSubRepo,
 		interval:    interval,
 		stopCh:      make(chan struct{}),
+		instanceID:  uuid.NewString(),
 	}
+}
+
+// SetLeaderLock 注入跨实例选主锁；cache 和 db 都为空时保持单实例/测试环境无锁运行。
+func (s *SubscriptionExpiryService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if s == nil {
+		return
+	}
+	s.lockCache = lockCache
+	s.db = db
 }
 
 func (s *SubscriptionExpiryService) SetSettingRepository(settingRepo SettingRepository) {
@@ -93,6 +115,12 @@ func (s *SubscriptionExpiryService) sendExpiryReminders(ctx context.Context) {
 	if !s.expiryReminderEnabled(ctx) {
 		return
 	}
+	release, ok := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, subscriptionExpiryReminderLeaderLockKey, s.instanceID, subscriptionExpiryReminderLeaderLockTTL)
+	if !ok {
+		return
+	}
+	defer release()
+
 	for page := 1; ; page++ {
 		subs, pag, err := s.userSubRepo.List(ctx, pagination.PaginationParams{Page: page, PageSize: 200}, nil, nil, SubscriptionStatusActive, "", "expires_at", "asc")
 		if err != nil {
