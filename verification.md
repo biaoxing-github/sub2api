@@ -958,20 +958,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 
 ## 校验方式
 
--
-tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeBatchCreateRunsManualValidationOnly" -count=1：先按 TDD 红灯运行，因 BatchCreateModelProbeRuns 不存在失败；补实现后通过。
--
-tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts -t "starts batch manual account model probe runs"：先按 TDD 红灯运行，因 atchAccountModelProbeRuns 不存在失败；补 wrapper 后通过。
--
-tk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts -t "starts batch model validation"：先按 TDD 红灯运行，因报告页按钮不存在失败；补入口后通过。
--
-tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeCreateRunsManualValidationOnly|TestAccountModelProbeBatchCreateRunsManualValidationOnly|TestAccountProbeReportBatchCreate|TestAccountProbeCreate" -count=1
--
-tk go test -tags unit ./internal/service -run "TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation|TestAccountProbeService_RunManualModelValidationStoresEvidence|TestScheduledTestRunnerRunsAccountProbePlan" -count=1
--
-tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts src/views/admin/__tests__/AccountModelProbesView.spec.ts
--
-tk npm run typecheck
+- tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeBatchCreateRunsManualValidationOnly" -count=1：先按 TDD 红灯运行，因 BatchCreateModelProbeRuns 不存在失败；补实现后通过。
+- tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts -t "starts batch manual account model probe runs"：先按 TDD 红灯运行，因 atchAccountModelProbeRuns 不存在失败；补 wrapper 后通过。
+- tk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts -t "starts batch model validation"：先按 TDD 红灯运行，因报告页按钮不存在失败；补入口后通过。
+- tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeCreateRunsManualValidationOnly|TestAccountModelProbeBatchCreateRunsManualValidationOnly|TestAccountProbeReportBatchCreate|TestAccountProbeCreate" -count=1
+- tk go test -tags unit ./internal/service -run "TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation|TestAccountProbeService_RunManualModelValidationStoresEvidence|TestScheduledTestRunnerRunsAccountProbePlan" -count=1
+- tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts src/views/admin/__tests__/AccountModelProbesView.spec.ts
+- tk npm run typecheck
 - git diff --check
 
 ## 校验结果
@@ -2341,6 +2334,32 @@ tk npm run typecheck
 - 构建：前端 `npm run build` 通过；从 `git archive HEAD` 清洁归档构建 Docker 镜像 `sub2api:multi-key-local` 通过，镜像 ID 为 `sha256:e6c782a3da021899154feff60fd058ab1d73528e062a55cca65eb2d02b293ee3`。
 - 部署：在 `D:\sub2api-deploy` 执行 `docker compose -f D:\sub2api-deploy\docker-compose.yml up -d --no-build --no-deps --force-recreate sub2api`，只重建应用容器，Postgres/Redis 保持运行。
 - 验证：`docker inspect sub2api` 显示 `Status=running`、`Health=healthy`、镜像 ID 匹配；`Invoke-WebRequest http://127.0.0.1:8080/health` 返回 200，内容为 `{"status":"ok"}`。
+
+## sub2api v0.1.134 吸收状态清单
+
+- 日期：2026-06-07T13:06:36+08:00
+- 执行者：Devil
+- 目标：按用户要求新增一份可长期维护的 v0.1.134 吸收状态清单，后续继续开发时直接更新状态，不再重复拉取 release note。
+- 变更：新增 `docs/SUB2API_V0_1_134_ABSORPTION_LIST_CN.md`，按 `[x]`、`[~]`、`[ ]` 标记已完成、并行开发和暂不吸收条目；同步追加 docs JSONL、`.codex/operations-log.md`、`.codex/testing.md`。
+- 关键边界：继续保留 OpenAI failover-before-real-output 的真实输出 marker gate，不把初始 SSE heartbeat 算成真实输出。
+- 验证：已读取 `docs/SUB2API_V0_1_134_ABSORPTION_LIST_CN.md` 前 120 行确认状态表落地；Python 解析 `docs/feature_list.jsonl` 与 `docs/process_list.jsonl` 通过，分别为 123 与 121 条 JSON 记录；`git diff --check` 通过，仅提示既有 LF-to-CRLF 行尾提醒。
+
+## juhe-ai 借鉴功能 Phase 1/2 开发验证
+
+- 日期：2026-06-07T14:19:14+08:00
+- 执行者：Devil
+- 目标：按 `docs/JUHE_AI_FEATURE_20250605_BORROWABLE_FEATURES_CN.md` 开始开发可借鉴功能，并给已完成/进行中功能打状态标记。
+- 变更：`backend/internal/service/ops_request_details.go` 将 `action_label`、`action_metadata` 从 ops upstream error event 透出到 request timeline 与 Codex diagnosis；`backend/internal/service/ops_request_timeline_test.go` 增加动作字段覆盖；`frontend/src/api/admin/ops.ts` 补充 upstream error event 动作字段类型；借鉴清单把 `账号有效可用性汇总`、`断流动作分级` 标为 `[x]`，把上游桶级避让、半开可见化、断流审计元数据标为 `[~]`。
+- 验证：`gofmt -w internal/service/ops_request_details.go internal/service/ops_request_timeline_test.go` 通过；`go test ./internal/service -run "TestOpsServiceGetRequestTimelineIncludesLatencyAndUpstreamErrors|TestOpsServiceGetCodexDiagnosisIncludesBaseURLFailover|TestOpsServiceGetCodexDiagnosisIncludesActionMetadata|TestOpenAIPathHealthRecordFailureWithActionStoresLastActionLabel|TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata|TestOpenAIGatewayServiceRecordOpenAIPathHealthFailureLabelsAccountAndBucket" -count=1` 通过；`corepack pnpm typecheck` 通过。
+
+## v0.1.134 本地编译碎片与分组描述清空验证
+
+- 日期：2026-06-07T14:29:15+08:00
+- 执行者：Devil
+- 目标：按用户要求只修本地编译碎片，把本轮已经写完且验证过的条目落到 `docs/SUB2API_V0_1_134_ABSORPTION_LIST_CN.md`，其他待定项不继续扩大修改。
+- 变更：补齐 `emailSyncRepoStub`、`balanceLoadUserRepoStub`、`mockUserRepo`、`emailBindUserRepoStub` 的 `GetByIDIncludeDeleted`；将 `generate_session_hash_test.go` 中旧的 `ParseGatewayRequest([]byte, "gemini")` 调用改为 `ParseGatewayRequest(NewRequestBodyRef(...), "gemini")`；将 v0.1.134 清单里的“修复管理员清空分组描述未持久化”标为 `[x]`。
+- OpenAI 保留项：复扫并运行 handler 聚焦测试，`openai_gateway_handler.go` 的 failover gate 仍使用 `service.OpenAIRealClientOutputStarted(c)`，没有回退到 `Writer.Size()` / `Writer.Written()` 判断；初始 SSE heartbeat 仍不会阻断真实输出前 failover。
+- 验证：`go test -tags unit ./internal/service -run "TestAdminService_UpdateGroup|TestGenerateSessionHash_Gemini" -count=1` 通过；`go test -tags unit ./internal/service -run TestDoesNotExist -count=1` 通过；`go test ./internal/handler -run "TestOpenAIForwardErrorAlreadyCommunicated_HeartbeatIsNotRealOutput|TestOpenAIHandleFailoverExhausted_AppendsResponsesFailedAfterHeartbeat" -count=1` 通过。
 
 ## 账号 API Key 列表单 Key 删除与 429 单 Key 停用验证
 
