@@ -18,10 +18,10 @@
 - 固定顺序：先提交，再给镜像生成递增版本，再构建/推送不可变版本镜像，再启动候选容器验证，最后切流量；部署必须使用已提交的 HEAD，不用未提交工作树构建线上镜像。
 - 提交前执行 `git status --short --branch`、`git diff --cached --check`，只暂存同一功能范围的文件；提交 subject 使用中文，并按功能拆分多个 commit。
 - 禁止把生产或当前 Codex 网关连接到可变标签 `sub2api:multi-key-local`。该标签只能作为“最新本地构建源”打不可变候选版本，不能直接作为发布镜像、compose 运行镜像或网关主链路镜像。
-- 每次构建或候选验证必须使用递增且不可复用的版本标签，推荐格式：`sub2api:vYYYYMMDD.N-<12位commit>`，例如 `sub2api:v20260607.1-79653902afb2`。同一个版本标签禁止覆盖重建；候选失败、需要重建或需要重新验证时必须递增 `N`。
-- 2026-06-07 首次按此规则判定：当前可用/回滚镜像为 `sub2api:v0134-absorption-check`；最新本地构建源为 `sub2api:multi-key-local`；已从该源生成首个不可变候选 `sub2api:v20260607.1-666797082235`。该候选 green 启动失败于 `157_user_platform_quotas.sql` 迁移 checksum mismatch，禁止复用此版本号；下一次候选版本从 `v20260607.2-...` 或新的日期序号继续递增。
+- 每次构建或候选验证必须使用 Git 版本线提供的不可变版本标签，当前版本线从 `sub2api:v0.1.134`（对应 Git tag `v0.1.134`）向后补丁延伸为 `sub2api:v0.1.134.N`，例如本轮使用 `sub2api:v0.1.134.1`。禁止另起 `sub2api:vYYYYMMDD.N-<12位commit>` 这类日期/自主序号；同一个版本标签一旦用于候选验证或推送，禁止覆盖重建。
+- 2026-06-07 版本规则校正：当前可用/回滚镜像仍记录为 `sub2api:v0134-absorption-check`；最新本地构建源仍可保留 `sub2api:multi-key-local`，但只能作为构建源，不能作为发布入口。此前生成的 `sub2api:v20260607.*` 仅作为历史候选记录，后续候选/发布改回 Git 版本线，本轮目标版本为 `sub2api:v0.1.134.1`。
 - 构建前记录当前线上镜像：`docker inspect sub2api --format 'ConfigImage={{.Config.Image}} ImageID={{.Image}} Health={{if .State.Health}}{{.State.Health.Status}}{{end}}'`，并把它作为本次回滚目标。
-- 构建应用镜像使用干净提交归档或干净工作树，PowerShell 示例：`$commit = git rev-parse --short=12 HEAD; $version = "v$(Get-Date -Format yyyyMMdd).1-$commit"; git archive --format=tar HEAD | docker build --pull=false -t "sub2api:$version" --label "org.opencontainers.image.version=$version" --label "org.opencontainers.image.revision=$commit" --build-arg COMMIT=$commit -`。
+- 构建应用镜像使用干净提交归档或干净工作树，PowerShell 示例：`$commit = git rev-parse --short=12 HEAD; $version = "v0.1.134.1"; git archive --format=tar HEAD | docker build --pull=false -t "sub2api:$version" --label "org.opencontainers.image.version=$version" --label "org.opencontainers.image.revision=$commit" --build-arg COMMIT=$commit -`。若不是本轮 134 补丁发布，先确认对应 Git tag 后再调整 `$version`，不要使用日期/自主序号。
 - 如需推送镜像，只推送不可变版本标签：`docker tag "sub2api:$version" "<registry>/sub2api:$version"; docker push "<registry>/sub2api:$version"`；禁止把 `latest`、`multi-key-local` 或已在线标签作为发布入口。
 - 部署前必须先拉起候选容器，候选容器不得占用线上 8080 端口，建议使用同一 Docker network、独立容器名和本机候选端口：`sub2api-candidate` + `127.0.0.1:18080:8080`。候选容器必须使用新版本镜像，不能复用线上容器名 `sub2api`。
 - 候选容器验证至少包括：`http://127.0.0.1:18080/health`、管理前端静态资源 200、受保护管理 API 未登录返回 401、容器 `Health=healthy` 持续至少 60 秒、最近日志过滤 `panic`、`fatal`、`migration.*fail`、`checksum`、`pq:`、`bind`、`listen`、`rebuild failed`。

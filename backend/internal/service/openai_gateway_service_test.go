@@ -1637,6 +1637,107 @@ func TestOpenAIStreamingResponseFailedBeforeOutputCapacityErrorReturnsFailover(t
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
+func TestOpenAIStreamingQuotaFailedAfterOutputWritesGatewayRetryableFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial"}`,
+			"",
+			"event: response.failed",
+			`data: {"type":"response.failed","response":{"error":{"type":"insufficient_quota","code":"insufficient_quota","message":"You exceeded your current quota, please check your plan and billing details."}}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-quota-after-output"}},
+	}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.True(t, c.Writer.Written())
+	body := rec.Body.String()
+	require.Contains(t, body, "response.output_text.delta")
+	require.Contains(t, body, "partial")
+	require.Contains(t, body, "response.failed")
+	require.Contains(t, body, "upstream_retryable_error")
+	require.NotContains(t, body, "current quota")
+	require.True(t, openAIStreamClientOutputStarted(c, false))
+}
+
+func TestOpenAIStreamingFirstOutputFlushesBeforeTerminal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{"X-Request-Id": []string{"rid-first-output"}},
+	}
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+		resultCh <- err
+	}()
+
+	_, err := pw.Write([]byte(strings.Join([]string{
+		"event: response.created",
+		`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+		"",
+		"event: response.output_text.delta",
+		`data: {"type":"response.output_text.delta","delta":"partial"}`,
+		"",
+		"",
+	}, "\n")))
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return strings.Contains(rec.Body.String(), "response.output_text.delta")
+	}, time.Second, 10*time.Millisecond)
+	require.Contains(t, rec.Body.String(), "response.created")
+	require.Contains(t, rec.Body.String(), "partial")
+	require.NotContains(t, rec.Body.String(), "response.completed")
+	require.True(t, openAIStreamClientOutputStarted(c, false))
+
+	_, err = pw.Write([]byte(strings.Join([]string{
+		"event: response.completed",
+		`data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":1,"output_tokens":1}}}`,
+		"",
+		"",
+	}, "\n")))
+	require.NoError(t, err)
+	require.NoError(t, pw.Close())
+	require.NoError(t, <-resultCh)
+}
+
 func TestOpenAIStreamingPreambleOnlyMissingTerminalReturnsFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
@@ -1769,7 +1870,7 @@ func TestOpenAIStreamingWaitGuardTimeoutBeforeOutputReturnsFailover(t *testing.T
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
-func TestOpenAIStreamingPolicyResponseFailedBeforeOutputPassesThrough(t *testing.T) {
+func TestOpenAIStreamingPolicyResponseFailedBeforeOutputReturnsFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
@@ -1800,10 +1901,11 @@ func TestOpenAIStreamingPolicyResponseFailedBeforeOutputPassesThrough(t *testing
 	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr))
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.True(t, c.Writer.Written())
-	require.Contains(t, rec.Body.String(), "response.failed")
-	require.Contains(t, rec.Body.String(), "high-risk cyber activity")
+	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
 func TestOpenAIStreamingClientDisconnectDrainsUpstreamUsage(t *testing.T) {
@@ -2000,6 +2102,49 @@ func TestOpenAIStreamingPassthroughResponseFailedBeforeOutputReturnsFailover(t *
 	require.True(t, c.Writer.Written())
 	require.Equal(t, ":\n\n", rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
+}
+
+func TestOpenAIStreamingPassthroughQuotaFailedAfterOutputWritesGatewayRetryableFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			MaxLineSize: defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial"}`,
+			"",
+			"event: response.failed",
+			`data: {"type":"response.failed","response":{"error":{"type":"insufficient_quota","code":"insufficient_quota","message":"You exceeded your current quota, please check your plan and billing details."}}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-passthrough-quota-after-output"}},
+	}
+
+	_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "", "")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.True(t, c.Writer.Written())
+	body := rec.Body.String()
+	require.Contains(t, body, "response.output_text.delta")
+	require.Contains(t, body, "partial")
+	require.Contains(t, body, "response.failed")
+	require.Contains(t, body, "upstream_retryable_error")
+	require.NotContains(t, body, "current quota")
+	require.True(t, openAIStreamClientOutputStarted(c, false))
 }
 
 func TestOpenAIStreamingPassthroughResponseDoneWithoutDoneMarkerStillSucceeds(t *testing.T) {

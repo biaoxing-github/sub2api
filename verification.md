@@ -2455,3 +2455,54 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 变更：`D:\sub2api-deploy\docker-compose.proxy.yml` 新增 `0.0.0.0:${SUB2API_PROXY_PUBLIC_PORT:-8080}:8080` 端口绑定；停止旧容器 `sub2api:v0134-absorption-check` 释放 8080 后，强制重建 `sub2api-proxy` 让 proxy 同时绑定 `0.0.0.0:8080` 和 `127.0.0.1:18081`；`active.conf` 保持指向 `sub2api-green:8080`。
 - 验证：切换后 `http://127.0.0.1:8080/health` 返回 200，根路径 200，未登录 admin API 返回 401；`http://127.0.0.1:18081/health` 和 `http://127.0.0.1:18082/health` 均返回 200；`docker ps` 显示 `sub2api-proxy` 绑定 `0.0.0.0:8080->8080/tcp` 与 `127.0.0.1:18081->8080/tcp`，`sub2api-green` healthy，旧 `sub2api` 已停止；nginx 日志显示 8080 上的后台管理、静态资源与 Codex `/responses` 请求均转发到 `172.23.0.7:8080`。
 - 备注：日志中 `/v1/messages` 出现的 502/499 已进入 `sub2api-green`，对应 green 内部上游账号限流、上游 EOF 或客户端取消，不属于 8080 端口或 nginx 切换失败。
+
+## 2026-06-07 20:33 +08:00 - OpenAI `/responses` quota/billing 流式失败保活
+
+- 执行者：Devil
+- 目标：修复 OpenAI 上游 `response.failed` 中的 quota/billing/insufficient_quota 在已有 partial delta 后被透传给 Codex 客户端，导致 goal 中途断掉的问题。
+- 变更：`backend/internal/service/openai_gateway_service.go` 的普通 `/responses` 流和 passthrough 流都延迟提交真实 SSE 事件：成功终态后才 flush 给客户端；遇到可 failover 的 `response.failed` 时只保留心跳并返回 `UpstreamFailoverError`，让上层继续切账号；策略/安全失败仍透传。`backend/internal/service/openai_gateway_service_test.go` 新增普通流和 passthrough 流 quota-after-output 回归测试。
+- 验证：`go test ./internal/service -run "TestOpenAIStreaming(QuotaFailedAfterOutputReturnsFailover|PassthroughQuotaFailedAfterOutputReturnsFailover)" -count=1` 通过；`go test ./internal/service -run "TestOpenAIStreaming" -count=1` 通过；`go test ./internal/service -run TestDoesNotExist -count=1` 通过；`git diff --check` 通过。
+- 备注：`go test ./internal/service -count=1` 全包仍失败，失败点集中在既有 WS/rate-limit 测试：`TestOpenAIGatewayService_Forward_WSv2*` 与 `TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotSetsRateLimit`，本轮目标流式 `/responses` 验证已通过。
+
+## 2026-06-07 21:00 +08:00 - OpenAI Responses Codex goal failover 计划工程复核
+
+- 执行者：Devil
+- 目标：按 `plan-eng-review` 视角复核当前 quota/billing 流式保活实现是否符合 `docs/OPENAI_RESPONSES_CODEX_GOAL_STREAM_FAILOVER_PLAN_CN.md` 与 juhe-ai feature 借鉴方向，并优化开发计划。
+- 结论：当前实现可作为 Phase 0 止血，能避免 Codex 客户端直接收到 quota/billing `response.failed`，但通过成功终态前全量缓冲真实 SSE 牺牲流式体验，不符合最终计划。计划文档已补充 Phase 1-5：event 级缓冲、首字前所有流内失败 failover、首字后 Codex retryable 改写、turn/request 级避让、ops 可见性与测试矩阵。
+- 验证：CodeGraph 成功返回 `openAIStreamFailedEventShouldFailover`、`handleStreamingResponsePassthrough`、`handleStreamingResponse` 等关键符号；PowerShell 行级复核当前 service、handler、测试与 juhe 借鉴文档；`git diff --check` 通过，仅有既有 `docs/feature_list.jsonl` 与 `docs/process_list.jsonl` LF-to-CRLF warning。
+- 未执行：本轮只更新本地计划文档和记录，未改 Go 行为代码，因此未跑 Go 测试。
+
+## 2026-06-07 21:25 +08:00 - Codex agentic 请求判定与 v0.1.134 版本规则校正
+
+- 执行者：Devil
+- 目标：回应用户两个补充要求：先判断当前接收到的 `/responses` 请求是否满足计划里的 `isCodexAgenticRequest`，并把部署版本规则从日期/自主序号改回 Git 版本线 `v0.1.134`。
+- 结论：当前请求应判定为 Codex agentic。入口代理最近 30 分钟持续记录 `POST /responses`，User-Agent 为 `Codex Desktop/0.137.0-alpha.4 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.602.40724)`；服务端持续记录 `[OpenAI] Injected /responses image_generation tool for Codex client`。该日志只会在 `isCodexCLI` 命中且 Codex image_generation bridge 启用后出现，因此已经证明当前请求命中了 Codex 官方客户端路径。当前日志窗口没有直接打印 `stream=true` 和 `tools_count`，这两项由既有 Codex `/responses` 解析样本和 Codex Desktop 行为支持，后续 helper 需要用 body 测试或诊断字段显式补强。
+- 变更：`AGENTS.md` 的候选镜像规则已从 `sub2api:vYYYYMMDD.N-<12位commit>` 改为跟随 Git 版本线，本轮目标版本为 `sub2api:v0.1.134`；`docs/OPENAI_RESPONSES_CODEX_GOAL_STREAM_FAILOVER_PLAN_CN.md` 的 NOT in scope 同步声明不使用日期/自主序号候选。
+- 验证：`git show-ref --tags v0.1.134` 确认 tag 存在；`docker logs sub2api-proxy --since 30m` 看到 Codex Desktop `/responses` 请求；`docker logs sub2api-green --since 30m` 看到 Codex image_generation bridge 注入日志；CodeGraph `status` 仍为 `Transport closed`，按项目降级规则使用 PowerShell 与容器日志复核。
+- 未执行：未改 Go 行为代码，因此未跑 Go 测试。
+
+## 2026-06-07 21:42 +08:00 - OpenAI `/responses` 中转保护范围放宽
+
+- 执行者：Devil
+- 目标：按用户反馈修正计划：流式失败保护不应依赖 Codex 客户端信号，只要请求走 sub2api 中转就应该有这个功能。
+- 变更：`docs/OPENAI_RESPONSES_CODEX_GOAL_STREAM_FAILOVER_PLAN_CN.md` 已把 `isCodexAgenticRequest` 口径改为 `isGatewayProtectedResponsesRequest`。硬条件只保留“进入 sub2api OpenAI `/responses` 中转链路”；Codex UA、`x-codex-*`、`stream=true`、`tools_count`、`turn_id` 仅作为诊断和 retry key 精度增强字段，不再作为功能开关。Phase 3、状态机、测试计划、验收标准和生产失败模式同步改为 gateway retryable 语义。
+- 验证：PowerShell 扫描计划文档，确认不再保留 `isCodexAgenticRequest`、`Codex agentic`、`Codex retryable` 作为启用条件的旧口径。
+- 未执行：未改 Go 行为代码，因此未跑 Go 测试。
+
+## 2026-06-07 22:07 +08:00 - OpenAI `/responses` Phase 1-3 并行开发集成验证
+
+- 执行者：Devil
+- 目标：参照并行开发结果，把 OpenAI `/responses` SSE failover 从 Phase 0 止血推进到 Phase 1-3 最小实现，并验证普通流、passthrough 流和 handler 首字前 failover 相关路径。
+- 变更：普通 `/responses` 流和 passthrough 流在首个真实 SSE event 到达完整边界后立即 flush preamble + 当前 event；首字前任意 `response.failed` 返回 `UpstreamFailoverError`；首字后上游 `response.failed` 改写为网关生成的脱敏 `response.failed`，错误码为 `upstream_retryable_error`，不再把 quota/billing 原文下发给客户端。`docs/OPENAI_RESPONSES_CODEX_GOAL_STREAM_FAILOVER_PLAN_CN.md` 已同步标记 Phase 1-3 最小 HTTP/SSE 实现完成，Phase 4/5 仍待实现。
+- 并行审计证据：Hubble 确认测试应从 Phase 0 的 after-output failover 断言替换为实时首字和 gateway retryable；Euclid 确认 handler 当前请求内 `failedAccountIDs` 足以承接首字前切号，首字后必须由 service 写 retryable 失败事件，不能返回 `UpstreamFailoverError` 让 handler 在真实输出后切号。
+- 验证：`go test ./internal/service -run "TestOpenAIStreaming" -count=1` 通过；`go test ./internal/service -run "TestOpenAIStreaming|TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata|TestOpenAIGatewayServiceRecordOpenAIPathHealthFailureLabelsAccountAndBucket" -count=1` 通过；`go test ./internal/handler -run "TestOpenAIForwardErrorAlreadyCommunicated_HeartbeatIsNotRealOutput|TestOpenAIHandleFailoverExhausted_AppendsResponsesFailedAfterHeartbeat" -count=1` 通过；`go test ./cmd/server -run TestDoesNotExist -count=1` 通过；`go test ./internal/service -run TestDoesNotExist -count=1` 通过；`git diff --check -- backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_test.go` 通过。
+- 已知无关失败：更宽的 service WS/rate-limit/usage snapshot 检查仍失败于既有 `TestOpenAIGatewayService_Forward_WSv2*` 与 `TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotSetsRateLimit`；handler WebSocket continuity 仍失败于 `TestOpenAIResponsesWebSocket_ContinuityReplayForwardsSanitizedBodyToNextAccount`。本轮没有修改 WebSocket 路径。
+- CodeGraph 降级：`codegraph_context`、`codegraph_status`、`codegraph_search` 连续返回 `Transport closed`；`.codegraph/daemon.log` 与 `Get-Process -Id 8556` 显示 daemon 进程仍在。按项目规则记录降级，使用 PowerShell 行级复核源码和测试。
+
+## 2026-06-07 22:26 +08:00 - v0.1.134 补丁版本线校正
+
+- 执行者：Devil
+- 目标：按用户纠正，版本不要跳到 `v0.1.135`，而应沿 `v0.1.134` 向后延伸为 `v0.1.134.1`。
+- 变更：`AGENTS.md` 的发布规则改为当前版本线从 `sub2api:v0.1.134` 向 `sub2api:v0.1.134.N` 补丁延伸，本轮目标版本固定为 `sub2api:v0.1.134.1`；构建示例同步改为 `$version = "v0.1.134.1"`。
+- 清理：误建的本地 Git tag `v0.1.135` 已删除；误构建的本地镜像 `sub2api:v0.1.135` 已删除，后续不使用该版本。
+- 验证：`git tag --list 'v0.1.134*' 'v0.1.135'` 仅保留 `v0.1.134`；`docker images` 已查不到 `sub2api:v0.1.134` 或 `sub2api:v0.1.135` 发布镜像。
