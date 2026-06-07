@@ -2436,3 +2436,22 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 根因证据：green 日志报 `migration 157_user_platform_quotas.sql checksum mismatch`，数据库 `schema_migrations` 记录 checksum 为 `21cccff17048932c21048b4868f5b2685f9f7208607dcd3c62c89a9ea2d9a400`，失败镜像启动时报 file checksum 为 `fe485a0663f8948174819a2d36b06f260c2dd8a8e85b6e39cd85798b75090873`；当前源码按迁移 runner 的 trim 后 SHA256 计算结果与数据库一致，为 `21cccff17048932c21048b4868f5b2685f9f7208607dcd3c62c89a9ea2d9a400`。
 - 结论：首个候选版本 `sub2api:v20260607.1-666797082235` 判定失败并禁止复用；不能修改数据库 checksum 绕过，下一次应基于修正后的最新构建重新生成递增版本，例如 `v20260607.2-...`。
 - 安全验证：`http://127.0.0.1:8080/health` 返回 200 `{"status":"ok"}`；固定入口 `http://127.0.0.1:18081/health` 返回 200 `{"status":"ok"}`；`D:\sub2api-deploy\proxy\upstreams\active.conf` 仍指向 `sub2api:8080`。
+
+## OpenAI 本地并发切号与迁移 checksum 修复发布验证
+
+- 日期：2026-06-07T19:24:17+08:00
+- 执行者：Devil
+- 提交：`7c8bfdca3 fix(openai): 本地并发饱和时切换账号`；`708e0c307 fix(migrations): 兼容历史换行校验`。
+- 构建：先构建 `sub2api:v20260607.2-7c8bfdca398b`，green 仍失败于 157 checksum mismatch；根因确认为数据库记录的是 CRLF checksum，干净 Git 归档镜像是 LF checksum。随后补迁移 checksum 兼容白名单并构建 `sub2api:v20260607.3-708e0c307a5e`，同时更新 `sub2api:multi-key-local` 到同一镜像。
+- 部署：`D:\sub2api-deploy\docker-compose.green.yml` 已指向 `sub2api:v20260607.3-708e0c307a5e`；只重建 `sub2api-green` 候选，PostgreSQL、Redis 和原 `sub2api:v0134-absorption-check` 未重启。green 健康后，将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api:8080` 切到 `sub2api-green:8080` 并执行 `nginx -s reload`。
+- 验证：提交前后 Go 聚焦测试通过，包括 handler 本地并发切号、repository checksum 兼容、service API Key 异常单 Key 暂停、cmd/server 编译切片。green `http://127.0.0.1:18082/health` 返回 200，根路径 200，未登录 admin API 返回 401；`docker exec sub2api-green /app/sub2api --version` 显示 `v20260607.3-708e0c307a5e`；green 最近日志过滤无 `panic`、`fatal`、`migration.*fail`、`checksum`、`pq:`、`bind`、`listen`。
+- 切流结果：固定入口 `http://127.0.0.1:18081/health` 返回 200，根路径 200，未登录 admin API 返回 401；nginx 日志显示 reload 后 upstream 为 `172.23.0.7:8080`（green），旧 upstream `172.23.0.4:8080` 不再承接 18081 验证请求。原 `http://127.0.0.1:8080/health` 仍返回 200，旧容器保留为回滚目标。
+
+## 固定入口代理正式接管 8080 验证
+
+- 日期：2026-06-07T19:49:52+08:00
+- 执行者：Devil
+- 目标：按用户要求将正式入口 `8080` 切到固定入口代理，允许短暂中断服务，后续普通客户端继续连接 `8080` 即可走新 green。
+- 变更：`D:\sub2api-deploy\docker-compose.proxy.yml` 新增 `0.0.0.0:${SUB2API_PROXY_PUBLIC_PORT:-8080}:8080` 端口绑定；停止旧容器 `sub2api:v0134-absorption-check` 释放 8080 后，强制重建 `sub2api-proxy` 让 proxy 同时绑定 `0.0.0.0:8080` 和 `127.0.0.1:18081`；`active.conf` 保持指向 `sub2api-green:8080`。
+- 验证：切换后 `http://127.0.0.1:8080/health` 返回 200，根路径 200，未登录 admin API 返回 401；`http://127.0.0.1:18081/health` 和 `http://127.0.0.1:18082/health` 均返回 200；`docker ps` 显示 `sub2api-proxy` 绑定 `0.0.0.0:8080->8080/tcp` 与 `127.0.0.1:18081->8080/tcp`，`sub2api-green` healthy，旧 `sub2api` 已停止；nginx 日志显示 8080 上的后台管理、静态资源与 Codex `/responses` 请求均转发到 `172.23.0.7:8080`。
+- 备注：日志中 `/v1/messages` 出现的 502/499 已进入 `sub2api-green`，对应 green 内部上游账号限流、上游 EOF 或客户端取消，不属于 8080 端口或 nginx 切换失败。

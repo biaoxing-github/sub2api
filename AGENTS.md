@@ -26,7 +26,7 @@
 - 部署前必须先拉起候选容器，候选容器不得占用线上 8080 端口，建议使用同一 Docker network、独立容器名和本机候选端口：`sub2api-candidate` + `127.0.0.1:18080:8080`。候选容器必须使用新版本镜像，不能复用线上容器名 `sub2api`。
 - 候选容器验证至少包括：`http://127.0.0.1:18080/health`、管理前端静态资源 200、受保护管理 API 未登录返回 401、容器 `Health=healthy` 持续至少 60 秒、最近日志过滤 `panic`、`fatal`、`migration.*fail`、`checksum`、`pq:`、`bind`、`listen`、`rebuild failed`。
 - 零停机目标形态：在 `D:\sub2api-deploy` 增加固定入口代理（nginx / caddy / traefik 均可），只有代理发布 `0.0.0.0:8080`；`sub2api-blue` 与 `sub2api-green` 只在内部网络暴露 8080。候选容器通过健康检查后，更新代理 upstream 并 reload 代理完成切流。
-- 当前非侵入式代理试运行入口已落地在 `D:\sub2api-deploy\docker-compose.proxy.yml`，Compose 项目名 `sub2api-entry-proxy`，容器名 `sub2api-proxy`，默认绑定 `127.0.0.1:${SUB2API_PROXY_PORT:-18081}:8080`，upstream 文件为 `D:\sub2api-deploy\proxy\upstreams\active.conf`，当前指向 `sub2api:8080`。该入口只用于旁路验证；正式切流前不得占用或替换当前 `8080` 主入口。
+- 固定入口代理已正式接管 `8080`：`D:\sub2api-deploy\docker-compose.proxy.yml` 的 Compose 项目名为 `sub2api-entry-proxy`，容器名为 `sub2api-proxy`，当前绑定 `0.0.0.0:${SUB2API_PROXY_PUBLIC_PORT:-8080}:8080` 和 `127.0.0.1:${SUB2API_PROXY_PORT:-18081}:8080`；upstream 文件为 `D:\sub2api-deploy\proxy\upstreams\active.conf`，当前指向 `sub2api-green:8080`。后续正常请求优先连接 `8080`，`18081` 作为本机旁路验证入口保留。
 - 当前 green 候选 Compose 为 `D:\sub2api-deploy\docker-compose.green.yml`，Compose 项目名 `sub2api-green-candidate`，容器名 `sub2api-green`，默认绑定 `127.0.0.1:${SUB2API_GREEN_PORT:-18082}:8080`。候选失败时先停止 `sub2api-green`，保持 `proxy/upstreams/active.conf` 指向上一可用容器。
 - 代理切流推荐流程：保留当前 active 容器（blue），用新版本启动 idle 容器（green）并验证；验证通过后将代理 upstream 从 blue 改到 green，执行代理热重载；公网 `http://127.0.0.1:8080/health` 和管理端冒烟通过后，继续保留 blue 至少一个观察窗口用于秒级回滚。
 - 没有入口代理时，不允许宣称零停机切流。只能先用候选端口验证新版本，再在明确接受短暂停机的前提下，把 compose 的应用镜像变量改为新版本并仅重建 `sub2api`；如果当前网关承载 Codex 工作流，必须优先补代理，不走直接重建。
