@@ -153,6 +153,24 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		}
 	})
 
+	t.Run("157兼容CRLF已应用记录与LF归档构建", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"157_user_platform_quotas.sql",
+			"21cccff17048932c21048b4868f5b2685f9f7208607dcd3c62c89a9ea2d9a400",
+			"fe485a0663f8948174819a2d36b06f260c2dd8a8e85b6e39cd85798b75090873",
+		)
+		require.True(t, ok)
+	})
+
+	t.Run("157未知checksum不兼容", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"157_user_platform_quotas.sql",
+			"21cccff17048932c21048b4868f5b2685f9f7208607dcd3c62c89a9ea2d9a400",
+			"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		)
+		require.False(t, ok)
+	})
+
 	t.Run("119未知checksum不兼容", func(t *testing.T) {
 		ok := isMigrationChecksumCompatible(
 			"119_enforce_payment_orders_out_trade_no_unique.sql",
