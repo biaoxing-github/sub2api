@@ -116,6 +116,24 @@ func TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata(t *testin
 	require.Equal(t, OpenAIStreamActionRetryNextAccount, err.ActionLabel)
 	require.Equal(t, "request_phase", err.ActionMetadata["reason_scope"])
 	require.Equal(t, string(OpenAIStreamActionRetryNextAccount), err.ActionMetadata["action_label"])
+	require.Equal(t, string(OpenAIStreamActionRetryNextAccount), err.ActionMetadata["stream_action"])
+	require.Equal(t, "request", err.ActionMetadata["avoidance_scope"])
+}
+
+func TestOpenAIStreamActionMetadataIncludesPathHealthAuditFields(t *testing.T) {
+	retryAfter := time.Now().UTC().Add(2 * time.Minute)
+	account := &Account{ID: 12, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	metadata := openAIStreamActionMetadata(OpenAIStreamActionAvoidUpstreamBucketTTL, "stream", false, account, "req_up_1", http.StatusBadGateway)
+
+	enrichOpenAIStreamActionMetadataWithPathHealth(metadata, OpenAIPathHealthRecord{
+		State:         OpenAIPathHealthStateOpenCircuit,
+		CooldownUntil: &retryAfter,
+	})
+
+	require.Equal(t, string(OpenAIStreamActionAvoidUpstreamBucketTTL), metadata["stream_action"])
+	require.Equal(t, "upstream_bucket", metadata["avoidance_scope"])
+	require.Equal(t, OpenAIPathHealthStateOpenCircuit, metadata["path_health_state"])
+	require.Equal(t, retryAfter.Format(time.RFC3339), metadata["retry_after"])
 }
 
 func TestOpenAIGatewayServiceRecordOpenAIPathHealthFailureLabelsAccountAndBucket(t *testing.T) {

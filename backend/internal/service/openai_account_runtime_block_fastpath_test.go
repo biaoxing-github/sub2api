@@ -72,6 +72,20 @@ func TestOpenAIRuntimeBlock_DoesNotShortenExistingBlock(t *testing.T) {
 	require.WithinDuration(t, longUntil, actualUntil, time.Second)
 }
 
+func TestOpenAIRuntimeBlock_SnapshotIncludesReasonAndUntil(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 49, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	until := time.Now().Add(3 * time.Minute)
+
+	svc.BlockAccountScheduling(account, until, "429")
+
+	snapshot, ok := svc.SnapshotOpenAIAccountRuntimeBlock(account, time.Now())
+	require.True(t, ok)
+	require.Equal(t, "429", snapshot.Reason)
+	require.NotNil(t, snapshot.Until)
+	require.WithinDuration(t, until, *snapshot.Until, time.Second)
+}
+
 func TestOpenAIRuntimeBlock_ClearAccountSchedulingBlock(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	account := &Account{ID: 47, Platform: PlatformOpenAI, Type: AccountTypeOAuth}

@@ -17,13 +17,15 @@ func TestDeriveAccountEffectiveAvailability(t *testing.T) {
 	pathCooldown := now.Add(5 * time.Minute)
 
 	tests := []struct {
-		name       string
-		account    *Account
-		pathHealth OpenAIPathHealthRecord
-		hasPath    bool
-		wantState  string
-		wantReason string
-		wantUntil  bool
+		name         string
+		account      *Account
+		pathHealth   OpenAIPathHealthRecord
+		hasPath      bool
+		runtimeBlock OpenAIAccountRuntimeBlockSnapshot
+		hasRuntime   bool
+		wantState    string
+		wantReason   string
+		wantUntil    bool
 	}{
 		{
 			name: "healthy account",
@@ -91,6 +93,54 @@ func TestDeriveAccountEffectiveAvailability(t *testing.T) {
 			hasPath:    true,
 			wantState:  AccountEffectiveAvailabilityPathHalfOpen,
 			wantReason: "probe_limit",
+			wantUntil:  true,
+		},
+		{
+			name: "runtime precheck pending account",
+			account: &Account{
+				Status:      StatusActive,
+				Schedulable: true,
+				Platform:    PlatformOpenAI,
+			},
+			runtimeBlock: OpenAIAccountRuntimeBlockSnapshot{
+				Reason: "precheck_pending",
+				Until:  &future,
+			},
+			hasRuntime: true,
+			wantState:  AccountEffectiveAvailabilityPrecheckPending,
+			wantReason: "precheck_pending",
+			wantUntil:  true,
+		},
+		{
+			name: "runtime local suppressed account",
+			account: &Account{
+				Status:      StatusActive,
+				Schedulable: true,
+				Platform:    PlatformOpenAI,
+			},
+			runtimeBlock: OpenAIAccountRuntimeBlockSnapshot{
+				Reason: "429",
+				Until:  &future,
+			},
+			hasRuntime: true,
+			wantState:  AccountEffectiveAvailabilityLocalSuppressed,
+			wantReason: "429",
+			wantUntil:  true,
+		},
+		{
+			name: "runtime precheck failed account",
+			account: &Account{
+				Status:      StatusActive,
+				Schedulable: true,
+				Platform:    PlatformOpenAI,
+			},
+			runtimeBlock: OpenAIAccountRuntimeBlockSnapshot{
+				Reason: "token_refresh_retry_exhausted",
+				Until:  &future,
+			},
+			hasRuntime: true,
+			wantState:  AccountEffectiveAvailabilityPrecheckFailed,
+			wantReason: "token_refresh_retry_exhausted",
 			wantUntil:  true,
 		},
 		{
@@ -162,7 +212,7 @@ func TestDeriveAccountEffectiveAvailability(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := deriveAccountEffectiveAvailability(tt.account, now, tt.pathHealth, tt.hasPath)
+			got := deriveAccountEffectiveAvailability(tt.account, now, tt.pathHealth, tt.hasPath, tt.runtimeBlock, tt.hasRuntime)
 			require.Equal(t, tt.wantState, got.State)
 			require.Equal(t, tt.wantReason, got.Reason)
 			if tt.wantUntil {

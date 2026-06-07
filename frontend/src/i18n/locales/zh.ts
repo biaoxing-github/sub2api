@@ -5933,6 +5933,18 @@ export default {
         available: '可用',
         unavailable: '不可用',
         accountError: '异常',
+        until: '截止',
+        effective: {
+          precheck_pending: '预检中',
+          local_suppressed: '本地抑制',
+          precheck_failed: '预检失败',
+          temp_unschedulable: '临时不可调度',
+          rate_limited: '限流中',
+          overloaded: '过载中',
+          error: '异常',
+          disabled: '已停用',
+          unschedulable: '不可调度'
+        },
         pathHealth: {
           healthy: '线路正常',
           degraded: '慢路径',

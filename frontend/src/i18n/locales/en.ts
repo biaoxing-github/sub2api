@@ -5771,6 +5771,18 @@ export default {
         available: 'Available',
         unavailable: 'Unavailable',
         accountError: 'Error',
+        until: 'Until',
+        effective: {
+          precheck_pending: 'Precheck pending',
+          local_suppressed: 'Locally suppressed',
+          precheck_failed: 'Precheck failed',
+          temp_unschedulable: 'Temporarily unschedulable',
+          rate_limited: 'Rate-limited',
+          overloaded: 'Overloaded',
+          error: 'Error',
+          disabled: 'Disabled',
+          unschedulable: 'Unschedulable'
+        },
         pathHealth: {
           healthy: 'Path healthy',
           degraded: 'Slow path',

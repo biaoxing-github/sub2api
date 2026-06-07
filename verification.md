@@ -2384,3 +2384,11 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 目标：把提交、构建、部署、验证的固定操作步骤写入 `AGENTS.md`，并固化常规部署不重启 Redis/PostgreSQL 的边界。
 - 变更：`AGENTS.md` 新增“提交、构建、部署、验证约定”，包含中文拆分提交、`docker build` 镜像构建、`docker compose` 只重建 `sub2api`、新 SQL 仅对运行中 PostgreSQL 定向写入、部署后接口和日志验证清单。
 - 验证：复查命令均为 PowerShell 可执行形式；常规部署命令明确使用 `--no-deps --force-recreate sub2api`，没有包含 `postgres` 或 `redis` 服务名；本轮 Go 聚焦测试 `go test ./internal/service -run "Test(OpenAIPathHealthBucketKeyForAccountClearsAccountID|OpenAIGatewayServiceRecordOpenAIPathHealthFailureLabelsAccountAndBucket|BuildOpenAIAccountLoadPlanSkipsOpenBucketAcrossAccounts)" -count=1`、`go test ./internal/service -run TestDoesNotExist -count=1`、`go test ./cmd/server -run TestDoesNotExist -count=1` 均通过。
+
+## juhe-ai P1 可观测性并行开发验证
+
+- 日期：2026-06-07T17:45:23+08:00
+- 执行者：Devil
+- 目标：并行完成 `docs/JUHE_AI_FEATURE_20250605_BORROWABLE_FEATURES_CN.md` 中 P1 的半开/运行态阻塞可见化、异步副作用队列复用确认、断流审计元数据补齐。
+- 变更：`OpenAIGatewayService` 增加运行态阻塞 reason 快照；账号有效可用性新增 `precheck_pending`、`local_suppressed`、`precheck_failed` 并进入管理端 `effective_availability` 徽章；断流审计 `action_metadata` 新增 `stream_action`、`avoidance_scope`、`path_health_state`、`retry_after`；复核 `/responses` usage 记录继续复用 `UsageRecordWorkerPool`，不新增独立 side-effect queue。
+- 验证：`go test -tags unit ./internal/service -run "TestOpenAIRuntimeBlock_SnapshotIncludesReasonAndUntil|TestDeriveAccountEffectiveAvailability|TestOpenAIStreamActionMetadataIncludesPathHealthAuditFields|TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata" -count=1` 通过；相关 OpenAI path-health/scheduler/gateway 切片通过；`go test ./internal/service -run TestDoesNotExist -count=1`、`go test ./cmd/server -run TestDoesNotExist -count=1` 通过；前端 `npm run typecheck` 通过。

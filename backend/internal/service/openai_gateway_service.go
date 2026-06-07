@@ -385,6 +385,7 @@ type OpenAIGatewayService struct {
 
 	openaiWSFallbackUntil               sync.Map // key: int64(accountID), value: time.Time
 	openaiAccountRuntimeBlockUntil      sync.Map // key: int64(accountID), value: time.Time
+	openaiAccountRuntimeBlockReason     sync.Map // key: int64(accountID), value: string
 	openaiOAuth429WindowStartUnixNano   atomic.Int64
 	openaiOAuth429WindowCount           atomic.Int64
 	openaiWSRetryMetrics                openAIWSRetryMetrics
@@ -4384,13 +4385,10 @@ func newOpenAIRequestPhaseFailoverError(err error) *UpstreamFailoverError {
 		},
 	})
 	return &UpstreamFailoverError{
-		StatusCode:   http.StatusBadGateway,
-		ResponseBody: body,
-		ActionLabel:  OpenAIStreamActionRetryNextAccount,
-		ActionMetadata: map[string]string{
-			"action_label": string(OpenAIStreamActionRetryNextAccount),
-			"reason_scope": "request_phase",
-		},
+		StatusCode:     http.StatusBadGateway,
+		ResponseBody:   body,
+		ActionLabel:    OpenAIStreamActionRetryNextAccount,
+		ActionMetadata: openAIStreamActionMetadata(OpenAIStreamActionRetryNextAccount, "request_phase", false, nil, "", http.StatusBadGateway),
 	}
 }
 
@@ -4417,7 +4415,7 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 	if c != nil {
 		setOpsUpstreamError(c, http.StatusBadGateway, message, detail)
 		actionLabel := OpenAIStreamActionRetryNextAccount
-		actionMetadata := openAIStreamActionMetadata(actionLabel, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway)
+		actionMetadata := s.openAIStreamActionMetadataForAccount(actionLabel, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway)
 		event := OpsUpstreamErrorEvent{
 			Platform:           PlatformOpenAI,
 			UpstreamStatusCode: http.StatusBadGateway,
@@ -4447,13 +4445,15 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 		StatusCode:     http.StatusBadGateway,
 		ResponseBody:   body,
 		ActionLabel:    actionLabel,
-		ActionMetadata: openAIStreamActionMetadata(actionLabel, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway),
+		ActionMetadata: s.openAIStreamActionMetadataForAccount(actionLabel, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway),
 	}
 }
 
 func openAIStreamActionMetadata(actionLabel OpenAIStreamActionLabel, reasonScope string, passthrough bool, account *Account, upstreamRequestID string, upstreamStatusCode int) map[string]string {
 	metadata := map[string]string{
 		"action_label":    string(actionLabel),
+		"stream_action":   string(actionLabel),
+		"avoidance_scope": openAIStreamActionAvoidanceScope(actionLabel, reasonScope),
 		"reason_scope":    strings.TrimSpace(reasonScope),
 		"passthrough":     strconv.FormatBool(passthrough),
 		"upstream_status": strconv.Itoa(upstreamStatusCode),
@@ -4466,6 +4466,47 @@ func openAIStreamActionMetadata(actionLabel OpenAIStreamActionLabel, reasonScope
 		metadata["upstream_request_id"] = upstreamRequestID
 	}
 	return metadata
+}
+
+func (s *OpenAIGatewayService) openAIStreamActionMetadataForAccount(actionLabel OpenAIStreamActionLabel, reasonScope string, passthrough bool, account *Account, upstreamRequestID string, upstreamStatusCode int) map[string]string {
+	metadata := openAIStreamActionMetadata(actionLabel, reasonScope, passthrough, account, upstreamRequestID, upstreamStatusCode)
+	if s == nil || account == nil {
+		return metadata
+	}
+	if snapshot, ok := s.SnapshotOpenAIPathHealthForAccount(account, OpenAIUpstreamTransportHTTPSSE); ok {
+		enrichOpenAIStreamActionMetadataWithPathHealth(metadata, snapshot)
+	}
+	return metadata
+}
+
+func openAIStreamActionAvoidanceScope(actionLabel OpenAIStreamActionLabel, reasonScope string) string {
+	switch actionLabel {
+	case OpenAIStreamActionRetryNoAvoidance:
+		return "none"
+	case OpenAIStreamActionRetryNextAccount:
+		if strings.TrimSpace(reasonScope) == "request_phase" {
+			return "request"
+		}
+		return "account"
+	case OpenAIStreamActionAvoidAccountTTL:
+		return "account"
+	case OpenAIStreamActionAvoidUpstreamBucketTTL:
+		return "upstream_bucket"
+	default:
+		return "unknown"
+	}
+}
+
+func enrichOpenAIStreamActionMetadataWithPathHealth(metadata map[string]string, pathHealth OpenAIPathHealthRecord) {
+	if metadata == nil {
+		return
+	}
+	if state := strings.TrimSpace(pathHealth.State); state != "" {
+		metadata["path_health_state"] = state
+	}
+	if pathHealth.CooldownUntil != nil {
+		metadata["retry_after"] = pathHealth.CooldownUntil.UTC().Format(time.RFC3339)
+	}
 }
 
 func (s *OpenAIGatewayService) appendOpenAIStreamAuditEvent(
@@ -4489,7 +4530,7 @@ func (s *OpenAIGatewayService) appendOpenAIStreamAuditEvent(
 		Message:            sanitizeUpstreamErrorMessage(strings.TrimSpace(message)),
 		Detail:             strings.TrimSpace(detail),
 		ActionLabel:        string(actionLabel),
-		ActionMetadata:     openAIStreamActionMetadata(actionLabel, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway),
+		ActionMetadata:     s.openAIStreamActionMetadataForAccount(actionLabel, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway),
 	}
 	if account != nil {
 		ev.Platform = account.Platform

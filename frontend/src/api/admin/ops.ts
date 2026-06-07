@@ -425,6 +425,15 @@ export interface GroupAvailability {
   error_count: number
 }
 
+export interface AccountEffectiveAvailability {
+  /** 后端归一后的账号调度状态。 */
+  state: string
+  /** 状态来源原因，通常来自断流、预检或运行态阻塞。 */
+  reason?: string
+  /** 状态预计结束时间，采用服务端 RFC3339 时间。 */
+  until?: string
+}
+
 export interface AccountAvailability {
   account_id: number
   account_name: string
@@ -451,6 +460,7 @@ export interface AccountAvailability {
   path_health_header_timeout_count?: number
   path_health_ttft_ewma_ms?: number
   path_health_header_wait_ewma_ms?: number
+  effective_availability?: AccountEffectiveAvailability
 }
 
 export interface OpsAccountAvailabilityStatsResponse {

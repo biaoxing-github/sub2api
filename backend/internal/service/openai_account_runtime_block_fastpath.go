@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,11 @@ const (
 	openAIOAuth429StormThreshold          = 20
 	openAIOAuth429StormMaxAccountSwitches = 1
 )
+
+type OpenAIAccountRuntimeBlockSnapshot struct {
+	Reason string     `json:"reason,omitempty"`
+	Until  *time.Time `json:"until,omitempty"`
+}
 
 func openAIAccountStateContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	base := context.Background()
@@ -127,12 +133,14 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 	if blockUntil.IsZero() || !blockUntil.After(now) {
 		blockUntil = now.Add(openAIStopSchedulingBridgeCooldown)
 	}
+	reason = strings.TrimSpace(reason)
 
 	for {
 		current, loaded := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
 		if !loaded {
 			actual, stored := s.openaiAccountRuntimeBlockUntil.LoadOrStore(account.ID, blockUntil)
 			if !stored {
+				s.storeOpenAIAccountRuntimeBlockReason(account.ID, reason)
 				return
 			}
 			current = actual
@@ -149,9 +157,21 @@ func (s *OpenAIGatewayService) BlockAccountScheduling(account *Account, until ti
 			return
 		}
 		if s.openaiAccountRuntimeBlockUntil.CompareAndSwap(account.ID, current, blockUntil) {
+			s.storeOpenAIAccountRuntimeBlockReason(account.ID, reason)
 			return
 		}
 	}
+}
+
+func (s *OpenAIGatewayService) storeOpenAIAccountRuntimeBlockReason(accountID int64, reason string) {
+	if s == nil || accountID <= 0 {
+		return
+	}
+	if reason == "" {
+		s.openaiAccountRuntimeBlockReason.Delete(accountID)
+		return
+	}
+	s.openaiAccountRuntimeBlockReason.Store(accountID, reason)
 }
 
 func (s *OpenAIGatewayService) ClearAccountSchedulingBlock(accountID int64) {
@@ -159,26 +179,44 @@ func (s *OpenAIGatewayService) ClearAccountSchedulingBlock(accountID int64) {
 		return
 	}
 	s.openaiAccountRuntimeBlockUntil.Delete(accountID)
+	s.openaiAccountRuntimeBlockReason.Delete(accountID)
 }
 
-func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) bool {
+func (s *OpenAIGatewayService) SnapshotOpenAIAccountRuntimeBlock(account *Account, now time.Time) (OpenAIAccountRuntimeBlockSnapshot, bool) {
 	if s == nil || !isOpenAIAccount(account) {
-		return false
+		return OpenAIAccountRuntimeBlockSnapshot{}, false
+	}
+	if now.IsZero() {
+		now = time.Now()
 	}
 	value, ok := s.openaiAccountRuntimeBlockUntil.Load(account.ID)
 	if !ok {
-		return false
+		return OpenAIAccountRuntimeBlockSnapshot{}, false
 	}
 	cooldownUntil, ok := value.(time.Time)
 	if !ok || cooldownUntil.IsZero() {
-		s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
-		return false
+		s.ClearAccountSchedulingBlock(account.ID)
+		return OpenAIAccountRuntimeBlockSnapshot{}, false
 	}
-	if time.Now().Before(cooldownUntil) {
-		return true
+	if !now.Before(cooldownUntil) {
+		s.ClearAccountSchedulingBlock(account.ID)
+		return OpenAIAccountRuntimeBlockSnapshot{}, false
 	}
-	s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
-	return false
+	reason := ""
+	if raw, ok := s.openaiAccountRuntimeBlockReason.Load(account.ID); ok {
+		reason, _ = raw.(string)
+		reason = strings.TrimSpace(reason)
+	}
+	until := cooldownUntil
+	return OpenAIAccountRuntimeBlockSnapshot{
+		Reason: reason,
+		Until:  &until,
+	}, true
+}
+
+func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) bool {
+	_, ok := s.SnapshotOpenAIAccountRuntimeBlock(account, time.Now())
+	return ok
 }
 
 func (s *OpenAIGatewayService) recordOpenAIOAuth429() {

@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { opsAPI, type OpsAccountAvailabilityStatsResponse, type OpsConcurrencyStatsResponse, type OpsUserConcurrencyStatsResponse } from '@/api/admin/ops'
+import {
+  opsAPI,
+  type AccountEffectiveAvailability,
+  type OpsAccountAvailabilityStatsResponse,
+  type OpsConcurrencyStatsResponse,
+  type OpsUserConcurrencyStatsResponse
+} from '@/api/admin/ops'
 
 interface Props {
   platformFilter?: string
@@ -96,6 +102,7 @@ interface AccountRow {
   path_health_ttft_ewma_ms?: number
   path_health_header_wait_ewma_ms?: number
   temp_unschedulable_until?: string
+  effective_availability?: AccountEffectiveAvailability
 }
 
 // 用户行数据
@@ -231,7 +238,8 @@ const accountRows = computed((): AccountRow[] => {
         path_health_header_timeout_count: avail.path_health_header_timeout_count,
         path_health_ttft_ewma_ms: avail.path_health_ttft_ewma_ms,
         path_health_header_wait_ewma_ms: avail.path_health_header_wait_ewma_ms,
-        temp_unschedulable_until: avail.temp_unschedulable_until
+        temp_unschedulable_until: avail.temp_unschedulable_until,
+        effective_availability: avail.effective_availability
       }
     })
     .filter((row): row is NonNullable<typeof row> => row !== null)
@@ -392,10 +400,60 @@ function formatUntil(value?: string): string {
   return Number.isFinite(time.getTime()) ? time.toLocaleString() : ''
 }
 
+// 统一把后端 effective_availability 状态映射到管理端文案。
+function effectiveAvailabilityLabelKey(state: string): string {
+  return `admin.ops.accountAvailability.effective.${state}`
+}
+
+// 鼠标悬浮时展示后端归一原因和预计恢复时间。
+function getEffectiveAvailabilityTitle(effective?: AccountEffectiveAvailability): string {
+  if (!effective) return ''
+  const parts = []
+  if (effective.reason) {
+    parts.push(`${t('admin.ops.accountAvailability.pathHealth.reason')}: ${effective.reason}`)
+  }
+  const until = formatUntil(effective.until)
+  if (until) {
+    parts.push(`${t('admin.ops.accountAvailability.until')}: ${until}`)
+  }
+  return parts.join('\n')
+}
+
+// 后端归一状态优先级高于旧字段，避免同一账号显示成多个互相矛盾的状态。
+function getEffectiveAvailabilitySummary(row: AccountRow): UnifiedAvailabilitySummary | null {
+  const state = row.effective_availability?.state
+  if (!state || state === 'healthy') return null
+
+  if (state === 'path_open_circuit') {
+    return { tone: 'danger', label: getPathHealthLabel('open_circuit'), title: getPathHealthTitle(row) || getEffectiveAvailabilityTitle(row.effective_availability) }
+  }
+  if (state === 'path_half_open') {
+    return { tone: 'warning', label: getPathHealthLabel('half_open'), title: getPathHealthTitle(row) || getEffectiveAvailabilityTitle(row.effective_availability) }
+  }
+  if (state === 'path_degraded') {
+    return { tone: 'warning', label: getPathHealthLabel('degraded'), title: getPathHealthTitle(row) || getEffectiveAvailabilityTitle(row.effective_availability) }
+  }
+  if (state === 'precheck_failed' || state === 'overloaded' || state === 'error') {
+    return { tone: 'danger', label: t(effectiveAvailabilityLabelKey(state)), title: getEffectiveAvailabilityTitle(row.effective_availability) }
+  }
+  if (state === 'precheck_pending' || state === 'local_suppressed' || state === 'temp_unschedulable' || state === 'rate_limited') {
+    return { tone: 'warning', label: t(effectiveAvailabilityLabelKey(state)), title: getEffectiveAvailabilityTitle(row.effective_availability) }
+  }
+  if (state === 'disabled' || state === 'unschedulable') {
+    return { tone: 'neutral', label: t(effectiveAvailabilityLabelKey(state)), title: getEffectiveAvailabilityTitle(row.effective_availability) }
+  }
+  return { tone: 'neutral', label: t('admin.ops.accountAvailability.unavailable'), title: getEffectiveAvailabilityTitle(row.effective_availability) }
+}
+
 function getUnifiedAvailabilitySummary(row: AccountRow): UnifiedAvailabilitySummary {
   const pathHealthState = row.path_health_state
   const pathHealthUnavailable = (!!pathHealthState && pathHealthState !== 'healthy') || isFutureTime(row.path_health_cooldown_until)
   const tempUnschedulable = isFutureTime(row.temp_unschedulable_until)
+  const effectiveSummary = getEffectiveAvailabilitySummary(row)
+
+  if (effectiveSummary) {
+    return effectiveSummary
+  }
 
   if (row.has_error) {
     return {

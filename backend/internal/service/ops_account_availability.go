@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -11,6 +13,9 @@ const (
 	AccountEffectiveAvailabilityPathOpenCircuit   = "path_open_circuit"
 	AccountEffectiveAvailabilityPathHalfOpen      = "path_half_open"
 	AccountEffectiveAvailabilityPathDegraded      = "path_degraded"
+	AccountEffectiveAvailabilityPrecheckPending   = "precheck_pending"
+	AccountEffectiveAvailabilityLocalSuppressed   = "local_suppressed"
+	AccountEffectiveAvailabilityPrecheckFailed    = "precheck_failed"
 	AccountEffectiveAvailabilityTempUnschedulable = "temp_unschedulable"
 	AccountEffectiveAvailabilityRateLimited       = "rate_limited"
 	AccountEffectiveAvailabilityOverloaded        = "overloaded"
@@ -73,7 +78,8 @@ func (s *OpsService) GetAccountAvailabilityStats(ctx context.Context, platformFi
 		hasError := acc.Status == StatusError
 
 		pathHealth, hasPathHealth := s.openAIPathHealthForAvailability(&acc)
-		effectiveAvailability := deriveAccountEffectiveAvailability(&acc, now, pathHealth, hasPathHealth)
+		runtimeBlock, hasRuntimeBlock := s.openAIRuntimeBlockForAvailability(&acc, now)
+		effectiveAvailability := deriveAccountEffectiveAvailability(&acc, now, pathHealth, hasPathHealth, runtimeBlock, hasRuntimeBlock)
 		isAvailable := effectiveAvailability.State == AccountEffectiveAvailabilityHealthy
 
 		if acc.Platform != "" {
@@ -221,7 +227,21 @@ func (s *OpsService) openAIPathHealthForAvailability(account *Account) (OpenAIPa
 	return s.openAIGatewayService.SnapshotOpenAIPathHealthForAccount(account, OpenAIUpstreamTransportHTTPSSE)
 }
 
-func deriveAccountEffectiveAvailability(account *Account, now time.Time, pathHealth OpenAIPathHealthRecord, hasPathHealth bool) AccountEffectiveAvailability {
+func (s *OpsService) openAIRuntimeBlockForAvailability(account *Account, now time.Time) (OpenAIAccountRuntimeBlockSnapshot, bool) {
+	if s == nil || s.openAIGatewayService == nil || account == nil || !account.IsOpenAI() {
+		return OpenAIAccountRuntimeBlockSnapshot{}, false
+	}
+	return s.openAIGatewayService.SnapshotOpenAIAccountRuntimeBlock(account, now)
+}
+
+func deriveAccountEffectiveAvailability(
+	account *Account,
+	now time.Time,
+	pathHealth OpenAIPathHealthRecord,
+	hasPathHealth bool,
+	runtimeBlock OpenAIAccountRuntimeBlockSnapshot,
+	hasRuntimeBlock bool,
+) AccountEffectiveAvailability {
 	if account == nil {
 		return AccountEffectiveAvailability{State: AccountEffectiveAvailabilityDisabled, Reason: "account_missing"}
 	}
@@ -248,13 +268,18 @@ func deriveAccountEffectiveAvailability(account *Account, now time.Time, pathHea
 		}
 	}
 
-	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
-		reason := account.TempUnschedulableReason
-		if reason == "" {
-			reason = "temp_unschedulable_until"
-		}
+	if hasRuntimeBlock {
 		return AccountEffectiveAvailability{
-			State:  AccountEffectiveAvailabilityTempUnschedulable,
+			State:  accountRuntimeBlockAvailabilityState(runtimeBlock.Reason),
+			Reason: accountRuntimeBlockReason(runtimeBlock.Reason),
+			Until:  runtimeBlock.Until,
+		}
+	}
+
+	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
+		state, reason := accountTempUnschedulableAvailability(account.TempUnschedulableReason)
+		return AccountEffectiveAvailability{
+			State:  state,
 			Reason: reason,
 			Until:  account.TempUnschedulableUntil,
 		}
@@ -302,4 +327,47 @@ func deriveAccountEffectiveAvailability(account *Account, now time.Time, pathHea
 	}
 
 	return AccountEffectiveAvailability{State: AccountEffectiveAvailabilityHealthy}
+}
+
+func accountTempUnschedulableAvailability(rawReason string) (string, string) {
+	reason := strings.TrimSpace(rawReason)
+	if reason == "" {
+		return AccountEffectiveAvailabilityTempUnschedulable, "temp_unschedulable_until"
+	}
+	if strings.HasPrefix(reason, "{") {
+		var state TempUnschedState
+		if err := json.Unmarshal([]byte(reason), &state); err == nil {
+			reason = firstNonEmptyString(state.MatchedKeyword, state.ErrorMessage, reason)
+		}
+	}
+	return accountRuntimeBlockAvailabilityState(reason), accountRuntimeBlockReason(reason)
+}
+
+func accountRuntimeBlockAvailabilityState(reason string) string {
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	switch {
+	case strings.Contains(lower, "precheck_pending"):
+		return AccountEffectiveAvailabilityPrecheckPending
+	case strings.Contains(lower, "precheck_failed"),
+		strings.Contains(lower, "token_refresh"),
+		strings.Contains(lower, "oauth_401"),
+		strings.Contains(lower, "upstream_disable"):
+		return AccountEffectiveAvailabilityPrecheckFailed
+	case strings.Contains(lower, "local_suppressed"),
+		strings.Contains(lower, "stream_timeout"),
+		strings.Contains(lower, "rate_limit"),
+		strings.Contains(lower, "quota"),
+		strings.Contains(lower, "429"):
+		return AccountEffectiveAvailabilityLocalSuppressed
+	default:
+		return AccountEffectiveAvailabilityTempUnschedulable
+	}
+}
+
+func accountRuntimeBlockReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "runtime_blocked"
+	}
+	return reason
 }
