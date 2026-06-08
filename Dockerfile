@@ -12,6 +12,7 @@ ARG ALPINE_IMAGE=alpine:3.21
 ARG POSTGRES_IMAGE=postgres:18-alpine
 ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.google.cn
+ARG ALPINE_APK_REPOSITORY=https://mirrors.tuna.tsinghua.edu.cn/alpine
 
 # -----------------------------------------------------------------------------
 # Stage 1: Frontend Builder
@@ -43,12 +44,14 @@ ARG COMMIT=docker
 ARG DATE
 ARG GOPROXY
 ARG GOSUMDB
+ARG ALPINE_APK_REPOSITORY
 
 ENV GOPROXY=${GOPROXY}
 ENV GOSUMDB=${GOSUMDB}
 
 # Install build dependencies
-RUN apk add --no-cache git ca-certificates tzdata
+RUN sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${ALPINE_APK_REPOSITORY}#g" /etc/apk/repositories && \
+    apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app/backend
 
@@ -90,7 +93,9 @@ LABEL description="Sub2API - AI API Gateway Platform"
 LABEL org.opencontainers.image.source="https://github.com/Wei-Shaw/sub2api"
 
 # Install runtime dependencies
-RUN apk add --no-cache \
+ARG ALPINE_APK_REPOSITORY
+RUN sed -i "s#https://dl-cdn.alpinelinux.org/alpine#${ALPINE_APK_REPOSITORY}#g" /etc/apk/repositories && \
+    apk add --no-cache \
     ca-certificates \
     tzdata \
     su-exec \
