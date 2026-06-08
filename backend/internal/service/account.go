@@ -25,6 +25,8 @@ var accountAPIKeyRoundRobin sync.Map // map[int64]*atomic.Uint64
 const (
 	CredentialAPIKeysDisabled = "api_keys_disabled"
 	apiKeyFingerprintPrefix   = "sha256:"
+	// AnthropicContext1MEnabledExtraKey 控制单个 Anthropic API Key 账号是否补齐 1M 上下文 beta。
+	AnthropicContext1MEnabledExtraKey = "anthropic_context_1m_enabled"
 	// OpenAICodexCLISimulationEnabledExtraKey 控制单个 OpenAI 账号是否把上游请求模拟为 Codex CLI。
 	OpenAICodexCLISimulationEnabledExtraKey = "openai_codex_cli_simulation_enabled"
 )
@@ -89,6 +91,58 @@ type TempUnschedulableRule struct {
 	Keywords        []string `json:"keywords"`
 	DurationMinutes int      `json:"duration_minutes"`
 	Description     string   `json:"description"`
+}
+
+type AccountErrorHandlingAction string
+
+const (
+	AccountErrorHandlingActionRetryNext         AccountErrorHandlingAction = "retry_next"
+	AccountErrorHandlingActionTempUnschedulable AccountErrorHandlingAction = "temp_unschedulable"
+	AccountErrorHandlingActionRateLimited       AccountErrorHandlingAction = "rate_limited"
+	AccountErrorHandlingActionErrorDisabled     AccountErrorHandlingAction = "error_disabled"
+)
+
+type AccountErrorHandlingResetStrategy string
+
+const (
+	AccountErrorHandlingResetDuration AccountErrorHandlingResetStrategy = "duration"
+	AccountErrorHandlingResetDaily    AccountErrorHandlingResetStrategy = "daily"
+	AccountErrorHandlingResetWeekly   AccountErrorHandlingResetStrategy = "weekly"
+)
+
+type AccountErrorHandlingRule struct {
+	// Enabled 表示规则是否参与匹配；禁用规则只保留配置，不影响调度。
+	Enabled bool
+	// Name 是管理员可读的规则名称，会写入账号错误原因与诊断日志。
+	Name string
+	// Priority 越小越先匹配；相同优先级按配置数组顺序匹配。
+	Priority int
+	// Action 表示命中后的账号处理动作。
+	Action AccountErrorHandlingAction
+	// StatusCodes 是需要匹配的非 2xx HTTP 状态码集合。
+	StatusCodes []int
+	// ErrorCodes 匹配响应体 error.code 或根级 code。
+	ErrorCodes []string
+	// ErrorTypes 匹配响应体 error.type 或根级 type。
+	ErrorTypes []string
+	// Keywords 匹配上游响应正文中的关键字。
+	Keywords []string
+	// DurationMinutes 是临时不可调度动作的避让分钟数，也可作为 duration 限流恢复时长。
+	DurationMinutes int
+	// ResetStrategy 表示限流动作的恢复方式。
+	ResetStrategy AccountErrorHandlingResetStrategy
+	// DurationHours 是 duration 限流恢复方式使用的小时数。
+	DurationHours int
+	// DailyResetHour 是 daily 限流恢复方式使用的每天恢复小时。
+	DailyResetHour int
+	// WeeklyResetDay 是 weekly 限流恢复方式使用的恢复星期，取值与 time.Weekday 一致。
+	WeeklyResetDay int
+	// WeeklyResetHour 是 weekly 限流恢复方式使用的恢复小时。
+	WeeklyResetHour int
+	// Description 是管理员维护的补充说明。
+	Description string
+	// Index 记录原始配置顺序，用于稳定排序和写入诊断状态。
+	Index int
 }
 
 func (a *Account) IsActive() bool {
@@ -646,6 +700,172 @@ func (a *Account) GetTempUnschedulableRules() []TempUnschedulableRule {
 	}
 
 	return rules
+}
+
+func (a *Account) GetErrorHandlingRules() []AccountErrorHandlingRule {
+	if a == nil || a.Credentials == nil {
+		return nil
+	}
+	raw, ok := a.Credentials["error_handling_rules"]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+
+	rules := make([]AccountErrorHandlingRule, 0, len(arr))
+	for idx, item := range arr {
+		rule, ok := parseAccountErrorHandlingRule(item, idx)
+		if ok {
+			rules = append(rules, rule)
+		}
+	}
+	sort.SliceStable(rules, func(i, j int) bool {
+		if rules[i].Priority != rules[j].Priority {
+			return rules[i].Priority < rules[j].Priority
+		}
+		return rules[i].Index < rules[j].Index
+	})
+	return rules
+}
+
+func parseAccountErrorHandlingRule(item any, index int) (AccountErrorHandlingRule, bool) {
+	entry, ok := item.(map[string]any)
+	if !ok || entry == nil {
+		return AccountErrorHandlingRule{}, false
+	}
+	match := accountErrorHandlingRuleMap(entry["match"])
+	reset := accountErrorHandlingRuleMap(entry["reset_strategy"])
+
+	action := AccountErrorHandlingAction(parseTempUnschedString(entry["action"]))
+	switch action {
+	case AccountErrorHandlingActionRetryNext,
+		AccountErrorHandlingActionTempUnschedulable,
+		AccountErrorHandlingActionRateLimited,
+		AccountErrorHandlingActionErrorDisabled:
+	default:
+		return AccountErrorHandlingRule{}, false
+	}
+
+	enabled := true
+	if raw, exists := entry["enabled"]; exists {
+		if v, ok := raw.(bool); ok {
+			enabled = v
+		} else {
+			return AccountErrorHandlingRule{}, false
+		}
+	}
+
+	priority := parseTempUnschedInt(entry["priority"])
+	if priority <= 0 {
+		priority = index + 1
+	}
+	resetStrategy := AccountErrorHandlingResetStrategy(parseTempUnschedString(entry["reset_strategy"]))
+	if resetStrategy == "" && reset != nil {
+		resetStrategy = AccountErrorHandlingResetStrategy(parseTempUnschedString(reset["type"]))
+	}
+
+	rule := AccountErrorHandlingRule{
+		Enabled:         enabled,
+		Name:            parseTempUnschedString(entry["name"]),
+		Priority:        priority,
+		Action:          action,
+		StatusCodes:     parseAccountErrorHandlingStatusCodes(accountErrorHandlingRuleValue(entry, match, "status_codes")),
+		ErrorCodes:      parseAccountErrorHandlingStrings(accountErrorHandlingRuleValue(entry, match, "error_codes")),
+		ErrorTypes:      parseAccountErrorHandlingStrings(accountErrorHandlingRuleValue(entry, match, "error_types")),
+		Keywords:        parseAccountErrorHandlingStrings(accountErrorHandlingRuleValue(entry, match, "keywords")),
+		DurationMinutes: parseTempUnschedInt(firstPresent(entry["durationMinutes"], entry["duration_minutes"], reset["duration_minutes"])),
+		ResetStrategy:   resetStrategy,
+		DurationHours:   parseTempUnschedInt(firstPresent(entry["duration_hours"], reset["duration_hours"])),
+		DailyResetHour:  parseTempUnschedInt(firstPresent(entry["daily_reset_hour"], reset["daily_reset_hour"])),
+		WeeklyResetDay:  parseTempUnschedInt(firstPresent(entry["weekly_reset_day"], reset["weekly_reset_day"])),
+		WeeklyResetHour: parseTempUnschedInt(firstPresent(entry["weekly_reset_hour"], reset["weekly_reset_hour"])),
+		Description:     parseTempUnschedString(entry["description"]),
+		Index:           index,
+	}
+	if rule.Name == "" {
+		rule.Name = rule.Description
+	}
+	if rule.Action == AccountErrorHandlingActionRateLimited && rule.ResetStrategy == AccountErrorHandlingResetDuration && rule.DurationHours <= 0 && rule.DurationMinutes <= 0 {
+		return AccountErrorHandlingRule{}, false
+	}
+	if rule.Action == AccountErrorHandlingActionTempUnschedulable && rule.DurationMinutes <= 0 {
+		return AccountErrorHandlingRule{}, false
+	}
+	if len(rule.StatusCodes) == 0 && len(rule.ErrorCodes) == 0 && len(rule.ErrorTypes) == 0 && len(rule.Keywords) == 0 {
+		return AccountErrorHandlingRule{}, false
+	}
+	return rule, true
+}
+
+func accountErrorHandlingRuleMap(value any) map[string]any {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return m
+}
+
+func accountErrorHandlingRuleValue(entry, nested map[string]any, key string) any {
+	if nested != nil {
+		if v, ok := nested[key]; ok {
+			return v
+		}
+	}
+	return entry[key]
+}
+
+func firstPresent(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func parseAccountErrorHandlingStatusCodes(value any) []int {
+	values, ok := normalizeHTTPStatusCodeList(value)
+	if !ok {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(values))
+	codes := make([]int, 0, len(values))
+	for _, item := range values {
+		code, parsed := parseHTTPStatusCode(item)
+		if !parsed || code < 100 || code > 599 || (code >= 200 && code <= 299) {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	sort.Ints(codes)
+	return codes
+}
+
+func parseAccountErrorHandlingStrings(value any) []string {
+	values := parseAccountStringList(value)
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, item := range values {
+		s := strings.TrimSpace(item)
+		if s == "" {
+			continue
+		}
+		key := strings.ToLower(s)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
 
 func parseTempUnschedString(value any) string {
@@ -2160,6 +2380,14 @@ func (a *Account) IsCustomBaseURLEnabled() bool {
 // GetCustomBaseURL 返回自定义中继服务的 base URL
 func (a *Account) GetCustomBaseURL() string {
 	return a.GetExtraString("custom_base_url")
+}
+
+// IsAnthropicContext1MEnabled 检查 Anthropic API Key 账号是否需要补齐 1M 上下文 beta。
+func (a *Account) IsAnthropicContext1MEnabled() bool {
+	if a == nil || a.Platform != PlatformAnthropic || a.Type != AccountTypeAPIKey {
+		return false
+	}
+	return a.getExtraBool(AnthropicContext1MEnabledExtraKey)
 }
 
 // IsCacheTTLOverrideEnabled 检查是否启用缓存 TTL 强制替换

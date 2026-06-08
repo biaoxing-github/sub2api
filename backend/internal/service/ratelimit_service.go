@@ -130,11 +130,20 @@ const (
 	ErrorPolicySkipped                                  // 自定义错误码开启但未命中，跳过处理
 	ErrorPolicyMatched                                  // 自定义错误码命中，应停止调度
 	ErrorPolicyTempUnscheduled                          // 临时不可调度规则命中
+	ErrorPolicyRetryNext                                // 统一错误规则命中，仅切换到下个账号
+	ErrorPolicyRateLimited                              // 统一错误规则命中，账号进入限流恢复窗口
+	ErrorPolicyDisabled                                 // 统一错误规则命中，账号被标记为错误
 )
 
-// CheckErrorPolicy 检查自定义错误码和临时不可调度规则。
-// 自定义错误码开启时覆盖后续所有逻辑（包括临时不可调度）。
+// CheckErrorPolicy 检查统一错误处理规则、自定义错误码和临时不可调度规则。
+// 新的 error_handling_rules 有启用规则时优先接管旧字段；旧字段保留兼容历史账号。
 func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte) ErrorPolicyResult {
+	if account == nil {
+		return ErrorPolicyNone
+	}
+	if result, handled := s.applyUnifiedErrorHandlingRules(ctx, account, statusCode, nil, responseBody); handled {
+		return result
+	}
 	if account.IsCustomErrorCodesEnabled() {
 		if account.ShouldHandleErrorCode(statusCode) {
 			return ErrorPolicyMatched
@@ -154,6 +163,20 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // HandleUpstreamError 处理上游错误响应，标记账号状态
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
+	if account == nil {
+		return false
+	}
+	if result, handled := s.applyUnifiedErrorHandlingRules(ctx, account, statusCode, headers, responseBody); handled {
+		switch result {
+		case ErrorPolicyTempUnscheduled, ErrorPolicyDisabled:
+			return true
+		case ErrorPolicyRateLimited, ErrorPolicyRetryNext, ErrorPolicySkipped:
+			return false
+		default:
+			return false
+		}
+	}
+
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
 	// 池模式默认不标记本地账号状态；仅当用户显式配置自定义错误码时按本地策略处理。
@@ -1646,6 +1669,219 @@ func (s *RateLimitService) HandleTempUnschedulable(ctx context.Context, account 
 		return false
 	}
 	return s.tryTempUnschedulable(ctx, account, statusCode, responseBody)
+}
+
+func (s *RateLimitService) applyUnifiedErrorHandlingRules(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) (ErrorPolicyResult, bool) {
+	if account == nil {
+		return ErrorPolicyNone, false
+	}
+	rules := account.GetErrorHandlingRules()
+	enabledRules := make([]AccountErrorHandlingRule, 0, len(rules))
+	for _, rule := range rules {
+		if rule.Enabled {
+			enabledRules = append(enabledRules, rule)
+		}
+	}
+	if len(enabledRules) == 0 {
+		return ErrorPolicyNone, false
+	}
+	if statusCode >= 200 && statusCode <= 299 {
+		return ErrorPolicyNone, true
+	}
+
+	for _, rule := range enabledRules {
+		if !matchesUnifiedErrorHandlingRule(rule, statusCode, responseBody) {
+			continue
+		}
+		switch rule.Action {
+		case AccountErrorHandlingActionRetryNext:
+			slog.Info("account_error_handling_retry_next", "account_id", account.ID, "status_code", statusCode, "rule", rule.Name)
+			return ErrorPolicyRetryNext, true
+		case AccountErrorHandlingActionTempUnschedulable:
+			if s.applyUnifiedTempUnschedulable(ctx, account, rule, statusCode, responseBody) {
+				return ErrorPolicyTempUnscheduled, true
+			}
+			return ErrorPolicySkipped, true
+		case AccountErrorHandlingActionRateLimited:
+			if s.applyUnifiedRateLimited(ctx, account, rule, statusCode, responseBody) {
+				return ErrorPolicyRateLimited, true
+			}
+			return ErrorPolicySkipped, true
+		case AccountErrorHandlingActionErrorDisabled:
+			s.handleAuthError(ctx, account, buildUnifiedErrorHandlingReason(rule, statusCode, responseBody))
+			return ErrorPolicyDisabled, true
+		}
+	}
+
+	return ErrorPolicyNone, false
+}
+
+func matchesUnifiedErrorHandlingRule(rule AccountErrorHandlingRule, statusCode int, responseBody []byte) bool {
+	if len(rule.StatusCodes) > 0 && !intSliceContains(rule.StatusCodes, statusCode) {
+		return false
+	}
+	bodyText := string(responseBody)
+	if len(responseBody) > tempUnschedBodyMaxBytes {
+		bodyText = string(responseBody[:tempUnschedBodyMaxBytes])
+	}
+	if len(rule.Keywords) > 0 && matchTempUnschedKeyword(strings.ToLower(bodyText), rule.Keywords) == "" {
+		return false
+	}
+	errorCode := strings.TrimSpace(extractUpstreamErrorCode(responseBody))
+	if errorCode == "" {
+		errorCode = strings.TrimSpace(gjson.GetBytes(responseBody, "code").String())
+	}
+	if len(rule.ErrorCodes) > 0 && !stringSliceEqualFoldContains(rule.ErrorCodes, errorCode) {
+		return false
+	}
+	errorType := strings.TrimSpace(gjson.GetBytes(responseBody, "error.type").String())
+	if errorType == "" {
+		errorType = strings.TrimSpace(gjson.GetBytes(responseBody, "type").String())
+	}
+	if len(rule.ErrorTypes) > 0 && !stringSliceEqualFoldContains(rule.ErrorTypes, errorType) {
+		return false
+	}
+	return true
+}
+
+func intSliceContains(items []int, value int) bool {
+	for _, item := range items {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSliceEqualFoldContains(items []string, value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item), value) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *RateLimitService) applyUnifiedTempUnschedulable(ctx context.Context, account *Account, rule AccountErrorHandlingRule, statusCode int, responseBody []byte) bool {
+	if rule.DurationMinutes <= 0 {
+		return false
+	}
+	now := time.Now()
+	until := now.Add(time.Duration(rule.DurationMinutes) * time.Minute)
+	state := &TempUnschedState{
+		UntilUnix:       until.Unix(),
+		TriggeredAtUnix: now.Unix(),
+		StatusCode:      statusCode,
+		MatchedKeyword:  matchTempUnschedKeyword(strings.ToLower(string(responseBody)), rule.Keywords),
+		RuleIndex:       rule.Index,
+		ErrorMessage:    truncateForLog([]byte(buildUnifiedErrorHandlingReason(rule, statusCode, responseBody)), tempUnschedMessageMaxBytes),
+	}
+	reason := state.ErrorMessage
+	if raw, err := json.Marshal(state); err == nil {
+		reason = string(raw)
+	}
+
+	s.notifyAccountSchedulingBlocked(account, until, "error_handling_rules.temp_unschedulable")
+	if err := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); err != nil {
+		slog.Warn("unified_temp_unsched_set_failed", "account_id", account.ID, "status_code", statusCode, "rule", rule.Name, "error", err)
+		return false
+	}
+	if s.tempUnschedCache != nil {
+		if err := s.tempUnschedCache.SetTempUnsched(ctx, account.ID, state); err != nil {
+			slog.Warn("temp_unsched_cache_set_failed", "account_id", account.ID, "error", err)
+		}
+	}
+	slog.Info("account_error_handling_temp_unschedulable", "account_id", account.ID, "status_code", statusCode, "rule", rule.Name, "until", until)
+	return true
+}
+
+func (s *RateLimitService) applyUnifiedRateLimited(ctx context.Context, account *Account, rule AccountErrorHandlingRule, statusCode int, responseBody []byte) bool {
+	resetAt, ok := resolveUnifiedRateLimitResetAt(rule, time.Now())
+	if !ok {
+		return false
+	}
+	s.notifyAccountSchedulingBlocked(account, resetAt, "error_handling_rules.rate_limited")
+	if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetAt); err != nil {
+		slog.Warn("unified_rate_limit_set_failed", "account_id", account.ID, "status_code", statusCode, "rule", rule.Name, "error", err)
+		return false
+	}
+	slog.Info("account_error_handling_rate_limited", "account_id", account.ID, "status_code", statusCode, "rule", rule.Name, "reset_at", resetAt, "reason", buildUnifiedErrorHandlingReason(rule, statusCode, responseBody))
+	return true
+}
+
+func resolveUnifiedRateLimitResetAt(rule AccountErrorHandlingRule, now time.Time) (time.Time, bool) {
+	switch rule.ResetStrategy {
+	case AccountErrorHandlingResetDuration:
+		if rule.DurationHours > 0 {
+			return now.Add(time.Duration(rule.DurationHours) * time.Hour), true
+		}
+		if rule.DurationMinutes > 0 {
+			return now.Add(time.Duration(rule.DurationMinutes) * time.Minute), true
+		}
+	case AccountErrorHandlingResetDaily:
+		return nextUnifiedDailyReset(now, normalizeUnifiedResetHour(rule.DailyResetHour)), true
+	case AccountErrorHandlingResetWeekly:
+		return nextUnifiedWeeklyReset(now, normalizeUnifiedWeekday(rule.WeeklyResetDay), normalizeUnifiedResetHour(rule.WeeklyResetHour)), true
+	default:
+		if rule.DurationHours > 0 {
+			return now.Add(time.Duration(rule.DurationHours) * time.Hour), true
+		}
+		if rule.DurationMinutes > 0 {
+			return now.Add(time.Duration(rule.DurationMinutes) * time.Minute), true
+		}
+	}
+	return time.Time{}, false
+}
+
+func nextUnifiedDailyReset(now time.Time, hour int) time.Time {
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, now.Location())
+	if !next.After(now) {
+		next = next.Add(24 * time.Hour)
+	}
+	return next
+}
+
+func nextUnifiedWeeklyReset(now time.Time, weekday int, hour int) time.Time {
+	next := nextUnifiedDailyReset(now, hour)
+	for int(next.Weekday()) != weekday {
+		next = next.Add(24 * time.Hour)
+	}
+	return next
+}
+
+func normalizeUnifiedResetHour(hour int) int {
+	if hour < 0 || hour > 23 {
+		return 0
+	}
+	return hour
+}
+
+func normalizeUnifiedWeekday(day int) int {
+	if day < 0 || day > 6 {
+		return 1
+	}
+	return day
+}
+
+func buildUnifiedErrorHandlingReason(rule AccountErrorHandlingRule, statusCode int, responseBody []byte) string {
+	ruleName := strings.TrimSpace(rule.Name)
+	if ruleName == "" {
+		ruleName = string(rule.Action)
+	}
+	base := fmt.Sprintf("命中错误处理规则：%s（HTTP %d）", ruleName, statusCode)
+	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(responseBody))
+	if upstreamMsg == "" {
+		upstreamMsg = strings.TrimSpace(string(responseBody))
+	}
+	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+	if upstreamMsg == "" {
+		return base
+	}
+	return truncateForLog([]byte(base+"；"+upstreamMsg), 1000)
 }
 
 const tempUnschedBodyMaxBytes = 64 << 10

@@ -110,7 +110,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 	c.Request.Header.Set("Cookie", "secret=1")
 	c.Request.Header.Set("Anthropic-Beta", "interleaved-thinking-2025-05-14")
 
-	body := []byte(`{"model":"claude-3-7-sonnet-20250219","stream":true,"system":[{"type":"text","text":"x-anthropic-billing-header keep"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	body := []byte(`{"model":"claude-3-7-sonnet-20250219","stream":true,"cch_session_id":"cch-session-123","system":[{"type":"text","text":"x-anthropic-billing-header keep"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
 	parsed := &ParsedRequest{
 		Body:   NewRequestBodyRef(body),
 		Model:  "claude-3-7-sonnet-20250219",
@@ -175,6 +175,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 	require.True(t, result.Stream)
 
 	require.Equal(t, "claude-3-haiku-20240307", gjson.GetBytes(upstream.lastBody, "model").String(), "透传模式应应用账号级模型映射")
+	require.False(t, gjson.GetBytes(upstream.lastBody, "cch_session_id").Exists(), "透传模式不应把客户端内部会话字段送到上游")
 
 	require.Equal(t, "upstream-anthropic-key", getHeaderRaw(upstream.lastReq.Header, "x-api-key"))
 	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "authorization"))
@@ -200,7 +201,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBo
 	c.Request.Header.Set("X-Api-Key", "inbound-api-key")
 	c.Request.Header.Set("Cookie", "secret=1")
 
-	body := []byte(`{"model":"claude-3-5-sonnet-latest","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}],"thinking":{"type":"enabled"}}`)
+	body := []byte(`{"model":"claude-3-5-sonnet-latest","cch_session_id":"cch-session-123","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}],"thinking":{"type":"enabled"}}`)
 	parsed := &ParsedRequest{
 		Body:  NewRequestBodyRef(body),
 		Model: "claude-3-5-sonnet-latest",
@@ -253,6 +254,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBo
 	require.NoError(t, err)
 
 	require.Equal(t, "claude-3-opus-20240229", gjson.GetBytes(upstream.lastBody, "model").String(), "count_tokens 透传模式应应用账号级模型映射")
+	require.False(t, gjson.GetBytes(upstream.lastBody, "cch_session_id").Exists(), "count_tokens 透传模式不应把客户端内部会话字段送到上游")
 	require.Equal(t, "upstream-anthropic-key", getHeaderRaw(upstream.lastReq.Header, "x-api-key"))
 	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "authorization"))
 	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "cookie"))
@@ -342,7 +344,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases(t *test
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 
-			body := []byte(`{"model":"` + tt.model + `","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+			body := []byte(`{"model":"` + tt.model + `","cch_session_id":"cch-session-123","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
 			parsed := &ParsedRequest{
 				Body:  NewRequestBodyRef(body),
 				Model: tt.model,
@@ -391,6 +393,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases(t *test
 				require.NotNil(t, result)
 				require.Equal(t, tt.expectedModel, gjson.GetBytes(upstream.lastBody, "model").String(),
 					"Forward 上游请求体中的模型应为: %s", tt.expectedModel)
+				require.False(t, gjson.GetBytes(upstream.lastBody, "cch_session_id").Exists(), "Forward 上游请求体不应包含客户端内部会话字段")
 			} else {
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
 
@@ -412,6 +415,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases(t *test
 				require.NoError(t, err)
 				require.Equal(t, tt.expectedModel, gjson.GetBytes(upstream.lastBody, "model").String(),
 					"CountTokens 上游请求体中的模型应为: %s", tt.expectedModel)
+				require.False(t, gjson.GetBytes(upstream.lastBody, "cch_session_id").Exists(), "CountTokens 上游请求体不应包含客户端内部会话字段")
 			}
 		})
 	}

@@ -891,6 +891,24 @@ func sanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 	return body, false
 }
 
+// sanitizeAnthropicAPIKeyPassthroughBody 删除 Claude Code 本地调度可能附带的辅助会话字段，
+// 避免 API key 透传时把客户端内部参数原样送到 Anthropic 上游触发 400 校验失败。
+func sanitizeAnthropicAPIKeyPassthroughBody(body []byte) ([]byte, bool) {
+	if len(body) == 0 {
+		return body, false
+	}
+	if !gjson.GetBytes(body, "cch_session_id").Exists() {
+		return body, false
+	}
+	if next, ok := deleteJSONPathBytes(body, "cch_session_id"); ok {
+		return next, true
+	}
+	logger.LegacyPrintf("service.gateway",
+		"[AnthropicPassthroughSanitize] failed to delete cch_session_id from request body (body len=%d)",
+		len(body))
+	return body, false
+}
+
 // anthropicBetaTokensContains 检测逗号分隔的 anthropic-beta header 是否含指定 token。
 func anthropicBetaTokensContains(header, token string) bool {
 	if header == "" || token == "" {

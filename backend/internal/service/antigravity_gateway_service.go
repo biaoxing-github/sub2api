@@ -943,8 +943,10 @@ func (s *AntigravityGatewayService) applyErrorPolicy(p antigravityRetryLoopParam
 		_ = p.handleError(p.ctx, p.prefix, p.account, statusCode, headers, respBody,
 			p.requestedModel, p.groupID, p.sessionHash, p.isStickySession)
 		return true, statusCode, nil
-	case ErrorPolicyTempUnscheduled:
-		slog.Info("temp_unschedulable_matched",
+	case ErrorPolicyDisabled:
+		return true, statusCode, nil
+	case ErrorPolicyRetryNext, ErrorPolicyRateLimited, ErrorPolicyTempUnscheduled:
+		slog.Info("error_policy_account_switch_matched",
 			"prefix", p.prefix, "status_code", statusCode, "account_id", p.account.ID)
 		return true, statusCode, &AntigravityAccountSwitchError{OriginalAccountID: p.account.ID, RateLimitedModel: p.requestedModel, IsStickySession: p.isStickySession}
 	}

@@ -1253,6 +1253,9 @@ export interface Account {
   custom_base_url_enabled?: boolean | null
   custom_base_url?: string | null
 
+  // Anthropic API Key 账号 1M 上下文 beta 开关
+  anthropic_context_1m_enabled?: boolean | null
+
   // API Key 账号配额限制
   quota_limit?: number | null
   quota_used?: number | null

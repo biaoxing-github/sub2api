@@ -1,6 +1,7 @@
 package service
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
@@ -109,6 +110,92 @@ func TestMergeAnthropicBetaDropping_Context1M(t *testing.T) {
 	got := mergeAnthropicBetaDropping(required, incoming, drop)
 	require.Equal(t, "oauth-2025-04-20,interleaved-thinking-2025-05-14,foo-beta", got)
 	require.NotContains(t, got, "context-1m-2025-08-07")
+}
+
+func TestComputeFinalAnthropicBeta_APIKeyDefaultDoesNotSetContext1M(t *testing.T) {
+	svc := &GatewayService{}
+	body := []byte(`{"model":"claude-opus-4-7[1m]","messages":[{"role":"user","content":"hello"}]}`)
+
+	got, shouldSet := svc.computeFinalAnthropicBeta("apikey", false, "claude-opus-4-7[1m]", nil, body, nil, nil)
+
+	require.False(t, shouldSet)
+	require.Empty(t, got)
+}
+
+func TestComputeFinalAnthropicBeta_APIKeyRequiredContext1M(t *testing.T) {
+	svc := &GatewayService{}
+	body := []byte(`{"model":"claude-opus-4-7[1m]","messages":[{"role":"user","content":"hello"}]}`)
+
+	got, shouldSet := svc.computeFinalAnthropicBeta(
+		"apikey",
+		false,
+		"claude-opus-4-7[1m]",
+		nil,
+		body,
+		nil,
+		[]string{claude.BetaContext1M},
+	)
+
+	require.True(t, shouldSet)
+	require.Equal(t, claude.BetaContext1M, got)
+}
+
+func TestComputeFinalAnthropicBeta_APIKeyContext1MMergesClientBeta(t *testing.T) {
+	svc := &GatewayService{}
+	headers := http.Header{}
+	headers.Set("anthropic-beta", claude.BetaInterleavedThinking)
+	body := []byte(`{"model":"claude-opus-4-7[1m]","messages":[{"role":"user","content":"hello"}]}`)
+
+	got, shouldSet := svc.computeFinalAnthropicBeta(
+		"apikey",
+		false,
+		"claude-opus-4-7[1m]",
+		headers,
+		body,
+		nil,
+		[]string{claude.BetaContext1M},
+	)
+
+	require.True(t, shouldSet)
+	require.Equal(t, claude.BetaContext1M+","+claude.BetaInterleavedThinking, got)
+}
+
+func TestComputeFinalCountTokensAnthropicBeta_APIKeyRequiredContext1M(t *testing.T) {
+	svc := &GatewayService{}
+	body := []byte(`{"model":"claude-opus-4-7[1m]","messages":[{"role":"user","content":"hello"}]}`)
+
+	got, shouldSet := svc.computeFinalCountTokensAnthropicBeta(
+		"apikey",
+		false,
+		"claude-opus-4-7[1m]",
+		nil,
+		body,
+		nil,
+		[]string{claude.BetaContext1M},
+	)
+
+	require.True(t, shouldSet)
+	require.Equal(t, claude.BetaContext1M, got)
+}
+
+func TestEffectiveAnthropicBetaDropSet_Context1MAccountOverride(t *testing.T) {
+	account := &Account{
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeAPIKey,
+		Extra: map[string]any{
+			AnthropicContext1MEnabledExtraKey: true,
+		},
+	}
+	policySet := map[string]struct{}{
+		claude.BetaContext1M:           {},
+		claude.BetaInterleavedThinking: {},
+	}
+
+	got := effectiveAnthropicBetaDropSet(account, policySet)
+
+	require.NotContains(t, got, claude.BetaContext1M)
+	require.Contains(t, got, claude.BetaInterleavedThinking)
+	require.Contains(t, policySet, claude.BetaContext1M, "账号级覆盖不能修改缓存的策略集合")
 }
 
 func TestMergeAnthropicBetaDropping_DroppedBetas(t *testing.T) {

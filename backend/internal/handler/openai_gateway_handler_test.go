@@ -411,6 +411,33 @@ func TestOpenAIMapUpstreamError_Maps413ToRequestEntityTooLarge(t *testing.T) {
 	require.Contains(t, message, "Request body is too large")
 }
 
+func TestOpenAIHandleAnthropicFailoverExhausted_Maps529ToOverloadedError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	h := &OpenAIGatewayHandler{}
+	h.handleAnthropicFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode: 529,
+		ResponseHeaders: http.Header{
+			"Retry-After": []string{"17"},
+		},
+	}, false)
+
+	require.Equal(t, 529, w.Code)
+	require.Equal(t, "17", w.Header().Get("Retry-After"))
+
+	var parsed map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &parsed)
+	require.NoError(t, err)
+
+	errorObj, ok := parsed["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "overloaded_error", errorObj["type"])
+	require.Contains(t, errorObj["message"], "overloaded")
+}
+
 func TestOpenAIFailoverRetryWindow_SingleCandidate(t *testing.T) {
 	start := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	state := &openAIFailoverRetryWindow{}

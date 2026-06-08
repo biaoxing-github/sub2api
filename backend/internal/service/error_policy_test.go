@@ -264,6 +264,349 @@ func TestHandleUpstreamError_PoolModeCustomErrorCodesOverride(t *testing.T) {
 	})
 }
 
+func TestAccountGetErrorHandlingRules_NormalizesUnifiedSchema(t *testing.T) {
+	account := &Account{
+		Credentials: map[string]any{
+			"error_handling_rules": []any{
+				map[string]any{
+					"enabled":  true,
+					"name":     "nested match",
+					"priority": float64(20),
+					"action":   "rate_limited",
+					"match": map[string]any{
+						"status_codes": []any{float64(429), "429", float64(200), "bad"},
+						"error_codes":  []any{"insufficient_quota", "INSUFFICIENT_QUOTA", ""},
+						"error_types":  []any{"rate_limit_error"},
+						"keywords":     []any{"quota", "quota", "额度"},
+					},
+					"reset_strategy": map[string]any{
+						"type":              "weekly",
+						"weekly_reset_day":  float64(1),
+						"weekly_reset_hour": float64(3),
+					},
+				},
+				map[string]any{
+					"enabled":         true,
+					"name":            "temporary",
+					"priority":        float64(10),
+					"action":          "temp_unschedulable",
+					"status_codes":    []any{float64(503)},
+					"durationMinutes": float64(15),
+				},
+				map[string]any{
+					"enabled":      true,
+					"name":         "invalid success matcher",
+					"priority":     float64(1),
+					"action":       "retry_next",
+					"status_codes": []any{float64(200)},
+				},
+			},
+		},
+	}
+
+	rules := account.GetErrorHandlingRules()
+
+	require.Len(t, rules, 2)
+	require.Equal(t, "temporary", rules[0].Name)
+	require.Equal(t, AccountErrorHandlingActionTempUnschedulable, rules[0].Action)
+	require.Equal(t, []int{503}, rules[0].StatusCodes)
+	require.Equal(t, 15, rules[0].DurationMinutes)
+
+	require.Equal(t, "nested match", rules[1].Name)
+	require.Equal(t, AccountErrorHandlingActionRateLimited, rules[1].Action)
+	require.Equal(t, []int{429}, rules[1].StatusCodes)
+	require.Equal(t, []string{"insufficient_quota"}, rules[1].ErrorCodes)
+	require.Equal(t, []string{"rate_limit_error"}, rules[1].ErrorTypes)
+	require.Equal(t, []string{"quota", "额度"}, rules[1].Keywords)
+	require.Equal(t, AccountErrorHandlingResetWeekly, rules[1].ResetStrategy)
+	require.Equal(t, 1, rules[1].WeeklyResetDay)
+	require.Equal(t, 3, rules[1].WeeklyResetHour)
+}
+
+func TestCheckErrorPolicy_UnifiedErrorHandlingRules(t *testing.T) {
+	tests := []struct {
+		name     string
+		account  *Account
+		status   int
+		body     []byte
+		expected ErrorPolicyResult
+	}{
+		{
+			name: "retry_next_matches_error_code",
+			account: &Account{
+				ID:       40,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{
+					"error_handling_rules": []any{
+						map[string]any{
+							"enabled":      true,
+							"name":         "quota retry",
+							"priority":     float64(10),
+							"action":       "retry_next",
+							"status_codes": []any{float64(429)},
+							"error_codes":  []any{"insufficient_quota"},
+						},
+					},
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(500)},
+				},
+			},
+			status:   429,
+			body:     []byte(`{"error":{"code":"insufficient_quota","type":"rate_limit_error","message":"quota exceeded"}}`),
+			expected: ErrorPolicyRetryNext,
+		},
+		{
+			name: "disabled_rule_is_ignored_and_falls_back_to_old_custom_codes",
+			account: &Account{
+				ID:       41,
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformOpenAI,
+				Credentials: map[string]any{
+					"error_handling_rules": []any{
+						map[string]any{
+							"enabled":      false,
+							"name":         "disabled retry",
+							"priority":     float64(1),
+							"action":       "retry_next",
+							"status_codes": []any{float64(500)},
+						},
+					},
+					"custom_error_codes_enabled": true,
+					"custom_error_codes":         []any{float64(500)},
+				},
+			},
+			status:   500,
+			body:     []byte(`{"error":{"message":"server error"}}`),
+			expected: ErrorPolicyMatched,
+		},
+		{
+			name: "unified_rules_take_precedence_over_old_temp_rules",
+			account: &Account{
+				ID:       42,
+				Type:     AccountTypeOAuth,
+				Platform: PlatformAntigravity,
+				Credentials: map[string]any{
+					"error_handling_rules": []any{
+						map[string]any{
+							"enabled":      true,
+							"name":         "retry 503",
+							"priority":     float64(1),
+							"action":       "retry_next",
+							"status_codes": []any{float64(503)},
+							"keywords":     []any{"overloaded"},
+						},
+					},
+					"temp_unschedulable_enabled": true,
+					"temp_unschedulable_rules": []any{
+						map[string]any{
+							"error_code":       float64(503),
+							"keywords":         []any{"overloaded"},
+							"duration_minutes": float64(10),
+						},
+					},
+				},
+			},
+			status:   503,
+			body:     []byte(`overloaded`),
+			expected: ErrorPolicyRetryNext,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &errorPolicyRepoStub{}
+			svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+
+			result := svc.CheckErrorPolicy(context.Background(), tt.account, tt.status, tt.body)
+
+			require.Equal(t, tt.expected, result)
+			require.Equal(t, 0, repo.tempCalls)
+			require.Equal(t, 0, repo.setErrCalls)
+			require.Equal(t, 0, repo.rateCalls)
+		})
+	}
+}
+
+func TestHandleUpstreamError_UnifiedErrorHandlingRules(t *testing.T) {
+	t.Run("temp_unschedulable_writes_temp_state", func(t *testing.T) {
+		repo := &errorPolicyRepoStub{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		account := &Account{
+			ID:       50,
+			Type:     AccountTypeOAuth,
+			Platform: PlatformOpenAI,
+			Credentials: map[string]any{
+				"error_handling_rules": []any{
+					map[string]any{
+						"enabled":         true,
+						"name":            "capacity cooldown",
+						"priority":        float64(1),
+						"action":          "temp_unschedulable",
+						"status_codes":    []any{float64(529)},
+						"keywords":        []any{"overloaded"},
+						"durationMinutes": float64(15),
+					},
+				},
+			},
+		}
+
+		shouldDisable := svc.HandleUpstreamError(context.Background(), account, 529, http.Header{}, []byte(`{"error":{"message":"server overloaded"}}`))
+
+		require.True(t, shouldDisable)
+		require.Equal(t, 1, repo.tempCalls)
+		require.Equal(t, int64(50), repo.lastTempID)
+		require.True(t, repo.lastTempUntil.After(time.Now().Add(14*time.Minute)))
+		require.Contains(t, repo.lastTempReason, "capacity cooldown")
+		require.Equal(t, 0, repo.rateCalls)
+		require.Equal(t, 0, repo.setErrCalls)
+	})
+
+	t.Run("rate_limited_duration_writes_rate_limit", func(t *testing.T) {
+		repo := &errorPolicyRepoStub{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		account := &Account{
+			ID:       51,
+			Type:     AccountTypeAPIKey,
+			Platform: PlatformOpenAI,
+			Credentials: map[string]any{
+				"error_handling_rules": []any{
+					map[string]any{
+						"enabled":        true,
+						"name":           "quota window",
+						"priority":       float64(1),
+						"action":         "rate_limited",
+						"status_codes":   []any{float64(429)},
+						"error_types":    []any{"rate_limit_error"},
+						"reset_strategy": "duration",
+						"duration_hours": float64(2),
+					},
+				},
+			},
+		}
+
+		shouldDisable := svc.HandleUpstreamError(context.Background(), account, 429, http.Header{}, []byte(`{"error":{"type":"rate_limit_error","message":"slow down"}}`))
+
+		require.False(t, shouldDisable)
+		require.Equal(t, 1, repo.rateCalls)
+		require.Equal(t, int64(51), repo.lastRateID)
+		require.True(t, repo.lastRateUntil.After(time.Now().Add(119*time.Minute)))
+		require.Equal(t, 0, repo.tempCalls)
+		require.Equal(t, 0, repo.setErrCalls)
+	})
+
+	t.Run("error_disabled_writes_error", func(t *testing.T) {
+		repo := &errorPolicyRepoStub{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		account := &Account{
+			ID:       52,
+			Type:     AccountTypeAPIKey,
+			Platform: PlatformOpenAI,
+			Credentials: map[string]any{
+				"error_handling_rules": []any{
+					map[string]any{
+						"enabled":      true,
+						"name":         "invalid key",
+						"priority":     float64(1),
+						"action":       "error_disabled",
+						"status_codes": []any{float64(401)},
+						"error_codes":  []any{"invalid_api_key"},
+					},
+				},
+			},
+		}
+
+		shouldDisable := svc.HandleUpstreamError(context.Background(), account, 401, http.Header{}, []byte(`{"error":{"code":"invalid_api_key","message":"bad key"}}`))
+
+		require.True(t, shouldDisable)
+		require.Equal(t, 1, repo.setErrCalls)
+		require.Contains(t, repo.lastErrorMsg, "invalid key")
+		require.Equal(t, 0, repo.tempCalls)
+		require.Equal(t, 0, repo.rateCalls)
+	})
+
+	t.Run("retry_next_has_no_state_side_effect", func(t *testing.T) {
+		repo := &errorPolicyRepoStub{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		account := &Account{
+			ID:       53,
+			Type:     AccountTypeAPIKey,
+			Platform: PlatformOpenAI,
+			Credentials: map[string]any{
+				"error_handling_rules": []any{
+					map[string]any{
+						"enabled":      true,
+						"name":         "try another account",
+						"priority":     float64(1),
+						"action":       "retry_next",
+						"status_codes": []any{float64(500)},
+						"keywords":     []any{"internal"},
+					},
+				},
+				"custom_error_codes_enabled": true,
+				"custom_error_codes":         []any{float64(500)},
+			},
+		}
+
+		shouldDisable := svc.HandleUpstreamError(context.Background(), account, 500, http.Header{}, []byte(`internal server error`))
+
+		require.False(t, shouldDisable)
+		require.Equal(t, 0, repo.tempCalls)
+		require.Equal(t, 0, repo.rateCalls)
+		require.Equal(t, 0, repo.setErrCalls)
+	})
+}
+
+func TestResolveUnifiedRateLimitResetAt(t *testing.T) {
+	now := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+
+	t.Run("daily_same_day_when_future_hour", func(t *testing.T) {
+		resetAt, ok := resolveUnifiedRateLimitResetAt(AccountErrorHandlingRule{
+			Action:         AccountErrorHandlingActionRateLimited,
+			ResetStrategy:  AccountErrorHandlingResetDaily,
+			DailyResetHour: 12,
+		}, now)
+
+		require.True(t, ok)
+		require.Equal(t, time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC), resetAt)
+	})
+
+	t.Run("daily_next_day_when_hour_passed", func(t *testing.T) {
+		resetAt, ok := resolveUnifiedRateLimitResetAt(AccountErrorHandlingRule{
+			Action:         AccountErrorHandlingActionRateLimited,
+			ResetStrategy:  AccountErrorHandlingResetDaily,
+			DailyResetHour: 9,
+		}, now)
+
+		require.True(t, ok)
+		require.Equal(t, time.Date(2026, 6, 9, 9, 0, 0, 0, time.UTC), resetAt)
+	})
+
+	t.Run("weekly_same_week_when_future_slot", func(t *testing.T) {
+		resetAt, ok := resolveUnifiedRateLimitResetAt(AccountErrorHandlingRule{
+			Action:          AccountErrorHandlingActionRateLimited,
+			ResetStrategy:   AccountErrorHandlingResetWeekly,
+			WeeklyResetDay:  int(time.Monday),
+			WeeklyResetHour: 12,
+		}, now)
+
+		require.True(t, ok)
+		require.Equal(t, time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC), resetAt)
+	})
+
+	t.Run("weekly_next_week_when_slot_passed", func(t *testing.T) {
+		resetAt, ok := resolveUnifiedRateLimitResetAt(AccountErrorHandlingRule{
+			Action:          AccountErrorHandlingActionRateLimited,
+			ResetStrategy:   AccountErrorHandlingResetWeekly,
+			WeeklyResetDay:  int(time.Monday),
+			WeeklyResetHour: 9,
+		}, now)
+
+		require.True(t, ok)
+		require.Equal(t, time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC), resetAt)
+	})
+}
+
 // ---------------------------------------------------------------------------
 // TestApplyErrorPolicy — 4 table-driven cases for the wrapper method
 // ---------------------------------------------------------------------------
@@ -395,13 +738,29 @@ func TestApplyErrorPolicy(t *testing.T) {
 
 type errorPolicyRepoStub struct {
 	mockAccountRepoForGemini
-	tempCalls    int
-	setErrCalls  int
-	lastErrorMsg string
+	tempCalls      int
+	lastTempID     int64
+	lastTempUntil  time.Time
+	lastTempReason string
+	rateCalls      int
+	lastRateID     int64
+	lastRateUntil  time.Time
+	setErrCalls    int
+	lastErrorMsg   string
 }
 
 func (r *errorPolicyRepoStub) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
 	r.tempCalls++
+	r.lastTempID = id
+	r.lastTempUntil = until
+	r.lastTempReason = reason
+	return nil
+}
+
+func (r *errorPolicyRepoStub) SetRateLimited(ctx context.Context, id int64, resetAt time.Time) error {
+	r.rateCalls++
+	r.lastRateID = id
+	r.lastRateUntil = resetAt
 	return nil
 }
 

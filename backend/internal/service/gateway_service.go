@@ -5453,6 +5453,9 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, clientBeta); changed {
 		body = sanitized
 	}
+	if sanitized, changed := sanitizeAnthropicAPIKeyPassthroughBody(body); changed {
+		body = sanitized
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -6331,13 +6334,17 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	//   4) NewRequest（body 至此最终敲定）
 	//   5) 透传白名单 / fingerprint / mimic header / 写入 finalBeta
 	policyFilterSet := s.getBetaPolicyFilterSet(ctx, c, account, modelID)
-	effectiveDropSet := mergeDropSets(policyFilterSet)
+	effectiveDropSet := effectiveAnthropicBetaDropSet(account, policyFilterSet)
+	requiredAPIKeyBetas := requiredAnthropicAPIKeyBetaTokens(account)
 	finalBetaHeader, finalBetaShouldSet := s.computeFinalAnthropicBeta(
-		tokenType, mimicClaudeCode, modelID, clientHeaders, body, effectiveDropSet,
+		tokenType, mimicClaudeCode, modelID, clientHeaders, body, effectiveDropSet, requiredAPIKeyBetas,
 	)
 
 	// 能力维度 body sanitize：与最终 anthropic-beta header 对称
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, finalBetaHeader); changed {
+		body = sanitized
+	}
+	if sanitized, changed := sanitizeAnthropicAPIKeyPassthroughBody(body); changed {
 		body = sanitized
 	}
 
@@ -6566,6 +6573,14 @@ func defaultAPIKeyBetaHeader(body []byte) string {
 	return claude.APIKeyBetaHeader
 }
 
+// requiredAnthropicAPIKeyBetaTokens 返回账号级必须补齐的 API Key beta token。
+func requiredAnthropicAPIKeyBetaTokens(account *Account) []string {
+	if account == nil || !account.IsAnthropicContext1MEnabled() {
+		return nil
+	}
+	return []string{claude.BetaContext1M}
+}
+
 func applyClaudeOAuthHeaderDefaults(req *http.Request) {
 	if req == nil {
 		return
@@ -6652,6 +6667,7 @@ func (s *GatewayService) computeFinalAnthropicBeta(
 	clientHeaders http.Header,
 	body []byte,
 	effectiveDropSet map[string]struct{},
+	requiredAPIKeyBetas []string,
 ) (string, bool) {
 	clientBeta := ""
 	if clientHeaders != nil {
@@ -6673,6 +6689,15 @@ func (s *GatewayService) computeFinalAnthropicBeta(
 	}
 
 	// API-key accounts
+	if len(requiredAPIKeyBetas) > 0 {
+		incomingBeta := clientBeta
+		if incomingBeta == "" && s.cfg != nil && s.cfg.Gateway.InjectBetaForAPIKey {
+			if requestNeedsBetaFeatures(body) {
+				incomingBeta = defaultAPIKeyBetaHeader(body)
+			}
+		}
+		return mergeAnthropicBetaDropping(requiredAPIKeyBetas, incomingBeta, effectiveDropSet), true
+	}
 	if clientBeta != "" {
 		return stripBetaTokensWithSet(clientBeta, effectiveDropSet), true
 	}
@@ -6703,6 +6728,7 @@ func (s *GatewayService) computeFinalCountTokensAnthropicBeta(
 	clientHeaders http.Header,
 	body []byte,
 	effectiveDropSet map[string]struct{},
+	requiredAPIKeyBetas []string,
 ) (string, bool) {
 	clientBeta := ""
 	if clientHeaders != nil {
@@ -6729,6 +6755,15 @@ func (s *GatewayService) computeFinalCountTokensAnthropicBeta(
 	}
 
 	// API-key accounts
+	if len(requiredAPIKeyBetas) > 0 {
+		incomingBeta := clientBeta
+		if incomingBeta == "" && s.cfg != nil && s.cfg.Gateway.InjectBetaForAPIKey {
+			if requestNeedsBetaFeatures(body) {
+				incomingBeta = defaultAPIKeyBetaHeader(body)
+			}
+		}
+		return mergeAnthropicBetaDropping(requiredAPIKeyBetas, incomingBeta, effectiveDropSet), true
+	}
 	if clientBeta != "" {
 		return stripBetaTokensWithSet(clientBeta, effectiveDropSet), true
 	}
@@ -6838,6 +6873,32 @@ func mergeDropSets(policySet map[string]struct{}, extra ...string) map[string]st
 		m[t] = struct{}{}
 	}
 	return m
+}
+
+// effectiveAnthropicBetaDropSet 返回账号最终使用的 beta 过滤集合。
+func effectiveAnthropicBetaDropSet(account *Account, policySet map[string]struct{}) map[string]struct{} {
+	dropSet := mergeDropSets(policySet)
+	if account == nil || !account.IsAnthropicContext1MEnabled() {
+		return dropSet
+	}
+	return removeBetaDropToken(dropSet, claude.BetaContext1M)
+}
+
+func removeBetaDropToken(dropSet map[string]struct{}, token string) map[string]struct{} {
+	if len(dropSet) == 0 || strings.TrimSpace(token) == "" {
+		return dropSet
+	}
+	if _, ok := dropSet[token]; !ok {
+		return dropSet
+	}
+	kept := make(map[string]struct{}, len(dropSet)-1)
+	for item := range dropSet {
+		if item == token {
+			continue
+		}
+		kept[item] = struct{}{}
+	}
+	return kept
 }
 
 // betaPolicyFilterSetKey is the gin.Context key for caching the policy filter set within a request.
@@ -9707,6 +9768,9 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, clientBeta); changed {
 		body = sanitized
 	}
+	if sanitized, changed := sanitizeAnthropicAPIKeyPassthroughBody(body); changed {
+		body = sanitized
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -9801,13 +9865,17 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 
 	// === 计算最终 anthropic-beta header（先于 body sanitize 与 CCH 签名）===
 	// 顺序约束同 buildUpstreamRequest。
-	ctEffectiveDropSet := mergeDropSets(s.getBetaPolicyFilterSet(ctx, c, account, modelID))
+	ctEffectiveDropSet := effectiveAnthropicBetaDropSet(account, s.getBetaPolicyFilterSet(ctx, c, account, modelID))
+	ctRequiredAPIKeyBetas := requiredAnthropicAPIKeyBetaTokens(account)
 	finalBetaHeader, finalBetaShouldSet := s.computeFinalCountTokensAnthropicBeta(
-		tokenType, mimicClaudeCode, modelID, clientHeaders, body, ctEffectiveDropSet,
+		tokenType, mimicClaudeCode, modelID, clientHeaders, body, ctEffectiveDropSet, ctRequiredAPIKeyBetas,
 	)
 
 	// 能力维度 body sanitize：与最终 anthropic-beta header 对称
 	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, finalBetaHeader); changed {
+		body = sanitized
+	}
+	if sanitized, changed := sanitizeAnthropicAPIKeyPassthroughBody(body); changed {
 		body = sanitized
 	}
 

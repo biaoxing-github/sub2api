@@ -1107,14 +1107,50 @@ func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, stat
 
 // handleAnthropicFailoverExhausted maps upstream failover errors to Anthropic format.
 func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	if failoverErr == nil {
+		h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
+		return
+	}
+	if retryAfter := anthropicRetryAfterFromHeaders(failoverErr.ResponseHeaders); retryAfter != "" {
+		c.Header("Retry-After", retryAfter)
+	}
 	if isOpenAILocalAccountConcurrencyFailover(failoverErr) {
 		status, errType, errMsg := openAILocalAccountConcurrencyClientError(failoverErr)
 		service.SetOpsUpstreamError(c, failoverErr.StatusCode, errMsg, "")
 		h.anthropicStreamingAwareError(c, status, errType, errMsg, streamStarted)
 		return
 	}
-	status, errType, errMsg := h.mapUpstreamError(failoverErr.StatusCode)
+	upstreamMsg := strings.TrimSpace(service.ExtractUpstreamErrorMessage(failoverErr.ResponseBody))
+	service.SetOpsUpstreamError(c, failoverErr.StatusCode, upstreamMsg, "")
+	status, errType, errMsg := anthropicFailoverErrorDetails(failoverErr.StatusCode)
 	h.anthropicStreamingAwareError(c, status, errType, errMsg, streamStarted)
+}
+
+func anthropicRetryAfterFromHeaders(headers http.Header) string {
+	if headers == nil {
+		return ""
+	}
+	return strings.TrimSpace(headers.Get("Retry-After"))
+}
+
+func anthropicFailoverErrorDetails(statusCode int) (int, string, string) {
+	switch statusCode {
+	case 401:
+		return http.StatusBadGateway, "upstream_error", "Upstream authentication failed, please contact administrator"
+	case 403:
+		return http.StatusBadGateway, "upstream_error", "Upstream access forbidden, please contact administrator"
+	case 429:
+		return http.StatusTooManyRequests, "rate_limit_error", "Upstream rate limit exceeded, please retry later"
+	case 413:
+		return http.StatusRequestEntityTooLarge, "invalid_request_error", "Request body is too large for upstream Anthropic API; limit is 32MB"
+	case 529:
+		// Claude Code 会把重复 529 识别为 overloaded 并继续自动重试，这里保留同样的下游语义。
+		return 529, "overloaded_error", "Upstream service overloaded, please retry later"
+	case 500, 502, 503, 504:
+		return http.StatusBadGateway, "upstream_error", "Upstream service temporarily unavailable"
+	default:
+		return http.StatusBadGateway, "upstream_error", "Upstream request failed"
+	}
 }
 
 // handleOpenAIContextContinuityError 返回不可安全重放的连续会话错误。

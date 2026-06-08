@@ -1559,6 +1559,13 @@
 
       </div>
 
+      <AccountErrorHandlingCard
+        v-model:rules="accountErrorHandlingRules"
+        :account-type="form.type"
+        :base-url="apiKeyBaseUrl"
+        :provider-code="form.platform"
+      />
+
       <!-- Bedrock credentials (only for Anthropic Bedrock type) -->
       <div v-if="form.platform === 'anthropic' && accountCategory === 'bedrock'" class="space-y-4">
         <!-- Auth Mode Radio -->
@@ -2730,6 +2737,35 @@
         </div>
       </div>
 
+      <!-- Anthropic API Key 1M 上下文开关 -->
+      <div
+        v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.context1M') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.context1MDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            :class="[
+              'inline-flex min-w-24 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+              anthropicContext1MEnabled
+                ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-500 dark:bg-emerald-900/30 dark:text-emerald-300'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-300 dark:hover:bg-dark-500'
+            ]"
+            :aria-pressed="anthropicContext1MEnabled"
+            @click="anthropicContext1MEnabled = !anthropicContext1MEnabled"
+          >
+            <Icon :name="anthropicContext1MEnabled ? 'checkCircle' : 'xCircle'" size="sm" :stroke-width="2" />
+            {{ anthropicContext1MEnabled ? t('admin.accounts.anthropic.context1MEnabled') : t('admin.accounts.anthropic.context1MDisabled') }}
+          </button>
+        </div>
+      </div>
+
       <!-- Anthropic API Key: Web Search Emulation (hidden when global disabled) -->
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey' && webSearchGlobalEnabled"
@@ -3353,9 +3389,16 @@ import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
+import { applyLegacyErrorHandlingRules } from '@/components/account/errorHandlingRules'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
+import AccountErrorHandlingCard from '@/components/account/AccountErrorHandlingCard.vue'
+import {
+  validateAccountErrorHandlingRules,
+  writeAccountErrorHandlingToCredentials
+} from '@/components/account/accountErrorHandlingPayload'
+import type { AccountErrorHandlingRuleForm } from '@/components/account/accountErrorHandlingTypes'
 import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
@@ -3569,6 +3612,7 @@ const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OF
 const codexCLIOnlyEnabled = ref(false)
 const openAICodexCLISimulationEnabled = ref(false)
 const anthropicPassthroughEnabled = ref(false)
+const anthropicContext1MEnabled = ref(false)
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
 const {
@@ -3629,6 +3673,7 @@ const vertexProjectId = ref('')
 const vertexClientEmail = ref('')
 const vertexLocation = ref('global')
 const vertexServiceAccountDragActive = ref(false)
+const accountErrorHandlingRules = ref<AccountErrorHandlingRuleForm[]>([])
 const tempUnschedEnabled = ref(false)
 const tempUnschedRules = ref<TempUnschedRuleForm[]>([])
 const getModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-model-mapping')
@@ -3965,6 +4010,7 @@ watch(
     }
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
+      anthropicContext1MEnabled.value = false
       webSearchEmulationMode.value = 'default'
     }
     // Reset OAuth states
@@ -3985,6 +4031,7 @@ watch(
     }
     if (platform !== 'anthropic' || category !== 'apikey') {
       anthropicPassthroughEnabled.value = false
+      anthropicContext1MEnabled.value = false
       webSearchEmulationMode.value = 'default'
     }
   }
@@ -4185,10 +4232,29 @@ const buildTempUnschedRules = (rules: TempUnschedRuleForm[]) => {
   return out
 }
 
+const applyUnifiedErrorHandlingConfig = (credentials: Record<string, unknown>) => {
+  const validation = validateAccountErrorHandlingRules(accountErrorHandlingRules.value)
+  if (!validation.valid) {
+    appStore.showError(validation.message || '错误处理策略规则无效')
+    return false
+  }
+  writeAccountErrorHandlingToCredentials(credentials, accountErrorHandlingRules.value)
+  return true
+}
+
 const applyTempUnschedConfig = (credentials: Record<string, unknown>) => {
+  if (!applyUnifiedErrorHandlingConfig(credentials)) {
+    return false
+  }
   if (!tempUnschedEnabled.value) {
     delete credentials.temp_unschedulable_enabled
     delete credentials.temp_unschedulable_rules
+    applyLegacyErrorHandlingRules(credentials, {
+      customErrorCodesEnabled: customErrorCodesEnabled.value,
+      customErrorCodes: selectedErrorCodes.value,
+      tempUnschedEnabled: false,
+      tempUnschedRules: []
+    })
     return true
   }
 
@@ -4200,6 +4266,12 @@ const applyTempUnschedConfig = (credentials: Record<string, unknown>) => {
 
   credentials.temp_unschedulable_enabled = true
   credentials.temp_unschedulable_rules = rules
+  applyLegacyErrorHandlingRules(credentials, {
+    customErrorCodesEnabled: customErrorCodesEnabled.value,
+    customErrorCodes: selectedErrorCodes.value,
+    tempUnschedEnabled: true,
+    tempUnschedRules: rules
+  })
   return true
 }
 
@@ -4355,6 +4427,7 @@ const resetForm = () => {
   customErrorCodesEnabled.value = false
   selectedErrorCodes.value = []
   customErrorCodeInput.value = null
+  accountErrorHandlingRules.value = []
   interceptWarmupRequests.value = false
   autoPauseOnExpired.value = true
   openaiPassthroughEnabled.value = false
@@ -4364,6 +4437,7 @@ const resetForm = () => {
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyEnabled.value = false
   anthropicPassthroughEnabled.value = false
+  anthropicContext1MEnabled.value = false
   webSearchEmulationMode.value = 'default'
   // Reset quota control state
   windowCostEnabled.value = false
@@ -4476,6 +4550,11 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
     extra.anthropic_passthrough = true
   } else {
     delete extra.anthropic_passthrough
+  }
+  if (anthropicContext1MEnabled.value) {
+    extra.anthropic_context_1m_enabled = true
+  } else {
+    delete extra.anthropic_context_1m_enabled
   }
   if (webSearchEmulationMode.value === 'default') {
     delete extra.web_search_emulation
@@ -5168,6 +5247,9 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             credentials.compact_model_mapping = compactModelMapping
           }
         }
+        if (!applyTempUnschedConfig(credentials)) {
+          continue
+        }
 
         // Generate account name; fallback to email if name is empty (ent schema requires NotEmpty)
         const baseName = form.name || tokenInfo.email || 'OpenAI OAuth Account'
@@ -5288,6 +5370,9 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
         })
+        if (!applyTempUnschedConfig(credentials)) {
+          continue
+        }
         await adminAPI.accounts.create(createPayload)
         successCount++
       } catch (error: any) {
@@ -5521,11 +5606,8 @@ const handleCookieAuth = async (sessionKey: string) => {
       return
     }
 
-    const tempUnschedPayload = tempUnschedEnabled.value
-      ? buildTempUnschedRules(tempUnschedRules.value)
-      : []
-    if (tempUnschedEnabled.value && tempUnschedPayload.length === 0) {
-      appStore.showError(t('admin.accounts.tempUnschedulable.rulesInvalid'))
+    const configProbe: Record<string, unknown> = {}
+    if (!applyTempUnschedConfig(configProbe)) {
       return
     }
 
@@ -5608,9 +5690,8 @@ const handleCookieAuth = async (sessionKey: string) => {
 
         const credentials: Record<string, unknown> = { ...tokenInfo }
         applyInterceptWarmup(credentials, interceptWarmupRequests.value, 'create')
-        if (tempUnschedEnabled.value) {
-          credentials.temp_unschedulable_enabled = true
-          credentials.temp_unschedulable_rules = tempUnschedPayload
+        if (!applyTempUnschedConfig(credentials)) {
+          return
         }
 
         await adminAPI.accounts.create({
