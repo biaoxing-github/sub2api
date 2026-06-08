@@ -55,6 +55,8 @@ const (
 	openAIWSReconnectRetryLimit = 5
 	// 上游错误体只需要提取错误 JSON/日志摘要，默认 512KiB 避免错误风暴叠加大请求体。
 	openAIUpstreamErrorBodyReadLimit int64 = 512 << 10
+	// response.failed 中明确属于账号额度/计费类的失败短期摘除当前账号，避免后续粘性路由继续复用。
+	openAIStreamAccountTempUnschedDuration = 10 * time.Minute
 	// OpenAI WS Mode 重连退避默认值（可由配置覆盖）。
 	openAIWSRetryBackoffInitialDefault = 120 * time.Millisecond
 	openAIWSRetryBackoffMaxDefault     = 2 * time.Second
@@ -2766,6 +2768,30 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	return account, nil
 }
 
+// isOpenAIStickyAccountInRequestedGroup 校验粘性命中的账号仍属于当前请求分组。
+// simple mode 沿用全局账号池语义；账号缺少 group 元数据时回到调度列表查询确认。
+func (s *OpenAIGatewayService) isOpenAIStickyAccountInRequestedGroup(ctx context.Context, account *Account, groupID *int64) bool {
+	if s != nil && s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		return account != nil
+	}
+	if isAccountInRequestedGroup(account, groupID) {
+		return true
+	}
+	if account == nil || groupID == nil || hasAccountGroupMetadata(account) {
+		return false
+	}
+	accounts, err := s.listSchedulableAccounts(ctx, groupID)
+	if err != nil {
+		return false
+	}
+	for i := range accounts {
+		if accounts[i].ID == account.ID {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {
 	if account == nil || s.schedulerSnapshot == nil {
 		return account, nil
@@ -3547,24 +3573,7 @@ httpRetryLoop:
 					}
 					return nil, newOpenAIRequestPhaseFailoverError(err)
 				}
-				// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
-				safeErr := sanitizeUpstreamErrorMessage(err.Error())
-				setOpsUpstreamError(c, 0, safeErr, "")
-				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-					Platform:           account.Platform,
-					AccountID:          account.ID,
-					AccountName:        account.Name,
-					UpstreamStatusCode: 0,
-					Kind:               "request_error",
-					Message:            safeErr,
-				})
-				c.JSON(http.StatusBadGateway, gin.H{
-					"error": gin.H{
-						"type":    "upstream_error",
-						"message": "Upstream request failed",
-					},
-				})
-				return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+				return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 			}
 
 			// Handle error response
@@ -3874,24 +3883,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				}
 				return nil, newOpenAIRequestPhaseFailoverError(err)
 			}
-			safeErr := sanitizeUpstreamErrorMessage(err.Error())
-			setOpsUpstreamError(c, 0, safeErr, "")
-			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-				Platform:           account.Platform,
-				AccountID:          account.ID,
-				AccountName:        account.Name,
-				UpstreamStatusCode: 0,
-				Passthrough:        true,
-				Kind:               "request_error",
-				Message:            safeErr,
-			})
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error": gin.H{
-					"type":    "upstream_error",
-					"message": "Upstream request failed",
-				},
-			})
-			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
 		}
 
 		if resp.StatusCode >= 400 {
@@ -4451,15 +4443,15 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 		}
 		detail = truncateString(string(payload), maxBytes)
 	}
+	actionLabel := OpenAIStreamActionRetryNextAccount
+	extraMetadata := map[string]string(nil)
+	if len(payload) > 0 {
+		decision := openAIClassifyStreamInterceptDecision(payload, message)
+		actionLabel = decision.ActionLabel
+		extraMetadata = decision.Metadata()
+	}
 	if c != nil {
 		setOpsUpstreamError(c, http.StatusBadGateway, message, detail)
-		actionLabel := OpenAIStreamActionRetryNextAccount
-		extraMetadata := map[string]string(nil)
-		if len(payload) > 0 {
-			decision := openAIClassifyStreamInterceptDecision(payload, message)
-			actionLabel = decision.ActionLabel
-			extraMetadata = decision.Metadata()
-		}
 		actionMetadata := s.openAIStreamActionMetadataForAccount(actionLabel, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway)
 		actionMetadata = mergeOpenAIStreamActionMetadata(actionMetadata, extraMetadata)
 		event := OpsUpstreamErrorEvent{
@@ -4480,25 +4472,74 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 		}
 		appendOpsUpstreamError(c, event)
 	}
+	s.applyOpenAIStreamFailoverAccountState(contextFromGin(c), account, actionLabel, message, payload)
 	body, _ := json.Marshal(gin.H{
 		"error": gin.H{
 			"type":    "upstream_error",
 			"message": message,
 		},
 	})
-	actionLabel := OpenAIStreamActionRetryNextAccount
-	extraMetadata := map[string]string(nil)
-	if len(payload) > 0 {
-		decision := openAIClassifyStreamInterceptDecision(payload, message)
-		actionLabel = decision.ActionLabel
-		extraMetadata = decision.Metadata()
-	}
 	return &UpstreamFailoverError{
 		StatusCode:     http.StatusBadGateway,
 		ResponseBody:   body,
 		ActionLabel:    actionLabel,
 		ActionMetadata: mergeOpenAIStreamActionMetadata(s.openAIStreamActionMetadataForAccount(actionLabel, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway), extraMetadata),
 	}
+}
+
+func contextFromGin(c *gin.Context) context.Context {
+	if c != nil && c.Request != nil && c.Request.Context() != nil {
+		return c.Request.Context()
+	}
+	return context.Background()
+}
+
+func (s *OpenAIGatewayService) applyOpenAIStreamFailoverAccountState(ctx context.Context, account *Account, actionLabel OpenAIStreamActionLabel, message string, payload []byte) {
+	if s == nil || account == nil || actionLabel != OpenAIStreamActionAvoidAccountTTL {
+		return
+	}
+	until := time.Now().Add(openAIStreamAccountTempUnschedDuration)
+	msg := sanitizeUpstreamErrorMessage(strings.TrimSpace(firstNonEmptyString(message, extractOpenAISSEErrorMessage(payload))))
+	if msg == "" {
+		msg = "OpenAI stream response failed"
+	}
+	state := &TempUnschedState{
+		UntilUnix:       until.Unix(),
+		TriggeredAtUnix: time.Now().Unix(),
+		StatusCode:      http.StatusBadGateway,
+		MatchedKeyword:  "response.failed",
+		RuleIndex:       -1,
+		ErrorMessage:    truncateForLog([]byte(msg), tempUnschedMessageMaxBytes),
+	}
+	reason := "OpenAI stream response.failed: " + state.ErrorMessage
+	if raw, err := json.Marshal(state); err == nil {
+		reason = string(raw)
+	}
+	s.BlockAccountScheduling(account, until, "stream_response_failed")
+	if s.accountRepo == nil {
+		logger.L().Warn("openai.account_temp_unscheduled_stream_memory_only",
+			zap.Int64("account_id", account.ID),
+			zap.String("account_name", account.Name),
+			zap.Time("until", until),
+			zap.String("reason", reason),
+		)
+		return
+	}
+	stateCtx, cancel := openAIAccountStateContext(ctx)
+	defer cancel()
+	if err := s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, until, reason); err != nil {
+		logger.L().Warn("openai.account_temp_unscheduled_stream_failed",
+			zap.Int64("account_id", account.ID),
+			zap.Error(err),
+		)
+		return
+	}
+	logger.L().Warn("openai.account_temp_unscheduled_stream",
+		zap.Int64("account_id", account.ID),
+		zap.String("account_name", account.Name),
+		zap.Time("until", until),
+		zap.String("reason", reason),
+	)
 }
 
 func mergeOpenAIStreamActionMetadata(base map[string]string, extra map[string]string) map[string]string {
@@ -4746,6 +4787,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 							return resultWithUsage(), err
 						}
 					}
+					s.applyOpenAIStreamFailoverAccountState(ctx, account, interceptDecision.ActionLabel, failedMessage, dataBytes)
 					return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 				}
 				if interceptDecision.FailoverBeforeOutput {
@@ -4799,6 +4841,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if openAIStreamClientOutputStarted(c, clientOutputStarted) {
 				decision := openAIClassifyStreamInterceptDecision(nil, failedMessage)
 				s.appendOpenAIStreamAuditEvent(c, account, upstreamRequestID, fmt.Sprintf("upstream response failed: %s", failedMessage), "", decision.ActionLabel, false, decision.Metadata())
+				s.applyOpenAIStreamFailoverAccountState(ctx, account, decision.ActionLabel, failedMessage, nil)
 			}
 			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 		}
@@ -4839,6 +4882,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if openAIStreamClientOutputStarted(c, clientOutputStarted) {
 			decision := openAIClassifyStreamInterceptDecision(nil, failedMessage)
 			s.appendOpenAIStreamAuditEvent(c, account, upstreamRequestID, fmt.Sprintf("upstream response failed: %s", failedMessage), "", decision.ActionLabel, false, decision.Metadata())
+			s.applyOpenAIStreamFailoverAccountState(ctx, account, decision.ActionLabel, failedMessage, nil)
 		}
 		return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 	}
@@ -5746,6 +5790,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			if openAIStreamClientOutputStarted(c, clientOutputStarted) {
 				decision := openAIClassifyStreamInterceptDecision(nil, failedMessage)
 				s.appendOpenAIStreamAuditEvent(c, account, upstreamRequestID, fmt.Sprintf("upstream response failed: %s", failedMessage), "", decision.ActionLabel, false, decision.Metadata())
+				s.applyOpenAIStreamFailoverAccountState(ctx, account, decision.ActionLabel, failedMessage, nil)
 			}
 			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage), true
 		}
@@ -5813,6 +5858,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 						}
 						lastDownstreamWriteAt = time.Now()
 					}
+					s.applyOpenAIStreamFailoverAccountState(ctx, account, interceptDecision.ActionLabel, failedMessage, dataBytes)
 					streamFailoverErr = fmt.Errorf("upstream response failed: %s", failedMessage)
 					return
 				}

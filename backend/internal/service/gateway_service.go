@@ -2496,19 +2496,7 @@ func (s *GatewayService) isAccountSchedulableForModelSelection(ctx context.Conte
 // isAccountInGroup checks if the account belongs to the specified group.
 // When groupID is nil, returns true only for ungrouped accounts (no group assignments).
 func (s *GatewayService) isAccountInGroup(account *Account, groupID *int64) bool {
-	if account == nil {
-		return false
-	}
-	if groupID == nil {
-		// 无分组的 API Key 只能使用未分组的账号
-		return len(account.AccountGroups) == 0
-	}
-	for _, ag := range account.AccountGroups {
-		if ag.GroupID == *groupID {
-			return true
-		}
-	}
-	return false
+	return isAccountInRequestedGroup(account, groupID)
 }
 
 func (s *GatewayService) tryAcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {

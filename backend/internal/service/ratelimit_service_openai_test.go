@@ -451,6 +451,52 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyForbiddenInvalidKeyDis
 	require.Equal(t, []int64{1}, counter.counts)
 }
 
+func TestRateLimitService_HandleUpstreamError_OpenAILineAndLocalErrorsDoNotMutateAccountState(t *testing.T) {
+	cases := []struct {
+		name       string
+		statusCode int
+		body       []byte
+	}{
+		{
+			name:       "cloudflare 403",
+			statusCode: http.StatusForbidden,
+			body:       []byte(`<html><title>Just a moment...</title><center>cloudflare</center>`),
+		},
+		{
+			name:       "upstream 5xx",
+			statusCode: http.StatusBadGateway,
+			body:       []byte(`{"error":{"message":"upstream failed"}}`),
+		},
+		{
+			name:       "previous response not found",
+			statusCode: http.StatusBadRequest,
+			body:       []byte(`{"error":{"code":"previous_response_not_found","message":"previous response not found"}}`),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &rateLimitAccountRepoStub{}
+			counter := &openAI403CounterCacheStub{counts: []int64{1}}
+			service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+			service.SetOpenAI403CounterCache(counter)
+			account := &Account{
+				ID:       207,
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+			}
+
+			shouldDisable := service.HandleUpstreamError(context.Background(), account, tc.statusCode, http.Header{}, tc.body)
+
+			require.False(t, shouldDisable)
+			require.Equal(t, 0, repo.setErrorCalls)
+			require.Equal(t, 0, repo.tempCalls)
+			require.Equal(t, 0, repo.rateLimitedCalls)
+			require.Equal(t, []int64{1}, counter.counts)
+		})
+	}
+}
+
 func TestShouldDisableCurrentAPIKeySkipsForbiddenPolicy(t *testing.T) {
 	require.False(t, shouldDisableCurrentAPIKey(
 		http.StatusForbidden,

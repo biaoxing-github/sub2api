@@ -41,6 +41,32 @@ type snapshotUpdateAccountRepo struct {
 	updateExtraCalls chan map[string]any
 }
 
+type streamAccountStateRepoSpy struct {
+	stubOpenAIAccountRepo
+	tempCalls          int
+	setErrorCalls      int
+	lastTempAccountID  int64
+	lastTempUntil      time.Time
+	lastTempReason     string
+	lastErrorAccountID int64
+	lastErrorMessage   string
+}
+
+func (r *streamAccountStateRepoSpy) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
+	r.tempCalls++
+	r.lastTempAccountID = id
+	r.lastTempUntil = until
+	r.lastTempReason = reason
+	return nil
+}
+
+func (r *streamAccountStateRepoSpy) SetError(ctx context.Context, id int64, errorMsg string) error {
+	r.setErrorCalls++
+	r.lastErrorAccountID = id
+	r.lastErrorMessage = errorMsg
+	return nil
+}
+
 func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	if r.updateExtraCalls != nil {
 		copied := make(map[string]any, len(updates))
@@ -149,6 +175,45 @@ func TestOpenAIStreamActionMetadataIncludesPathHealthAuditFields(t *testing.T) {
 	require.Equal(t, "upstream_bucket", metadata["avoidance_scope"])
 	require.Equal(t, OpenAIPathHealthStateOpenCircuit, metadata["path_health_state"])
 	require.Equal(t, retryAfter.Format(time.RFC3339), metadata["retry_after"])
+}
+
+func TestOpenAIGatewayServiceStreamFailoverAvoidAccountWritesTempUnschedulable(t *testing.T) {
+	repo := &streamAccountStateRepoSpy{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 101, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Name: "quota-account"}
+	payload := []byte(`{"type":"response.failed","error":{"code":"insufficient_quota","message":"quota exhausted"}}`)
+	before := time.Now()
+
+	err := svc.newOpenAIStreamFailoverError(nil, account, false, "req_stream_1", payload, "quota exhausted")
+
+	require.NotNil(t, err)
+	require.Equal(t, OpenAIStreamActionAvoidAccountTTL, err.ActionLabel)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Zero(t, repo.setErrorCalls)
+	require.Equal(t, account.ID, repo.lastTempAccountID)
+	require.WithinDuration(t, before.Add(openAIStreamAccountTempUnschedDuration), repo.lastTempUntil, 2*time.Second)
+	require.Equal(t, "response.failed", gjson.Get(repo.lastTempReason, "matched_keyword").String())
+	require.Contains(t, gjson.Get(repo.lastTempReason, "error_message").String(), "quota exhausted")
+	snapshot, ok := svc.SnapshotOpenAIAccountRuntimeBlock(account, time.Now())
+	require.True(t, ok)
+	require.Equal(t, "stream_response_failed", snapshot.Reason)
+	require.NotNil(t, snapshot.Until)
+}
+
+func TestOpenAIGatewayServiceStreamFailoverAvoidBucketDoesNotWriteAccountTemp(t *testing.T) {
+	repo := &streamAccountStateRepoSpy{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{ID: 102, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Name: "bucket-account"}
+	payload := []byte(`{"type":"response.failed","error":{"message":"server overloaded"}}`)
+
+	err := svc.newOpenAIStreamFailoverError(nil, account, false, "req_stream_2", payload, "server overloaded")
+
+	require.NotNil(t, err)
+	require.Equal(t, OpenAIStreamActionAvoidUpstreamBucketTTL, err.ActionLabel)
+	require.Zero(t, repo.tempCalls)
+	require.Zero(t, repo.setErrorCalls)
+	_, ok := svc.SnapshotOpenAIAccountRuntimeBlock(account, time.Now())
+	require.False(t, ok)
 }
 
 func TestOpenAIGatewayServiceRecordOpenAIPathHealthFailureLabelsAccountAndBucket(t *testing.T) {

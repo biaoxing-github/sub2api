@@ -320,6 +320,66 @@ func TestApiKeyAuthWithSubscriptionGoogleSetsGroupContext(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+func TestApiKeyAuthWithSubscriptionGoogleRejectsExclusiveGroupWithoutUserGrant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(99)
+	user := &service.User{
+		ID:          11,
+		Role:        service.RoleUser,
+		Status:      service.StatusActive,
+		Balance:     10,
+		Concurrency: 3,
+	}
+	group := &service.Group{
+		ID:               groupID,
+		Name:             "gemini-exclusive",
+		Status:           service.StatusActive,
+		Platform:         service.PlatformGemini,
+		Hydrated:         true,
+		IsExclusive:      true,
+		SubscriptionType: service.SubscriptionTypeStandard,
+	}
+	apiKey := &service.APIKey{
+		ID:      201,
+		UserID:  user.ID,
+		GroupID: &groupID,
+		Key:     "google-exclusive",
+		Status:  service.StatusActive,
+		User:    user,
+		Group:   group,
+	}
+
+	r := gin.New()
+	apiKeyService := newTestAPIKeyService(fakeAPIKeyRepo{
+		getByKey: func(ctx context.Context, key string) (*service.APIKey, error) {
+			if key != apiKey.Key {
+				return nil, service.ErrAPIKeyNotFound
+			}
+			clone := *apiKey
+			userClone := *user
+			groupClone := *group
+			clone.User = &userClone
+			clone.Group = &groupClone
+			return &clone, nil
+		},
+	})
+	r.Use(APIKeyAuthWithSubscriptionGoogle(apiKeyService, nil, &config.Config{RunMode: config.RunModeSimple}))
+	r.GET("/v1beta/test", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1beta/test", nil)
+	req.Header.Set("x-goog-api-key", apiKey.Key)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	var resp googleErrorResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, http.StatusForbidden, resp.Error.Code)
+	require.Equal(t, "PERMISSION_DENIED", resp.Error.Status)
+	require.Equal(t, "API Key 所属独占分组未授权", resp.Error.Message)
+}
+
 func TestApiKeyAuthWithSubscriptionGoogle_QueryKeyAllowedOnV1Beta(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

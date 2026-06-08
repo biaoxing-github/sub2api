@@ -63,6 +63,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // upstreamBalance
 		tokenRefreshSvc,
 		accountExpirySvc,
+		nil, // proxyExpiry
 		subscriptionExpirySvc,
 		&service.UsageCleanupService{},
 		idempotencyCleanupSvc,

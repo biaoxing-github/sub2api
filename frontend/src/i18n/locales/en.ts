@@ -4371,6 +4371,8 @@ export default {
         status: 'Status',
         accounts: 'Accounts',
         latency: 'Latency',
+        expiry: 'Expiry',
+        fallback: 'Fallback',
         actions: 'Actions'
       },
       testConnection: 'Test Connection',
@@ -4468,7 +4470,21 @@ export default {
       hostRequired: 'Please enter host address',
       portInvalid: 'Port must be between 1-65535',
       deleteConfirm:
-        "Are you sure you want to delete '{name}'? Accounts using this proxy will have their proxy removed."
+        "Are you sure you want to delete '{name}'? Accounts using this proxy will have their proxy removed.",
+      neverExpires: 'Never expires',
+      expired: 'Expired',
+      overdueDays: 'Overdue {days}d',
+      expiringInDays: 'Expires in {days}d',
+      remainingDays: '{days}d left',
+      expiresAt: 'Expires at',
+      expiryWarnDays: 'Warn days',
+      fallbackMode: 'Fallback mode',
+      fallbackNone: 'No fallback',
+      fallbackProxy: 'Backup proxy',
+      fallbackDirect: 'Direct',
+      backupProxy: 'Backup proxy',
+      backupProxyPlaceholder: 'Select backup proxy',
+      backupProxyRequired: 'Please select a backup proxy'
     },
 
     // Redeem Codes
@@ -5559,6 +5575,7 @@ export default {
           accountRateLimitedCount: 'Rate-limited Accounts',
           accountErrorCount: 'Error Accounts (excluding temporarily unschedulable)',
           accountErrorRatio: 'Error Account Ratio (%)',
+          accountTempUnscheduledCount: 'Temporarily Unschedulable Accounts',
           overloadAccountCount: 'Overloaded Accounts'
         },
         metricDescriptions: {
@@ -5576,6 +5593,7 @@ export default {
           accountRateLimitedCount: 'Number of rate-limited accounts within the window.',
           accountErrorCount: 'Number of error accounts within the window (excluding temporarily unschedulable).',
           accountErrorRatio: 'Error account ratio within the window (0-100).',
+          accountTempUnscheduledCount: 'Number of accounts currently in a temporary unschedulable, path-health open-circuit, or proxy failure cooldown window.',
           overloadAccountCount: 'Number of overloaded accounts within the window.'
         },
         hints: {

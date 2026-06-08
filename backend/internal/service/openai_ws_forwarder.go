@@ -4267,6 +4267,10 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 		return nil, nil
 	}
+	if !s.isOpenAIStickyAccountInRequestedGroup(ctx, account, groupID) {
+		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		return nil, nil
+	}
 	// 非 WSv2 场景（如 force_http/全局关闭）不应使用 previous_response_id 粘连，
 	// 以保持“回滚到 HTTP”后的历史行为一致性。
 	if s.getOpenAIWSProtocolResolver().Resolve(account).Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
@@ -4292,6 +4296,10 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 	if s.schedulerSnapshot != nil && s.accountRepo != nil {
 		latest, latestErr := s.accountRepo.GetByID(ctx, account.ID)
 		if latestErr != nil || latest == nil {
+			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+			return nil, nil
+		}
+		if !s.isOpenAIStickyAccountInRequestedGroup(ctx, latest, groupID) {
 			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
 			return nil, nil
 		}

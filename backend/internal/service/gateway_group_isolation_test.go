@@ -72,6 +72,21 @@ func TestIsAccountInGroup(t *testing.T) {
 			&Account{ID: 9, AccountGroups: []AccountGroup{{GroupID: 300}, {GroupID: 400}}},
 			&groupID100, false,
 		},
+		{
+			"with_groupID_account_group_ids_match",
+			&Account{ID: 10, GroupIDs: []int64{100}},
+			&groupID100, true,
+		},
+		{
+			"with_groupID_groups_match",
+			&Account{ID: 11, Groups: []*Group{{ID: 100}}},
+			&groupID100, true,
+		},
+		{
+			"nil_groupID_group_ids_not_ungrouped",
+			&Account{ID: 12, GroupIDs: []int64{100}},
+			nil, false,
+		},
 		// 防御性边界
 		{
 			"nil_account_nil_groupID",

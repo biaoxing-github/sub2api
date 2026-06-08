@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"sort"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
@@ -15,20 +16,16 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 )
 
-type sqlQuerier interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-}
-
 type proxyRepository struct {
 	client *dbent.Client
-	sql    sqlQuerier
+	sql    sqlExecutor
 }
 
-func NewProxyRepository(client *dbent.Client, sqlDB *sql.DB) service.ProxyRepository {
+func NewProxyRepository(client *dbent.Client, sqlDB *sql.DB) *proxyRepository {
 	return newProxyRepositoryWithSQL(client, sqlDB)
 }
 
-func newProxyRepositoryWithSQL(client *dbent.Client, sqlq sqlQuerier) *proxyRepository {
+func newProxyRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *proxyRepository {
 	return &proxyRepository{client: client, sql: sqlq}
 }
 
@@ -38,12 +35,20 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 		SetProtocol(proxyIn.Protocol).
 		SetHost(proxyIn.Host).
 		SetPort(proxyIn.Port).
-		SetStatus(proxyIn.Status)
+		SetStatus(proxyIn.Status).
+		SetFallbackMode(normalizeProxyFallbackMode(proxyIn.FallbackMode)).
+		SetExpiryWarnDays(normalizeProxyExpiryWarnDays(proxyIn.ExpiryWarnDays))
 	if proxyIn.Username != "" {
 		builder.SetUsername(proxyIn.Username)
 	}
 	if proxyIn.Password != "" {
 		builder.SetPassword(proxyIn.Password)
+	}
+	if proxyIn.ExpiresAt != nil {
+		builder.SetExpiresAt(*proxyIn.ExpiresAt)
+	}
+	if proxyIn.BackupProxyID != nil {
+		builder.SetBackupProxyID(*proxyIn.BackupProxyID)
 	}
 
 	created, err := builder.Save(ctx)
@@ -89,7 +94,9 @@ func (r *proxyRepository) Update(ctx context.Context, proxyIn *service.Proxy) er
 		SetProtocol(proxyIn.Protocol).
 		SetHost(proxyIn.Host).
 		SetPort(proxyIn.Port).
-		SetStatus(proxyIn.Status)
+		SetStatus(proxyIn.Status).
+		SetFallbackMode(normalizeProxyFallbackMode(proxyIn.FallbackMode)).
+		SetExpiryWarnDays(normalizeProxyExpiryWarnDays(proxyIn.ExpiryWarnDays))
 	if proxyIn.Username != "" {
 		builder.SetUsername(proxyIn.Username)
 	} else {
@@ -99,6 +106,16 @@ func (r *proxyRepository) Update(ctx context.Context, proxyIn *service.Proxy) er
 		builder.SetPassword(proxyIn.Password)
 	} else {
 		builder.ClearPassword()
+	}
+	if proxyIn.ExpiresAt != nil {
+		builder.SetExpiresAt(*proxyIn.ExpiresAt)
+	} else {
+		builder.ClearExpiresAt()
+	}
+	if proxyIn.BackupProxyID != nil {
+		builder.SetBackupProxyID(*proxyIn.BackupProxyID)
+	} else {
+		builder.ClearBackupProxyID()
 	}
 
 	updated, err := builder.Save(ctx)
@@ -258,6 +275,8 @@ func proxyListOrder(params pagination.PaginationParams) []func(*entsql.Selector)
 		field = proxy.FieldStatus
 	case "created_at":
 		field = proxy.FieldCreatedAt
+	case "expiry":
+		field = proxy.FieldExpiresAt
 	default:
 		field = proxy.FieldID
 	}
@@ -417,14 +436,18 @@ func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
 		return nil
 	}
 	out := &service.Proxy{
-		ID:        m.ID,
-		Name:      m.Name,
-		Protocol:  m.Protocol,
-		Host:      m.Host,
-		Port:      m.Port,
-		Status:    m.Status,
-		CreatedAt: m.CreatedAt,
-		UpdatedAt: m.UpdatedAt,
+		ID:             m.ID,
+		Name:           m.Name,
+		Protocol:       m.Protocol,
+		Host:           m.Host,
+		Port:           m.Port,
+		Status:         m.Status,
+		CreatedAt:      m.CreatedAt,
+		UpdatedAt:      m.UpdatedAt,
+		ExpiresAt:      m.ExpiresAt,
+		FallbackMode:   m.FallbackMode,
+		BackupProxyID:  m.BackupProxyID,
+		ExpiryWarnDays: m.ExpiryWarnDays,
 	}
 	if m.Username != nil {
 		out.Username = *m.Username
@@ -442,4 +465,117 @@ func applyProxyEntityToService(dst *service.Proxy, src *dbent.Proxy) {
 	dst.ID = src.ID
 	dst.CreatedAt = src.CreatedAt
 	dst.UpdatedAt = src.UpdatedAt
+	dst.ExpiresAt = src.ExpiresAt
+	dst.FallbackMode = src.FallbackMode
+	dst.BackupProxyID = src.BackupProxyID
+	dst.ExpiryWarnDays = src.ExpiryWarnDays
+}
+
+func normalizeProxyFallbackMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case service.FallbackModeProxy:
+		return service.FallbackModeProxy
+	case service.FallbackModeDirect:
+		return service.FallbackModeDirect
+	default:
+		return service.FallbackModeNone
+	}
+}
+
+func normalizeProxyExpiryWarnDays(days int) int {
+	if days <= 0 {
+		return 7
+	}
+	return days
+}
+
+// ListAllForFallback 返回所有未软删代理，供过期回退扫描构建本地快照。
+func (r *proxyRepository) ListAllForFallback(ctx context.Context) ([]service.Proxy, error) {
+	proxies, err := r.client.Proxy.Query().All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]service.Proxy, 0, len(proxies))
+	for i := range proxies {
+		out = append(out, *proxyEntityToService(proxies[i]))
+	}
+	return out, nil
+}
+
+// SweepExpiredProxies 标记到期 active 代理，并按 fallback 策略改投绑定账号。
+func (r *proxyRepository) SweepExpiredProxies(ctx context.Context, now time.Time) (int64, error) {
+	all, err := r.ListAllForFallback(ctx)
+	if err != nil {
+		return 0, err
+	}
+	byID := make(map[int64]service.Proxy, len(all))
+	for _, p := range all {
+		byID[p.ID] = p
+	}
+
+	var totalChanged int64
+	for _, p := range all {
+		if p.Status != service.StatusActive || !p.IsExpired(now) {
+			continue
+		}
+		target, shouldChange := service.ResolveProxyFallbackTarget(p, byID, now)
+		changed, err := r.sweepOneExpiredProxy(ctx, p.ID, target, shouldChange)
+		if err != nil {
+			return totalChanged, err
+		}
+		totalChanged += changed
+	}
+	return totalChanged, nil
+}
+
+func (r *proxyRepository) sweepOneExpiredProxy(ctx context.Context, proxyID int64, target *int64, change bool) (int64, error) {
+	tx, txErr := r.client.Tx(ctx)
+	if txErr != nil {
+		if txErr != dbent.ErrTxStarted {
+			return 0, txErr
+		}
+		return r.sweepOneExpiredProxyOnExec(ctx, r.sql, proxyID, target, change)
+	}
+
+	changed, err := r.sweepOneExpiredProxyOnExec(ctx, tx, proxyID, target, change)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return changed, nil
+}
+
+func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec sqlExecutor, proxyID int64, target *int64, change bool) (int64, error) {
+	if _, err := exec.ExecContext(ctx,
+		`UPDATE proxies SET status = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL`,
+		service.StatusExpired, proxyID); err != nil {
+		return 0, err
+	}
+	if !change {
+		return 0, nil
+	}
+
+	var (
+		result sql.Result
+		err    error
+	)
+	if target == nil {
+		result, err = exec.ExecContext(ctx, `
+			UPDATE accounts
+			SET proxy_id = NULL, proxy_fallback_origin_id = $1, updated_at = NOW()
+			WHERE proxy_id = $1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL`, proxyID)
+	} else {
+		result, err = exec.ExecContext(ctx, `
+			UPDATE accounts
+			SET proxy_id = $2, proxy_fallback_origin_id = $1, updated_at = NOW()
+			WHERE proxy_id = $1 AND proxy_fallback_origin_id IS NULL AND deleted_at IS NULL`, proxyID, *target)
+	}
+	if err != nil {
+		return 0, err
+	}
+	changed, _ := result.RowsAffected()
+	return changed, nil
 }

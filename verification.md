@@ -958,13 +958,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 
 ## 校验方式
 
-- tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeBatchCreateRunsManualValidationOnly" -count=1：先按 TDD 红灯运行，因 BatchCreateModelProbeRuns 不存在失败；补实现后通过。
-- tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts -t "starts batch manual account model probe runs"：先按 TDD 红灯运行，因 atchAccountModelProbeRuns 不存在失败；补 wrapper 后通过。
-- tk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts -t "starts batch model validation"：先按 TDD 红灯运行，因报告页按钮不存在失败；补入口后通过。
-- tk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeCreateRunsManualValidationOnly|TestAccountModelProbeBatchCreateRunsManualValidationOnly|TestAccountProbeReportBatchCreate|TestAccountProbeCreate" -count=1
-- tk go test -tags unit ./internal/service -run "TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation|TestAccountProbeService_RunManualModelValidationStoresEvidence|TestScheduledTestRunnerRunsAccountProbePlan" -count=1
-- tk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts src/views/admin/__tests__/AccountModelProbesView.spec.ts
-- tk npm run typecheck
+- rtk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeBatchCreateRunsManualValidationOnly" -count=1：先按 TDD 红灯运行，因 BatchCreateModelProbeRuns 不存在失败；补实现后通过。
+- rtk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts -t "starts batch manual account model probe runs"：先按 TDD 红灯运行，因 BatchAccountModelProbeRuns 不存在失败；补 wrapper 后通过。
+- rtk npm run test:run -- src/views/admin/__tests__/AccountProbeReportsView.spec.ts -t "starts batch model validation"：先按 TDD 红灯运行，因报告页按钮不存在失败；补入口后通过。
+- rtk go test -tags unit ./internal/handler/admin -run "TestAccountModelProbeCreateRunsManualValidationOnly|TestAccountModelProbeBatchCreateRunsManualValidationOnly|TestAccountProbeReportBatchCreate|TestAccountProbeCreate" -count=1
+- rtk go test -tags unit ./internal/service -run "TestAccountProbeService_RunCodexStabilityDoesNotAutoRunModelValidation|TestAccountProbeService_RunManualModelValidationStoresEvidence|TestScheduledTestRunnerRunsAccountProbePlan" -count=1
+- rtk npm run test:run -- src/api/__tests__/admin.accounts.spec.ts src/views/admin/__tests__/AccountProbeReportsView.spec.ts src/views/admin/__tests__/AccountModelProbesView.spec.ts
+- rtk npm run typecheck
 - git diff --check
 
 ## 校验结果
@@ -2710,3 +2710,10 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 切流：将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-green:8080` 改为 `sub2api-blue:8080`；`docker exec sub2api-proxy nginx -t` 通过；`docker exec sub2api-proxy nginx -s reload` 成功；`D:\sub2api-deploy\docker-compose.blue.yml` 默认镜像已同步为 `sub2api:v0.1.134.9`，`docker compose -f docker-compose.blue.yml config --services` 通过。
 - 切流后验证：`8080/health`、`18081/health`、`18083/health`、`18082/health` 均 200；`8080` 根路径 200，静态资源 200，未登录 admin API 401，`POST /responses` 未登录 401；`sub2api-blue` 为 `sub2api:v0.1.134.9` healthy，`sub2api-green` 为 `sub2api:v0.1.134.8` healthy，`sub2api-proxy` running；blue 日志关键错误过滤为 0，proxy 最近日志关键错误过滤为 0。
 - 当前状态：active 已切到 blue `sub2api:v0.1.134.9`；green `sub2api:v0.1.134.8` 保留运行作为回滚目标。本轮未推送远端 registry。
+## 2026-06-09 00:12 +08:00 - JUHE 最高优先级借鉴收口
+
+- 执行者：Devil
+- 目标：把 JUHE / v0.1.135 的 API Key 独占分组强制校验、OpenAI sticky session 分组校验和 previous_response_id 跨组剥离从待做同步为已完成，并补聚焦验证。
+- 验证：`go test ./internal/server/middleware -run ''^TestApiKeyAuthWithSubscriptionGoogleRejectsExclusiveGroupWithoutUserGrant$'' -count=1 -v` 通过。
+- 验证：`go test ./internal/service -run ''^TestOpenAIGatewayService_SelectAccountWithScheduler_(EnabledUsesAdvancedPreviousResponseRouting|PreviousResponseSkipsAccountOutsideGroup|SessionStickySkipsAccountOutsideGroup)$|^TestOpenAIWSStateStore_ResponseAccountLocalCacheIsGroupScoped$'' -count=1 -v` 通过。
+- 说明：这轮主要是文档状态同步和聚焦验证，未提交、未构建镜像、未部署。

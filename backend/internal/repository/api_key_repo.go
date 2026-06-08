@@ -155,6 +155,9 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				user.FieldLastActiveAt,
 				user.FieldRpmLimit,
 			)
+			q.WithAllowedGroups(func(gq *dbent.GroupQuery) {
+				gq.Select(group.FieldID)
+			})
 		}).
 		WithGroup(func(q *dbent.GroupQuery) {
 			q.Select(
@@ -162,6 +165,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldName,
 				group.FieldPlatform,
 				group.FieldStatus,
+				group.FieldIsExclusive,
 				group.FieldSubscriptionType,
 				group.FieldRateMultiplier,
 				group.FieldDailyLimitUsd,
@@ -683,6 +687,14 @@ func userEntityToService(u *dbent.User) *service.User {
 	// Parse extra emails JSON (supports both old []string and new []NotifyEmailEntry format)
 	if u.BalanceNotifyExtraEmails != "" && u.BalanceNotifyExtraEmails != "[]" {
 		out.BalanceNotifyExtraEmails = service.ParseNotifyEmails(u.BalanceNotifyExtraEmails)
+	}
+	if len(u.Edges.AllowedGroups) > 0 {
+		out.AllowedGroups = make([]int64, 0, len(u.Edges.AllowedGroups))
+		for _, g := range u.Edges.AllowedGroups {
+			if g != nil {
+				out.AllowedGroups = append(out.AllowedGroups, g.ID)
+			}
+		}
 	}
 	return out
 }

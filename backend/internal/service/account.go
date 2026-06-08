@@ -40,8 +40,10 @@ type Account struct {
 	Credentials map[string]any
 	Extra       map[string]any
 	ProxyID     *int64
-	Concurrency int
-	Priority    int
+	// ProxyFallbackOriginID 记录代理过期回退前账号绑定的原始代理 ID。
+	ProxyFallbackOriginID *int64
+	Concurrency           int
+	Priority              int
 	// RateMultiplier 账号计费倍率（>=0，允许 0 表示该账号计费为 0）。
 	// 使用指针用于兼容旧版本调度缓存（Redis）中缺字段的情况：nil 表示按 1.0 处理。
 	RateMultiplier     *float64
@@ -84,6 +86,41 @@ type Account struct {
 	modelMappingCacheRawSig         uint64
 
 	lastSelectedAPIKey string
+}
+
+// isAccountInRequestedGroup 判定账号是否允许服务当前请求分组。
+// groupID 为空代表无分组 API Key，只允许使用完全未分组的账号。
+func isAccountInRequestedGroup(account *Account, groupID *int64) bool {
+	if account == nil {
+		return false
+	}
+	if groupID == nil {
+		return len(account.AccountGroups) == 0 &&
+			len(account.GroupIDs) == 0 &&
+			len(account.Groups) == 0
+	}
+	requestedGroupID := *groupID
+	for _, accountGroup := range account.AccountGroups {
+		if accountGroup.GroupID == requestedGroupID {
+			return true
+		}
+	}
+	for _, id := range account.GroupIDs {
+		if id == requestedGroupID {
+			return true
+		}
+	}
+	for _, group := range account.Groups {
+		if group != nil && group.ID == requestedGroupID {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAccountGroupMetadata(account *Account) bool {
+	return account != nil &&
+		(len(account.AccountGroups) > 0 || len(account.GroupIDs) > 0 || len(account.Groups) > 0)
 }
 
 type TempUnschedulableRule struct {

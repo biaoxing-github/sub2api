@@ -398,6 +398,122 @@ func TestAPIKeyAuthRejectsUnavailableGroup(t *testing.T) {
 	}
 }
 
+func TestAPIKeyAuthRejectsExclusiveGroupWithoutUserGrant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(101)
+	userID := int64(7)
+	tests := []struct {
+		name          string
+		group         *service.Group
+		allowedGroups []int64
+		wantStatus    int
+		wantCode      string
+	}{
+		{
+			name: "exclusive standard group without grant is forbidden",
+			group: &service.Group{
+				ID:               groupID,
+				Name:             "exclusive",
+				Status:           service.StatusActive,
+				Platform:         service.PlatformAnthropic,
+				Hydrated:         true,
+				IsExclusive:      true,
+				SubscriptionType: service.SubscriptionTypeStandard,
+			},
+			wantStatus: http.StatusForbidden,
+			wantCode:   "GROUP_FORBIDDEN",
+		},
+		{
+			name: "exclusive standard group with grant passes",
+			group: &service.Group{
+				ID:               groupID,
+				Name:             "exclusive",
+				Status:           service.StatusActive,
+				Platform:         service.PlatformAnthropic,
+				Hydrated:         true,
+				IsExclusive:      true,
+				SubscriptionType: service.SubscriptionTypeStandard,
+			},
+			allowedGroups: []int64{groupID},
+			wantStatus:    http.StatusOK,
+		},
+		{
+			name: "public standard group passes without grant",
+			group: &service.Group{
+				ID:               groupID,
+				Name:             "public",
+				Status:           service.StatusActive,
+				Platform:         service.PlatformAnthropic,
+				Hydrated:         true,
+				SubscriptionType: service.SubscriptionTypeStandard,
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "exclusive subscription group still uses subscription checks",
+			group: &service.Group{
+				ID:               groupID,
+				Name:             "subscription",
+				Status:           service.StatusActive,
+				Platform:         service.PlatformAnthropic,
+				Hydrated:         true,
+				IsExclusive:      true,
+				SubscriptionType: service.SubscriptionTypeSubscription,
+			},
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			user := &service.User{
+				ID:            userID,
+				Role:          service.RoleUser,
+				Status:        service.StatusActive,
+				Balance:       10,
+				Concurrency:   3,
+				AllowedGroups: tt.allowedGroups,
+			}
+			apiKey := &service.APIKey{
+				ID:      100,
+				UserID:  user.ID,
+				GroupID: &groupID,
+				Key:     "test-key",
+				Status:  service.StatusActive,
+				User:    user,
+				Group:   tt.group,
+			}
+			apiKeyRepo := &stubApiKeyRepo{
+				getByKey: func(ctx context.Context, key string) (*service.APIKey, error) {
+					if key != apiKey.Key {
+						return nil, service.ErrAPIKeyNotFound
+					}
+					clone := *apiKey
+					userClone := *user
+					groupClone := *tt.group
+					clone.User = &userClone
+					clone.Group = &groupClone
+					return &clone, nil
+				},
+			}
+			cfg := &config.Config{RunMode: config.RunModeSimple}
+			apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
+			router := newAuthTestRouter(apiKeyService, nil, cfg)
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/t", nil)
+			req.Header.Set("Authorization", "Bearer "+apiKey.Key)
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantCode != "" {
+				require.Contains(t, w.Body.String(), tt.wantCode)
+			}
+		})
+	}
+}
+
 func TestAPIKeyAuthIPRestrictionDoesNotTrustForwardedClientIPByDefault(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

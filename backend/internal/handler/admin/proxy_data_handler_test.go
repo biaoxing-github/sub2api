@@ -120,6 +120,51 @@ func TestProxyExportDataWithSelectedIDs(t *testing.T) {
 	require.Equal(t, 0, adminSvc.lastListProxies.calls)
 }
 
+func TestProxyExportDataIncludesExpiryFallbackFields(t *testing.T) {
+	router, adminSvc := setupProxyDataRouter()
+
+	expiresAt := time.Unix(1893456000, 0).UTC()
+	backupProxyID := int64(2)
+	adminSvc.proxies = []service.Proxy{
+		{
+			ID:             1,
+			Name:           "proxy-a",
+			Protocol:       "http",
+			Host:           "127.0.0.1",
+			Port:           8080,
+			Username:       "user",
+			Password:       "pass",
+			Status:         service.StatusActive,
+			ExpiresAt:      &expiresAt,
+			FallbackMode:   service.FallbackModeProxy,
+			BackupProxyID:  &backupProxyID,
+			ExpiryWarnDays: 7,
+		},
+		{
+			ID:       backupProxyID,
+			Name:     "proxy-b",
+			Protocol: "https",
+			Host:     "10.0.0.2",
+			Port:     443,
+			Status:   service.StatusActive,
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/proxies/data", nil)
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp proxyDataResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Data.Proxies, 2)
+	require.NotNil(t, resp.Data.Proxies[0].ExpiresAt)
+	require.Equal(t, expiresAt.Unix(), *resp.Data.Proxies[0].ExpiresAt)
+	require.Equal(t, service.FallbackModeProxy, resp.Data.Proxies[0].FallbackMode)
+	require.Equal(t, "proxy-b", resp.Data.Proxies[0].BackupProxyName)
+	require.Equal(t, 7, resp.Data.Proxies[0].ExpiryWarnDays)
+}
+
 func TestProxyExportDataPassesSortParams(t *testing.T) {
 	router, adminSvc := setupProxyDataRouter()
 
@@ -279,4 +324,135 @@ func TestProxyImportDataReusesAndTriggersLatencyProbe(t *testing.T) {
 		defer adminSvc.mu.Unlock()
 		return len(adminSvc.testedProxyIDs) == 1
 	}, time.Second, 10*time.Millisecond)
+}
+
+func TestProxyImportDataMapsBackupProxyNameToCreateInput(t *testing.T) {
+	router, adminSvc := setupProxyDataRouter()
+
+	expiresAt := int64(1893456000)
+	payload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []map[string]any{
+				{
+					"proxy_key": "https|10.0.0.2|443||",
+					"name":      "proxy-b",
+					"protocol":  "https",
+					"host":      "10.0.0.2",
+					"port":      443,
+					"status":    "active",
+				},
+				{
+					"proxy_key":         "http|127.0.0.1|8080|user|pass",
+					"name":              "proxy-a",
+					"protocol":          "http",
+					"host":              "127.0.0.1",
+					"port":              8080,
+					"username":          "user",
+					"password":          "pass",
+					"status":            "active",
+					"expires_at":        expiresAt,
+					"fallback_mode":     service.FallbackModeProxy,
+					"backup_proxy_name": "proxy-b",
+					"expiry_warn_days":  7,
+				},
+			},
+			"accounts": []map[string]any{},
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/proxies/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	require.Len(t, adminSvc.createdProxies, 2)
+	primary := adminSvc.createdProxies[1]
+	require.NotNil(t, primary.ExpiresAt)
+	require.Equal(t, expiresAt, primary.ExpiresAt.Unix())
+	require.Equal(t, service.FallbackModeProxy, primary.FallbackMode)
+	require.NotNil(t, primary.BackupProxyID)
+	require.Equal(t, int64(400), *primary.BackupProxyID)
+	require.Equal(t, 7, primary.ExpiryWarnDays)
+}
+
+func TestProxyImportDataUpdatesExistingExpiryFallbackFields(t *testing.T) {
+	router, adminSvc := setupProxyDataRouter()
+
+	oldExpiresAt := time.Unix(1735689600, 0).UTC()
+	newExpiresAt := int64(1893456000)
+	backupProxyID := int64(2)
+	adminSvc.proxies = []service.Proxy{
+		{
+			ID:             1,
+			Name:           "proxy-a",
+			Protocol:       "http",
+			Host:           "127.0.0.1",
+			Port:           8080,
+			Username:       "user",
+			Password:       "pass",
+			Status:         service.StatusActive,
+			ExpiresAt:      &oldExpiresAt,
+			FallbackMode:   service.FallbackModeNone,
+			ExpiryWarnDays: 7,
+		},
+		{
+			ID:       backupProxyID,
+			Name:     "proxy-b",
+			Protocol: "https",
+			Host:     "10.0.0.2",
+			Port:     443,
+			Status:   service.StatusActive,
+		},
+	}
+
+	payload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []map[string]any{
+				{
+					"proxy_key":         "http|127.0.0.1|8080|user|pass",
+					"name":              "proxy-a",
+					"protocol":          "http",
+					"host":              "127.0.0.1",
+					"port":              8080,
+					"username":          "user",
+					"password":          "pass",
+					"status":            "active",
+					"expires_at":        newExpiresAt,
+					"fallback_mode":     service.FallbackModeProxy,
+					"backup_proxy_name": "proxy-b",
+					"expiry_warn_days":  14,
+				},
+			},
+			"accounts": []map[string]any{},
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/proxies/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp proxyImportResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Data.ProxyCreated)
+	require.Equal(t, 1, resp.Data.ProxyReused)
+	require.Equal(t, 0, resp.Data.ProxyFailed)
+
+	require.Len(t, adminSvc.updatedProxies, 1)
+	update := adminSvc.updatedProxies[0]
+	require.Equal(t, service.StatusActive, update.Status)
+	require.NotNil(t, update.ExpiresAt)
+	require.Equal(t, newExpiresAt, update.ExpiresAt.Unix())
+	require.Equal(t, service.FallbackModeProxy, update.FallbackMode)
+	require.NotNil(t, update.BackupProxyID)
+	require.Equal(t, backupProxyID, *update.BackupProxyID)
+	require.Equal(t, 14, update.ExpiryWarnDays)
 }

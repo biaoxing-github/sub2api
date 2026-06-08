@@ -192,6 +192,20 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		return false
 	}
 
+	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(responseBody))
+	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+	if upstreamMsg != "" {
+		upstreamMsg = truncateForLog([]byte(upstreamMsg), 512)
+	}
+	if shouldSkipOpenAIAccountStateMutation(account, statusCode, upstreamMsg, responseBody, customErrorCodesEnabled) {
+		slog.Info("openai_account_state_mutation_skipped",
+			"account_id", account.ID,
+			"status_code", statusCode,
+			"category", ClassifyUpstreamError(UpstreamErrorInput{StatusCode: statusCode, Message: upstreamMsg, Body: responseBody}).Category,
+		)
+		return false
+	}
+
 	// API Key 列表账号的单 Key 错误必须先写入 key 状态，避免通用临时不可调度规则误伤整个账号。
 	apiKeyDisabled := false
 	if account.Type == AccountTypeAPIKey && shouldDisableCurrentAPIKey(statusCode, responseBody) {
@@ -210,12 +224,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		if s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
 			return true
 		}
-	}
-
-	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(responseBody))
-	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-	if upstreamMsg != "" {
-		upstreamMsg = truncateForLog([]byte(upstreamMsg), 512)
 	}
 
 	switch statusCode {
@@ -384,6 +392,26 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	}
 
 	return shouldDisable
+}
+
+func shouldSkipOpenAIAccountStateMutation(account *Account, statusCode int, upstreamMsg string, responseBody []byte, customErrorCodesEnabled bool) bool {
+	if account == nil || account.Platform != PlatformOpenAI || customErrorCodesEnabled {
+		return false
+	}
+	classification := ClassifyUpstreamError(UpstreamErrorInput{
+		StatusCode: statusCode,
+		Message:    upstreamMsg,
+		Body:       responseBody,
+	})
+	switch classification.Category {
+	case UpstreamErrorCategoryCloudflareWAF,
+		UpstreamErrorCategoryPreviousResponseNotFound,
+		UpstreamErrorCategoryRequestTooLarge,
+		UpstreamErrorCategoryUpstream5xx:
+		return true
+	default:
+		return false
+	}
 }
 
 // PreCheckUsage proactively checks local quota before dispatching a request.

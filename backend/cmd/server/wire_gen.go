@@ -285,10 +285,11 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	opsScheduledReportService := service.ProvideOpsScheduledReportService(opsService, userService, emailService, redisClient, configConfig)
 	tokenRefreshService := service.ProvideTokenRefreshService(accountRepository, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, compositeTokenCacheInvalidator, schedulerCache, configConfig, tempUnschedCache, privacyClientFactory, proxyRepository, oAuthRefreshAPI, openAIGatewayService)
 	accountExpiryService := service.ProvideAccountExpiryService(accountRepository)
+	proxyExpiryService := service.ProvideProxyExpiryService(proxyRepository)
 	subscriptionExpiryService := service.ProvideSubscriptionExpiryService(userSubscriptionRepository, settingRepository, notificationEmailService, leaderLockCache, db)
 	paymentOrderExpiryService := service.ProvidePaymentOrderExpiryService(paymentService, leaderLockCache, db)
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, upstreamBalanceService, tokenRefreshService, accountExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, userPlatformQuotaUsageFlusher, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, openAIGatewayService, openAIRequestSnapshotService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, upstreamBalanceService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, userPlatformQuotaUsageFlusher, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, openAIGatewayService, openAIRequestSnapshotService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner)
 	application := &Application{
 		Server:  httpServer,
 		Cleanup: v,
@@ -328,6 +329,7 @@ func provideCleanup(
 	upstreamBalance *service.UpstreamBalanceService,
 	tokenRefresh *service.TokenRefreshService,
 	accountExpiry *service.AccountExpiryService,
+	proxyExpiry *service.ProxyExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
 	idempotencyCleanup *service.IdempotencyCleanupService,
@@ -424,6 +426,10 @@ func provideCleanup(
 			}},
 			{"AccountExpiryService", func() error {
 				accountExpiry.Stop()
+				return nil
+			}},
+			{"ProxyExpiryService", func() error {
+				proxyExpiry.Stop()
 				return nil
 			}},
 			{"SubscriptionExpiryService", func() error {

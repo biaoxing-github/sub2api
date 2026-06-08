@@ -91,6 +91,12 @@ func (Account) Fields() []ent.Field {
 		field.Int64("proxy_id").
 			Optional().
 			Nillable(),
+		// proxy_fallback_origin_id: 代理过期回退前的原始代理 ID。
+		// 非空表示账号当前处于自动回退状态，可用于后续人工恢复。
+		field.Int64("proxy_fallback_origin_id").
+			Optional().
+			Nillable().
+			Comment("Original proxy id replaced by expiry fallback; NULL means not in fallback."),
 
 		// concurrency: 账户最大并发请求数
 		// 用于限制同一时间对该账户发起的请求数量

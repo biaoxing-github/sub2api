@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 10 // v10: reload snapshots for group availability checks
+const apiKeyAuthSnapshotVersion = 11 // v11: reload snapshots for exclusive group auth checks
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -234,6 +234,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			BalanceNotifyExtraEmails:   apiKey.User.BalanceNotifyExtraEmails,
 			TotalRecharged:             apiKey.User.TotalRecharged,
 			RPMLimit:                   apiKey.User.RPMLimit,
+			AllowedGroups:              apiKey.User.AllowedGroups,
 		},
 	}
 
@@ -252,6 +253,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			Platform:                        apiKey.Group.Platform,
 			Status:                          apiKey.Group.Status,
 			SubscriptionType:                apiKey.Group.SubscriptionType,
+			IsExclusive:                     apiKey.Group.IsExclusive,
 			RateMultiplier:                  apiKey.Group.RateMultiplier,
 			DailyLimitUSD:                   apiKey.Group.DailyLimitUSD,
 			WeeklyLimitUSD:                  apiKey.Group.WeeklyLimitUSD,
@@ -312,6 +314,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			TotalRecharged:             snapshot.User.TotalRecharged,
 			RPMLimit:                   snapshot.User.RPMLimit,
 			UserGroupRPMOverride:       snapshot.User.UserGroupRPMOverride,
+			AllowedGroups:              snapshot.User.AllowedGroups,
 		},
 	}
 	if snapshot.Group != nil {
@@ -322,6 +325,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			Status:                          snapshot.Group.Status,
 			Hydrated:                        true,
 			SubscriptionType:                snapshot.Group.SubscriptionType,
+			IsExclusive:                     snapshot.Group.IsExclusive,
 			RateMultiplier:                  snapshot.Group.RateMultiplier,
 			DailyLimitUSD:                   snapshot.Group.DailyLimitUSD,
 			WeeklyLimitUSD:                  snapshot.Group.WeeklyLimitUSD,

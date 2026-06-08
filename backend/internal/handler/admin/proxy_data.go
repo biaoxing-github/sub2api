@@ -46,19 +46,37 @@ func (h *ProxyHandler) ExportData(c *gin.Context) {
 		}
 	}
 
+	proxyNameByID := make(map[int64]string, len(proxies))
+	for i := range proxies {
+		proxyNameByID[proxies[i].ID] = proxies[i].Name
+	}
+
 	dataProxies := make([]DataProxy, 0, len(proxies))
 	for i := range proxies {
 		p := proxies[i]
 		key := buildProxyKey(p.Protocol, p.Host, p.Port, p.Username, p.Password)
+		var expiresAt *int64
+		if p.ExpiresAt != nil {
+			v := p.ExpiresAt.Unix()
+			expiresAt = &v
+		}
+		var backupProxyName string
+		if p.BackupProxyID != nil {
+			backupProxyName = proxyNameByID[*p.BackupProxyID]
+		}
 		dataProxies = append(dataProxies, DataProxy{
-			ProxyKey: key,
-			Name:     p.Name,
-			Protocol: p.Protocol,
-			Host:     p.Host,
-			Port:     p.Port,
-			Username: p.Username,
-			Password: p.Password,
-			Status:   p.Status,
+			ProxyKey:        key,
+			Name:            p.Name,
+			Protocol:        p.Protocol,
+			Host:            p.Host,
+			Port:            p.Port,
+			Username:        p.Username,
+			Password:        p.Password,
+			Status:          p.Status,
+			ExpiresAt:       expiresAt,
+			FallbackMode:    p.FallbackMode,
+			BackupProxyName: backupProxyName,
+			ExpiryWarnDays:  p.ExpiryWarnDays,
 		})
 	}
 
@@ -98,10 +116,14 @@ func (h *ProxyHandler) ImportData(c *gin.Context) {
 	}
 
 	proxyByKey := make(map[string]service.Proxy, len(existingProxies))
+	proxyNameToID := make(map[string]int64, len(existingProxies))
 	for i := range existingProxies {
 		p := existingProxies[i]
 		key := buildProxyKey(p.Protocol, p.Host, p.Port, p.Username, p.Password)
 		proxyByKey[key] = p
+		if p.Name != "" {
+			proxyNameToID[p.Name] = p.ID
+		}
 	}
 
 	latencyProbeIDs := make([]int64, 0, len(req.Data.Proxies))
@@ -126,13 +148,14 @@ func (h *ProxyHandler) ImportData(c *gin.Context) {
 		normalizedStatus := normalizeProxyStatus(item.Status)
 		if existing, ok := proxyByKey[key]; ok {
 			result.ProxyReused++
-			if normalizedStatus != "" && normalizedStatus != existing.Status {
-				if _, err := h.adminService.UpdateProxy(ctx, existing.ID, &service.UpdateProxyInput{Status: normalizedStatus}); err != nil {
+			updateInput := buildExistingProxyImportUpdate(existing, item, normalizedStatus, proxyNameToID, &result, key)
+			if proxyImportNeedsUpdate(existing, updateInput) {
+				if _, err := h.adminService.UpdateProxy(ctx, existing.ID, updateInput); err != nil {
 					result.Errors = append(result.Errors, DataImportError{
 						Kind:     "proxy",
 						Name:     item.Name,
 						ProxyKey: key,
-						Message:  "update status failed: " + err.Error(),
+						Message:  "update proxy failed: " + err.Error(),
 					})
 				}
 			}
@@ -140,13 +163,38 @@ func (h *ProxyHandler) ImportData(c *gin.Context) {
 			continue
 		}
 
+		var expiresAt *time.Time
+		if item.ExpiresAt != nil {
+			t := time.Unix(*item.ExpiresAt, 0).UTC()
+			expiresAt = &t
+		}
+		fallbackMode := item.FallbackMode
+		var backupProxyID *int64
+		if item.BackupProxyName != "" {
+			if bid, ok := proxyNameToID[item.BackupProxyName]; ok {
+				backupProxyID = &bid
+			} else {
+				fallbackMode = service.FallbackModeNone
+				result.Errors = append(result.Errors, DataImportError{
+					Kind:     "proxy",
+					Name:     item.Name,
+					ProxyKey: key,
+					Message:  fmt.Sprintf("backup_proxy_name %q not found, fallback_mode downgraded to none", item.BackupProxyName),
+				})
+			}
+		}
+
 		created, err := h.adminService.CreateProxy(ctx, &service.CreateProxyInput{
-			Name:     defaultProxyName(item.Name),
-			Protocol: item.Protocol,
-			Host:     item.Host,
-			Port:     item.Port,
-			Username: item.Username,
-			Password: item.Password,
+			Name:           defaultProxyName(item.Name),
+			Protocol:       item.Protocol,
+			Host:           item.Host,
+			Port:           item.Port,
+			Username:       item.Username,
+			Password:       item.Password,
+			ExpiresAt:      expiresAt,
+			FallbackMode:   fallbackMode,
+			BackupProxyID:  backupProxyID,
+			ExpiryWarnDays: item.ExpiryWarnDays,
 		})
 		if err != nil {
 			result.ProxyFailed++
@@ -160,9 +208,24 @@ func (h *ProxyHandler) ImportData(c *gin.Context) {
 		}
 		result.ProxyCreated++
 		proxyByKey[key] = *created
+		if created.Name != "" {
+			proxyNameToID[created.Name] = created.ID
+		}
 
 		if normalizedStatus != "" && normalizedStatus != created.Status {
-			if _, err := h.adminService.UpdateProxy(ctx, created.ID, &service.UpdateProxyInput{Status: normalizedStatus}); err != nil {
+			if _, err := h.adminService.UpdateProxy(ctx, created.ID, &service.UpdateProxyInput{
+				Status:         normalizedStatus,
+				ExpiresAt:      expiresAt,
+				FallbackMode:   fallbackMode,
+				BackupProxyID:  backupProxyID,
+				ExpiryWarnDays: item.ExpiryWarnDays,
+				Name:           created.Name,
+				Protocol:       created.Protocol,
+				Host:           created.Host,
+				Port:           created.Port,
+				Username:       created.Username,
+				Password:       created.Password,
+			}); err != nil {
 				result.Errors = append(result.Errors, DataImportError{
 					Kind:     "proxy",
 					Name:     item.Name,
@@ -184,6 +247,88 @@ func (h *ProxyHandler) ImportData(c *gin.Context) {
 	}
 
 	response.Success(c, result)
+}
+
+func buildExistingProxyImportUpdate(existing service.Proxy, item DataProxy, normalizedStatus string, proxyNameToID map[string]int64, result *DataImportResult, key string) *service.UpdateProxyInput {
+	status := existing.Status
+	if normalizedStatus != "" {
+		status = normalizedStatus
+	}
+	return &service.UpdateProxyInput{
+		Status:         status,
+		ExpiresAt:      dataProxyExpiresAt(item),
+		FallbackMode:   dataProxyFallbackMode(item, proxyNameToID, result, key),
+		BackupProxyID:  dataProxyBackupID(item, proxyNameToID),
+		ExpiryWarnDays: item.ExpiryWarnDays,
+		Name:           existing.Name,
+		Protocol:       existing.Protocol,
+		Host:           existing.Host,
+		Port:           existing.Port,
+		Username:       existing.Username,
+		Password:       existing.Password,
+	}
+}
+
+func dataProxyExpiresAt(item DataProxy) *time.Time {
+	if item.ExpiresAt == nil {
+		return nil
+	}
+	t := time.Unix(*item.ExpiresAt, 0).UTC()
+	return &t
+}
+
+func dataProxyFallbackMode(item DataProxy, proxyNameToID map[string]int64, result *DataImportResult, key string) string {
+	mode := strings.ToLower(strings.TrimSpace(item.FallbackMode))
+	if mode == "" {
+		mode = service.FallbackModeNone
+	}
+	if item.BackupProxyName == "" {
+		return mode
+	}
+	if _, ok := proxyNameToID[item.BackupProxyName]; ok {
+		return mode
+	}
+	if result != nil {
+		result.Errors = append(result.Errors, DataImportError{
+			Kind:     "proxy",
+			Name:     item.Name,
+			ProxyKey: key,
+			Message:  fmt.Sprintf("backup_proxy_name %q not found, fallback_mode downgraded to none", item.BackupProxyName),
+		})
+	}
+	return service.FallbackModeNone
+}
+
+func dataProxyBackupID(item DataProxy, proxyNameToID map[string]int64) *int64 {
+	if item.BackupProxyName == "" {
+		return nil
+	}
+	if bid, ok := proxyNameToID[item.BackupProxyName]; ok {
+		return &bid
+	}
+	return nil
+}
+
+func proxyImportNeedsUpdate(existing service.Proxy, input *service.UpdateProxyInput) bool {
+	return input.Status != existing.Status ||
+		!sameTimePtr(input.ExpiresAt, existing.ExpiresAt) ||
+		strings.ToLower(strings.TrimSpace(input.FallbackMode)) != strings.ToLower(strings.TrimSpace(existing.FallbackMode)) ||
+		!sameInt64Ptr(input.BackupProxyID, existing.BackupProxyID) ||
+		input.ExpiryWarnDays != existing.ExpiryWarnDays
+}
+
+func sameTimePtr(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
+}
+
+func sameInt64Ptr(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func (h *ProxyHandler) getProxiesByIDs(ctx context.Context, ids []int64) ([]service.Proxy, error) {

@@ -278,5 +278,10 @@ func validateAPIKeyGroupAvailable(apiKey *service.APIKey) (string, string, bool)
 	if !group.IsActive() {
 		return "GROUP_DISABLED", "API Key 所属分组已停用", false
 	}
+	if group.IsExclusive && !group.IsSubscriptionType() {
+		if apiKey.User == nil || !apiKey.User.CanBindGroup(group.ID, true) {
+			return "GROUP_FORBIDDEN", "API Key 所属独占分组未授权", false
+		}
+	}
 	return "", "", true
 }

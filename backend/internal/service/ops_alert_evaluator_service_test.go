@@ -106,6 +106,59 @@ func TestCountAccountsByCondition(t *testing.T) {
 	})
 }
 
+func TestComputeRuleMetricAccountTempUnscheduledCount(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	futureUntil := now.Add(5 * time.Minute)
+	pastUntil := now.Add(-1 * time.Minute)
+
+	availability := &OpsAccountAvailability{
+		Accounts: map[int64]*AccountAvailability{
+			// 账号级临时不可调度窗口仍在生效。
+			1: {TempUnschedulableUntil: &futureUntil},
+			// path-health open-circuit 冷却窗口仍在生效。
+			2: {
+				PathHealthState:         OpenAIPathHealthStateOpenCircuit,
+				PathHealthCooldownUntil: &futureUntil,
+			},
+			// proxy failure 这类运行时阻断通过 effective availability 透出。
+			3: {
+				EffectiveAvailability: &AccountEffectiveAvailability{
+					State:  AccountEffectiveAvailabilityLocalSuppressed,
+					Reason: "proxy_failure",
+					Until:  &futureUntil,
+				},
+			},
+			// 已过期的窗口不应继续计入告警指标。
+			4: {TempUnschedulableUntil: &pastUntil},
+			5: {
+				PathHealthState:         OpenAIPathHealthStateOpenCircuit,
+				PathHealthCooldownUntil: &pastUntil,
+			},
+			// 普通错误与常规限流由各自指标负责，不属于本指标。
+			6: {HasError: true},
+			7: {IsRateLimited: true},
+		},
+	}
+
+	opsService := &OpsService{
+		getAccountAvailability: func(_ context.Context, _ string, _ *int64) (*OpsAccountAvailability, error) {
+			return availability, nil
+		},
+	}
+	svc := &OpsAlertEvaluatorService{
+		opsService: opsService,
+		opsRepo:    &stubOpsRepo{},
+	}
+
+	rule := &OpsAlertRule{MetricType: "account_temp_unscheduled_count"}
+	val, ok := svc.computeRuleMetric(context.Background(), rule, nil, now.Add(-5*time.Minute), now, "", nil)
+
+	require.True(t, ok)
+	require.InDelta(t, 3.0, val, 0.0001)
+}
+
 func TestComputeRuleMetricNewIndicators(t *testing.T) {
 	t.Parallel()
 

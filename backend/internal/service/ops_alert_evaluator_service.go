@@ -506,6 +506,18 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 		return float64(countAccountsByCondition(availability.Accounts, func(acc *AccountAvailability) bool {
 			return acc.HasError && acc.TempUnschedulableUntil == nil
 		})), true
+	case "account_temp_unscheduled_count":
+		if s == nil || s.opsService == nil {
+			return 0, false
+		}
+		availability, err := s.opsService.GetAccountAvailability(ctx, platform, groupID)
+		if err != nil || availability == nil {
+			return 0, false
+		}
+		now := time.Now().UTC()
+		return float64(countAccountsByCondition(availability.Accounts, func(acc *AccountAvailability) bool {
+			return isAccountTempUnscheduledForAlert(acc, now)
+		})), true
 	case "group_rate_limit_ratio":
 		if groupID == nil || *groupID <= 0 {
 			return 0, false
@@ -583,6 +595,33 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 	default:
 		return 0, false
 	}
+}
+
+// isAccountTempUnscheduledForAlert 判断账号是否处于本告警指标关注的临时摘除冷却窗口。
+func isAccountTempUnscheduledForAlert(acc *AccountAvailability, now time.Time) bool {
+	if acc == nil {
+		return false
+	}
+	if isFutureAlertWindow(acc.TempUnschedulableUntil, now) {
+		return true
+	}
+	if strings.TrimSpace(acc.PathHealthState) == string(OpenAIPathHealthStateOpenCircuit) &&
+		isFutureAlertWindow(acc.PathHealthCooldownUntil, now) {
+		return true
+	}
+	if acc.EffectiveAvailability == nil || !isFutureAlertWindow(acc.EffectiveAvailability.Until, now) {
+		return false
+	}
+	switch strings.TrimSpace(acc.EffectiveAvailability.State) {
+	case AccountEffectiveAvailabilityTempUnschedulable, AccountEffectiveAvailabilityPathOpenCircuit:
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(acc.EffectiveAvailability.Reason)), "proxy")
+}
+
+// isFutureAlertWindow 判断冷却窗口是否仍在当前时间之后。
+func isFutureAlertWindow(until *time.Time, now time.Time) bool {
+	return until != nil && now.Before(*until)
 }
 
 func compareMetric(value float64, operator string, threshold float64) bool {

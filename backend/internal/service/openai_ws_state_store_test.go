@@ -28,6 +28,37 @@ func TestOpenAIWSStateStore_BindGetDeleteResponseAccount(t *testing.T) {
 	require.Zero(t, accountID)
 }
 
+func TestOpenAIWSStateStore_ResponseAccountLocalCacheIsGroupScoped(t *testing.T) {
+	store := NewOpenAIWSStateStore(nil)
+	ctx := context.Background()
+	responseID := "resp_shared"
+
+	require.NoError(t, store.BindResponseAccount(ctx, 1, responseID, 101, time.Minute))
+	accountID, err := store.GetResponseAccount(ctx, 1, responseID)
+	require.NoError(t, err)
+	require.Equal(t, int64(101), accountID)
+
+	accountID, err = store.GetResponseAccount(ctx, 2, responseID)
+	require.NoError(t, err)
+	require.Zero(t, accountID, "本地 previous_response_id 缓存必须按 group 隔离")
+
+	require.NoError(t, store.BindResponseAccount(ctx, 2, responseID, 202, time.Minute))
+	accountID, err = store.GetResponseAccount(ctx, 1, responseID)
+	require.NoError(t, err)
+	require.Equal(t, int64(101), accountID)
+	accountID, err = store.GetResponseAccount(ctx, 2, responseID)
+	require.NoError(t, err)
+	require.Equal(t, int64(202), accountID)
+
+	require.NoError(t, store.DeleteResponseAccount(ctx, 2, responseID))
+	accountID, err = store.GetResponseAccount(ctx, 2, responseID)
+	require.NoError(t, err)
+	require.Zero(t, accountID)
+	accountID, err = store.GetResponseAccount(ctx, 1, responseID)
+	require.NoError(t, err)
+	require.Equal(t, int64(101), accountID, "删除另一个 group 的绑定不能影响当前 group")
+}
+
 func TestOpenAIWSStateStore_ResponseConnTTL(t *testing.T) {
 	store := NewOpenAIWSStateStore(nil)
 	store.BindResponseConn("resp_conn", "conn_1", 30*time.Millisecond)

@@ -4455,6 +4455,8 @@ export default {
         status: '状态',
         accounts: '账号数',
         latency: '延迟',
+        expiry: '有效期',
+        fallback: '回退',
         actions: '操作',
         nameLabel: '名称',
         namePlaceholder: '请输入代理名称',
@@ -4590,7 +4592,21 @@ export default {
       nameRequired: '请输入代理名称',
       hostRequired: '请输入主机地址',
       portInvalid: '端口必须在 1-65535 之间',
-      deleteConfirm: "确定要删除代理 '{name}' 吗？使用此代理的账号将被移除代理设置。"
+      deleteConfirm: "确定要删除代理 '{name}' 吗？使用此代理的账号将被移除代理设置。",
+      neverExpires: '永不过期',
+      expired: '已过期',
+      overdueDays: '已超期 {days} 天',
+      expiringInDays: '{days} 天后到期',
+      remainingDays: '剩余 {days} 天',
+      expiresAt: '过期时间',
+      expiryWarnDays: '提醒天数',
+      fallbackMode: '回退模式',
+      fallbackNone: '不回退',
+      fallbackProxy: '备用代理',
+      fallbackDirect: '直连',
+      backupProxy: '备用代理',
+      backupProxyPlaceholder: '请选择备用代理',
+      backupProxyRequired: '请选择备用代理'
     },
 
     // Redeem Codes Management
@@ -5719,6 +5735,7 @@ export default {
           accountRateLimitedCount: '限流账号数',
           accountErrorCount: '错误账号数（不含临时不可调度）',
           accountErrorRatio: '错误账号比例 (%)',
+          accountTempUnscheduledCount: '临时不可调度账号数',
           overloadAccountCount: '过载账号数'
         },
         metricDescriptions: {
@@ -5736,6 +5753,7 @@ export default {
           accountRateLimitedCount: '统计窗口内被限流的账号数量。',
           accountErrorCount: '统计窗口内产生错误的账号数量（不含临时不可调度）。',
           accountErrorRatio: '统计窗口内错误账号占比（0~100）。',
+          accountTempUnscheduledCount: '当前处于临时不可调度、path-health open-circuit 或代理故障冷却窗口的账号数量。',
           overloadAccountCount: '统计窗口内过载账号数量。'
         },
         hints: {
