@@ -2600,3 +2600,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 变更：前端新增、编辑、批量编辑账号弹窗已提供 `请求上游时模拟 Codex CLI` 配置入口；开关写入账号 extra 的 `openai_codex_cli_simulation_enabled`。后端按账号 extra 显式 true 才在 HTTP/SSE、自动透传和 WS 上游请求中应用 Codex CLI User-Agent、originator 与版本头，并保留 Codex 请求体字段；关闭或未设置时保持原规则。
 - 验证：`npm run typecheck` 通过；`go test ./internal/service -run "TestAccount_IsOpenAICodexCLISimulationEnabled|TestOpenAIGatewayService_APIKey(CodexCLISimulation|PassthroughCodexCLISimulation)|TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator" -count=1 -v` 通过。
 - 说明：本轮未构建 Docker 镜像、未部署、未切流；需要上线后在对应 OpenAI 账号上手动开启该账号级开关。
+
+## 2026-06-08 12:48 +08:00 - v0.1.134.7 部署与 free5 模拟验证
+
+- 执行者：Devil
+- 修正：复核部署前发现 `shouldSimulateOpenAICodexCLI` 仍受旧 `Gateway.ForceCodexCLI` 影响，已按账号级开关语义收口为只读取 `accounts.extra.openai_codex_cli_simulation_enabled`；`openai_ws_v2_passthrough_adapter.go` 同步改为调用同一 helper。新增 `TestOpenAIGatewayService_ShouldSimulateCodexCLIUsesAccountSwitchOnly` 锁定“全局 force 不绕过账号开关”。
+- 提交与镜像：提交 `ed076e054 fix(openai): 收口 Codex CLI 模拟开关`；Git tag `v0.1.134.7` 指向该提交；从 `git archive HEAD` 构建 `sub2api:v0.1.134.7`，镜像 label `org.opencontainers.image.version=v0.1.134.7`、`revision=ed076e054050`；`/app/sub2api --version` 输出 `Sub2API 0.1.134 (image: v0.1.134.7, commit: ed076e054050, ...)`。
+- 部署：部署前 active upstream 为 `sub2api-green:8080`，green/blue 均 healthy 且运行 `sub2api:v0.1.134.4`；本轮只更新 `D:\sub2api-deploy\docker-compose.blue.yml` 默认镜像并执行 `docker compose -f docker-compose.blue.yml up -d --no-deps --force-recreate sub2api-blue`，未重启 PostgreSQL、Redis 或 active green。
+- 候选验证：等待 65 秒后，`sub2api-blue` 为 `ConfigImage=sub2api:v0.1.134.7` 且 healthy；`http://127.0.0.1:18083/health` 200，根路径 200，`GET /api/v1/admin/dashboard/stats` 未登录 401，`POST /responses` 未登录 401；blue 精确错误日志过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 为空。
+- 切流验证：将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-green:8080` 改为 `sub2api-blue:8080`；`docker exec sub2api-proxy nginx -t` 与 reload 通过；切流后 `8080/health`、`18081/health`、`18083/health`、`18082/health` 均 200，公网根路径 200，admin 未登录 401，`POST /responses` 未登录 401；proxy/blue 错误日志过滤为空，green 继续作为回滚容器。
+- free5 实测：DB 确认 `free5` 为 account_id `416`，OpenAI APIKey，base_url `https://new.sharedchat.cc/codex`；已设置 `openai_codex_cli_simulation_enabled=true` 并恢复 `schedulable=true`。第一次用现有 `自用` 分组请求命中其他同组账号 `426`，因此创建仅绑定 `free5` 的临时验证分组 `temp_group_id=8` 和临时 key `temp_api_key_id=7`；真实 `POST http://127.0.0.1:8080/responses` 返回 HTTP 200，响应 `output_text=OK`，blue 日志确认 `account_id=416`，未出现 `codex_access_restricted`。临时 key 和临时分组已标记 inactive/deleted。
