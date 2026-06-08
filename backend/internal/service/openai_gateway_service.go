@@ -396,6 +396,8 @@ type OpenAIGatewayService struct {
 
 	openAISchedulerExhaustionProbeFunc  func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error
 	openAISchedulerExhaustionProbeSleep func(ctx context.Context, d time.Duration) error
+	openAISchedulerExhaustionProbeNow   func() time.Time
+	openAISchedulerExhaustionNotifyFunc func(ctx context.Context, event openAISchedulerExhaustionProbeNotifyEvent) error
 }
 
 type openAIHeaderRaceBudget struct {

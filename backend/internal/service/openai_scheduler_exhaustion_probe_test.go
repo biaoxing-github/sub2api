@@ -2,11 +2,15 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,4 +136,205 @@ func TestOpenAISchedulerExhaustionProbeInfiniteIgnoresFiniteAttemptCapUntilSucce
 	require.NoError(t, err)
 	require.True(t, recovered)
 	require.Equal(t, 8, attempts)
+}
+
+func TestOpenAISchedulerExhaustionProbeInfiniteNotifiesAfterThresholdAndRepeatInterval(t *testing.T) {
+	groupID := int64(9)
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	repo := &schedulerExhaustionProbeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{
+			{ID: 41, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1},
+		}},
+	}
+	attempts := 0
+	var events []openAISchedulerExhaustionProbeNotifyEvent
+	svc := &OpenAIGatewayService{
+		accountRepo: repo,
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAISchedulerProbeNotifyEnabled:          true,
+			OpenAISchedulerProbeNotifyAfterSeconds:     3,
+			OpenAISchedulerProbeNotifyRepeatSeconds:    4,
+			OpenAISchedulerProbeNotifyRecoveredEnabled: true,
+		}},
+		openAISchedulerExhaustionProbeNow: func() time.Time {
+			return now
+		},
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+			attempts++
+			return errors.New("still no schedulable account")
+		},
+		openAISchedulerExhaustionProbeSleep: func(ctx context.Context, d time.Duration) error {
+			now = now.Add(d)
+			if attempts >= 5 {
+				return context.Canceled
+			}
+			return nil
+		},
+		openAISchedulerExhaustionNotifyFunc: func(ctx context.Context, event openAISchedulerExhaustionProbeNotifyEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+
+	recovered, err := svc.RecoverOpenAISchedulerExhaustion(context.Background(), OpenAISchedulerExhaustionProbeOptions{
+		GroupID:        &groupID,
+		RequestedModel: "gpt-5.2",
+		Infinite:       true,
+	})
+
+	require.False(t, recovered)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Len(t, events, 2)
+	require.Equal(t, openAISchedulerExhaustionNotifyPhaseWaiting, events[0].Phase)
+	require.Equal(t, 4*time.Second, events[0].Elapsed)
+	require.Equal(t, 3, events[0].Attempts)
+	require.Equal(t, openAISchedulerExhaustionNotifyPhaseWaiting, events[1].Phase)
+	require.Equal(t, 8*time.Second, events[1].Elapsed)
+	require.Equal(t, 5, events[1].Attempts)
+	require.Equal(t, "still no schedulable account", events[1].LastError)
+}
+
+func TestOpenAISchedulerExhaustionProbeInfiniteSendsRecoveredNotificationAfterWaitingNotification(t *testing.T) {
+	groupID := int64(9)
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	repo := &schedulerExhaustionProbeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{
+			{ID: 51, Name: "primary-oauth", Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1},
+		}},
+	}
+	attempts := 0
+	var events []openAISchedulerExhaustionProbeNotifyEvent
+	svc := &OpenAIGatewayService{
+		accountRepo: repo,
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAISchedulerProbeNotifyEnabled:          true,
+			OpenAISchedulerProbeNotifyAfterSeconds:     3,
+			OpenAISchedulerProbeNotifyRepeatSeconds:    60,
+			OpenAISchedulerProbeNotifyRecoveredEnabled: true,
+		}},
+		openAISchedulerExhaustionProbeNow: func() time.Time {
+			return now
+		},
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+			attempts++
+			if attempts == 4 {
+				return nil
+			}
+			return errors.New("still no schedulable account")
+		},
+		openAISchedulerExhaustionProbeSleep: func(ctx context.Context, d time.Duration) error {
+			now = now.Add(d)
+			return nil
+		},
+		openAISchedulerExhaustionNotifyFunc: func(ctx context.Context, event openAISchedulerExhaustionProbeNotifyEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+
+	recovered, err := svc.RecoverOpenAISchedulerExhaustion(context.Background(), OpenAISchedulerExhaustionProbeOptions{
+		GroupID:        &groupID,
+		RequestedModel: "gpt-5.2",
+		Infinite:       true,
+	})
+
+	require.NoError(t, err)
+	require.True(t, recovered)
+	require.Len(t, events, 2)
+	require.Equal(t, openAISchedulerExhaustionNotifyPhaseWaiting, events[0].Phase)
+	require.Equal(t, openAISchedulerExhaustionNotifyPhaseRecovered, events[1].Phase)
+	require.Equal(t, int64(51), events[1].AccountID)
+	require.Equal(t, "primary-oauth", events[1].AccountName)
+	require.Equal(t, 6*time.Second, events[1].Elapsed)
+}
+
+func TestOpenAISchedulerExhaustionProbeFeishuNotificationSendsTextPayload(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Contains(t, r.Header.Get("content-type"), "application/json")
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"StatusCode":0}`))
+	}))
+	defer server.Close()
+
+	svc := &OpenAIGatewayService{}
+	err := svc.sendOpenAISchedulerExhaustionFeishuNotification(context.Background(), server.URL, openAISchedulerExhaustionProbeNotifyEvent{
+		Phase:          openAISchedulerExhaustionNotifyPhaseWaiting,
+		StartedAt:      time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
+		Elapsed:        90 * time.Second,
+		Rounds:         45,
+		Attempts:       45,
+		CandidateCount: 3,
+		RequestedModel: "gpt-5.2",
+		LastError:      "429 Too Many Requests",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "text", payload["msg_type"])
+	content, ok := payload["content"].(map[string]any)
+	require.True(t, ok)
+	text, ok := content["text"].(string)
+	require.True(t, ok)
+	require.Contains(t, text, "OpenAI /responses")
+	require.Contains(t, text, "无限调度等待")
+	require.Contains(t, text, "90s")
+	require.Contains(t, text, "45")
+	require.Contains(t, text, "429 Too Many Requests")
+}
+
+func TestOpenAISchedulerExhaustionProbeFeishuAppNotificationUsesTenantTokenAndChatMessage(t *testing.T) {
+	var tokenPayload map[string]string
+	var messagePayload map[string]any
+	var receiveIDType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			require.Equal(t, http.MethodPost, r.Method)
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&tokenPayload))
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"code":0,"tenant_access_token":"tenant-token"}`))
+		case "/open-apis/im/v1/messages":
+			require.Equal(t, http.MethodPost, r.Method)
+			require.Equal(t, "Bearer tenant-token", r.Header.Get("authorization"))
+			receiveIDType = r.URL.Query().Get("receive_id_type")
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&messagePayload))
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{"code":0,"data":{"message_id":"om_xxx"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	svc := &OpenAIGatewayService{}
+	err := svc.sendOpenAISchedulerExhaustionFeishuAppNotification(context.Background(), config.GatewayConfig{
+		OpenAISchedulerProbeNotifyFeishuAppID:         "cli_test",
+		OpenAISchedulerProbeNotifyFeishuAppSecret:     "secret_test",
+		OpenAISchedulerProbeNotifyFeishuDomain:        server.URL,
+		OpenAISchedulerProbeNotifyFeishuReceiveIDType: "chat_id",
+		OpenAISchedulerProbeNotifyFeishuReceiveID:     "oc_test",
+	}, openAISchedulerExhaustionProbeNotifyEvent{
+		Phase:          openAISchedulerExhaustionNotifyPhaseWaiting,
+		StartedAt:      time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
+		Elapsed:        75 * time.Second,
+		Rounds:         37,
+		Attempts:       37,
+		CandidateCount: 2,
+		RequestedModel: "gpt-5.2",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "cli_test", tokenPayload["app_id"])
+	require.Equal(t, "secret_test", tokenPayload["app_secret"])
+	require.Equal(t, "chat_id", receiveIDType)
+	require.Equal(t, "oc_test", messagePayload["receive_id"])
+	require.Equal(t, "text", messagePayload["msg_type"])
+	contentRaw, ok := messagePayload["content"].(string)
+	require.True(t, ok)
+	var content map[string]string
+	require.NoError(t, json.Unmarshal([]byte(contentRaw), &content))
+	require.Contains(t, content["text"], "OpenAI /responses")
+	require.Contains(t, content["text"], "75s")
 }

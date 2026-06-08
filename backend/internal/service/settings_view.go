@@ -188,63 +188,74 @@ type SystemSettings struct {
 	BackendModeEnabled bool
 
 	// Gateway forwarding behavior
-	EnableFingerprintUnification               bool   // 是否统一 OAuth 账号的指纹头（默认 true）
-	EnableMetadataPassthrough                  bool   // 是否透传客户端原始 metadata（默认 false）
-	EnableCCHSigning                           bool   // 是否对 billing header cch 进行签名（默认 false）
-	EnableAnthropicCacheTTL1hInjection         bool   // 是否对 Anthropic OAuth/SetupToken 请求体注入 1h cache_control ttl（默认 false）
-	RewriteMessageCacheControl                 bool   // 是否改写 messages[*].content[*].cache_control（默认 false）
-	AntigravityUserAgentVersion                string // Antigravity 上游 User-Agent 版本号；空值使用配置/默认值
-	OpenAICodexUserAgent                       string // OpenAI Codex 上游完整 User-Agent；空值使用内置默认
-	OpenAIAllowClaudeCodeCodexPlugin           bool   // 是否允许 Claude Code 的 Codex 插件访问仅 Codex 官方客户端账号
-	OpenAICockpitToolsCompat                   bool   // 是否按 cockpit-tools 方式发送 OpenAI OAuth Responses 请求
-	OpenAIOAuthCompatMode                      string // OpenAI OAuth 上游兼容模式：off/cockpit_tools/codex_direct
-	OpenAICodexDirectForceWS                   bool   // Codex 直连模式下是否强制 OAuth 上游走 WSv2
-	OpenAICodexDirectTLSFingerprintProfileID   int64  // Codex 直连模式上游 HTTP 请求使用的 TLS 指纹模板 ID：0=内置默认，-1=随机
-	OpenAISchedulerProbeInfiniteWaitEnabled    bool   // OpenAI 可调度账号耗尽后是否无限小请求探测等待
-	ClientRequestDebugLogEnabled               bool
-	CodexStabilityMode                         string
-	CodexStabilityDynamicHeaderTimeoutEnabled  bool
-	CodexStabilityRequestPhaseFailoverEnabled  bool
-	CodexStabilitySuppressClientTimeoutHeaders bool
-	CodexStabilityStreamKeepaliveEnabled       bool
-	CodexAutopilotEnabled                      bool
-	CodexAutopilotObserveOnly                  bool
-	CodexAutopilotWindowSeconds                int
-	CodexAutopilotMinSamples                   int
-	CodexAutopilotHeaderTimeoutThreshold       int
-	CodexAutopilotEOFThreshold                 int
-	CodexAutopilotSilentStreamTimeoutSeconds   int
-	OpenAIPathHealthEnabled                    bool
-	OpenAIPathHealthCircuitBreakerEnabled      bool
-	OpenAIPathHealthFailureWindowSeconds       int
-	OpenAIPathHealthCooldownSeconds            int
-	OpenAIPathHealthDegradedFailures           int
-	OpenAIPathHealthOpenFailures               int
-	OpenAIPathHealthHalfOpenMaxProbes          int
-	OpenAIFastLaneEnabled                      bool
-	OpenAIFastLaneNewSessionOnly               bool
-	OpenAIFastLaneTTFTWeight                   float64
-	OpenAIFastLaneHeaderWaitWeight             float64
-	OpenAIFastLaneMinSamples                   int
-	OpenAIFastLaneExploreRatio                 float64
-	RealtimeBalancePrewarmEnabled              bool
-	RealtimeBalancePrewarmIntervalSeconds      int
-	RealtimeBalancePrewarmActiveAccountLimit   int
-	RealtimeBalanceConfirmTopN                 int
-	RealtimeBalanceConfirmTimeoutMs            int
-	OpenAIHeaderRaceEnabled                    bool
-	OpenAIHeaderRaceDelayMs                    int
-	OpenAIHeaderRaceDailyBudget                int
-	OpenAIRequestSnapshotEnabled               bool
-	OpenAIRequestSnapshotRetentionHours        int
-	CodexWaitGuardEnabled                      bool
-	CodexWaitGuardMaxHeaderWaitSeconds         int
-	CodexWaitGuardMaxStreamSilentSeconds       int
-	CodexWaitGuardKeepaliveIntervalSeconds     int
-	CodexWaitGuardProtectAfterOutput           bool
-	ContextJournalBackend                      string
-	ContextJournalTTLHours                     int
-	ContextJournalMaxSessionBytes              int64
+	EnableFingerprintUnification                  bool   // 是否统一 OAuth 账号的指纹头（默认 true）
+	EnableMetadataPassthrough                     bool   // 是否透传客户端原始 metadata（默认 false）
+	EnableCCHSigning                              bool   // 是否对 billing header cch 进行签名（默认 false）
+	EnableAnthropicCacheTTL1hInjection            bool   // 是否对 Anthropic OAuth/SetupToken 请求体注入 1h cache_control ttl（默认 false）
+	RewriteMessageCacheControl                    bool   // 是否改写 messages[*].content[*].cache_control（默认 false）
+	AntigravityUserAgentVersion                   string // Antigravity 上游 User-Agent 版本号；空值使用配置/默认值
+	OpenAICodexUserAgent                          string // OpenAI Codex 上游完整 User-Agent；空值使用内置默认
+	OpenAIAllowClaudeCodeCodexPlugin              bool   // 是否允许 Claude Code 的 Codex 插件访问仅 Codex 官方客户端账号
+	OpenAICockpitToolsCompat                      bool   // 是否按 cockpit-tools 方式发送 OpenAI OAuth Responses 请求
+	OpenAIOAuthCompatMode                         string // OpenAI OAuth 上游兼容模式：off/cockpit_tools/codex_direct
+	OpenAICodexDirectForceWS                      bool   // Codex 直连模式下是否强制 OAuth 上游走 WSv2
+	OpenAICodexDirectTLSFingerprintProfileID      int64  // Codex 直连模式上游 HTTP 请求使用的 TLS 指纹模板 ID：0=内置默认，-1=随机
+	OpenAISchedulerProbeInfiniteWaitEnabled       bool   // OpenAI 可调度账号耗尽后是否无限小请求探测等待
+	OpenAISchedulerProbeNotifyEnabled             bool   // OpenAI 无限探测等待超时后是否发送通知
+	OpenAISchedulerProbeNotifyChannel             string // OpenAI 无限探测等待通知通道：feishu_webhook/feishu_app
+	OpenAISchedulerProbeNotifyAfterSeconds        int    // OpenAI 无限探测等待首次通知阈值（秒）
+	OpenAISchedulerProbeNotifyRepeatSeconds       int    // OpenAI 无限探测等待重复通知间隔（秒）
+	OpenAISchedulerProbeNotifyFeishuWebhookURL    string // OpenAI 无限探测等待飞书机器人 webhook 地址
+	OpenAISchedulerProbeNotifyFeishuAppID         string // OpenAI 无限探测等待飞书企业应用 App ID
+	OpenAISchedulerProbeNotifyFeishuAppSecret     string // OpenAI 无限探测等待飞书企业应用 App Secret
+	OpenAISchedulerProbeNotifyFeishuDomain        string // OpenAI 无限探测等待飞书开放平台域
+	OpenAISchedulerProbeNotifyFeishuReceiveIDType string // OpenAI 无限探测等待飞书接收者类型
+	OpenAISchedulerProbeNotifyFeishuReceiveID     string // OpenAI 无限探测等待飞书接收者 ID
+	OpenAISchedulerProbeNotifyRecoveredEnabled    bool   // OpenAI 无限探测恢复后是否发送恢复通知
+	ClientRequestDebugLogEnabled                  bool
+	CodexStabilityMode                            string
+	CodexStabilityDynamicHeaderTimeoutEnabled     bool
+	CodexStabilityRequestPhaseFailoverEnabled     bool
+	CodexStabilitySuppressClientTimeoutHeaders    bool
+	CodexStabilityStreamKeepaliveEnabled          bool
+	CodexAutopilotEnabled                         bool
+	CodexAutopilotObserveOnly                     bool
+	CodexAutopilotWindowSeconds                   int
+	CodexAutopilotMinSamples                      int
+	CodexAutopilotHeaderTimeoutThreshold          int
+	CodexAutopilotEOFThreshold                    int
+	CodexAutopilotSilentStreamTimeoutSeconds      int
+	OpenAIPathHealthEnabled                       bool
+	OpenAIPathHealthCircuitBreakerEnabled         bool
+	OpenAIPathHealthFailureWindowSeconds          int
+	OpenAIPathHealthCooldownSeconds               int
+	OpenAIPathHealthDegradedFailures              int
+	OpenAIPathHealthOpenFailures                  int
+	OpenAIPathHealthHalfOpenMaxProbes             int
+	OpenAIFastLaneEnabled                         bool
+	OpenAIFastLaneNewSessionOnly                  bool
+	OpenAIFastLaneTTFTWeight                      float64
+	OpenAIFastLaneHeaderWaitWeight                float64
+	OpenAIFastLaneMinSamples                      int
+	OpenAIFastLaneExploreRatio                    float64
+	RealtimeBalancePrewarmEnabled                 bool
+	RealtimeBalancePrewarmIntervalSeconds         int
+	RealtimeBalancePrewarmActiveAccountLimit      int
+	RealtimeBalanceConfirmTopN                    int
+	RealtimeBalanceConfirmTimeoutMs               int
+	OpenAIHeaderRaceEnabled                       bool
+	OpenAIHeaderRaceDelayMs                       int
+	OpenAIHeaderRaceDailyBudget                   int
+	OpenAIRequestSnapshotEnabled                  bool
+	OpenAIRequestSnapshotRetentionHours           int
+	CodexWaitGuardEnabled                         bool
+	CodexWaitGuardMaxHeaderWaitSeconds            int
+	CodexWaitGuardMaxStreamSilentSeconds          int
+	CodexWaitGuardKeepaliveIntervalSeconds        int
+	CodexWaitGuardProtectAfterOutput              bool
+	ContextJournalBackend                         string
+	ContextJournalTTLHours                        int
+	ContextJournalMaxSessionBytes                 int64
 
 	// Web Search Emulation
 	WebSearchEmulationEnabled bool // 是否启用 web search 模拟

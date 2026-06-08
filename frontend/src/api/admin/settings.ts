@@ -525,6 +525,11 @@ export interface SystemSettings {
   openai_codex_direct_force_ws: boolean;
   openai_codex_direct_tls_fingerprint_profile_id: number;
   openai_scheduler_exhaustion_probe_infinite_wait_enabled: boolean;
+  openai_scheduler_exhaustion_probe_notify_enabled: boolean;
+  openai_scheduler_exhaustion_probe_notify_after_seconds: number;
+  openai_scheduler_exhaustion_probe_notify_repeat_seconds: number;
+  openai_scheduler_exhaustion_probe_notify_feishu_webhook_url: string;
+  openai_scheduler_exhaustion_probe_notify_recovered_enabled: boolean;
   client_request_debug_log_enabled: boolean;
   codex_stability_mode: "off" | "codex" | "all_openai_responses" | string;
   codex_stability_dynamic_header_timeout_enabled: boolean;
@@ -773,6 +778,11 @@ export interface UpdateSettingsRequest {
   openai_codex_direct_force_ws?: boolean;
   openai_codex_direct_tls_fingerprint_profile_id?: number;
   openai_scheduler_exhaustion_probe_infinite_wait_enabled?: boolean;
+  openai_scheduler_exhaustion_probe_notify_enabled?: boolean;
+  openai_scheduler_exhaustion_probe_notify_after_seconds?: number;
+  openai_scheduler_exhaustion_probe_notify_repeat_seconds?: number;
+  openai_scheduler_exhaustion_probe_notify_feishu_webhook_url?: string;
+  openai_scheduler_exhaustion_probe_notify_recovered_enabled?: boolean;
   client_request_debug_log_enabled?: boolean;
   codex_stability_mode?: "off" | "codex" | "all_openai_responses" | string;
   codex_stability_dynamic_header_timeout_enabled?: boolean;

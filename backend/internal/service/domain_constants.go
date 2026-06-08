@@ -423,6 +423,28 @@ const (
 	SettingKeyOpenAICodexDirectTLSFingerprintProfileID = "openai_codex_direct_tls_fingerprint_profile_id"
 	// SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled 是否在 OpenAI 可调度账号耗尽时无限小请求探测等待。
 	SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled = "openai_scheduler_exhaustion_probe_infinite_wait_enabled"
+	// SettingKeyOpenAISchedulerProbeNotifyEnabled 是否在无限探测等待超时后发送通知。
+	SettingKeyOpenAISchedulerProbeNotifyEnabled = "openai_scheduler_exhaustion_probe_notify_enabled"
+	// SettingKeyOpenAISchedulerProbeNotifyChannel 无限探测等待通知通道。
+	SettingKeyOpenAISchedulerProbeNotifyChannel = "openai_scheduler_exhaustion_probe_notify_channel"
+	// SettingKeyOpenAISchedulerProbeNotifyAfterSeconds 无限探测等待首次通知阈值（秒）。
+	SettingKeyOpenAISchedulerProbeNotifyAfterSeconds = "openai_scheduler_exhaustion_probe_notify_after_seconds"
+	// SettingKeyOpenAISchedulerProbeNotifyRepeatSeconds 无限探测等待重复通知间隔（秒）。
+	SettingKeyOpenAISchedulerProbeNotifyRepeatSeconds = "openai_scheduler_exhaustion_probe_notify_repeat_seconds"
+	// SettingKeyOpenAISchedulerProbeNotifyFeishuWebhookURL 飞书自定义机器人 webhook 地址。
+	SettingKeyOpenAISchedulerProbeNotifyFeishuWebhookURL = "openai_scheduler_exhaustion_probe_notify_feishu_webhook_url"
+	// SettingKeyOpenAISchedulerProbeNotifyFeishuAppID 飞书企业自建应用 App ID。
+	SettingKeyOpenAISchedulerProbeNotifyFeishuAppID = "openai_scheduler_exhaustion_probe_notify_feishu_app_id"
+	// SettingKeyOpenAISchedulerProbeNotifyFeishuAppSecret 飞书企业自建应用 App Secret。
+	SettingKeyOpenAISchedulerProbeNotifyFeishuAppSecret = "openai_scheduler_exhaustion_probe_notify_feishu_app_secret"
+	// SettingKeyOpenAISchedulerProbeNotifyFeishuDomain 飞书开放平台域。
+	SettingKeyOpenAISchedulerProbeNotifyFeishuDomain = "openai_scheduler_exhaustion_probe_notify_feishu_domain"
+	// SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveIDType 飞书消息接收者类型。
+	SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveIDType = "openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type"
+	// SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveID 飞书消息接收者 ID。
+	SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveID = "openai_scheduler_exhaustion_probe_notify_feishu_receive_id"
+	// SettingKeyOpenAISchedulerProbeNotifyRecoveredEnabled 是否在无限探测恢复后发送通知。
+	SettingKeyOpenAISchedulerProbeNotifyRecoveredEnabled = "openai_scheduler_exhaustion_probe_notify_recovered_enabled"
 	// SettingKeyClientRequestDebugLogEnabled 是否把客户端打到本服务的完整请求体写入本地日志（默认 false）。
 	SettingKeyClientRequestDebugLogEnabled = "client_request_debug_log_enabled"
 	// SettingKeyCodexStabilityMode Codex 稳定模式档位：off/codex/all_openai_responses。

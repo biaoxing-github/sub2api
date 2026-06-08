@@ -119,226 +119,237 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 	}
 
 	payload := dto.SystemSettings{
-		RegistrationEnabled:                        settings.RegistrationEnabled,
-		EmailVerifyEnabled:                         settings.EmailVerifyEnabled,
-		RegistrationEmailSuffixWhitelist:           settings.RegistrationEmailSuffixWhitelist,
-		PromoCodeEnabled:                           settings.PromoCodeEnabled,
-		PasswordResetEnabled:                       settings.PasswordResetEnabled,
-		FrontendURL:                                settings.FrontendURL,
-		InvitationCodeEnabled:                      settings.InvitationCodeEnabled,
-		TotpEnabled:                                settings.TotpEnabled,
-		TotpEncryptionKeyConfigured:                h.settingService.IsTotpEncryptionKeyConfigured(),
-		LoginAgreementEnabled:                      settings.LoginAgreementEnabled,
-		LoginAgreementMode:                         settings.LoginAgreementMode,
-		LoginAgreementUpdatedAt:                    settings.LoginAgreementUpdatedAt,
-		LoginAgreementDocuments:                    loginAgreementDocumentsToDTO(settings.LoginAgreementDocuments),
-		SMTPHost:                                   settings.SMTPHost,
-		SMTPPort:                                   settings.SMTPPort,
-		SMTPUsername:                               settings.SMTPUsername,
-		SMTPPasswordConfigured:                     settings.SMTPPasswordConfigured,
-		SMTPFrom:                                   settings.SMTPFrom,
-		SMTPFromName:                               settings.SMTPFromName,
-		SMTPUseTLS:                                 settings.SMTPUseTLS,
-		TurnstileEnabled:                           settings.TurnstileEnabled,
-		TurnstileSiteKey:                           settings.TurnstileSiteKey,
-		TurnstileSecretKeyConfigured:               settings.TurnstileSecretKeyConfigured,
-		APIKeyACLTrustForwardedIP:                  settings.APIKeyACLTrustForwardedIP,
-		LinuxDoConnectEnabled:                      settings.LinuxDoConnectEnabled,
-		LinuxDoConnectClientID:                     settings.LinuxDoConnectClientID,
-		LinuxDoConnectClientSecretConfigured:       settings.LinuxDoConnectClientSecretConfigured,
-		LinuxDoConnectRedirectURL:                  settings.LinuxDoConnectRedirectURL,
-		DingTalkConnectEnabled:                     settings.DingTalkConnectEnabled,
-		DingTalkConnectClientID:                    settings.DingTalkConnectClientID,
-		DingTalkConnectClientSecretConfigured:      settings.DingTalkConnectClientSecretConfigured,
-		DingTalkConnectRedirectURL:                 settings.DingTalkConnectRedirectURL,
-		DingTalkConnectCorpRestrictionPolicy:       settings.DingTalkConnectCorpRestrictionPolicy,
-		DingTalkConnectInternalCorpID:              settings.DingTalkConnectInternalCorpID,
-		DingTalkConnectBypassRegistration:          settings.DingTalkConnectBypassRegistration,
-		DingTalkConnectSyncCorpEmail:               settings.DingTalkConnectSyncCorpEmail,
-		DingTalkConnectSyncDisplayName:             settings.DingTalkConnectSyncDisplayName,
-		DingTalkConnectSyncDept:                    settings.DingTalkConnectSyncDept,
-		DingTalkConnectSyncCorpEmailAttrKey:        settings.DingTalkConnectSyncCorpEmailAttrKey,
-		DingTalkConnectSyncDisplayNameAttrKey:      settings.DingTalkConnectSyncDisplayNameAttrKey,
-		DingTalkConnectSyncDeptAttrKey:             settings.DingTalkConnectSyncDeptAttrKey,
-		DingTalkConnectSyncCorpEmailAttrName:       settings.DingTalkConnectSyncCorpEmailAttrName,
-		DingTalkConnectSyncDisplayNameAttrName:     settings.DingTalkConnectSyncDisplayNameAttrName,
-		DingTalkConnectSyncDeptAttrName:            settings.DingTalkConnectSyncDeptAttrName,
-		WeChatConnectEnabled:                       settings.WeChatConnectEnabled,
-		WeChatConnectAppID:                         settings.WeChatConnectAppID,
-		WeChatConnectAppSecretConfigured:           settings.WeChatConnectAppSecretConfigured,
-		WeChatConnectOpenAppID:                     settings.WeChatConnectOpenAppID,
-		WeChatConnectOpenAppSecretConfigured:       settings.WeChatConnectOpenAppSecretConfigured,
-		WeChatConnectMPAppID:                       settings.WeChatConnectMPAppID,
-		WeChatConnectMPAppSecretConfigured:         settings.WeChatConnectMPAppSecretConfigured,
-		WeChatConnectMobileAppID:                   settings.WeChatConnectMobileAppID,
-		WeChatConnectMobileAppSecretConfigured:     settings.WeChatConnectMobileAppSecretConfigured,
-		WeChatConnectOpenEnabled:                   settings.WeChatConnectOpenEnabled,
-		WeChatConnectMPEnabled:                     settings.WeChatConnectMPEnabled,
-		WeChatConnectMobileEnabled:                 settings.WeChatConnectMobileEnabled,
-		WeChatConnectMode:                          settings.WeChatConnectMode,
-		WeChatConnectScopes:                        settings.WeChatConnectScopes,
-		WeChatConnectRedirectURL:                   settings.WeChatConnectRedirectURL,
-		WeChatConnectFrontendRedirectURL:           settings.WeChatConnectFrontendRedirectURL,
-		OIDCConnectEnabled:                         settings.OIDCConnectEnabled,
-		OIDCConnectProviderName:                    settings.OIDCConnectProviderName,
-		OIDCConnectClientID:                        settings.OIDCConnectClientID,
-		OIDCConnectClientSecretConfigured:          settings.OIDCConnectClientSecretConfigured,
-		OIDCConnectIssuerURL:                       settings.OIDCConnectIssuerURL,
-		OIDCConnectDiscoveryURL:                    settings.OIDCConnectDiscoveryURL,
-		OIDCConnectAuthorizeURL:                    settings.OIDCConnectAuthorizeURL,
-		OIDCConnectTokenURL:                        settings.OIDCConnectTokenURL,
-		OIDCConnectUserInfoURL:                     settings.OIDCConnectUserInfoURL,
-		OIDCConnectJWKSURL:                         settings.OIDCConnectJWKSURL,
-		OIDCConnectScopes:                          settings.OIDCConnectScopes,
-		OIDCConnectRedirectURL:                     settings.OIDCConnectRedirectURL,
-		OIDCConnectFrontendRedirectURL:             settings.OIDCConnectFrontendRedirectURL,
-		OIDCConnectTokenAuthMethod:                 settings.OIDCConnectTokenAuthMethod,
-		OIDCConnectUsePKCE:                         settings.OIDCConnectUsePKCE,
-		OIDCConnectValidateIDToken:                 settings.OIDCConnectValidateIDToken,
-		OIDCConnectAllowedSigningAlgs:              settings.OIDCConnectAllowedSigningAlgs,
-		OIDCConnectClockSkewSeconds:                settings.OIDCConnectClockSkewSeconds,
-		OIDCConnectRequireEmailVerified:            settings.OIDCConnectRequireEmailVerified,
-		OIDCConnectUserInfoEmailPath:               settings.OIDCConnectUserInfoEmailPath,
-		OIDCConnectUserInfoIDPath:                  settings.OIDCConnectUserInfoIDPath,
-		OIDCConnectUserInfoUsernamePath:            settings.OIDCConnectUserInfoUsernamePath,
-		GitHubOAuthEnabled:                         settings.GitHubOAuthEnabled,
-		GitHubOAuthClientID:                        settings.GitHubOAuthClientID,
-		GitHubOAuthClientSecretConfigured:          settings.GitHubOAuthClientSecretConfigured,
-		GitHubOAuthRedirectURL:                     settings.GitHubOAuthRedirectURL,
-		GitHubOAuthFrontendRedirectURL:             settings.GitHubOAuthFrontendRedirectURL,
-		GoogleOAuthEnabled:                         settings.GoogleOAuthEnabled,
-		GoogleOAuthClientID:                        settings.GoogleOAuthClientID,
-		GoogleOAuthClientSecretConfigured:          settings.GoogleOAuthClientSecretConfigured,
-		GoogleOAuthRedirectURL:                     settings.GoogleOAuthRedirectURL,
-		GoogleOAuthFrontendRedirectURL:             settings.GoogleOAuthFrontendRedirectURL,
-		SiteName:                                   settings.SiteName,
-		SiteLogo:                                   settings.SiteLogo,
-		SiteSubtitle:                               settings.SiteSubtitle,
-		APIBaseURL:                                 settings.APIBaseURL,
-		ContactInfo:                                settings.ContactInfo,
-		DocURL:                                     settings.DocURL,
-		HomeContent:                                settings.HomeContent,
-		HideCcsImportButton:                        settings.HideCcsImportButton,
-		PurchaseSubscriptionEnabled:                settings.PurchaseSubscriptionEnabled,
-		PurchaseSubscriptionURL:                    settings.PurchaseSubscriptionURL,
-		TableDefaultPageSize:                       settings.TableDefaultPageSize,
-		TablePageSizeOptions:                       settings.TablePageSizeOptions,
-		CustomMenuItems:                            dto.ParseCustomMenuItems(settings.CustomMenuItems),
-		CustomEndpoints:                            dto.ParseCustomEndpoints(settings.CustomEndpoints),
-		DefaultConcurrency:                         settings.DefaultConcurrency,
-		DefaultBalance:                             settings.DefaultBalance,
-		RiskControlEnabled:                         settings.RiskControlEnabled,
-		AffiliateRebateRate:                        settings.AffiliateRebateRate,
-		AffiliateRebateFreezeHours:                 settings.AffiliateRebateFreezeHours,
-		AffiliateRebateDurationDays:                settings.AffiliateRebateDurationDays,
-		AffiliateRebatePerInviteeCap:               settings.AffiliateRebatePerInviteeCap,
-		DefaultUserRPMLimit:                        settings.DefaultUserRPMLimit,
-		DefaultSubscriptions:                       defaultSubscriptions,
-		EnableModelFallback:                        settings.EnableModelFallback,
-		FallbackModelAnthropic:                     settings.FallbackModelAnthropic,
-		FallbackModelOpenAI:                        settings.FallbackModelOpenAI,
-		FallbackModelGemini:                        settings.FallbackModelGemini,
-		FallbackModelAntigravity:                   settings.FallbackModelAntigravity,
-		EnableIdentityPatch:                        settings.EnableIdentityPatch,
-		IdentityPatchPrompt:                        settings.IdentityPatchPrompt,
-		OpsMonitoringEnabled:                       opsEnabled && settings.OpsMonitoringEnabled,
-		OpsRealtimeMonitoringEnabled:               settings.OpsRealtimeMonitoringEnabled,
-		OpsQueryModeDefault:                        settings.OpsQueryModeDefault,
-		OpsMetricsIntervalSeconds:                  settings.OpsMetricsIntervalSeconds,
-		MinClaudeCodeVersion:                       settings.MinClaudeCodeVersion,
-		MaxClaudeCodeVersion:                       settings.MaxClaudeCodeVersion,
-		AllowUngroupedKeyScheduling:                settings.AllowUngroupedKeyScheduling,
-		BackendModeEnabled:                         settings.BackendModeEnabled,
-		EnableFingerprintUnification:               settings.EnableFingerprintUnification,
-		EnableMetadataPassthrough:                  settings.EnableMetadataPassthrough,
-		EnableCCHSigning:                           settings.EnableCCHSigning,
-		EnableAnthropicCacheTTL1hInjection:         settings.EnableAnthropicCacheTTL1hInjection,
-		RewriteMessageCacheControl:                 settings.RewriteMessageCacheControl,
-		AntigravityUserAgentVersion:                settings.AntigravityUserAgentVersion,
-		OpenAICodexUserAgent:                       settings.OpenAICodexUserAgent,
-		OpenAIAllowClaudeCodeCodexPlugin:           settings.OpenAIAllowClaudeCodeCodexPlugin,
-		OpenAICockpitToolsCompat:                   settings.OpenAICockpitToolsCompat,
-		OpenAIOAuthCompatMode:                      settings.OpenAIOAuthCompatMode,
-		OpenAICodexDirectForceWS:                   settings.OpenAICodexDirectForceWS,
-		OpenAICodexDirectTLSFingerprintProfileID:   settings.OpenAICodexDirectTLSFingerprintProfileID,
-		OpenAISchedulerProbeInfiniteWaitEnabled:    settings.OpenAISchedulerProbeInfiniteWaitEnabled,
-		ClientRequestDebugLogEnabled:               settings.ClientRequestDebugLogEnabled,
-		CodexStabilityMode:                         settings.CodexStabilityMode,
-		CodexStabilityDynamicHeaderTimeoutEnabled:  settings.CodexStabilityDynamicHeaderTimeoutEnabled,
-		CodexStabilityRequestPhaseFailoverEnabled:  settings.CodexStabilityRequestPhaseFailoverEnabled,
-		CodexStabilitySuppressClientTimeoutHeaders: settings.CodexStabilitySuppressClientTimeoutHeaders,
-		CodexStabilityStreamKeepaliveEnabled:       settings.CodexStabilityStreamKeepaliveEnabled,
-		CodexAutopilotEnabled:                      settings.CodexAutopilotEnabled,
-		CodexAutopilotObserveOnly:                  settings.CodexAutopilotObserveOnly,
-		CodexAutopilotWindowSeconds:                settings.CodexAutopilotWindowSeconds,
-		CodexAutopilotMinSamples:                   settings.CodexAutopilotMinSamples,
-		CodexAutopilotHeaderTimeoutThreshold:       settings.CodexAutopilotHeaderTimeoutThreshold,
-		CodexAutopilotEOFThreshold:                 settings.CodexAutopilotEOFThreshold,
-		CodexAutopilotSilentStreamTimeoutSeconds:   settings.CodexAutopilotSilentStreamTimeoutSeconds,
-		OpenAIPathHealthEnabled:                    settings.OpenAIPathHealthEnabled,
-		OpenAIPathHealthCircuitBreakerEnabled:      settings.OpenAIPathHealthCircuitBreakerEnabled,
-		OpenAIPathHealthFailureWindowSeconds:       settings.OpenAIPathHealthFailureWindowSeconds,
-		OpenAIPathHealthCooldownSeconds:            settings.OpenAIPathHealthCooldownSeconds,
-		OpenAIPathHealthDegradedFailures:           settings.OpenAIPathHealthDegradedFailures,
-		OpenAIPathHealthOpenFailures:               settings.OpenAIPathHealthOpenFailures,
-		OpenAIPathHealthHalfOpenMaxProbes:          settings.OpenAIPathHealthHalfOpenMaxProbes,
-		OpenAIFastLaneEnabled:                      settings.OpenAIFastLaneEnabled,
-		OpenAIFastLaneNewSessionOnly:               settings.OpenAIFastLaneNewSessionOnly,
-		OpenAIFastLaneTTFTWeight:                   settings.OpenAIFastLaneTTFTWeight,
-		OpenAIFastLaneHeaderWaitWeight:             settings.OpenAIFastLaneHeaderWaitWeight,
-		OpenAIFastLaneMinSamples:                   settings.OpenAIFastLaneMinSamples,
-		OpenAIFastLaneExploreRatio:                 settings.OpenAIFastLaneExploreRatio,
-		RealtimeBalancePrewarmEnabled:              settings.RealtimeBalancePrewarmEnabled,
-		RealtimeBalancePrewarmIntervalSeconds:      settings.RealtimeBalancePrewarmIntervalSeconds,
-		RealtimeBalancePrewarmActiveAccountLimit:   settings.RealtimeBalancePrewarmActiveAccountLimit,
-		RealtimeBalanceConfirmTopN:                 settings.RealtimeBalanceConfirmTopN,
-		RealtimeBalanceConfirmTimeoutMs:            settings.RealtimeBalanceConfirmTimeoutMs,
-		OpenAIHeaderRaceEnabled:                    settings.OpenAIHeaderRaceEnabled,
-		OpenAIHeaderRaceDelayMs:                    settings.OpenAIHeaderRaceDelayMs,
-		OpenAIHeaderRaceDailyBudget:                settings.OpenAIHeaderRaceDailyBudget,
-		OpenAIRequestSnapshotEnabled:               settings.OpenAIRequestSnapshotEnabled,
-		OpenAIRequestSnapshotRetentionHours:        settings.OpenAIRequestSnapshotRetentionHours,
-		CodexWaitGuardEnabled:                      settings.CodexWaitGuardEnabled,
-		CodexWaitGuardMaxHeaderWaitSeconds:         settings.CodexWaitGuardMaxHeaderWaitSeconds,
-		CodexWaitGuardMaxStreamSilentSeconds:       settings.CodexWaitGuardMaxStreamSilentSeconds,
-		CodexWaitGuardKeepaliveIntervalSeconds:     settings.CodexWaitGuardKeepaliveIntervalSeconds,
-		CodexWaitGuardProtectAfterOutput:           settings.CodexWaitGuardProtectAfterOutput,
-		ContextJournalBackend:                      settings.ContextJournalBackend,
-		ContextJournalTTLHours:                     settings.ContextJournalTTLHours,
-		ContextJournalMaxSessionBytes:              settings.ContextJournalMaxSessionBytes,
-		WebSearchEmulationEnabled:                  settings.WebSearchEmulationEnabled,
-		PaymentVisibleMethodAlipaySource:           settings.PaymentVisibleMethodAlipaySource,
-		PaymentVisibleMethodWxpaySource:            settings.PaymentVisibleMethodWxpaySource,
-		PaymentVisibleMethodAlipayEnabled:          settings.PaymentVisibleMethodAlipayEnabled,
-		PaymentVisibleMethodWxpayEnabled:           settings.PaymentVisibleMethodWxpayEnabled,
-		OpenAIAdvancedSchedulerEnabled:             settings.OpenAIAdvancedSchedulerEnabled,
-		BalanceLowNotifyEnabled:                    settings.BalanceLowNotifyEnabled,
-		BalanceLowNotifyThreshold:                  settings.BalanceLowNotifyThreshold,
-		BalanceLowNotifyRechargeURL:                settings.BalanceLowNotifyRechargeURL,
-		SubscriptionExpiryNotifyEnabled:            settings.SubscriptionExpiryNotifyEnabled,
-		AccountQuotaNotifyEnabled:                  settings.AccountQuotaNotifyEnabled,
-		AccountQuotaNotifyEmails:                   dto.NotifyEmailEntriesFromService(settings.AccountQuotaNotifyEmails),
-		PaymentEnabled:                             paymentCfg.Enabled,
-		PaymentMinAmount:                           paymentCfg.MinAmount,
-		PaymentMaxAmount:                           paymentCfg.MaxAmount,
-		PaymentDailyLimit:                          paymentCfg.DailyLimit,
-		PaymentOrderTimeoutMin:                     paymentCfg.OrderTimeoutMin,
-		PaymentMaxPendingOrders:                    paymentCfg.MaxPendingOrders,
-		PaymentEnabledTypes:                        paymentCfg.EnabledTypes,
-		PaymentBalanceDisabled:                     paymentCfg.BalanceDisabled,
-		PaymentBalanceRechargeMultiplier:           paymentCfg.BalanceRechargeMultiplier,
-		PaymentRechargeFeeRate:                     paymentCfg.RechargeFeeRate,
-		PaymentLoadBalanceStrat:                    paymentCfg.LoadBalanceStrategy,
-		PaymentProductNamePrefix:                   paymentCfg.ProductNamePrefix,
-		PaymentProductNameSuffix:                   paymentCfg.ProductNameSuffix,
-		PaymentHelpImageURL:                        paymentCfg.HelpImageURL,
-		PaymentHelpText:                            paymentCfg.HelpText,
-		PaymentCancelRateLimitEnabled:              paymentCfg.CancelRateLimitEnabled,
-		PaymentCancelRateLimitMax:                  paymentCfg.CancelRateLimitMax,
-		PaymentCancelRateLimitWindow:               paymentCfg.CancelRateLimitWindow,
-		PaymentCancelRateLimitUnit:                 paymentCfg.CancelRateLimitUnit,
-		PaymentCancelRateLimitMode:                 paymentCfg.CancelRateLimitMode,
-		PaymentAlipayForceQRCode:                   paymentCfg.AlipayForceQRCode,
+		RegistrationEnabled:                           settings.RegistrationEnabled,
+		EmailVerifyEnabled:                            settings.EmailVerifyEnabled,
+		RegistrationEmailSuffixWhitelist:              settings.RegistrationEmailSuffixWhitelist,
+		PromoCodeEnabled:                              settings.PromoCodeEnabled,
+		PasswordResetEnabled:                          settings.PasswordResetEnabled,
+		FrontendURL:                                   settings.FrontendURL,
+		InvitationCodeEnabled:                         settings.InvitationCodeEnabled,
+		TotpEnabled:                                   settings.TotpEnabled,
+		TotpEncryptionKeyConfigured:                   h.settingService.IsTotpEncryptionKeyConfigured(),
+		LoginAgreementEnabled:                         settings.LoginAgreementEnabled,
+		LoginAgreementMode:                            settings.LoginAgreementMode,
+		LoginAgreementUpdatedAt:                       settings.LoginAgreementUpdatedAt,
+		LoginAgreementDocuments:                       loginAgreementDocumentsToDTO(settings.LoginAgreementDocuments),
+		SMTPHost:                                      settings.SMTPHost,
+		SMTPPort:                                      settings.SMTPPort,
+		SMTPUsername:                                  settings.SMTPUsername,
+		SMTPPasswordConfigured:                        settings.SMTPPasswordConfigured,
+		SMTPFrom:                                      settings.SMTPFrom,
+		SMTPFromName:                                  settings.SMTPFromName,
+		SMTPUseTLS:                                    settings.SMTPUseTLS,
+		TurnstileEnabled:                              settings.TurnstileEnabled,
+		TurnstileSiteKey:                              settings.TurnstileSiteKey,
+		TurnstileSecretKeyConfigured:                  settings.TurnstileSecretKeyConfigured,
+		APIKeyACLTrustForwardedIP:                     settings.APIKeyACLTrustForwardedIP,
+		LinuxDoConnectEnabled:                         settings.LinuxDoConnectEnabled,
+		LinuxDoConnectClientID:                        settings.LinuxDoConnectClientID,
+		LinuxDoConnectClientSecretConfigured:          settings.LinuxDoConnectClientSecretConfigured,
+		LinuxDoConnectRedirectURL:                     settings.LinuxDoConnectRedirectURL,
+		DingTalkConnectEnabled:                        settings.DingTalkConnectEnabled,
+		DingTalkConnectClientID:                       settings.DingTalkConnectClientID,
+		DingTalkConnectClientSecretConfigured:         settings.DingTalkConnectClientSecretConfigured,
+		DingTalkConnectRedirectURL:                    settings.DingTalkConnectRedirectURL,
+		DingTalkConnectCorpRestrictionPolicy:          settings.DingTalkConnectCorpRestrictionPolicy,
+		DingTalkConnectInternalCorpID:                 settings.DingTalkConnectInternalCorpID,
+		DingTalkConnectBypassRegistration:             settings.DingTalkConnectBypassRegistration,
+		DingTalkConnectSyncCorpEmail:                  settings.DingTalkConnectSyncCorpEmail,
+		DingTalkConnectSyncDisplayName:                settings.DingTalkConnectSyncDisplayName,
+		DingTalkConnectSyncDept:                       settings.DingTalkConnectSyncDept,
+		DingTalkConnectSyncCorpEmailAttrKey:           settings.DingTalkConnectSyncCorpEmailAttrKey,
+		DingTalkConnectSyncDisplayNameAttrKey:         settings.DingTalkConnectSyncDisplayNameAttrKey,
+		DingTalkConnectSyncDeptAttrKey:                settings.DingTalkConnectSyncDeptAttrKey,
+		DingTalkConnectSyncCorpEmailAttrName:          settings.DingTalkConnectSyncCorpEmailAttrName,
+		DingTalkConnectSyncDisplayNameAttrName:        settings.DingTalkConnectSyncDisplayNameAttrName,
+		DingTalkConnectSyncDeptAttrName:               settings.DingTalkConnectSyncDeptAttrName,
+		WeChatConnectEnabled:                          settings.WeChatConnectEnabled,
+		WeChatConnectAppID:                            settings.WeChatConnectAppID,
+		WeChatConnectAppSecretConfigured:              settings.WeChatConnectAppSecretConfigured,
+		WeChatConnectOpenAppID:                        settings.WeChatConnectOpenAppID,
+		WeChatConnectOpenAppSecretConfigured:          settings.WeChatConnectOpenAppSecretConfigured,
+		WeChatConnectMPAppID:                          settings.WeChatConnectMPAppID,
+		WeChatConnectMPAppSecretConfigured:            settings.WeChatConnectMPAppSecretConfigured,
+		WeChatConnectMobileAppID:                      settings.WeChatConnectMobileAppID,
+		WeChatConnectMobileAppSecretConfigured:        settings.WeChatConnectMobileAppSecretConfigured,
+		WeChatConnectOpenEnabled:                      settings.WeChatConnectOpenEnabled,
+		WeChatConnectMPEnabled:                        settings.WeChatConnectMPEnabled,
+		WeChatConnectMobileEnabled:                    settings.WeChatConnectMobileEnabled,
+		WeChatConnectMode:                             settings.WeChatConnectMode,
+		WeChatConnectScopes:                           settings.WeChatConnectScopes,
+		WeChatConnectRedirectURL:                      settings.WeChatConnectRedirectURL,
+		WeChatConnectFrontendRedirectURL:              settings.WeChatConnectFrontendRedirectURL,
+		OIDCConnectEnabled:                            settings.OIDCConnectEnabled,
+		OIDCConnectProviderName:                       settings.OIDCConnectProviderName,
+		OIDCConnectClientID:                           settings.OIDCConnectClientID,
+		OIDCConnectClientSecretConfigured:             settings.OIDCConnectClientSecretConfigured,
+		OIDCConnectIssuerURL:                          settings.OIDCConnectIssuerURL,
+		OIDCConnectDiscoveryURL:                       settings.OIDCConnectDiscoveryURL,
+		OIDCConnectAuthorizeURL:                       settings.OIDCConnectAuthorizeURL,
+		OIDCConnectTokenURL:                           settings.OIDCConnectTokenURL,
+		OIDCConnectUserInfoURL:                        settings.OIDCConnectUserInfoURL,
+		OIDCConnectJWKSURL:                            settings.OIDCConnectJWKSURL,
+		OIDCConnectScopes:                             settings.OIDCConnectScopes,
+		OIDCConnectRedirectURL:                        settings.OIDCConnectRedirectURL,
+		OIDCConnectFrontendRedirectURL:                settings.OIDCConnectFrontendRedirectURL,
+		OIDCConnectTokenAuthMethod:                    settings.OIDCConnectTokenAuthMethod,
+		OIDCConnectUsePKCE:                            settings.OIDCConnectUsePKCE,
+		OIDCConnectValidateIDToken:                    settings.OIDCConnectValidateIDToken,
+		OIDCConnectAllowedSigningAlgs:                 settings.OIDCConnectAllowedSigningAlgs,
+		OIDCConnectClockSkewSeconds:                   settings.OIDCConnectClockSkewSeconds,
+		OIDCConnectRequireEmailVerified:               settings.OIDCConnectRequireEmailVerified,
+		OIDCConnectUserInfoEmailPath:                  settings.OIDCConnectUserInfoEmailPath,
+		OIDCConnectUserInfoIDPath:                     settings.OIDCConnectUserInfoIDPath,
+		OIDCConnectUserInfoUsernamePath:               settings.OIDCConnectUserInfoUsernamePath,
+		GitHubOAuthEnabled:                            settings.GitHubOAuthEnabled,
+		GitHubOAuthClientID:                           settings.GitHubOAuthClientID,
+		GitHubOAuthClientSecretConfigured:             settings.GitHubOAuthClientSecretConfigured,
+		GitHubOAuthRedirectURL:                        settings.GitHubOAuthRedirectURL,
+		GitHubOAuthFrontendRedirectURL:                settings.GitHubOAuthFrontendRedirectURL,
+		GoogleOAuthEnabled:                            settings.GoogleOAuthEnabled,
+		GoogleOAuthClientID:                           settings.GoogleOAuthClientID,
+		GoogleOAuthClientSecretConfigured:             settings.GoogleOAuthClientSecretConfigured,
+		GoogleOAuthRedirectURL:                        settings.GoogleOAuthRedirectURL,
+		GoogleOAuthFrontendRedirectURL:                settings.GoogleOAuthFrontendRedirectURL,
+		SiteName:                                      settings.SiteName,
+		SiteLogo:                                      settings.SiteLogo,
+		SiteSubtitle:                                  settings.SiteSubtitle,
+		APIBaseURL:                                    settings.APIBaseURL,
+		ContactInfo:                                   settings.ContactInfo,
+		DocURL:                                        settings.DocURL,
+		HomeContent:                                   settings.HomeContent,
+		HideCcsImportButton:                           settings.HideCcsImportButton,
+		PurchaseSubscriptionEnabled:                   settings.PurchaseSubscriptionEnabled,
+		PurchaseSubscriptionURL:                       settings.PurchaseSubscriptionURL,
+		TableDefaultPageSize:                          settings.TableDefaultPageSize,
+		TablePageSizeOptions:                          settings.TablePageSizeOptions,
+		CustomMenuItems:                               dto.ParseCustomMenuItems(settings.CustomMenuItems),
+		CustomEndpoints:                               dto.ParseCustomEndpoints(settings.CustomEndpoints),
+		DefaultConcurrency:                            settings.DefaultConcurrency,
+		DefaultBalance:                                settings.DefaultBalance,
+		RiskControlEnabled:                            settings.RiskControlEnabled,
+		AffiliateRebateRate:                           settings.AffiliateRebateRate,
+		AffiliateRebateFreezeHours:                    settings.AffiliateRebateFreezeHours,
+		AffiliateRebateDurationDays:                   settings.AffiliateRebateDurationDays,
+		AffiliateRebatePerInviteeCap:                  settings.AffiliateRebatePerInviteeCap,
+		DefaultUserRPMLimit:                           settings.DefaultUserRPMLimit,
+		DefaultSubscriptions:                          defaultSubscriptions,
+		EnableModelFallback:                           settings.EnableModelFallback,
+		FallbackModelAnthropic:                        settings.FallbackModelAnthropic,
+		FallbackModelOpenAI:                           settings.FallbackModelOpenAI,
+		FallbackModelGemini:                           settings.FallbackModelGemini,
+		FallbackModelAntigravity:                      settings.FallbackModelAntigravity,
+		EnableIdentityPatch:                           settings.EnableIdentityPatch,
+		IdentityPatchPrompt:                           settings.IdentityPatchPrompt,
+		OpsMonitoringEnabled:                          opsEnabled && settings.OpsMonitoringEnabled,
+		OpsRealtimeMonitoringEnabled:                  settings.OpsRealtimeMonitoringEnabled,
+		OpsQueryModeDefault:                           settings.OpsQueryModeDefault,
+		OpsMetricsIntervalSeconds:                     settings.OpsMetricsIntervalSeconds,
+		MinClaudeCodeVersion:                          settings.MinClaudeCodeVersion,
+		MaxClaudeCodeVersion:                          settings.MaxClaudeCodeVersion,
+		AllowUngroupedKeyScheduling:                   settings.AllowUngroupedKeyScheduling,
+		BackendModeEnabled:                            settings.BackendModeEnabled,
+		EnableFingerprintUnification:                  settings.EnableFingerprintUnification,
+		EnableMetadataPassthrough:                     settings.EnableMetadataPassthrough,
+		EnableCCHSigning:                              settings.EnableCCHSigning,
+		EnableAnthropicCacheTTL1hInjection:            settings.EnableAnthropicCacheTTL1hInjection,
+		RewriteMessageCacheControl:                    settings.RewriteMessageCacheControl,
+		AntigravityUserAgentVersion:                   settings.AntigravityUserAgentVersion,
+		OpenAICodexUserAgent:                          settings.OpenAICodexUserAgent,
+		OpenAIAllowClaudeCodeCodexPlugin:              settings.OpenAIAllowClaudeCodeCodexPlugin,
+		OpenAICockpitToolsCompat:                      settings.OpenAICockpitToolsCompat,
+		OpenAIOAuthCompatMode:                         settings.OpenAIOAuthCompatMode,
+		OpenAICodexDirectForceWS:                      settings.OpenAICodexDirectForceWS,
+		OpenAICodexDirectTLSFingerprintProfileID:      settings.OpenAICodexDirectTLSFingerprintProfileID,
+		OpenAISchedulerProbeInfiniteWaitEnabled:       settings.OpenAISchedulerProbeInfiniteWaitEnabled,
+		OpenAISchedulerProbeNotifyEnabled:             settings.OpenAISchedulerProbeNotifyEnabled,
+		OpenAISchedulerProbeNotifyChannel:             settings.OpenAISchedulerProbeNotifyChannel,
+		OpenAISchedulerProbeNotifyAfterSeconds:        settings.OpenAISchedulerProbeNotifyAfterSeconds,
+		OpenAISchedulerProbeNotifyRepeatSeconds:       settings.OpenAISchedulerProbeNotifyRepeatSeconds,
+		OpenAISchedulerProbeNotifyFeishuWebhookURL:    settings.OpenAISchedulerProbeNotifyFeishuWebhookURL,
+		OpenAISchedulerProbeNotifyFeishuAppID:         settings.OpenAISchedulerProbeNotifyFeishuAppID,
+		OpenAISchedulerProbeNotifyFeishuAppSecret:     settings.OpenAISchedulerProbeNotifyFeishuAppSecret,
+		OpenAISchedulerProbeNotifyFeishuDomain:        settings.OpenAISchedulerProbeNotifyFeishuDomain,
+		OpenAISchedulerProbeNotifyFeishuReceiveIDType: settings.OpenAISchedulerProbeNotifyFeishuReceiveIDType,
+		OpenAISchedulerProbeNotifyFeishuReceiveID:     settings.OpenAISchedulerProbeNotifyFeishuReceiveID,
+		OpenAISchedulerProbeNotifyRecoveredEnabled:    settings.OpenAISchedulerProbeNotifyRecoveredEnabled,
+		ClientRequestDebugLogEnabled:                  settings.ClientRequestDebugLogEnabled,
+		CodexStabilityMode:                            settings.CodexStabilityMode,
+		CodexStabilityDynamicHeaderTimeoutEnabled:     settings.CodexStabilityDynamicHeaderTimeoutEnabled,
+		CodexStabilityRequestPhaseFailoverEnabled:     settings.CodexStabilityRequestPhaseFailoverEnabled,
+		CodexStabilitySuppressClientTimeoutHeaders:    settings.CodexStabilitySuppressClientTimeoutHeaders,
+		CodexStabilityStreamKeepaliveEnabled:          settings.CodexStabilityStreamKeepaliveEnabled,
+		CodexAutopilotEnabled:                         settings.CodexAutopilotEnabled,
+		CodexAutopilotObserveOnly:                     settings.CodexAutopilotObserveOnly,
+		CodexAutopilotWindowSeconds:                   settings.CodexAutopilotWindowSeconds,
+		CodexAutopilotMinSamples:                      settings.CodexAutopilotMinSamples,
+		CodexAutopilotHeaderTimeoutThreshold:          settings.CodexAutopilotHeaderTimeoutThreshold,
+		CodexAutopilotEOFThreshold:                    settings.CodexAutopilotEOFThreshold,
+		CodexAutopilotSilentStreamTimeoutSeconds:      settings.CodexAutopilotSilentStreamTimeoutSeconds,
+		OpenAIPathHealthEnabled:                       settings.OpenAIPathHealthEnabled,
+		OpenAIPathHealthCircuitBreakerEnabled:         settings.OpenAIPathHealthCircuitBreakerEnabled,
+		OpenAIPathHealthFailureWindowSeconds:          settings.OpenAIPathHealthFailureWindowSeconds,
+		OpenAIPathHealthCooldownSeconds:               settings.OpenAIPathHealthCooldownSeconds,
+		OpenAIPathHealthDegradedFailures:              settings.OpenAIPathHealthDegradedFailures,
+		OpenAIPathHealthOpenFailures:                  settings.OpenAIPathHealthOpenFailures,
+		OpenAIPathHealthHalfOpenMaxProbes:             settings.OpenAIPathHealthHalfOpenMaxProbes,
+		OpenAIFastLaneEnabled:                         settings.OpenAIFastLaneEnabled,
+		OpenAIFastLaneNewSessionOnly:                  settings.OpenAIFastLaneNewSessionOnly,
+		OpenAIFastLaneTTFTWeight:                      settings.OpenAIFastLaneTTFTWeight,
+		OpenAIFastLaneHeaderWaitWeight:                settings.OpenAIFastLaneHeaderWaitWeight,
+		OpenAIFastLaneMinSamples:                      settings.OpenAIFastLaneMinSamples,
+		OpenAIFastLaneExploreRatio:                    settings.OpenAIFastLaneExploreRatio,
+		RealtimeBalancePrewarmEnabled:                 settings.RealtimeBalancePrewarmEnabled,
+		RealtimeBalancePrewarmIntervalSeconds:         settings.RealtimeBalancePrewarmIntervalSeconds,
+		RealtimeBalancePrewarmActiveAccountLimit:      settings.RealtimeBalancePrewarmActiveAccountLimit,
+		RealtimeBalanceConfirmTopN:                    settings.RealtimeBalanceConfirmTopN,
+		RealtimeBalanceConfirmTimeoutMs:               settings.RealtimeBalanceConfirmTimeoutMs,
+		OpenAIHeaderRaceEnabled:                       settings.OpenAIHeaderRaceEnabled,
+		OpenAIHeaderRaceDelayMs:                       settings.OpenAIHeaderRaceDelayMs,
+		OpenAIHeaderRaceDailyBudget:                   settings.OpenAIHeaderRaceDailyBudget,
+		OpenAIRequestSnapshotEnabled:                  settings.OpenAIRequestSnapshotEnabled,
+		OpenAIRequestSnapshotRetentionHours:           settings.OpenAIRequestSnapshotRetentionHours,
+		CodexWaitGuardEnabled:                         settings.CodexWaitGuardEnabled,
+		CodexWaitGuardMaxHeaderWaitSeconds:            settings.CodexWaitGuardMaxHeaderWaitSeconds,
+		CodexWaitGuardMaxStreamSilentSeconds:          settings.CodexWaitGuardMaxStreamSilentSeconds,
+		CodexWaitGuardKeepaliveIntervalSeconds:        settings.CodexWaitGuardKeepaliveIntervalSeconds,
+		CodexWaitGuardProtectAfterOutput:              settings.CodexWaitGuardProtectAfterOutput,
+		ContextJournalBackend:                         settings.ContextJournalBackend,
+		ContextJournalTTLHours:                        settings.ContextJournalTTLHours,
+		ContextJournalMaxSessionBytes:                 settings.ContextJournalMaxSessionBytes,
+		WebSearchEmulationEnabled:                     settings.WebSearchEmulationEnabled,
+		PaymentVisibleMethodAlipaySource:              settings.PaymentVisibleMethodAlipaySource,
+		PaymentVisibleMethodWxpaySource:               settings.PaymentVisibleMethodWxpaySource,
+		PaymentVisibleMethodAlipayEnabled:             settings.PaymentVisibleMethodAlipayEnabled,
+		PaymentVisibleMethodWxpayEnabled:              settings.PaymentVisibleMethodWxpayEnabled,
+		OpenAIAdvancedSchedulerEnabled:                settings.OpenAIAdvancedSchedulerEnabled,
+		BalanceLowNotifyEnabled:                       settings.BalanceLowNotifyEnabled,
+		BalanceLowNotifyThreshold:                     settings.BalanceLowNotifyThreshold,
+		BalanceLowNotifyRechargeURL:                   settings.BalanceLowNotifyRechargeURL,
+		SubscriptionExpiryNotifyEnabled:               settings.SubscriptionExpiryNotifyEnabled,
+		AccountQuotaNotifyEnabled:                     settings.AccountQuotaNotifyEnabled,
+		AccountQuotaNotifyEmails:                      dto.NotifyEmailEntriesFromService(settings.AccountQuotaNotifyEmails),
+		PaymentEnabled:                                paymentCfg.Enabled,
+		PaymentMinAmount:                              paymentCfg.MinAmount,
+		PaymentMaxAmount:                              paymentCfg.MaxAmount,
+		PaymentDailyLimit:                             paymentCfg.DailyLimit,
+		PaymentOrderTimeoutMin:                        paymentCfg.OrderTimeoutMin,
+		PaymentMaxPendingOrders:                       paymentCfg.MaxPendingOrders,
+		PaymentEnabledTypes:                           paymentCfg.EnabledTypes,
+		PaymentBalanceDisabled:                        paymentCfg.BalanceDisabled,
+		PaymentBalanceRechargeMultiplier:              paymentCfg.BalanceRechargeMultiplier,
+		PaymentRechargeFeeRate:                        paymentCfg.RechargeFeeRate,
+		PaymentLoadBalanceStrat:                       paymentCfg.LoadBalanceStrategy,
+		PaymentProductNamePrefix:                      paymentCfg.ProductNamePrefix,
+		PaymentProductNameSuffix:                      paymentCfg.ProductNameSuffix,
+		PaymentHelpImageURL:                           paymentCfg.HelpImageURL,
+		PaymentHelpText:                               paymentCfg.HelpText,
+		PaymentCancelRateLimitEnabled:                 paymentCfg.CancelRateLimitEnabled,
+		PaymentCancelRateLimitMax:                     paymentCfg.CancelRateLimitMax,
+		PaymentCancelRateLimitWindow:                  paymentCfg.CancelRateLimitWindow,
+		PaymentCancelRateLimitUnit:                    paymentCfg.CancelRateLimitUnit,
+		PaymentCancelRateLimitMode:                    paymentCfg.CancelRateLimitMode,
+		PaymentAlipayForceQRCode:                      paymentCfg.AlipayForceQRCode,
 
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
@@ -620,63 +631,74 @@ type UpdateSettingsRequest struct {
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
 	// Gateway forwarding behavior
-	EnableFingerprintUnification               *bool    `json:"enable_fingerprint_unification"`
-	EnableMetadataPassthrough                  *bool    `json:"enable_metadata_passthrough"`
-	EnableCCHSigning                           *bool    `json:"enable_cch_signing"`
-	EnableAnthropicCacheTTL1hInjection         *bool    `json:"enable_anthropic_cache_ttl_1h_injection"`
-	RewriteMessageCacheControl                 *bool    `json:"rewrite_message_cache_control"`
-	AntigravityUserAgentVersion                *string  `json:"antigravity_user_agent_version"`
-	OpenAICodexUserAgent                       *string  `json:"openai_codex_user_agent"`
-	OpenAIAllowClaudeCodeCodexPlugin           *bool    `json:"openai_allow_claude_code_codex_plugin"`
-	OpenAICockpitToolsCompat                   *bool    `json:"openai_cockpit_tools_compat"`
-	OpenAIOAuthCompatMode                      *string  `json:"openai_oauth_compat_mode"`
-	OpenAICodexDirectForceWS                   *bool    `json:"openai_codex_direct_force_ws"`
-	OpenAICodexDirectTLSFingerprintProfileID   *int64   `json:"openai_codex_direct_tls_fingerprint_profile_id"`
-	OpenAISchedulerProbeInfiniteWaitEnabled    *bool    `json:"openai_scheduler_exhaustion_probe_infinite_wait_enabled"`
-	ClientRequestDebugLogEnabled               *bool    `json:"client_request_debug_log_enabled"`
-	CodexStabilityMode                         *string  `json:"codex_stability_mode"`
-	CodexStabilityDynamicHeaderTimeoutEnabled  *bool    `json:"codex_stability_dynamic_header_timeout_enabled"`
-	CodexStabilityRequestPhaseFailoverEnabled  *bool    `json:"codex_stability_request_phase_failover_enabled"`
-	CodexStabilitySuppressClientTimeoutHeaders *bool    `json:"codex_stability_suppress_client_timeout_headers"`
-	CodexStabilityStreamKeepaliveEnabled       *bool    `json:"codex_stability_stream_keepalive_enabled"`
-	CodexAutopilotEnabled                      *bool    `json:"codex_autopilot_enabled"`
-	CodexAutopilotObserveOnly                  *bool    `json:"codex_autopilot_observe_only"`
-	CodexAutopilotWindowSeconds                *int     `json:"codex_autopilot_window_seconds"`
-	CodexAutopilotMinSamples                   *int     `json:"codex_autopilot_min_samples"`
-	CodexAutopilotHeaderTimeoutThreshold       *int     `json:"codex_autopilot_header_timeout_threshold"`
-	CodexAutopilotEOFThreshold                 *int     `json:"codex_autopilot_eof_threshold"`
-	CodexAutopilotSilentStreamTimeoutSeconds   *int     `json:"codex_autopilot_silent_stream_timeout_seconds"`
-	OpenAIPathHealthEnabled                    *bool    `json:"openai_path_health_enabled"`
-	OpenAIPathHealthCircuitBreakerEnabled      *bool    `json:"openai_path_health_circuit_breaker_enabled"`
-	OpenAIPathHealthFailureWindowSeconds       *int     `json:"openai_path_health_failure_window_seconds"`
-	OpenAIPathHealthCooldownSeconds            *int     `json:"openai_path_health_cooldown_seconds"`
-	OpenAIPathHealthDegradedFailures           *int     `json:"openai_path_health_degraded_failures"`
-	OpenAIPathHealthOpenFailures               *int     `json:"openai_path_health_open_failures"`
-	OpenAIPathHealthHalfOpenMaxProbes          *int     `json:"openai_path_health_half_open_max_probes"`
-	OpenAIFastLaneEnabled                      *bool    `json:"openai_fast_lane_enabled"`
-	OpenAIFastLaneNewSessionOnly               *bool    `json:"openai_fast_lane_new_session_only"`
-	OpenAIFastLaneTTFTWeight                   *float64 `json:"openai_fast_lane_ttft_weight"`
-	OpenAIFastLaneHeaderWaitWeight             *float64 `json:"openai_fast_lane_header_wait_weight"`
-	OpenAIFastLaneMinSamples                   *int     `json:"openai_fast_lane_min_samples"`
-	OpenAIFastLaneExploreRatio                 *float64 `json:"openai_fast_lane_explore_ratio"`
-	RealtimeBalancePrewarmEnabled              *bool    `json:"realtime_balance_prewarm_enabled"`
-	RealtimeBalancePrewarmIntervalSeconds      *int     `json:"realtime_balance_prewarm_interval_seconds"`
-	RealtimeBalancePrewarmActiveAccountLimit   *int     `json:"realtime_balance_prewarm_active_account_limit"`
-	RealtimeBalanceConfirmTopN                 *int     `json:"realtime_balance_confirm_top_n"`
-	RealtimeBalanceConfirmTimeoutMs            *int     `json:"realtime_balance_confirm_timeout_ms"`
-	OpenAIHeaderRaceEnabled                    *bool    `json:"openai_header_race_enabled"`
-	OpenAIHeaderRaceDelayMs                    *int     `json:"openai_header_race_delay_ms"`
-	OpenAIHeaderRaceDailyBudget                *int     `json:"openai_header_race_daily_budget"`
-	OpenAIRequestSnapshotEnabled               *bool    `json:"openai_request_snapshot_enabled"`
-	OpenAIRequestSnapshotRetentionHours        *int     `json:"openai_request_snapshot_retention_hours"`
-	CodexWaitGuardEnabled                      *bool    `json:"codex_wait_guard_enabled"`
-	CodexWaitGuardMaxHeaderWaitSeconds         *int     `json:"codex_wait_guard_max_header_wait_seconds"`
-	CodexWaitGuardMaxStreamSilentSeconds       *int     `json:"codex_wait_guard_max_stream_silent_seconds"`
-	CodexWaitGuardKeepaliveIntervalSeconds     *int     `json:"codex_wait_guard_keepalive_interval_seconds"`
-	CodexWaitGuardProtectAfterOutput           *bool    `json:"codex_wait_guard_protect_after_output_started"`
-	ContextJournalBackend                      *string  `json:"context_journal_backend"`
-	ContextJournalTTLHours                     *int     `json:"context_journal_ttl_hours"`
-	ContextJournalMaxSessionBytes              *int64   `json:"context_journal_max_session_bytes"`
+	EnableFingerprintUnification                  *bool    `json:"enable_fingerprint_unification"`
+	EnableMetadataPassthrough                     *bool    `json:"enable_metadata_passthrough"`
+	EnableCCHSigning                              *bool    `json:"enable_cch_signing"`
+	EnableAnthropicCacheTTL1hInjection            *bool    `json:"enable_anthropic_cache_ttl_1h_injection"`
+	RewriteMessageCacheControl                    *bool    `json:"rewrite_message_cache_control"`
+	AntigravityUserAgentVersion                   *string  `json:"antigravity_user_agent_version"`
+	OpenAICodexUserAgent                          *string  `json:"openai_codex_user_agent"`
+	OpenAIAllowClaudeCodeCodexPlugin              *bool    `json:"openai_allow_claude_code_codex_plugin"`
+	OpenAICockpitToolsCompat                      *bool    `json:"openai_cockpit_tools_compat"`
+	OpenAIOAuthCompatMode                         *string  `json:"openai_oauth_compat_mode"`
+	OpenAICodexDirectForceWS                      *bool    `json:"openai_codex_direct_force_ws"`
+	OpenAICodexDirectTLSFingerprintProfileID      *int64   `json:"openai_codex_direct_tls_fingerprint_profile_id"`
+	OpenAISchedulerProbeInfiniteWaitEnabled       *bool    `json:"openai_scheduler_exhaustion_probe_infinite_wait_enabled"`
+	OpenAISchedulerProbeNotifyEnabled             *bool    `json:"openai_scheduler_exhaustion_probe_notify_enabled"`
+	OpenAISchedulerProbeNotifyChannel             *string  `json:"openai_scheduler_exhaustion_probe_notify_channel"`
+	OpenAISchedulerProbeNotifyAfterSeconds        *int     `json:"openai_scheduler_exhaustion_probe_notify_after_seconds"`
+	OpenAISchedulerProbeNotifyRepeatSeconds       *int     `json:"openai_scheduler_exhaustion_probe_notify_repeat_seconds"`
+	OpenAISchedulerProbeNotifyFeishuWebhookURL    *string  `json:"openai_scheduler_exhaustion_probe_notify_feishu_webhook_url"`
+	OpenAISchedulerProbeNotifyFeishuAppID         *string  `json:"openai_scheduler_exhaustion_probe_notify_feishu_app_id"`
+	OpenAISchedulerProbeNotifyFeishuAppSecret     *string  `json:"openai_scheduler_exhaustion_probe_notify_feishu_app_secret"`
+	OpenAISchedulerProbeNotifyFeishuDomain        *string  `json:"openai_scheduler_exhaustion_probe_notify_feishu_domain"`
+	OpenAISchedulerProbeNotifyFeishuReceiveIDType *string  `json:"openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type"`
+	OpenAISchedulerProbeNotifyFeishuReceiveID     *string  `json:"openai_scheduler_exhaustion_probe_notify_feishu_receive_id"`
+	OpenAISchedulerProbeNotifyRecoveredEnabled    *bool    `json:"openai_scheduler_exhaustion_probe_notify_recovered_enabled"`
+	ClientRequestDebugLogEnabled                  *bool    `json:"client_request_debug_log_enabled"`
+	CodexStabilityMode                            *string  `json:"codex_stability_mode"`
+	CodexStabilityDynamicHeaderTimeoutEnabled     *bool    `json:"codex_stability_dynamic_header_timeout_enabled"`
+	CodexStabilityRequestPhaseFailoverEnabled     *bool    `json:"codex_stability_request_phase_failover_enabled"`
+	CodexStabilitySuppressClientTimeoutHeaders    *bool    `json:"codex_stability_suppress_client_timeout_headers"`
+	CodexStabilityStreamKeepaliveEnabled          *bool    `json:"codex_stability_stream_keepalive_enabled"`
+	CodexAutopilotEnabled                         *bool    `json:"codex_autopilot_enabled"`
+	CodexAutopilotObserveOnly                     *bool    `json:"codex_autopilot_observe_only"`
+	CodexAutopilotWindowSeconds                   *int     `json:"codex_autopilot_window_seconds"`
+	CodexAutopilotMinSamples                      *int     `json:"codex_autopilot_min_samples"`
+	CodexAutopilotHeaderTimeoutThreshold          *int     `json:"codex_autopilot_header_timeout_threshold"`
+	CodexAutopilotEOFThreshold                    *int     `json:"codex_autopilot_eof_threshold"`
+	CodexAutopilotSilentStreamTimeoutSeconds      *int     `json:"codex_autopilot_silent_stream_timeout_seconds"`
+	OpenAIPathHealthEnabled                       *bool    `json:"openai_path_health_enabled"`
+	OpenAIPathHealthCircuitBreakerEnabled         *bool    `json:"openai_path_health_circuit_breaker_enabled"`
+	OpenAIPathHealthFailureWindowSeconds          *int     `json:"openai_path_health_failure_window_seconds"`
+	OpenAIPathHealthCooldownSeconds               *int     `json:"openai_path_health_cooldown_seconds"`
+	OpenAIPathHealthDegradedFailures              *int     `json:"openai_path_health_degraded_failures"`
+	OpenAIPathHealthOpenFailures                  *int     `json:"openai_path_health_open_failures"`
+	OpenAIPathHealthHalfOpenMaxProbes             *int     `json:"openai_path_health_half_open_max_probes"`
+	OpenAIFastLaneEnabled                         *bool    `json:"openai_fast_lane_enabled"`
+	OpenAIFastLaneNewSessionOnly                  *bool    `json:"openai_fast_lane_new_session_only"`
+	OpenAIFastLaneTTFTWeight                      *float64 `json:"openai_fast_lane_ttft_weight"`
+	OpenAIFastLaneHeaderWaitWeight                *float64 `json:"openai_fast_lane_header_wait_weight"`
+	OpenAIFastLaneMinSamples                      *int     `json:"openai_fast_lane_min_samples"`
+	OpenAIFastLaneExploreRatio                    *float64 `json:"openai_fast_lane_explore_ratio"`
+	RealtimeBalancePrewarmEnabled                 *bool    `json:"realtime_balance_prewarm_enabled"`
+	RealtimeBalancePrewarmIntervalSeconds         *int     `json:"realtime_balance_prewarm_interval_seconds"`
+	RealtimeBalancePrewarmActiveAccountLimit      *int     `json:"realtime_balance_prewarm_active_account_limit"`
+	RealtimeBalanceConfirmTopN                    *int     `json:"realtime_balance_confirm_top_n"`
+	RealtimeBalanceConfirmTimeoutMs               *int     `json:"realtime_balance_confirm_timeout_ms"`
+	OpenAIHeaderRaceEnabled                       *bool    `json:"openai_header_race_enabled"`
+	OpenAIHeaderRaceDelayMs                       *int     `json:"openai_header_race_delay_ms"`
+	OpenAIHeaderRaceDailyBudget                   *int     `json:"openai_header_race_daily_budget"`
+	OpenAIRequestSnapshotEnabled                  *bool    `json:"openai_request_snapshot_enabled"`
+	OpenAIRequestSnapshotRetentionHours           *int     `json:"openai_request_snapshot_retention_hours"`
+	CodexWaitGuardEnabled                         *bool    `json:"codex_wait_guard_enabled"`
+	CodexWaitGuardMaxHeaderWaitSeconds            *int     `json:"codex_wait_guard_max_header_wait_seconds"`
+	CodexWaitGuardMaxStreamSilentSeconds          *int     `json:"codex_wait_guard_max_stream_silent_seconds"`
+	CodexWaitGuardKeepaliveIntervalSeconds        *int     `json:"codex_wait_guard_keepalive_interval_seconds"`
+	CodexWaitGuardProtectAfterOutput              *bool    `json:"codex_wait_guard_protect_after_output_started"`
+	ContextJournalBackend                         *string  `json:"context_journal_backend"`
+	ContextJournalTTLHours                        *int     `json:"context_journal_ttl_hours"`
+	ContextJournalMaxSessionBytes                 *int64   `json:"context_journal_max_session_bytes"`
 
 	// Payment visible method routing
 	PaymentVisibleMethodAlipaySource  *string `json:"payment_visible_method_alipay_source"`
@@ -1787,7 +1809,53 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAICodexDirectForceWS:                 boolValueOrDefault(req.OpenAICodexDirectForceWS, previousSettings.OpenAICodexDirectForceWS),
 		OpenAICodexDirectTLSFingerprintProfileID: int64ValueOrDefault(req.OpenAICodexDirectTLSFingerprintProfileID, previousSettings.OpenAICodexDirectTLSFingerprintProfileID),
 		OpenAISchedulerProbeInfiniteWaitEnabled:  boolValueOrDefault(req.OpenAISchedulerProbeInfiniteWaitEnabled, previousSettings.OpenAISchedulerProbeInfiniteWaitEnabled),
-		ClientRequestDebugLogEnabled:             boolValueOrDefault(req.ClientRequestDebugLogEnabled, previousSettings.ClientRequestDebugLogEnabled),
+		OpenAISchedulerProbeNotifyEnabled:        boolValueOrDefault(req.OpenAISchedulerProbeNotifyEnabled, previousSettings.OpenAISchedulerProbeNotifyEnabled),
+		OpenAISchedulerProbeNotifyChannel: func() string {
+			if req.OpenAISchedulerProbeNotifyChannel != nil {
+				return *req.OpenAISchedulerProbeNotifyChannel
+			}
+			return previousSettings.OpenAISchedulerProbeNotifyChannel
+		}(),
+		OpenAISchedulerProbeNotifyAfterSeconds:  intValueOrDefault(req.OpenAISchedulerProbeNotifyAfterSeconds, previousSettings.OpenAISchedulerProbeNotifyAfterSeconds),
+		OpenAISchedulerProbeNotifyRepeatSeconds: intValueOrDefault(req.OpenAISchedulerProbeNotifyRepeatSeconds, previousSettings.OpenAISchedulerProbeNotifyRepeatSeconds),
+		OpenAISchedulerProbeNotifyFeishuWebhookURL: func() string {
+			if req.OpenAISchedulerProbeNotifyFeishuWebhookURL != nil {
+				return *req.OpenAISchedulerProbeNotifyFeishuWebhookURL
+			}
+			return previousSettings.OpenAISchedulerProbeNotifyFeishuWebhookURL
+		}(),
+		OpenAISchedulerProbeNotifyFeishuAppID: func() string {
+			if req.OpenAISchedulerProbeNotifyFeishuAppID != nil {
+				return *req.OpenAISchedulerProbeNotifyFeishuAppID
+			}
+			return previousSettings.OpenAISchedulerProbeNotifyFeishuAppID
+		}(),
+		OpenAISchedulerProbeNotifyFeishuAppSecret: func() string {
+			if req.OpenAISchedulerProbeNotifyFeishuAppSecret != nil {
+				return *req.OpenAISchedulerProbeNotifyFeishuAppSecret
+			}
+			return previousSettings.OpenAISchedulerProbeNotifyFeishuAppSecret
+		}(),
+		OpenAISchedulerProbeNotifyFeishuDomain: func() string {
+			if req.OpenAISchedulerProbeNotifyFeishuDomain != nil {
+				return *req.OpenAISchedulerProbeNotifyFeishuDomain
+			}
+			return previousSettings.OpenAISchedulerProbeNotifyFeishuDomain
+		}(),
+		OpenAISchedulerProbeNotifyFeishuReceiveIDType: func() string {
+			if req.OpenAISchedulerProbeNotifyFeishuReceiveIDType != nil {
+				return *req.OpenAISchedulerProbeNotifyFeishuReceiveIDType
+			}
+			return previousSettings.OpenAISchedulerProbeNotifyFeishuReceiveIDType
+		}(),
+		OpenAISchedulerProbeNotifyFeishuReceiveID: func() string {
+			if req.OpenAISchedulerProbeNotifyFeishuReceiveID != nil {
+				return *req.OpenAISchedulerProbeNotifyFeishuReceiveID
+			}
+			return previousSettings.OpenAISchedulerProbeNotifyFeishuReceiveID
+		}(),
+		OpenAISchedulerProbeNotifyRecoveredEnabled: boolValueOrDefault(req.OpenAISchedulerProbeNotifyRecoveredEnabled, previousSettings.OpenAISchedulerProbeNotifyRecoveredEnabled),
+		ClientRequestDebugLogEnabled:               boolValueOrDefault(req.ClientRequestDebugLogEnabled, previousSettings.ClientRequestDebugLogEnabled),
 		CodexStabilityMode: func() string {
 			if req.CodexStabilityMode != nil {
 				return *req.CodexStabilityMode
@@ -2945,6 +3013,39 @@ func appendGatewayRuntimeSettingChanges(changed []string, before *service.System
 	}
 	if before.OpenAISchedulerProbeInfiniteWaitEnabled != after.OpenAISchedulerProbeInfiniteWaitEnabled {
 		changed = append(changed, "openai_scheduler_exhaustion_probe_infinite_wait_enabled")
+	}
+	if before.OpenAISchedulerProbeNotifyEnabled != after.OpenAISchedulerProbeNotifyEnabled {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_enabled")
+	}
+	if before.OpenAISchedulerProbeNotifyChannel != after.OpenAISchedulerProbeNotifyChannel {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_channel")
+	}
+	if before.OpenAISchedulerProbeNotifyAfterSeconds != after.OpenAISchedulerProbeNotifyAfterSeconds {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_after_seconds")
+	}
+	if before.OpenAISchedulerProbeNotifyRepeatSeconds != after.OpenAISchedulerProbeNotifyRepeatSeconds {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_repeat_seconds")
+	}
+	if before.OpenAISchedulerProbeNotifyFeishuWebhookURL != after.OpenAISchedulerProbeNotifyFeishuWebhookURL {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_feishu_webhook_url")
+	}
+	if before.OpenAISchedulerProbeNotifyFeishuAppID != after.OpenAISchedulerProbeNotifyFeishuAppID {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_feishu_app_id")
+	}
+	if before.OpenAISchedulerProbeNotifyFeishuAppSecret != after.OpenAISchedulerProbeNotifyFeishuAppSecret {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_feishu_app_secret")
+	}
+	if before.OpenAISchedulerProbeNotifyFeishuDomain != after.OpenAISchedulerProbeNotifyFeishuDomain {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_feishu_domain")
+	}
+	if before.OpenAISchedulerProbeNotifyFeishuReceiveIDType != after.OpenAISchedulerProbeNotifyFeishuReceiveIDType {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type")
+	}
+	if before.OpenAISchedulerProbeNotifyFeishuReceiveID != after.OpenAISchedulerProbeNotifyFeishuReceiveID {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_feishu_receive_id")
+	}
+	if before.OpenAISchedulerProbeNotifyRecoveredEnabled != after.OpenAISchedulerProbeNotifyRecoveredEnabled {
+		changed = append(changed, "openai_scheduler_exhaustion_probe_notify_recovered_enabled")
 	}
 	if before.CodexWaitGuardEnabled != after.CodexWaitGuardEnabled {
 		changed = append(changed, "codex_wait_guard_enabled")

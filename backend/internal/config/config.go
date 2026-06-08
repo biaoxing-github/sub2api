@@ -58,6 +58,13 @@ const (
 // 可通过 gateway.upstream_response_read_max_bytes 配置项覆盖。
 const DefaultUpstreamResponseReadMaxBytes int64 = 128 * 1024 * 1024
 
+const (
+	// DefaultOpenAISchedulerProbeNotifyAfterSeconds 是无限探测等待首次通知阈值。
+	DefaultOpenAISchedulerProbeNotifyAfterSeconds = 60
+	// DefaultOpenAISchedulerProbeNotifyRepeatSeconds 是无限探测等待重复通知间隔。
+	DefaultOpenAISchedulerProbeNotifyRepeatSeconds = 300
+)
+
 type Config struct {
 	Server                  ServerConfig                  `mapstructure:"server"`
 	Log                     LogConfig                     `mapstructure:"log"`
@@ -814,6 +821,28 @@ type GatewayConfig struct {
 	// OpenAISchedulerProbeInfiniteWaitEnabled: OpenAI 调度耗尽时是否无限小请求探测等待。
 	// 关闭时每个候选账号探测 6 次后返回真实调度错误；开启后持续探测直到请求上下文取消或账号恢复。
 	OpenAISchedulerProbeInfiniteWaitEnabled bool `mapstructure:"openai_scheduler_exhaustion_probe_infinite_wait_enabled"`
+	// OpenAISchedulerProbeNotifyEnabled: 无限探测等待超过阈值时是否发送外部通知。
+	OpenAISchedulerProbeNotifyEnabled bool `mapstructure:"openai_scheduler_exhaustion_probe_notify_enabled"`
+	// OpenAISchedulerProbeNotifyChannel: 通知通道，feishu_webhook=自定义机器人，feishu_app=企业自建应用机器人。
+	OpenAISchedulerProbeNotifyChannel string `mapstructure:"openai_scheduler_exhaustion_probe_notify_channel"`
+	// OpenAISchedulerProbeNotifyAfterSeconds: 无限探测等待首次通知阈值（秒）。
+	OpenAISchedulerProbeNotifyAfterSeconds int `mapstructure:"openai_scheduler_exhaustion_probe_notify_after_seconds"`
+	// OpenAISchedulerProbeNotifyRepeatSeconds: 无限探测等待重复通知间隔（秒）。
+	OpenAISchedulerProbeNotifyRepeatSeconds int `mapstructure:"openai_scheduler_exhaustion_probe_notify_repeat_seconds"`
+	// OpenAISchedulerProbeNotifyFeishuWebhookURL: 飞书自定义机器人 webhook 地址，留空时仅记录本地日志。
+	OpenAISchedulerProbeNotifyFeishuWebhookURL string `mapstructure:"openai_scheduler_exhaustion_probe_notify_feishu_webhook_url"`
+	// OpenAISchedulerProbeNotifyFeishuAppID: 飞书企业自建应用 App ID。
+	OpenAISchedulerProbeNotifyFeishuAppID string `mapstructure:"openai_scheduler_exhaustion_probe_notify_feishu_app_id"`
+	// OpenAISchedulerProbeNotifyFeishuAppSecret: 飞书企业自建应用 App Secret。
+	OpenAISchedulerProbeNotifyFeishuAppSecret string `mapstructure:"openai_scheduler_exhaustion_probe_notify_feishu_app_secret"`
+	// OpenAISchedulerProbeNotifyFeishuDomain: 飞书开放平台域，feishu/lark 或完整开放平台 URL。
+	OpenAISchedulerProbeNotifyFeishuDomain string `mapstructure:"openai_scheduler_exhaustion_probe_notify_feishu_domain"`
+	// OpenAISchedulerProbeNotifyFeishuReceiveIDType: 飞书消息接收者类型，默认 chat_id。
+	OpenAISchedulerProbeNotifyFeishuReceiveIDType string `mapstructure:"openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type"`
+	// OpenAISchedulerProbeNotifyFeishuReceiveID: 飞书消息接收者 ID，例如群 chat_id。
+	OpenAISchedulerProbeNotifyFeishuReceiveID string `mapstructure:"openai_scheduler_exhaustion_probe_notify_feishu_receive_id"`
+	// OpenAISchedulerProbeNotifyRecoveredEnabled: 发送过等待通知后，账号恢复时是否补发恢复通知。
+	OpenAISchedulerProbeNotifyRecoveredEnabled bool `mapstructure:"openai_scheduler_exhaustion_probe_notify_recovered_enabled"`
 	// CodexImageGenerationBridgeEnabled: 是否为 Codex `/v1/responses` 自动注入 image_generation 工具和桥接指令。
 	// 默认关闭，避免纯文本 Codex 请求被意外改写；显式携带 image_generation 工具的请求仍按分组能力转发。
 	CodexImageGenerationBridgeEnabled bool `mapstructure:"codex_image_generation_bridge_enabled"`
@@ -1988,8 +2017,19 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_fast_lane.min_samples", 3)
 	viper.SetDefault("gateway.openai_fast_lane.explore_ratio", 0.1)
 	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_infinite_wait_enabled", false)
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_enabled", false)
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_channel", "")
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_after_seconds", DefaultOpenAISchedulerProbeNotifyAfterSeconds)
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_repeat_seconds", DefaultOpenAISchedulerProbeNotifyRepeatSeconds)
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_feishu_webhook_url", "")
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_feishu_app_id", "")
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_feishu_app_secret", "")
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_feishu_domain", "feishu")
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type", "chat_id")
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_feishu_receive_id", "")
+	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_recovered_enabled", true)
 	viper.SetDefault("gateway.realtime_balance_prewarm.enabled", true)
-	viper.SetDefault("gateway.realtime_balance_prewarm.interval_seconds", 60)
+	viper.SetDefault("gateway.realtime_balance_prewarm.interval_seconds", 900)
 	viper.SetDefault("gateway.realtime_balance_prewarm.active_account_limit", 20)
 	viper.SetDefault("gateway.realtime_balance_confirm_top_n", 3)
 	viper.SetDefault("gateway.realtime_balance_confirm_timeout_ms", 1200)
@@ -2715,6 +2755,50 @@ func (c *Config) Validate() error {
 	if c.Gateway.ImageStreamKeepaliveInterval != 0 &&
 		(c.Gateway.ImageStreamKeepaliveInterval < 5 || c.Gateway.ImageStreamKeepaliveInterval > 60) {
 		return fmt.Errorf("gateway.image_stream_keepalive_interval must be 0 or between 5-60 seconds")
+	}
+	if c.Gateway.OpenAISchedulerProbeNotifyAfterSeconds < 0 {
+		return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_after_seconds must be non-negative")
+	}
+	if c.Gateway.OpenAISchedulerProbeNotifyRepeatSeconds < 0 {
+		return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_repeat_seconds must be non-negative")
+	}
+	notifyChannel := strings.ToLower(strings.TrimSpace(c.Gateway.OpenAISchedulerProbeNotifyChannel))
+	switch notifyChannel {
+	case "", "feishu_webhook", "feishu_app":
+	default:
+		return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_channel must be one of: feishu_webhook/feishu_app")
+	}
+	if c.Gateway.OpenAISchedulerProbeNotifyEnabled {
+		if c.Gateway.OpenAISchedulerProbeNotifyAfterSeconds <= 0 {
+			return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_after_seconds must be positive when scheduler probe notification is enabled")
+		}
+		if c.Gateway.OpenAISchedulerProbeNotifyRepeatSeconds <= 0 {
+			return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_repeat_seconds must be positive when scheduler probe notification is enabled")
+		}
+		if notifyChannel == "feishu_app" {
+			if strings.TrimSpace(c.Gateway.OpenAISchedulerProbeNotifyFeishuAppID) == "" {
+				return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_feishu_app_id is required when scheduler probe notification channel is feishu_app")
+			}
+			if strings.TrimSpace(c.Gateway.OpenAISchedulerProbeNotifyFeishuAppSecret) == "" {
+				return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_feishu_app_secret is required when scheduler probe notification channel is feishu_app")
+			}
+			if strings.TrimSpace(c.Gateway.OpenAISchedulerProbeNotifyFeishuReceiveIDType) == "" {
+				return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type is required when scheduler probe notification channel is feishu_app")
+			}
+			if strings.TrimSpace(c.Gateway.OpenAISchedulerProbeNotifyFeishuReceiveID) == "" {
+				return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_feishu_receive_id is required when scheduler probe notification channel is feishu_app")
+			}
+		}
+	}
+	if strings.TrimSpace(c.Gateway.OpenAISchedulerProbeNotifyFeishuWebhookURL) != "" {
+		if err := ValidateAbsoluteHTTPURL(c.Gateway.OpenAISchedulerProbeNotifyFeishuWebhookURL); err != nil {
+			return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_feishu_webhook_url invalid: %w", err)
+		}
+	}
+	if strings.HasPrefix(strings.TrimSpace(c.Gateway.OpenAISchedulerProbeNotifyFeishuDomain), "http") {
+		if err := ValidateAbsoluteHTTPURL(c.Gateway.OpenAISchedulerProbeNotifyFeishuDomain); err != nil {
+			return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_feishu_domain invalid: %w", err)
+		}
 	}
 	// 兼容旧键 sticky_previous_response_ttl_seconds
 	if c.Gateway.OpenAIWS.StickyResponseIDTTLSeconds <= 0 && c.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds > 0 {

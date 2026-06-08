@@ -31,10 +31,11 @@ var embeddedVersion string
 
 // Build-time variables (can be set by ldflags)
 var (
-	Version   = ""
-	Commit    = "unknown"
-	Date      = "unknown"
-	BuildType = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
+	Version      = ""
+	ImageVersion = ""
+	Commit       = "unknown"
+	Date         = "unknown"
+	BuildType    = "source" // "source" for manual builds, "release" for CI builds (set by ldflags)
 )
 
 func init() {
@@ -62,6 +63,10 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
+		if strings.TrimSpace(ImageVersion) != "" {
+			log.Printf("Sub2API %s (image: %s, commit: %s, built: %s)\n", Version, ImageVersion, Commit, Date)
+			return
+		}
 		log.Printf("Sub2API %s (commit: %s, built: %s)\n", Version, Commit, Date)
 		return
 	}
@@ -144,8 +149,9 @@ func runMainServer() {
 	}
 
 	buildInfo := handler.BuildInfo{
-		Version:   Version,
-		BuildType: BuildType,
+		Version:      Version,
+		ImageVersion: ImageVersion,
+		BuildType:    BuildType,
 	}
 
 	app, err := initializeApplication(buildInfo)

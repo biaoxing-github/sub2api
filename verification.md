@@ -2558,3 +2558,37 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 部署：部署前 `active.conf` 指向 `sub2api-blue:8080`，active blue 运行 `sub2api:v0.1.134.2` 且 healthy；本轮只更新 idle green，`D:\sub2api-deploy\docker-compose.green.yml` 默认镜像改为 `sub2api:v0.1.134.3`，执行 `docker compose -f docker-compose.green.yml up -d --no-deps --force-recreate sub2api-green`。未重启 PostgreSQL、Redis、proxy 或 active blue。
 - green 候选验证：等待 65 秒后，`sub2api-green` 为 `ConfigImage=sub2api:v0.1.134.3` 且 healthy；`http://127.0.0.1:18082/health` 200，根路径 200，`GET /api/v1/admin/dashboard/stats` 未登录 401，`POST /responses` 未登录 401；候选日志精确过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 为 0。
 - 切流验证：将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-blue:8080` 改为 `sub2api-green:8080`，`docker exec sub2api-proxy nginx -t` 与 reload 通过。切流后 `8080/health`、`18081/health`、`18082/health`、`18083/health` 均 200；公网根路径 200，admin 未登录 401，`POST /responses` 未登录 401；`sub2api-green` active healthy，`sub2api-blue` 继续运行 `sub2api:v0.1.134.2` 作为回滚目标，proxy 错误日志过滤为 0。
+
+## 2026-06-08 08:20 +08:00 - 主版本外新增镜像子版本展示
+
+- 执行者：Devil
+- 目标：按用户要求保留主版本 `0.1.134` 展示，同时新增镜像子版本展示位置，用于显示 `v0.1.134.N` 这类镜像发布标签。
+- 变更：后端 BuildInfo、UpdateService、`/admin/system/version` 与 `/admin/system/check-updates` 增加 `image_version`；Docker 构建参数增加 `IMAGE_VERSION` 并通过 ldflags 注入 `main.ImageVersion`；前端 VersionInfo、App Store 和 VersionBadge 已缓存并展示镜像版本，管理员版本 badge 顶部和下拉详情均可看到镜像版本，主版本仍保持 `v0.1.134` 主视觉。
+- 验证：`go test ./internal/service -run TestUpdateServiceCheckUpdateExposesImageVersionSeparately -count=1` 通过；`go test ./cmd/server -run TestProvideServiceBuildInfo -count=1` 通过；`go run -ldflags "-X main.Version=0.1.134 -X main.ImageVersion=v0.1.134.4 -X main.Commit=testcommit -X main.Date=2026-06-08T00:00:00Z" ./cmd/server --version` 输出主版本和 image 版本；`vitest run src/stores/__tests__/app.spec.ts src/components/common/__tests__/VersionBadge.spec.ts` 通过；`npm run typecheck` 通过；`npm run build` 通过。
+- 说明：本轮未构建 Docker 镜像、未部署、未切流；当前线上仍是上一轮 active green `sub2api:v0.1.134.3`。
+
+## 2026-06-08 08:23 +08:00 - NewAPI 上游额度刷新失败排查
+
+- 执行者：Devil
+- 目标：按用户要求查明 NewAPI 额度刷新失败原因，并使用 `zz1cc` 验证。
+- 证据：当前 active 为 `sub2api-green`，镜像 `sub2api:v0.1.134.3`；`zz1cc` 对应 account_id `127`，base_url 为 `https://zz1cc.cc.cd`，有上游登录用户名/密码和 1 个 API key。`settings` 中 `realtime_balance_prewarm_enabled=true`、`realtime_balance_prewarm_interval_seconds=60`、`realtime_balance_prewarm_active_account_limit=20`；当前 20 个 OpenAI apikey 账号中 13 个带 NewAPI 登录凭证。
+- 现象：最近 30 分钟 `sub2api-green` 日志中 account 127 出现 10 次 `upstream_balance.login_failed`，错误均为 `https://zz1cc.cc.cd/api/user/login returned 429`。同类账号 181/184 也反复 429，说明不是单账号密码错误。
+- `zz1cc` 直连验证：宿主机读取同一账号配置后，`POST /api/user/login` 返回 200 并设置 Cookie；带 Cookie + `New-Api-User=378` 请求 `/api/user/self` 返回 200 且包含 `quota`，`/api/user/groups` 与 `/api/pricing` 也可用。直接 API key 兜底端点中 `/api/v1/usage` 为 404，`/api/usage/token/` 返回 `unlimited_quota=true` 且没有有限余额，不能作为可用额度来源。
+- 结论：失败根因是后台实时余额预热每 60 秒批量登录 NewAPI，触发上游登录限流；一旦登录态拿不到，API key 兜底路径在 `zz1cc` 上又没有可解析的有限余额，所以界面看到额度刷新失败。账号本身和上游 quota 数据是可用的。
+- 未执行：本轮未改业务代码、未部署、未切流。
+
+## 2026-06-08 08:40 +08:00 - NewAPI 上游额度刷新持久化登录态
+
+- 执行者：Devil
+- 目标：降低 NewAPI 额度刷新登录频率，把上游登录所需 token/cookie/`New-Api-User` 持久化到账号 extra，失效后再重新登录。
+- 变更：`backend/internal/service/upstream_balance.go` 新增 `upstream_auth_session` extra 读写；登录成功后保存 token、cookie、`new_api_user`、`expires_at` 和登录配置 cache key；刷新前优先使用 DB/进程缓存会话请求 `/api/user/self` 等登录态余额接口；缓存会话拿不到余额时清理旧会话并重新登录写回。缓存 key 移除 `account.updated_at`，改为账号 ID、base URL、用户名和密码指纹，避免余额字段更新打穿缓存。`backend/internal/config/config.go` 将 `gateway.realtime_balance_prewarm.interval_seconds` 默认值从 60 调整为 900，服务初始化时也会把低于 15 分钟的间隔夹到 15 分钟。
+- 验证：新增测试先红后绿；`go test ./internal/service -run "TestNewUpstreamBalanceServiceClampsShortRefreshInterval|TestUpstreamBalanceService(UsesPersistedAuthenticatedSessionBeforeLogin|RefreshesPersistedSessionAfterUnauthorized)" -count=1 -v` 通过；`go test ./internal/service -run "TestUpstreamBalanceService|TestNewUpstreamBalanceServiceClampsShortRefreshInterval|TestLoginUpstream|TestParseNewAPI" -count=1` 通过；`go test ./internal/service -run TestDoesNotExist -count=1` 通过；`go test ./internal/config -count=1` 通过。
+- 说明：本轮未提交、未构建 Docker 镜像、未部署、未切流；当前线上仍是上一轮 active green，发布后即使 DB 中 `realtime_balance_prewarm_interval_seconds` 仍为 60，服务启动也会按 15 分钟下限执行。
+
+## 2026-06-08 09:00 +08:00 - OpenAI 无限调度等待长时间通知
+
+- 执行者：Devil
+- 目标：在 OpenAI `/responses` 可调度账号耗尽且开启无限小请求探测时，等待过久可通知管理员，避免客户端长时间无响应但无人感知。
+- 变更：新增 `openai_scheduler_exhaustion_probe_notify_*` 配置和管理端设置，支持通知开关、首次通知秒数、重复通知秒数、飞书机器人 webhook 和恢复通知开关；无限探测循环超过阈值后发送 waiting 通知并按重复间隔限流，已发送等待通知后账号恢复会按配置发送 recovered 通知。飞书通知使用 5 秒超时的 text webhook，通知失败只写日志，不中断调度探测。
+- 验证：`go test ./internal/service -run "TestOpenAISchedulerExhaustionProbe" -count=1` 通过；`go test -tags unit ./internal/service -run "TestSettingService_UpdateSettings_OpenAISchedulerExhaustionProbe" -count=1` 通过；`go test ./internal/handler/admin -run TestNonExistent -count=0` 通过；`npm run typecheck` 通过。
+- 说明：本轮未提交、未构建 Docker 镜像、未部署、未切流；飞书 webhook 默认留空，通知开关默认关闭。

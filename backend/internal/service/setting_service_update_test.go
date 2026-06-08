@@ -350,11 +350,44 @@ func TestSettingService_UpdateSettings_OpenAISchedulerExhaustionProbeRefreshesGa
 	svc := NewSettingService(repo, cfg)
 
 	err := svc.UpdateSettings(context.Background(), &SystemSettings{
-		OpenAISchedulerProbeInfiniteWaitEnabled: true,
+		OpenAISchedulerProbeInfiniteWaitEnabled:       true,
+		OpenAISchedulerProbeNotifyEnabled:             true,
+		OpenAISchedulerProbeNotifyChannel:             openAISchedulerExhaustionNotifyChannelFeishuApp,
+		OpenAISchedulerProbeNotifyAfterSeconds:        45,
+		OpenAISchedulerProbeNotifyRepeatSeconds:       120,
+		OpenAISchedulerProbeNotifyFeishuWebhookURL:    "https://example.test/feishu",
+		OpenAISchedulerProbeNotifyFeishuAppID:         "cli_test",
+		OpenAISchedulerProbeNotifyFeishuAppSecret:     "secret_test",
+		OpenAISchedulerProbeNotifyFeishuDomain:        "feishu",
+		OpenAISchedulerProbeNotifyFeishuReceiveIDType: "chat_id",
+		OpenAISchedulerProbeNotifyFeishuReceiveID:     "oc_test",
+		OpenAISchedulerProbeNotifyRecoveredEnabled:    false,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "true", repo.updates[SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled])
+	require.Equal(t, "true", repo.updates[SettingKeyOpenAISchedulerProbeNotifyEnabled])
+	require.Equal(t, openAISchedulerExhaustionNotifyChannelFeishuApp, repo.updates[SettingKeyOpenAISchedulerProbeNotifyChannel])
+	require.Equal(t, "45", repo.updates[SettingKeyOpenAISchedulerProbeNotifyAfterSeconds])
+	require.Equal(t, "120", repo.updates[SettingKeyOpenAISchedulerProbeNotifyRepeatSeconds])
+	require.Equal(t, "https://example.test/feishu", repo.updates[SettingKeyOpenAISchedulerProbeNotifyFeishuWebhookURL])
+	require.Equal(t, "cli_test", repo.updates[SettingKeyOpenAISchedulerProbeNotifyFeishuAppID])
+	require.Equal(t, "secret_test", repo.updates[SettingKeyOpenAISchedulerProbeNotifyFeishuAppSecret])
+	require.Equal(t, "feishu", repo.updates[SettingKeyOpenAISchedulerProbeNotifyFeishuDomain])
+	require.Equal(t, "chat_id", repo.updates[SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveIDType])
+	require.Equal(t, "oc_test", repo.updates[SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveID])
+	require.Equal(t, "false", repo.updates[SettingKeyOpenAISchedulerProbeNotifyRecoveredEnabled])
 	require.True(t, cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled)
+	require.True(t, cfg.Gateway.OpenAISchedulerProbeNotifyEnabled)
+	require.Equal(t, openAISchedulerExhaustionNotifyChannelFeishuApp, cfg.Gateway.OpenAISchedulerProbeNotifyChannel)
+	require.Equal(t, 45, cfg.Gateway.OpenAISchedulerProbeNotifyAfterSeconds)
+	require.Equal(t, 120, cfg.Gateway.OpenAISchedulerProbeNotifyRepeatSeconds)
+	require.Equal(t, "https://example.test/feishu", cfg.Gateway.OpenAISchedulerProbeNotifyFeishuWebhookURL)
+	require.Equal(t, "cli_test", cfg.Gateway.OpenAISchedulerProbeNotifyFeishuAppID)
+	require.Equal(t, "secret_test", cfg.Gateway.OpenAISchedulerProbeNotifyFeishuAppSecret)
+	require.Equal(t, "feishu", cfg.Gateway.OpenAISchedulerProbeNotifyFeishuDomain)
+	require.Equal(t, "chat_id", cfg.Gateway.OpenAISchedulerProbeNotifyFeishuReceiveIDType)
+	require.Equal(t, "oc_test", cfg.Gateway.OpenAISchedulerProbeNotifyFeishuReceiveID)
+	require.False(t, cfg.Gateway.OpenAISchedulerProbeNotifyRecoveredEnabled)
 }
 
 func TestSettingService_UpdateSettings_GatewayRuntimeStabilityRefreshesConfig(t *testing.T) {

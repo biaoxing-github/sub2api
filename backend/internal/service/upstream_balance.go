@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,11 +47,14 @@ const (
 	UpstreamManualBalanceTotalKey           = "upstream_manual_balance_total"
 	UpstreamBalanceEndpointPathsKey         = "upstream_balance_endpoint_paths"
 	UpstreamFetchedGroupsKey                = "upstream_fetched_groups"
+	UpstreamAuthSessionExtraKey             = "upstream_auth_session"
 	UpstreamBalanceAccountEndpoint          = "upstream-login:/api/user/self"
 	UpstreamBalanceSubscriptionEndpoint     = "upstream-login:/api/subscription/self"
 	UpstreamBalanceSubscriptionItemEndpoint = "upstream-login:/api/subscription/self#subscription"
 
-	defaultUpstreamAuthCacheTTL = 15 * time.Minute
+	defaultUpstreamBalanceRefreshInterval = 30 * time.Minute
+	minUpstreamBalanceRefreshInterval     = 15 * time.Minute
+	defaultUpstreamAuthCacheTTL           = 24 * time.Hour
 )
 
 type UpstreamBalanceGroupSnapshot struct {
@@ -127,7 +131,7 @@ type UpstreamBalanceService struct {
 	// authCacheTTL 控制上游后台登录态的进程内复用时长，避免连续余额刷新反复打登录接口。
 	authCacheTTL time.Duration
 	authCacheMu  sync.Mutex
-	// authCache 只保留运行期登录态；进程重启后重新登录，避免把 cookie 写入数据库。
+	// authCache 缓存 DB 中的上游登录态，减少同一进程内重复解析和余额刷新登录。
 	authCache map[string]upstreamAuthSession
 }
 
@@ -155,9 +159,7 @@ type upstreamAuthSession struct {
 }
 
 func NewUpstreamBalanceService(accountRepo AccountRepository, httpUpstream HTTPUpstream, interval time.Duration) *UpstreamBalanceService {
-	if interval <= 0 {
-		interval = 30 * time.Minute
-	}
+	interval = normalizeUpstreamBalanceRefreshInterval(interval)
 	return &UpstreamBalanceService{
 		accountRepo:         accountRepo,
 		httpUpstream:        httpUpstream,
@@ -171,7 +173,7 @@ func NewUpstreamBalanceService(accountRepo AccountRepository, httpUpstream HTTPU
 }
 
 func ProvideUpstreamBalanceService(accountRepo AccountRepository, httpUpstream HTTPUpstream, cfg *config.Config) *UpstreamBalanceService {
-	interval := 30 * time.Minute
+	interval := defaultUpstreamBalanceRefreshInterval
 	autoRefreshEnabled := true
 	activeAccountLimit := 0
 	if cfg != nil {
@@ -186,6 +188,16 @@ func ProvideUpstreamBalanceService(accountRepo AccountRepository, httpUpstream H
 	svc.activeAccountLimit = activeAccountLimit
 	svc.Start()
 	return svc
+}
+
+func normalizeUpstreamBalanceRefreshInterval(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return defaultUpstreamBalanceRefreshInterval
+	}
+	if interval < minUpstreamBalanceRefreshInterval {
+		return minUpstreamBalanceRefreshInterval
+	}
+	return interval
 }
 
 func (s *UpstreamBalanceService) Start() {
@@ -523,26 +535,33 @@ func (s *UpstreamBalanceService) fetchUpstreamAuthContext(ctx context.Context, a
 		return nil
 	}
 	baseURL := upstreamBalanceBaseURL(account)
-	cacheKey := upstreamAuthCacheKey(account, baseURL, username)
+	cacheKey := upstreamAuthCacheKey(account, baseURL, username, password)
 	session, fromCache := s.cachedUpstreamAuthSession(cacheKey)
 	if !fromCache {
-		var err error
-		session, err = s.loginUpstreamSession(ctx, account, baseURL, username, password)
+		if persisted, ok := persistedUpstreamAuthSession(account, cacheKey, time.Now()); ok {
+			session = persisted
+			fromCache = true
+			s.storeUpstreamAuthSession(cacheKey, session)
+		}
+	}
+	if !fromCache {
+		freshSession, err := s.loginUpstreamSession(ctx, account, baseURL, username, password)
 		if err != nil {
 			slog.Warn("upstream_balance.login_failed", "account_id", account.ID, "error", err)
 			return nil
 		}
-		s.storeUpstreamAuthSession(cacheKey, session)
+		session = s.storeAndPersistUpstreamAuthSession(ctx, account, cacheKey, freshSession)
 	}
 	auth := s.fetchUpstreamAuthContextWithSession(ctx, account, keys, baseURL, session)
 	if fromCache && auth.userBalance == nil {
 		s.deleteUpstreamAuthSession(cacheKey)
+		s.deletePersistentUpstreamAuthSession(ctx, account, cacheKey)
 		freshSession, err := s.loginUpstreamSession(ctx, account, baseURL, username, password)
 		if err != nil {
 			slog.Warn("upstream_balance.login_failed", "account_id", account.ID, "error", err)
 			return auth
 		}
-		s.storeUpstreamAuthSession(cacheKey, freshSession)
+		freshSession = s.storeAndPersistUpstreamAuthSession(ctx, account, cacheKey, freshSession)
 		auth = s.fetchUpstreamAuthContextWithSession(ctx, account, keys, baseURL, freshSession)
 	}
 	return auth
@@ -561,11 +580,12 @@ func (s *UpstreamBalanceService) fetchUpstreamAuthContextWithSession(ctx context
 	return auth
 }
 
-func upstreamAuthCacheKey(account *Account, baseURL, username string) string {
+func upstreamAuthCacheKey(account *Account, baseURL, username, password string) string {
 	if account == nil {
 		return ""
 	}
-	return fmt.Sprintf("%d|%s|%s|%d", account.ID, baseURL, username, account.UpdatedAt.UnixNano())
+	passwordHash := sha256.Sum256([]byte(password))
+	return fmt.Sprintf("%d|%s|%s|%x", account.ID, baseURL, username, passwordHash)
 }
 
 func (s *UpstreamBalanceService) cachedUpstreamAuthSession(key string) (upstreamAuthSession, bool) {
@@ -589,11 +609,7 @@ func (s *UpstreamBalanceService) storeUpstreamAuthSession(key string, session up
 	if s == nil || key == "" {
 		return
 	}
-	ttl := s.authCacheTTL
-	if ttl <= 0 {
-		ttl = defaultUpstreamAuthCacheTTL
-	}
-	session.expiresAt = time.Now().Add(ttl)
+	session = s.ensureUpstreamAuthSessionExpiry(session, time.Now())
 	s.authCacheMu.Lock()
 	defer s.authCacheMu.Unlock()
 	if s.authCache == nil {
@@ -609,6 +625,94 @@ func (s *UpstreamBalanceService) deleteUpstreamAuthSession(key string) {
 	s.authCacheMu.Lock()
 	defer s.authCacheMu.Unlock()
 	delete(s.authCache, key)
+}
+
+func (s *UpstreamBalanceService) storeAndPersistUpstreamAuthSession(ctx context.Context, account *Account, cacheKey string, session upstreamAuthSession) upstreamAuthSession {
+	session = s.ensureUpstreamAuthSessionExpiry(session, time.Now())
+	s.storeUpstreamAuthSession(cacheKey, session)
+	if s == nil || s.accountRepo == nil || account == nil || cacheKey == "" {
+		return session
+	}
+	payload := map[string]any{
+		"cache_key":    cacheKey,
+		"token":        session.token,
+		"cookie":       session.cookie,
+		"new_api_user": session.newAPIUser,
+		"expires_at":   session.expiresAt.UTC().Format(time.RFC3339),
+		"updated_at":   time.Now().UTC().Format(time.RFC3339),
+	}
+	if account.Extra == nil {
+		account.Extra = make(map[string]any)
+	}
+	account.Extra[UpstreamAuthSessionExtraKey] = payload
+	if err := s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{UpstreamAuthSessionExtraKey: payload}); err != nil {
+		slog.Warn("upstream_balance.persist_auth_session_failed", "account_id", account.ID, "error", err)
+	}
+	return session
+}
+
+func (s *UpstreamBalanceService) deletePersistentUpstreamAuthSession(ctx context.Context, account *Account, cacheKey string) {
+	if s == nil || s.accountRepo == nil || account == nil || cacheKey == "" {
+		return
+	}
+	if persisted, ok := persistedUpstreamAuthSession(account, cacheKey, time.Now()); !ok || persisted.expiresAt.IsZero() {
+		return
+	}
+	if account.Extra == nil {
+		account.Extra = make(map[string]any)
+	}
+	account.Extra[UpstreamAuthSessionExtraKey] = nil
+	if err := s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{UpstreamAuthSessionExtraKey: nil}); err != nil {
+		slog.Warn("upstream_balance.delete_auth_session_failed", "account_id", account.ID, "error", err)
+	}
+}
+
+func (s *UpstreamBalanceService) ensureUpstreamAuthSessionExpiry(session upstreamAuthSession, now time.Time) upstreamAuthSession {
+	if session.expiresAt.After(now) {
+		return session
+	}
+	ttl := defaultUpstreamAuthCacheTTL
+	if s != nil && s.authCacheTTL > 0 {
+		ttl = s.authCacheTTL
+	}
+	session.expiresAt = now.Add(ttl)
+	return session
+}
+
+func persistedUpstreamAuthSession(account *Account, cacheKey string, now time.Time) (upstreamAuthSession, bool) {
+	if account == nil || account.Extra == nil || cacheKey == "" {
+		return upstreamAuthSession{}, false
+	}
+	raw, ok := account.Extra[UpstreamAuthSessionExtraKey].(map[string]any)
+	if !ok || raw == nil {
+		return upstreamAuthSession{}, false
+	}
+	if persistedAuthSessionString(raw, "cache_key") != cacheKey {
+		return upstreamAuthSession{}, false
+	}
+	token := persistedAuthSessionString(raw, "token")
+	cookie := persistedAuthSessionString(raw, "cookie")
+	if token == "" && cookie == "" {
+		return upstreamAuthSession{}, false
+	}
+	expiresAt, err := parseTime(persistedAuthSessionString(raw, "expires_at"))
+	if err != nil || !expiresAt.After(now) {
+		return upstreamAuthSession{}, false
+	}
+	return upstreamAuthSession{
+		token:      token,
+		cookie:     cookie,
+		newAPIUser: persistedAuthSessionString(raw, "new_api_user"),
+		expiresAt:  expiresAt.UTC(),
+	}, true
+}
+
+func persistedAuthSessionString(raw map[string]any, key string) string {
+	value, ok := raw[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func (s *UpstreamBalanceService) loginUpstreamSession(ctx context.Context, account *Account, baseURL, username, password string) (upstreamAuthSession, error) {

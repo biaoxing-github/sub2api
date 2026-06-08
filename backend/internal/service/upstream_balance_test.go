@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -14,12 +15,13 @@ import (
 )
 
 type upstreamBalanceRefreshOneRepo struct {
-	account       *Account
-	accounts      []Account
-	updateExtraID int64
-	updateExtra   map[string]any
-	bulkUpdateIDs []int64
-	bulkUpdate    AccountBulkUpdate
+	account            *Account
+	accounts           []Account
+	updateExtraID      int64
+	updateExtra        map[string]any
+	updateExtraHistory []map[string]any
+	bulkUpdateIDs      []int64
+	bulkUpdate         AccountBulkUpdate
 }
 
 func (r *upstreamBalanceRefreshOneRepo) Create(context.Context, *Account) error { return nil }
@@ -135,7 +137,20 @@ func (r *upstreamBalanceRefreshOneRepo) UpdateSessionWindow(context.Context, int
 }
 func (r *upstreamBalanceRefreshOneRepo) UpdateExtra(_ context.Context, id int64, updates map[string]any) error {
 	r.updateExtraID = id
-	r.updateExtra = updates
+	copied := make(map[string]any, len(updates))
+	for key, value := range updates {
+		copied[key] = value
+	}
+	r.updateExtra = copied
+	r.updateExtraHistory = append(r.updateExtraHistory, copied)
+	if r.account != nil && r.account.ID == id {
+		if r.account.Extra == nil {
+			r.account.Extra = make(map[string]any)
+		}
+		for key, value := range updates {
+			r.account.Extra[key] = value
+		}
+	}
 	return nil
 }
 func (r *upstreamBalanceRefreshOneRepo) BulkUpdate(_ context.Context, ids []int64, updates AccountBulkUpdate) (int64, error) {
@@ -151,17 +166,32 @@ func (r *upstreamBalanceRefreshOneRepo) ResetQuotaUsed(context.Context, int64) e
 }
 
 type upstreamBalanceRefreshOneHTTP struct {
-	requests  []*http.Request
-	body      string
-	responses map[string]string
-	statuses  map[string]int
+	requests          []*http.Request
+	body              string
+	responses         map[string]string
+	responseSequences map[string][]string
+	statuses          map[string]int
+	statusSequences   map[string][]int
+	headers           map[string]http.Header
+	pathCalls         map[string]int
 }
 
 func (h *upstreamBalanceRefreshOneHTTP) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	h.requests = append(h.requests, req)
+	if h.pathCalls == nil {
+		h.pathCalls = make(map[string]int)
+	}
+	path := req.URL.Path
+	callIndex := h.pathCalls[path]
+	h.pathCalls[path] = callIndex + 1
 	body := h.body
+	if h.responseSequences != nil {
+		if seq, ok := h.responseSequences[path]; ok && callIndex < len(seq) {
+			body = seq[callIndex]
+		}
+	}
 	if h.responses != nil {
-		if matched, ok := h.responses[req.URL.Path]; ok {
+		if matched, ok := h.responses[path]; ok && body == h.body {
 			body = matched
 		}
 	}
@@ -169,14 +199,27 @@ func (h *upstreamBalanceRefreshOneHTTP) Do(req *http.Request, _ string, _ int64,
 		body = `{"total_granted":20,"total_used":7.5,"total_available":12.5}`
 	}
 	status := http.StatusOK
+	if h.statusSequences != nil {
+		if seq, ok := h.statusSequences[path]; ok && callIndex < len(seq) {
+			status = seq[callIndex]
+		}
+	}
 	if h.statuses != nil {
-		if matched, ok := h.statuses[req.URL.Path]; ok {
+		if matched, ok := h.statuses[path]; ok && status == http.StatusOK {
 			status = matched
+		}
+	}
+	headers := make(http.Header)
+	if h.headers != nil {
+		if matched, ok := h.headers[path]; ok {
+			for key, values := range matched {
+				headers[key] = append([]string(nil), values...)
+			}
 		}
 	}
 	return &http.Response{
 		StatusCode: status,
-		Header:     make(http.Header),
+		Header:     headers,
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}, nil
 }
@@ -258,6 +301,14 @@ func TestUpstreamBalanceServiceRefreshAllHonorsActiveAccountLimit(t *testing.T) 
 	}
 	if len(httpUpstream.requests) != 4 {
 		t.Fatalf("upstream requests = %d, want 4 for two refreshed accounts", len(httpUpstream.requests))
+	}
+}
+
+func TestNewUpstreamBalanceServiceClampsShortRefreshInterval(t *testing.T) {
+	svc := NewUpstreamBalanceService(&upstreamBalanceRefreshOneRepo{}, &upstreamBalanceRefreshOneHTTP{}, time.Minute)
+
+	if svc.interval != minUpstreamBalanceRefreshInterval {
+		t.Fatalf("interval = %s, want %s", svc.interval, minUpstreamBalanceRefreshInterval)
 	}
 }
 
@@ -448,6 +499,182 @@ func TestUpstreamBalanceServiceCachesAuthenticatedLoginSession(t *testing.T) {
 	if loginRequests != 1 {
 		t.Fatalf("login requests = %d, want 1; requests = %+v", loginRequests, httpUpstream.requests)
 	}
+}
+
+func TestUpstreamBalanceServiceUsesPersistedAuthenticatedSessionBeforeLogin(t *testing.T) {
+	account := &Account{
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":                         "sk-test",
+			"base_url":                        "https://upstream.example",
+			UpstreamAuthUsernameCredentialKey: "alice@example.com",
+			UpstreamAuthPasswordCredentialKey: "secret",
+		},
+		Extra: map[string]any{},
+	}
+	account.Extra[UpstreamAuthSessionExtraKey] = map[string]any{
+		"cache_key":    upstreamAuthCacheKey(account, "https://upstream.example", "alice@example.com", "secret"),
+		"token":        "persisted-token",
+		"cookie":       "session=persisted",
+		"new_api_user": "378",
+		"expires_at":   time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+	}
+	repo := &upstreamBalanceRefreshOneRepo{account: account}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{
+		responses: map[string]string{
+			"/api/user/login":        `{"error":{"message":"too many requests"}}`,
+			"/api/v1/auth/me":        `{"success":false,"message":"Invalid URL"}`,
+			"/api/user/self":         `{"success":true,"data":{"quota":2452648,"used_quota":47352}}`,
+			"/api/subscription/self": `{"subscriptions":[]}`,
+		},
+		statuses: map[string]int{
+			"/api/user/login": http.StatusTooManyRequests,
+		},
+	}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+
+	snapshot, err := svc.RefreshOne(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("RefreshOne() error = %v", err)
+	}
+	if snapshot.Available != 4.905296 || snapshot.Used != 0.094704 || snapshot.Total != 5 {
+		t.Fatalf("snapshot = %+v; requests = %s", snapshot, describeUpstreamBalanceRequests(httpUpstream.requests))
+	}
+	if got := countUpstreamBalanceRequests(httpUpstream.requests, "/api/user/login"); got != 0 {
+		t.Fatalf("login requests = %d, want 0; requests = %+v", got, httpUpstream.requests)
+	}
+	var selfReq *http.Request
+	for _, req := range httpUpstream.requests {
+		if req.URL.Path == "/api/user/self" {
+			selfReq = req
+			break
+		}
+	}
+	if selfReq == nil {
+		t.Fatalf("missing /api/user/self request; requests = %+v", httpUpstream.requests)
+	}
+	if got := selfReq.Header.Get("Authorization"); got != "Bearer persisted-token" {
+		t.Fatalf("Authorization = %q, want persisted bearer token", got)
+	}
+	if got := selfReq.Header.Get("Cookie"); got != "session=persisted" {
+		t.Fatalf("Cookie = %q, want persisted cookie", got)
+	}
+	if got := selfReq.Header.Get("New-Api-User"); got != "378" {
+		t.Fatalf("New-Api-User = %q, want 378", got)
+	}
+}
+
+func TestUpstreamBalanceServiceRefreshesPersistedSessionAfterUnauthorized(t *testing.T) {
+	account := &Account{
+		ID:       42,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":                         "sk-test",
+			"base_url":                        "https://upstream.example",
+			UpstreamAuthUsernameCredentialKey: "alice@example.com",
+			UpstreamAuthPasswordCredentialKey: "secret",
+		},
+		Extra: map[string]any{},
+	}
+	account.Extra[UpstreamAuthSessionExtraKey] = map[string]any{
+		"cache_key":    upstreamAuthCacheKey(account, "https://upstream.example", "alice@example.com", "secret"),
+		"cookie":       "session=stale",
+		"new_api_user": "old-user",
+		"expires_at":   time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+	}
+	repo := &upstreamBalanceRefreshOneRepo{account: account}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{
+		body: `{"error":"unexpected default response"}`,
+		responses: map[string]string{
+			"/api/user/login":        `{"success":true,"data":{"id":378}}`,
+			"/api/v1/auth/me":        `{"success":false,"message":"Invalid URL"}`,
+			"/api/subscription/self": `{"subscriptions":[]}`,
+		},
+		responseSequences: map[string][]string{
+			"/api/user/self": {
+				`{"error":{"message":"session expired"}}`,
+				`{"success":true,"data":{"quota":2452648,"used_quota":47352}}`,
+			},
+		},
+		statusSequences: map[string][]int{
+			"/api/user/self": {http.StatusUnauthorized, http.StatusOK},
+		},
+		statuses: map[string]int{
+			"/v1/usage":                http.StatusNotFound,
+			"/api/v1/groups/available": http.StatusNotFound,
+			"/api/v1/groups/rates":     http.StatusNotFound,
+			"/api/user/groups":         http.StatusNotFound,
+			"/api/pricing":             http.StatusNotFound,
+			"/api/v1/keys":             http.StatusNotFound,
+			"/api/token/":              http.StatusNotFound,
+		},
+		headers: map[string]http.Header{
+			"/api/user/login": {
+				"Set-Cookie": []string{"session=fresh; Path=/; HttpOnly"},
+			},
+		},
+	}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+
+	snapshot, err := svc.RefreshOne(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("RefreshOne() error = %v", err)
+	}
+	if snapshot.Available != 4.905296 || snapshot.Used != 0.094704 || snapshot.Total != 5 {
+		t.Fatalf("snapshot = %+v; requests = %s", snapshot, describeUpstreamBalanceRequests(httpUpstream.requests))
+	}
+	if got := countUpstreamBalanceRequests(httpUpstream.requests, "/api/user/login"); got != 1 {
+		t.Fatalf("login requests = %d, want 1; requests = %+v", got, httpUpstream.requests)
+	}
+	selfRequests := make([]*http.Request, 0, 2)
+	for _, req := range httpUpstream.requests {
+		if req.URL.Path == "/api/user/self" {
+			selfRequests = append(selfRequests, req)
+		}
+	}
+	if len(selfRequests) < 2 {
+		t.Fatalf("self requests = %d, want at least 2; requests = %+v", len(selfRequests), httpUpstream.requests)
+	}
+	if got := selfRequests[0].Header.Get("Cookie"); got != "session=stale" {
+		t.Fatalf("first Cookie = %q, want stale session", got)
+	}
+	if got := selfRequests[len(selfRequests)-1].Header.Get("Cookie"); got != "session=fresh" {
+		t.Fatalf("last Cookie = %q, want refreshed session", got)
+	}
+	rawSession, ok := account.Extra[UpstreamAuthSessionExtraKey].(map[string]any)
+	if !ok {
+		t.Fatalf("persisted session = %#v, want map", account.Extra[UpstreamAuthSessionExtraKey])
+	}
+	if got := rawSession["cookie"]; got != "session=fresh" {
+		t.Fatalf("persisted cookie = %v, want fresh", got)
+	}
+	if got := rawSession["new_api_user"]; got != "378" {
+		t.Fatalf("persisted new_api_user = %v, want 378", got)
+	}
+	if _, ok := rawSession["expires_at"].(string); !ok {
+		t.Fatalf("persisted expires_at = %#v, want string", rawSession["expires_at"])
+	}
+}
+
+func countUpstreamBalanceRequests(requests []*http.Request, path string) int {
+	count := 0
+	for _, req := range requests {
+		if req.URL.Path == path {
+			count++
+		}
+	}
+	return count
+}
+
+func describeUpstreamBalanceRequests(requests []*http.Request) string {
+	parts := make([]string, 0, len(requests))
+	for _, req := range requests {
+		parts = append(parts, fmt.Sprintf("%s cookie=%q user=%q", req.URL.Path, req.Header.Get("Cookie"), req.Header.Get("New-Api-User")))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func TestLoginUpstreamStopsFallbackOnRateLimit(t *testing.T) {

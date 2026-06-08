@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAppStore } from '@/stores/app'
+import { checkUpdates } from '@/api/admin/system'
 import { getPublicSettings } from '@/api/auth'
 
 // Mock API 模块
@@ -16,6 +17,7 @@ describe('useAppStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.useFakeTimers()
+    vi.clearAllMocks()
     localStorage.clear()
     // 清除 window.__APP_CONFIG__
     delete (window as any).__APP_CONFIG__
@@ -250,6 +252,32 @@ describe('useAppStore', () => {
   })
 
   // --- 公开设置 ---
+
+  describe('版本信息加载', () => {
+    it('缓存主版本和镜像子版本', async () => {
+      vi.mocked(checkUpdates).mockResolvedValue({
+        current_version: '0.1.134',
+        image_version: 'v0.1.134.3',
+        latest_version: '0.1.134',
+        has_update: false,
+        build_type: 'release',
+        cached: false
+      } as any)
+
+      const store = useAppStore()
+      const result = await store.fetchVersion(true)
+
+      expect(result?.current_version).toBe('0.1.134')
+      expect(result?.image_version).toBe('v0.1.134.3')
+      expect((store as any).currentVersion).toBe('0.1.134')
+      expect((store as any).imageVersion).toBe('v0.1.134.3')
+
+      const cached = await store.fetchVersion(false)
+      expect(cached?.current_version).toBe('0.1.134')
+      expect(cached?.image_version).toBe('v0.1.134.3')
+      expect(checkUpdates).toHaveBeenCalledTimes(1)
+    })
+  })
 
   describe('公开设置加载', () => {
     it('从 window.__APP_CONFIG__ 初始化', () => {

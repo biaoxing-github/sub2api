@@ -7100,6 +7100,15 @@ export default {
         title: '调度耗尽无限探测等待',
         description: '默认关闭。开启后当 OpenAI 没有可调度账号时，会持续发送小请求探测同一调度范围内账号，直到账号恢复后再继续真实请求。'
       },
+      openaiSchedulerExhaustionProbeNotify: {
+        title: '长时间等待通知',
+        description: '开启后无限探测等待超过阈值会发送飞书机器人通知；未填写 webhook 时只记录本地日志。',
+        afterSeconds: '首次通知阈值（秒）',
+        repeatSeconds: '重复通知间隔（秒）',
+        feishuWebhook: '飞书机器人 Webhook',
+        feishuWebhookPlaceholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...',
+        recovered: '账号恢复后发送恢复通知'
+      },
       saveSettings: '保存设置',
       saving: '保存中...',
       settingsSaved: '设置保存成功',
@@ -7265,6 +7274,7 @@ export default {
   // Version Badge
   version: {
     currentVersion: '当前版本',
+    imageVersion: '镜像版本',
     latestVersion: '最新版本',
     upToDate: '已是最新版本',
     updateAvailable: '有新版本可用！',

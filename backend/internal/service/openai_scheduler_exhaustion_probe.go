@@ -45,8 +45,15 @@ func (s *OpenAIGatewayService) RecoverOpenAISchedulerExhaustion(ctx context.Cont
 		return false, ErrNoAvailableAccounts
 	}
 
+	startedAt := s.nowOpenAISchedulerExhaustionProbe()
+	notifyEnabled, notifyAfter, notifyRepeat, notifyRecovered := s.openAISchedulerExhaustionProbeNotifySettings()
+	nextNotifyAt := startedAt.Add(notifyAfter)
+	waitingNotificationSent := false
+	rounds := 0
+	attempts := 0
 	var lastErr error
 	for {
+		rounds++
 		for i := range accounts {
 			account := &accounts[i]
 			attemptLimit := openAISchedulerExhaustionProbeAttemptsPerAccount
@@ -57,12 +64,49 @@ func (s *OpenAIGatewayService) RecoverOpenAISchedulerExhaustion(ctx context.Cont
 				if err := ctx.Err(); err != nil {
 					return false, err
 				}
+				attempts++
 				if err := s.probeOpenAISchedulerExhaustionAccount(ctx, account, opts.RequestedModel, opts.RequireCompact); err != nil {
 					lastErr = err
+					if opts.Infinite && notifyEnabled {
+						now := s.nowOpenAISchedulerExhaustionProbe()
+						if !now.Before(nextNotifyAt) {
+							waitingNotificationSent = true
+							s.notifyOpenAISchedulerExhaustionProbe(ctx, openAISchedulerExhaustionProbeNotifyEvent{
+								Phase:          openAISchedulerExhaustionNotifyPhaseWaiting,
+								StartedAt:      startedAt,
+								Elapsed:        now.Sub(startedAt),
+								Rounds:         rounds,
+								Attempts:       attempts,
+								CandidateCount: len(accounts),
+								RequestedModel: opts.RequestedModel,
+								RequireCompact: opts.RequireCompact,
+								LastError:      err.Error(),
+							})
+							for !nextNotifyAt.After(now) {
+								nextNotifyAt = nextNotifyAt.Add(notifyRepeat)
+							}
+						}
+					}
 					continue
 				}
 				if err := s.recoverOpenAISchedulerExhaustionAccount(ctx, account); err != nil {
 					return false, err
+				}
+				if opts.Infinite && waitingNotificationSent && notifyRecovered {
+					now := s.nowOpenAISchedulerExhaustionProbe()
+					s.notifyOpenAISchedulerExhaustionProbe(ctx, openAISchedulerExhaustionProbeNotifyEvent{
+						Phase:          openAISchedulerExhaustionNotifyPhaseRecovered,
+						StartedAt:      startedAt,
+						Elapsed:        now.Sub(startedAt),
+						Rounds:         rounds,
+						Attempts:       attempts,
+						CandidateCount: len(accounts),
+						RequestedModel: opts.RequestedModel,
+						RequireCompact: opts.RequireCompact,
+						AccountID:      account.ID,
+						AccountName:    account.Name,
+						LastError:      errorString(lastErr),
+					})
 				}
 				return true, nil
 			}

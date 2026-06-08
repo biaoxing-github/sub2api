@@ -3687,6 +3687,127 @@
                   "
                 />
               </div>
+
+              <div
+                v-if="
+                  form.openai_scheduler_exhaustion_probe_infinite_wait_enabled
+                "
+                class="space-y-4 border-t border-gray-100 pt-5 dark:border-dark-700"
+              >
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label
+                      class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
+                          "admin.settings.openaiSchedulerExhaustionProbeNotify.title",
+                        )
+                      }}
+                    </label>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{
+                        t(
+                          "admin.settings.openaiSchedulerExhaustionProbeNotify.description",
+                        )
+                      }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="
+                      form.openai_scheduler_exhaustion_probe_notify_enabled
+                    "
+                  />
+                </div>
+
+                <div
+                  v-if="form.openai_scheduler_exhaustion_probe_notify_enabled"
+                  class="grid gap-4 md:grid-cols-2"
+                >
+                  <div>
+                    <label
+                      class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
+                          "admin.settings.openaiSchedulerExhaustionProbeNotify.afterSeconds",
+                        )
+                      }}
+                    </label>
+                    <input
+                      v-model.number="
+                        form.openai_scheduler_exhaustion_probe_notify_after_seconds
+                      "
+                      type="number"
+                      min="1"
+                      class="input"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
+                          "admin.settings.openaiSchedulerExhaustionProbeNotify.repeatSeconds",
+                        )
+                      }}
+                    </label>
+                    <input
+                      v-model.number="
+                        form.openai_scheduler_exhaustion_probe_notify_repeat_seconds
+                      "
+                      type="number"
+                      min="1"
+                      class="input"
+                    />
+                  </div>
+
+                  <div class="md:col-span-2">
+                    <label
+                      class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
+                          "admin.settings.openaiSchedulerExhaustionProbeNotify.feishuWebhook",
+                        )
+                      }}
+                    </label>
+                    <input
+                      v-model="
+                        form.openai_scheduler_exhaustion_probe_notify_feishu_webhook_url
+                      "
+                      type="url"
+                      class="input"
+                      :placeholder="
+                        t(
+                          'admin.settings.openaiSchedulerExhaustionProbeNotify.feishuWebhookPlaceholder',
+                        )
+                      "
+                    />
+                  </div>
+
+                  <div class="flex items-center justify-between md:col-span-2">
+                    <div>
+                      <label
+                        class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        {{
+                          t(
+                            "admin.settings.openaiSchedulerExhaustionProbeNotify.recovered",
+                          )
+                        }}
+                      </label>
+                    </div>
+                    <Toggle
+                      v-model="
+                        form.openai_scheduler_exhaustion_probe_notify_recovered_enabled
+                      "
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -7298,6 +7419,11 @@ type SettingsForm = Omit<
   force_email_on_third_party_signup: boolean;
   openai_advanced_scheduler_enabled: boolean;
   openai_scheduler_exhaustion_probe_infinite_wait_enabled: boolean;
+  openai_scheduler_exhaustion_probe_notify_enabled: boolean;
+  openai_scheduler_exhaustion_probe_notify_after_seconds: number;
+  openai_scheduler_exhaustion_probe_notify_repeat_seconds: number;
+  openai_scheduler_exhaustion_probe_notify_feishu_webhook_url: string;
+  openai_scheduler_exhaustion_probe_notify_recovered_enabled: boolean;
   // OpenAI OAuth 上游兼容模式：关闭、Cockpit Tools 或 Codex Desktop 直连形态。
   openai_oauth_compat_mode: OpenAIOAuthCompatMode;
   openai_cockpit_tools_compat: boolean;
@@ -7511,6 +7637,11 @@ const form = reactive<SettingsForm>({
   allow_ungrouped_key_scheduling: false,
   openai_advanced_scheduler_enabled: false,
   openai_scheduler_exhaustion_probe_infinite_wait_enabled: false,
+  openai_scheduler_exhaustion_probe_notify_enabled: false,
+  openai_scheduler_exhaustion_probe_notify_after_seconds: 60,
+  openai_scheduler_exhaustion_probe_notify_repeat_seconds: 300,
+  openai_scheduler_exhaustion_probe_notify_feishu_webhook_url: "",
+  openai_scheduler_exhaustion_probe_notify_recovered_enabled: true,
   // Gateway forwarding behavior
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
@@ -8761,6 +8892,18 @@ async function saveSettings() {
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,
       openai_scheduler_exhaustion_probe_infinite_wait_enabled:
         form.openai_scheduler_exhaustion_probe_infinite_wait_enabled,
+      openai_scheduler_exhaustion_probe_notify_enabled:
+        form.openai_scheduler_exhaustion_probe_notify_enabled,
+      openai_scheduler_exhaustion_probe_notify_after_seconds:
+        Number(form.openai_scheduler_exhaustion_probe_notify_after_seconds) ||
+        60,
+      openai_scheduler_exhaustion_probe_notify_repeat_seconds:
+        Number(form.openai_scheduler_exhaustion_probe_notify_repeat_seconds) ||
+        300,
+      openai_scheduler_exhaustion_probe_notify_feishu_webhook_url:
+        form.openai_scheduler_exhaustion_probe_notify_feishu_webhook_url.trim(),
+      openai_scheduler_exhaustion_probe_notify_recovered_enabled:
+        form.openai_scheduler_exhaustion_probe_notify_recovered_enabled,
       // 余额、订阅到期与账号限额通知
       balance_low_notify_enabled: form.balance_low_notify_enabled,
       balance_low_notify_threshold:

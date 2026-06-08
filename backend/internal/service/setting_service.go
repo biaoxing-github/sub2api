@@ -1897,6 +1897,17 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAICodexDirectForceWS] = strconv.FormatBool(settings.OpenAICodexDirectForceWS)
 	updates[SettingKeyOpenAICodexDirectTLSFingerprintProfileID] = strconv.FormatInt(tlsFingerprintProfileIDOrDefault(settings.OpenAICodexDirectTLSFingerprintProfileID, 0), 10)
 	updates[SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled] = strconv.FormatBool(settings.OpenAISchedulerProbeInfiniteWaitEnabled)
+	updates[SettingKeyOpenAISchedulerProbeNotifyEnabled] = strconv.FormatBool(settings.OpenAISchedulerProbeNotifyEnabled)
+	updates[SettingKeyOpenAISchedulerProbeNotifyChannel] = normalizeOpenAISchedulerProbeNotifyChannel(settings.OpenAISchedulerProbeNotifyChannel)
+	updates[SettingKeyOpenAISchedulerProbeNotifyAfterSeconds] = strconv.Itoa(positiveIntOrDefault(settings.OpenAISchedulerProbeNotifyAfterSeconds, config.DefaultOpenAISchedulerProbeNotifyAfterSeconds))
+	updates[SettingKeyOpenAISchedulerProbeNotifyRepeatSeconds] = strconv.Itoa(positiveIntOrDefault(settings.OpenAISchedulerProbeNotifyRepeatSeconds, config.DefaultOpenAISchedulerProbeNotifyRepeatSeconds))
+	updates[SettingKeyOpenAISchedulerProbeNotifyFeishuWebhookURL] = strings.TrimSpace(settings.OpenAISchedulerProbeNotifyFeishuWebhookURL)
+	updates[SettingKeyOpenAISchedulerProbeNotifyFeishuAppID] = strings.TrimSpace(settings.OpenAISchedulerProbeNotifyFeishuAppID)
+	updates[SettingKeyOpenAISchedulerProbeNotifyFeishuAppSecret] = strings.TrimSpace(settings.OpenAISchedulerProbeNotifyFeishuAppSecret)
+	updates[SettingKeyOpenAISchedulerProbeNotifyFeishuDomain] = normalizeOpenAISchedulerProbeNotifyFeishuDomain(settings.OpenAISchedulerProbeNotifyFeishuDomain)
+	updates[SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveIDType] = normalizeOpenAISchedulerProbeNotifyFeishuReceiveIDType(settings.OpenAISchedulerProbeNotifyFeishuReceiveIDType)
+	updates[SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveID] = strings.TrimSpace(settings.OpenAISchedulerProbeNotifyFeishuReceiveID)
+	updates[SettingKeyOpenAISchedulerProbeNotifyRecoveredEnabled] = strconv.FormatBool(settings.OpenAISchedulerProbeNotifyRecoveredEnabled)
 	updates[SettingKeyClientRequestDebugLogEnabled] = strconv.FormatBool(settings.ClientRequestDebugLogEnabled)
 	updates[SettingKeyCodexStabilityMode] = normalizeCodexStabilityMode(settings.CodexStabilityMode)
 	updates[SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled] = strconv.FormatBool(settings.CodexStabilityDynamicHeaderTimeoutEnabled)
@@ -2062,6 +2073,17 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		s.cfg.Gateway.OpenAICodexDirectForceWS = settings.OpenAICodexDirectForceWS
 		s.cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID = tlsFingerprintProfileIDOrDefault(settings.OpenAICodexDirectTLSFingerprintProfileID, 0)
 		s.cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled = settings.OpenAISchedulerProbeInfiniteWaitEnabled
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyEnabled = settings.OpenAISchedulerProbeNotifyEnabled
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyChannel = normalizeOpenAISchedulerProbeNotifyChannel(settings.OpenAISchedulerProbeNotifyChannel)
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyAfterSeconds = positiveIntOrDefault(settings.OpenAISchedulerProbeNotifyAfterSeconds, config.DefaultOpenAISchedulerProbeNotifyAfterSeconds)
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyRepeatSeconds = positiveIntOrDefault(settings.OpenAISchedulerProbeNotifyRepeatSeconds, config.DefaultOpenAISchedulerProbeNotifyRepeatSeconds)
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuWebhookURL = strings.TrimSpace(settings.OpenAISchedulerProbeNotifyFeishuWebhookURL)
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuAppID = strings.TrimSpace(settings.OpenAISchedulerProbeNotifyFeishuAppID)
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuAppSecret = strings.TrimSpace(settings.OpenAISchedulerProbeNotifyFeishuAppSecret)
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuDomain = normalizeOpenAISchedulerProbeNotifyFeishuDomain(settings.OpenAISchedulerProbeNotifyFeishuDomain)
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuReceiveIDType = normalizeOpenAISchedulerProbeNotifyFeishuReceiveIDType(settings.OpenAISchedulerProbeNotifyFeishuReceiveIDType)
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuReceiveID = strings.TrimSpace(settings.OpenAISchedulerProbeNotifyFeishuReceiveID)
+		s.cfg.Gateway.OpenAISchedulerProbeNotifyRecoveredEnabled = settings.OpenAISchedulerProbeNotifyRecoveredEnabled
 		s.cfg.Gateway.CodexStability.Mode = normalizeCodexStabilityMode(settings.CodexStabilityMode)
 		s.cfg.Gateway.CodexStability.DynamicHeaderTimeoutEnabled = settings.CodexStabilityDynamicHeaderTimeoutEnabled
 		s.cfg.Gateway.CodexStability.RequestPhaseFailoverEnabled = settings.CodexStabilityRequestPhaseFailoverEnabled
@@ -2146,6 +2168,80 @@ func (s *SettingService) defaultOpenAICodexDirectTLSFingerprintProfileID() int64
 
 func (s *SettingService) defaultOpenAISchedulerProbeInfiniteWaitEnabled() bool {
 	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyEnabled() bool {
+	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAISchedulerProbeNotifyEnabled
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyChannel() string {
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	return normalizeOpenAISchedulerProbeNotifyChannel(s.cfg.Gateway.OpenAISchedulerProbeNotifyChannel)
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyAfterSeconds() int {
+	if s == nil || s.cfg == nil {
+		return config.DefaultOpenAISchedulerProbeNotifyAfterSeconds
+	}
+	return positiveIntOrDefault(s.cfg.Gateway.OpenAISchedulerProbeNotifyAfterSeconds, config.DefaultOpenAISchedulerProbeNotifyAfterSeconds)
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyRepeatSeconds() int {
+	if s == nil || s.cfg == nil {
+		return config.DefaultOpenAISchedulerProbeNotifyRepeatSeconds
+	}
+	return positiveIntOrDefault(s.cfg.Gateway.OpenAISchedulerProbeNotifyRepeatSeconds, config.DefaultOpenAISchedulerProbeNotifyRepeatSeconds)
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyFeishuWebhookURL() string {
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuWebhookURL)
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyFeishuAppID() string {
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuAppID)
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyFeishuAppSecret() string {
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuAppSecret)
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyFeishuDomain() string {
+	if s == nil || s.cfg == nil {
+		return "feishu"
+	}
+	return normalizeOpenAISchedulerProbeNotifyFeishuDomain(s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuDomain)
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyFeishuReceiveIDType() string {
+	if s == nil || s.cfg == nil {
+		return "chat_id"
+	}
+	return normalizeOpenAISchedulerProbeNotifyFeishuReceiveIDType(s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuReceiveIDType)
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyFeishuReceiveID() string {
+	if s == nil || s.cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.cfg.Gateway.OpenAISchedulerProbeNotifyFeishuReceiveID)
+}
+
+func (s *SettingService) defaultOpenAISchedulerProbeNotifyRecoveredEnabled() bool {
+	if s == nil || s.cfg == nil {
+		return true
+	}
+	return s.cfg.Gateway.OpenAISchedulerProbeNotifyRecoveredEnabled
 }
 
 func (s *SettingService) validateDefaultSubscriptionGroups(ctx context.Context, items []DefaultSubscriptionSetting) error {
@@ -2980,66 +3076,77 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyMaxClaudeCodeVersion: "",
 
 		// 分组隔离（默认不允许未分组 Key 调度）
-		SettingKeyAllowUngroupedKeyScheduling:                "false",
-		SettingKeyEnableAnthropicCacheTTL1hInjection:         "false",
-		SettingKeyRewriteMessageCacheControl:                 strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
-		SettingKeyAntigravityUserAgentVersion:                "",
-		SettingKeyOpenAICodexUserAgent:                       "",
-		SettingKeyOpenAIAllowClaudeCodeCodexPlugin:           "false",
-		SettingKeyOpenAIOAuthCompatMode:                      s.defaultOpenAIOAuthCompatMode(),
-		SettingKeyOpenAICockpitToolsCompat:                   strconv.FormatBool(s.defaultOpenAICockpitToolsCompat()),
-		SettingKeyOpenAICodexDirectForceWS:                   strconv.FormatBool(s.defaultOpenAICodexDirectForceWS()),
-		SettingKeyOpenAICodexDirectTLSFingerprintProfileID:   strconv.FormatInt(s.defaultOpenAICodexDirectTLSFingerprintProfileID(), 10),
-		SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled:    strconv.FormatBool(s.defaultOpenAISchedulerProbeInfiniteWaitEnabled()),
-		SettingKeyClientRequestDebugLogEnabled:               "false",
-		SettingKeyCodexStabilityMode:                         config.GatewayCodexStabilityModeCodex,
-		SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled:  "true",
-		SettingKeyCodexStabilityRequestPhaseFailoverEnabled:  "true",
-		SettingKeyCodexStabilitySuppressClientTimeoutHeaders: "true",
-		SettingKeyCodexStabilityStreamKeepaliveEnabled:       "true",
-		SettingKeyCodexAutopilotEnabled:                      strconv.FormatBool(s.defaultCodexAutopilot().Enabled),
-		SettingKeyCodexAutopilotObserveOnly:                  strconv.FormatBool(s.defaultCodexAutopilot().ObserveOnly),
-		SettingKeyCodexAutopilotWindowSeconds:                strconv.Itoa(s.defaultCodexAutopilot().WindowSeconds),
-		SettingKeyCodexAutopilotMinSamples:                   strconv.Itoa(s.defaultCodexAutopilot().MinSamples),
-		SettingKeyCodexAutopilotHeaderTimeoutThreshold:       strconv.Itoa(s.defaultCodexAutopilot().HeaderTimeoutThreshold),
-		SettingKeyCodexAutopilotEOFThreshold:                 strconv.Itoa(s.defaultCodexAutopilot().EOFThreshold),
-		SettingKeyCodexAutopilotSilentStreamTimeoutSeconds:   strconv.Itoa(s.defaultCodexAutopilot().SilentStreamTimeoutSeconds),
-		SettingKeyOpenAIPathHealthEnabled:                    strconv.FormatBool(s.defaultOpenAIPathHealth().Enabled),
-		SettingKeyOpenAIPathHealthCircuitBreakerEnabled:      strconv.FormatBool(s.defaultOpenAIPathHealth().CircuitBreakerEnabled),
-		SettingKeyOpenAIPathHealthFailureWindowSeconds:       strconv.Itoa(s.defaultOpenAIPathHealth().FailureWindowSeconds),
-		SettingKeyOpenAIPathHealthCooldownSeconds:            strconv.Itoa(s.defaultOpenAIPathHealth().CooldownSeconds),
-		SettingKeyOpenAIPathHealthDegradedFailures:           strconv.Itoa(s.defaultOpenAIPathHealth().DegradedFailures),
-		SettingKeyOpenAIPathHealthOpenFailures:               strconv.Itoa(s.defaultOpenAIPathHealth().OpenFailures),
-		SettingKeyOpenAIPathHealthHalfOpenMaxProbes:          strconv.Itoa(s.defaultOpenAIPathHealth().HalfOpenMaxProbes),
-		SettingKeyOpenAIFastLaneEnabled:                      strconv.FormatBool(s.defaultOpenAIFastLane().Enabled),
-		SettingKeyOpenAIFastLaneNewSessionOnly:               strconv.FormatBool(s.defaultOpenAIFastLane().NewSessionOnly),
-		SettingKeyOpenAIFastLaneTTFTWeight:                   strconv.FormatFloat(s.defaultOpenAIFastLane().TTFTWeight, 'f', -1, 64),
-		SettingKeyOpenAIFastLaneHeaderWaitWeight:             strconv.FormatFloat(s.defaultOpenAIFastLane().HeaderWaitWeight, 'f', -1, 64),
-		SettingKeyOpenAIFastLaneMinSamples:                   strconv.Itoa(s.defaultOpenAIFastLane().MinSamples),
-		SettingKeyOpenAIFastLaneExploreRatio:                 strconv.FormatFloat(s.defaultOpenAIFastLane().ExploreRatio, 'f', -1, 64),
-		SettingKeyRealtimeBalancePrewarmEnabled:              strconv.FormatBool(s.defaultRealtimeBalancePrewarm().Enabled),
-		SettingKeyRealtimeBalancePrewarmIntervalSeconds:      strconv.Itoa(s.defaultRealtimeBalancePrewarm().IntervalSeconds),
-		SettingKeyRealtimeBalancePrewarmActiveAccountLimit:   strconv.Itoa(s.defaultRealtimeBalancePrewarm().ActiveAccountLimit),
-		SettingKeyRealtimeBalanceConfirmTopN:                 strconv.Itoa(s.defaultRealtimeBalanceConfirmTopN()),
-		SettingKeyRealtimeBalanceConfirmTimeoutMs:            strconv.Itoa(s.defaultRealtimeBalanceConfirmTimeoutMs()),
-		SettingKeyOpenAIHeaderRaceEnabled:                    "false",
-		SettingKeyOpenAIHeaderRaceDelayMs:                    "3500",
-		SettingKeyOpenAIHeaderRaceDailyBudget:                "0",
-		SettingKeyOpenAIRequestSnapshotEnabled:               "true",
-		SettingKeyOpenAIRequestSnapshotRetentionHours:        strconv.Itoa(openAIRequestSnapshotDefaultRetentionHours),
-		SettingKeyCodexWaitGuardEnabled:                      strconv.FormatBool(s.defaultCodexWaitGuard().Enabled),
-		SettingKeyCodexWaitGuardMaxHeaderWaitSeconds:         strconv.Itoa(s.defaultCodexWaitGuard().MaxHeaderWaitSeconds),
-		SettingKeyCodexWaitGuardMaxStreamSilentSeconds:       strconv.Itoa(s.defaultCodexWaitGuard().MaxStreamSilentSeconds),
-		SettingKeyCodexWaitGuardKeepaliveIntervalSeconds:     strconv.Itoa(s.defaultCodexWaitGuard().KeepaliveIntervalSeconds),
-		SettingKeyCodexWaitGuardProtectAfterOutput:           strconv.FormatBool(s.defaultCodexWaitGuard().ProtectAfterOutput),
-		SettingKeyContextJournalBackend:                      s.defaultContextJournal().Backend,
-		SettingKeyContextJournalTTLHours:                     strconv.Itoa(s.defaultContextJournal().TTLHours),
-		SettingKeyContextJournalMaxSessionBytes:              strconv.FormatInt(s.defaultContextJournal().MaxSessionBytes, 10),
-		SettingPaymentVisibleMethodAlipaySource:              "",
-		SettingPaymentVisibleMethodWxpaySource:               "",
-		SettingPaymentVisibleMethodAlipayEnabled:             "false",
-		SettingPaymentVisibleMethodWxpayEnabled:              "false",
-		openAIAdvancedSchedulerSettingKey:                    "false",
+		SettingKeyAllowUngroupedKeyScheduling:                   "false",
+		SettingKeyEnableAnthropicCacheTTL1hInjection:            "false",
+		SettingKeyRewriteMessageCacheControl:                    strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
+		SettingKeyAntigravityUserAgentVersion:                   "",
+		SettingKeyOpenAICodexUserAgent:                          "",
+		SettingKeyOpenAIAllowClaudeCodeCodexPlugin:              "false",
+		SettingKeyOpenAIOAuthCompatMode:                         s.defaultOpenAIOAuthCompatMode(),
+		SettingKeyOpenAICockpitToolsCompat:                      strconv.FormatBool(s.defaultOpenAICockpitToolsCompat()),
+		SettingKeyOpenAICodexDirectForceWS:                      strconv.FormatBool(s.defaultOpenAICodexDirectForceWS()),
+		SettingKeyOpenAICodexDirectTLSFingerprintProfileID:      strconv.FormatInt(s.defaultOpenAICodexDirectTLSFingerprintProfileID(), 10),
+		SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled:       strconv.FormatBool(s.defaultOpenAISchedulerProbeInfiniteWaitEnabled()),
+		SettingKeyOpenAISchedulerProbeNotifyEnabled:             strconv.FormatBool(s.defaultOpenAISchedulerProbeNotifyEnabled()),
+		SettingKeyOpenAISchedulerProbeNotifyChannel:             s.defaultOpenAISchedulerProbeNotifyChannel(),
+		SettingKeyOpenAISchedulerProbeNotifyAfterSeconds:        strconv.Itoa(s.defaultOpenAISchedulerProbeNotifyAfterSeconds()),
+		SettingKeyOpenAISchedulerProbeNotifyRepeatSeconds:       strconv.Itoa(s.defaultOpenAISchedulerProbeNotifyRepeatSeconds()),
+		SettingKeyOpenAISchedulerProbeNotifyFeishuWebhookURL:    s.defaultOpenAISchedulerProbeNotifyFeishuWebhookURL(),
+		SettingKeyOpenAISchedulerProbeNotifyFeishuAppID:         s.defaultOpenAISchedulerProbeNotifyFeishuAppID(),
+		SettingKeyOpenAISchedulerProbeNotifyFeishuAppSecret:     s.defaultOpenAISchedulerProbeNotifyFeishuAppSecret(),
+		SettingKeyOpenAISchedulerProbeNotifyFeishuDomain:        s.defaultOpenAISchedulerProbeNotifyFeishuDomain(),
+		SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveIDType: s.defaultOpenAISchedulerProbeNotifyFeishuReceiveIDType(),
+		SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveID:     s.defaultOpenAISchedulerProbeNotifyFeishuReceiveID(),
+		SettingKeyOpenAISchedulerProbeNotifyRecoveredEnabled:    strconv.FormatBool(s.defaultOpenAISchedulerProbeNotifyRecoveredEnabled()),
+		SettingKeyClientRequestDebugLogEnabled:                  "false",
+		SettingKeyCodexStabilityMode:                            config.GatewayCodexStabilityModeCodex,
+		SettingKeyCodexStabilityDynamicHeaderTimeoutEnabled:     "true",
+		SettingKeyCodexStabilityRequestPhaseFailoverEnabled:     "true",
+		SettingKeyCodexStabilitySuppressClientTimeoutHeaders:    "true",
+		SettingKeyCodexStabilityStreamKeepaliveEnabled:          "true",
+		SettingKeyCodexAutopilotEnabled:                         strconv.FormatBool(s.defaultCodexAutopilot().Enabled),
+		SettingKeyCodexAutopilotObserveOnly:                     strconv.FormatBool(s.defaultCodexAutopilot().ObserveOnly),
+		SettingKeyCodexAutopilotWindowSeconds:                   strconv.Itoa(s.defaultCodexAutopilot().WindowSeconds),
+		SettingKeyCodexAutopilotMinSamples:                      strconv.Itoa(s.defaultCodexAutopilot().MinSamples),
+		SettingKeyCodexAutopilotHeaderTimeoutThreshold:          strconv.Itoa(s.defaultCodexAutopilot().HeaderTimeoutThreshold),
+		SettingKeyCodexAutopilotEOFThreshold:                    strconv.Itoa(s.defaultCodexAutopilot().EOFThreshold),
+		SettingKeyCodexAutopilotSilentStreamTimeoutSeconds:      strconv.Itoa(s.defaultCodexAutopilot().SilentStreamTimeoutSeconds),
+		SettingKeyOpenAIPathHealthEnabled:                       strconv.FormatBool(s.defaultOpenAIPathHealth().Enabled),
+		SettingKeyOpenAIPathHealthCircuitBreakerEnabled:         strconv.FormatBool(s.defaultOpenAIPathHealth().CircuitBreakerEnabled),
+		SettingKeyOpenAIPathHealthFailureWindowSeconds:          strconv.Itoa(s.defaultOpenAIPathHealth().FailureWindowSeconds),
+		SettingKeyOpenAIPathHealthCooldownSeconds:               strconv.Itoa(s.defaultOpenAIPathHealth().CooldownSeconds),
+		SettingKeyOpenAIPathHealthDegradedFailures:              strconv.Itoa(s.defaultOpenAIPathHealth().DegradedFailures),
+		SettingKeyOpenAIPathHealthOpenFailures:                  strconv.Itoa(s.defaultOpenAIPathHealth().OpenFailures),
+		SettingKeyOpenAIPathHealthHalfOpenMaxProbes:             strconv.Itoa(s.defaultOpenAIPathHealth().HalfOpenMaxProbes),
+		SettingKeyOpenAIFastLaneEnabled:                         strconv.FormatBool(s.defaultOpenAIFastLane().Enabled),
+		SettingKeyOpenAIFastLaneNewSessionOnly:                  strconv.FormatBool(s.defaultOpenAIFastLane().NewSessionOnly),
+		SettingKeyOpenAIFastLaneTTFTWeight:                      strconv.FormatFloat(s.defaultOpenAIFastLane().TTFTWeight, 'f', -1, 64),
+		SettingKeyOpenAIFastLaneHeaderWaitWeight:                strconv.FormatFloat(s.defaultOpenAIFastLane().HeaderWaitWeight, 'f', -1, 64),
+		SettingKeyOpenAIFastLaneMinSamples:                      strconv.Itoa(s.defaultOpenAIFastLane().MinSamples),
+		SettingKeyOpenAIFastLaneExploreRatio:                    strconv.FormatFloat(s.defaultOpenAIFastLane().ExploreRatio, 'f', -1, 64),
+		SettingKeyRealtimeBalancePrewarmEnabled:                 strconv.FormatBool(s.defaultRealtimeBalancePrewarm().Enabled),
+		SettingKeyRealtimeBalancePrewarmIntervalSeconds:         strconv.Itoa(s.defaultRealtimeBalancePrewarm().IntervalSeconds),
+		SettingKeyRealtimeBalancePrewarmActiveAccountLimit:      strconv.Itoa(s.defaultRealtimeBalancePrewarm().ActiveAccountLimit),
+		SettingKeyRealtimeBalanceConfirmTopN:                    strconv.Itoa(s.defaultRealtimeBalanceConfirmTopN()),
+		SettingKeyRealtimeBalanceConfirmTimeoutMs:               strconv.Itoa(s.defaultRealtimeBalanceConfirmTimeoutMs()),
+		SettingKeyOpenAIHeaderRaceEnabled:                       "false",
+		SettingKeyOpenAIHeaderRaceDelayMs:                       "3500",
+		SettingKeyOpenAIHeaderRaceDailyBudget:                   "0",
+		SettingKeyOpenAIRequestSnapshotEnabled:                  "true",
+		SettingKeyOpenAIRequestSnapshotRetentionHours:           strconv.Itoa(openAIRequestSnapshotDefaultRetentionHours),
+		SettingKeyCodexWaitGuardEnabled:                         strconv.FormatBool(s.defaultCodexWaitGuard().Enabled),
+		SettingKeyCodexWaitGuardMaxHeaderWaitSeconds:            strconv.Itoa(s.defaultCodexWaitGuard().MaxHeaderWaitSeconds),
+		SettingKeyCodexWaitGuardMaxStreamSilentSeconds:          strconv.Itoa(s.defaultCodexWaitGuard().MaxStreamSilentSeconds),
+		SettingKeyCodexWaitGuardKeepaliveIntervalSeconds:        strconv.Itoa(s.defaultCodexWaitGuard().KeepaliveIntervalSeconds),
+		SettingKeyCodexWaitGuardProtectAfterOutput:              strconv.FormatBool(s.defaultCodexWaitGuard().ProtectAfterOutput),
+		SettingKeyContextJournalBackend:                         s.defaultContextJournal().Backend,
+		SettingKeyContextJournalTTLHours:                        strconv.Itoa(s.defaultContextJournal().TTLHours),
+		SettingKeyContextJournalMaxSessionBytes:                 strconv.FormatInt(s.defaultContextJournal().MaxSessionBytes, 10),
+		SettingPaymentVisibleMethodAlipaySource:                 "",
+		SettingPaymentVisibleMethodWxpaySource:                  "",
+		SettingPaymentVisibleMethodAlipayEnabled:                "false",
+		SettingPaymentVisibleMethodWxpayEnabled:                 "false",
+		openAIAdvancedSchedulerSettingKey:                       "false",
 	}
 
 	return s.settingRepo.SetMultiple(ctx, defaults)
@@ -3597,6 +3704,17 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAICodexDirectForceWS = boolSettingWithDefault(settings[SettingKeyOpenAICodexDirectForceWS], s.defaultOpenAICodexDirectForceWS())
 	result.OpenAICodexDirectTLSFingerprintProfileID = tlsFingerprintProfileIDSettingWithDefault(settings[SettingKeyOpenAICodexDirectTLSFingerprintProfileID], s.defaultOpenAICodexDirectTLSFingerprintProfileID())
 	result.OpenAISchedulerProbeInfiniteWaitEnabled = boolSettingWithDefault(settings[SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled], s.defaultOpenAISchedulerProbeInfiniteWaitEnabled())
+	result.OpenAISchedulerProbeNotifyEnabled = boolSettingWithDefault(settings[SettingKeyOpenAISchedulerProbeNotifyEnabled], s.defaultOpenAISchedulerProbeNotifyEnabled())
+	result.OpenAISchedulerProbeNotifyChannel = normalizeOpenAISchedulerProbeNotifyChannel(stringSettingWithDefault(settings[SettingKeyOpenAISchedulerProbeNotifyChannel], s.defaultOpenAISchedulerProbeNotifyChannel()))
+	result.OpenAISchedulerProbeNotifyAfterSeconds = intSettingWithDefault(settings[SettingKeyOpenAISchedulerProbeNotifyAfterSeconds], s.defaultOpenAISchedulerProbeNotifyAfterSeconds())
+	result.OpenAISchedulerProbeNotifyRepeatSeconds = intSettingWithDefault(settings[SettingKeyOpenAISchedulerProbeNotifyRepeatSeconds], s.defaultOpenAISchedulerProbeNotifyRepeatSeconds())
+	result.OpenAISchedulerProbeNotifyFeishuWebhookURL = strings.TrimSpace(settings[SettingKeyOpenAISchedulerProbeNotifyFeishuWebhookURL])
+	result.OpenAISchedulerProbeNotifyFeishuAppID = strings.TrimSpace(settings[SettingKeyOpenAISchedulerProbeNotifyFeishuAppID])
+	result.OpenAISchedulerProbeNotifyFeishuAppSecret = strings.TrimSpace(settings[SettingKeyOpenAISchedulerProbeNotifyFeishuAppSecret])
+	result.OpenAISchedulerProbeNotifyFeishuDomain = normalizeOpenAISchedulerProbeNotifyFeishuDomain(stringSettingWithDefault(settings[SettingKeyOpenAISchedulerProbeNotifyFeishuDomain], s.defaultOpenAISchedulerProbeNotifyFeishuDomain()))
+	result.OpenAISchedulerProbeNotifyFeishuReceiveIDType = normalizeOpenAISchedulerProbeNotifyFeishuReceiveIDType(stringSettingWithDefault(settings[SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveIDType], s.defaultOpenAISchedulerProbeNotifyFeishuReceiveIDType()))
+	result.OpenAISchedulerProbeNotifyFeishuReceiveID = strings.TrimSpace(settings[SettingKeyOpenAISchedulerProbeNotifyFeishuReceiveID])
+	result.OpenAISchedulerProbeNotifyRecoveredEnabled = boolSettingWithDefault(settings[SettingKeyOpenAISchedulerProbeNotifyRecoveredEnabled], s.defaultOpenAISchedulerProbeNotifyRecoveredEnabled())
 	result.OpenAIHeaderRaceEnabled = settings[SettingKeyOpenAIHeaderRaceEnabled] == "true"
 	result.OpenAIHeaderRaceDelayMs = intSettingWithDefault(settings[SettingKeyOpenAIHeaderRaceDelayMs], 3500)
 	result.OpenAIHeaderRaceDailyBudget = intSettingWithDefault(settings[SettingKeyOpenAIHeaderRaceDailyBudget], 0)
@@ -3795,6 +3913,13 @@ func boolSettingWithDefault(value string, fallback bool) bool {
 func intSettingWithDefault(value string, fallback int) int {
 	if v, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && v >= 0 {
 		return v
+	}
+	return fallback
+}
+
+func stringSettingWithDefault(value string, fallback string) string {
+	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		return trimmed
 	}
 	return fallback
 }

@@ -50,22 +50,37 @@ type UpdateService struct {
 	cache          UpdateCache
 	githubClient   GitHubReleaseClient
 	currentVersion string
+	imageVersion   string
 	buildType      string // "source" for manual builds, "release" for CI builds
 }
 
 // NewUpdateService creates a new UpdateService
 func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string) *UpdateService {
+	return NewUpdateServiceWithImageVersion(cache, githubClient, version, "", buildType)
+}
+
+// NewUpdateServiceWithImageVersion creates UpdateService with a deployable image tag in addition to the main version.
+func NewUpdateServiceWithImageVersion(cache UpdateCache, githubClient GitHubReleaseClient, version, imageVersion, buildType string) *UpdateService {
 	return &UpdateService{
 		cache:          cache,
 		githubClient:   githubClient,
 		currentVersion: version,
+		imageVersion:   resolveImageVersion(imageVersion),
 		buildType:      buildType,
 	}
+}
+
+func resolveImageVersion(imageVersion string) string {
+	if trimmed := strings.TrimSpace(imageVersion); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(os.Getenv("SUB2API_IMAGE_VERSION"))
 }
 
 // UpdateInfo contains update information
 type UpdateInfo struct {
 	CurrentVersion string       `json:"current_version"`
+	ImageVersion   string       `json:"image_version,omitempty"`
 	LatestVersion  string       `json:"latest_version"`
 	HasUpdate      bool         `json:"has_update"`
 	ReleaseInfo    *ReleaseInfo `json:"release_info,omitempty"`
@@ -125,6 +140,7 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 		}
 		return &UpdateInfo{
 			CurrentVersion: s.currentVersion,
+			ImageVersion:   s.imageVersion,
 			LatestVersion:  s.currentVersion,
 			HasUpdate:      false,
 			Warning:        err.Error(),
@@ -292,6 +308,7 @@ func (s *UpdateService) fetchLatestRelease(ctx context.Context) (*UpdateInfo, er
 
 	return &UpdateInfo{
 		CurrentVersion: s.currentVersion,
+		ImageVersion:   s.imageVersion,
 		LatestVersion:  latestVersion,
 		HasUpdate:      compareVersions(s.currentVersion, latestVersion) < 0,
 		ReleaseInfo: &ReleaseInfo{
@@ -488,6 +505,7 @@ func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 
 	return &UpdateInfo{
 		CurrentVersion: s.currentVersion,
+		ImageVersion:   s.imageVersion,
 		LatestVersion:  cached.Latest,
 		HasUpdate:      compareVersions(s.currentVersion, cached.Latest) < 0,
 		ReleaseInfo:    cached.ReleaseInfo,

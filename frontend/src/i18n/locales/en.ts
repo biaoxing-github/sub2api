@@ -6943,6 +6943,15 @@ export default {
         title: 'Infinite probe wait on scheduler exhaustion',
         description: 'Disabled by default. When no OpenAI account is schedulable, keep sending tiny probe requests within the same scheduling scope until an account recovers, then continue the real request.'
       },
+      openaiSchedulerExhaustionProbeNotify: {
+        title: 'Long wait notification',
+        description: 'When enabled, send a Feishu bot notification after the infinite probe wait exceeds the threshold; with no webhook, only local logs are written.',
+        afterSeconds: 'First notification threshold (seconds)',
+        repeatSeconds: 'Repeat notification interval (seconds)',
+        feishuWebhook: 'Feishu bot webhook',
+        feishuWebhookPlaceholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...',
+        recovered: 'Send recovered notification after an account recovers'
+      },
       saveSettings: 'Save Settings',
       saving: 'Saving...',
       settingsSaved: 'Settings saved successfully',
@@ -7108,6 +7117,7 @@ export default {
   // Version Badge
   version: {
     currentVersion: 'Current Version',
+    imageVersion: 'Image Version',
     latestVersion: 'Latest Version',
     upToDate: "You're running the latest version.",
     updateAvailable: 'A new version is available!',

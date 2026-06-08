@@ -17,6 +17,13 @@
           v-else
           class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
         ></span>
+        <span
+          v-if="imageVersion"
+          class="max-w-28 truncate rounded bg-gray-200/80 px-1.5 py-0.5 text-[10px] leading-none text-gray-500 dark:bg-dark-700 dark:text-dark-300"
+          :title="t('version.imageVersion') + ': ' + imageVersion"
+        >
+          {{ imageVersion }}
+        </span>
         <!-- Update indicator -->
         <span v-if="hasUpdate" class="relative flex h-2 w-2">
           <span
@@ -111,6 +118,17 @@
                       : t('version.upToDate')
                   }}
                 </p>
+                <div
+                  v-if="imageVersion"
+                  class="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left dark:border-dark-700 dark:bg-dark-900/40"
+                >
+                  <p class="text-[11px] font-medium uppercase text-gray-400 dark:text-dark-400">
+                    {{ t('version.imageVersion') }}
+                  </p>
+                  <p class="mt-1 break-all text-xs font-medium text-gray-700 dark:text-dark-200">
+                    {{ imageVersion }}
+                  </p>
+                </div>
               </div>
 
               <!-- Priority 1: Update error (must check before hasUpdate) -->
@@ -404,6 +422,7 @@ const dropdownRef = ref<HTMLElement | null>(null)
 // Use store's cached version state
 const loading = computed(() => appStore.versionLoading)
 const currentVersion = computed(() => appStore.currentVersion || props.version || '')
+const imageVersion = computed(() => appStore.imageVersion)
 const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
