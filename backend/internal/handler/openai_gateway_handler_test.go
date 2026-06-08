@@ -438,6 +438,53 @@ func TestOpenAIHandleAnthropicFailoverExhausted_Maps529ToOverloadedError(t *test
 	require.Contains(t, errorObj["message"], "overloaded")
 }
 
+func TestOpenAISchedulerExhaustionProbeMode(t *testing.T) {
+	tests := []struct {
+		name               string
+		failedAccountCount int
+		infiniteEnabled    bool
+		wantProbe          bool
+		wantInfinite       bool
+	}{
+		{
+			name:               "initial selection exhaustion probes once when infinite disabled",
+			failedAccountCount: 0,
+			wantProbe:          true,
+		},
+		{
+			name:               "initial selection exhaustion enters infinite probe when enabled",
+			failedAccountCount: 0,
+			infiniteEnabled:    true,
+			wantProbe:          true,
+			wantInfinite:       true,
+		},
+		{
+			name:               "failover exhaustion does not probe when infinite disabled",
+			failedAccountCount: 3,
+			wantProbe:          false,
+		},
+		{
+			name:               "failover exhaustion continues probing when infinite enabled",
+			failedAccountCount: 3,
+			infiniteEnabled:    true,
+			wantProbe:          true,
+			wantInfinite:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &OpenAIGatewayHandler{cfg: &config.Config{}}
+			h.cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled = tt.infiniteEnabled
+
+			shouldProbe, infinite := h.openAISchedulerExhaustionProbeMode(tt.failedAccountCount)
+
+			require.Equal(t, tt.wantProbe, shouldProbe)
+			require.Equal(t, tt.wantInfinite, infinite)
+		})
+	}
+}
+
 func TestOpenAIFailoverRetryWindow_SingleCandidate(t *testing.T) {
 	start := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	state := &openAIFailoverRetryWindow{}

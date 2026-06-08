@@ -94,6 +94,18 @@ func (w *openAIFailoverRetryWindow) nextWaitRetry(now time.Time, failoverErr *se
 	}
 }
 
+// openAISchedulerExhaustionProbeMode 决定选号失败后是否进入调度耗尽探测。
+func (h *OpenAIGatewayHandler) openAISchedulerExhaustionProbeMode(failedAccountCount int) (bool, bool) {
+	infiniteProbe := h != nil && h.cfg != nil && h.cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled
+	if failedAccountCount == 0 {
+		return true, infiniteProbe
+	}
+	if infiniteProbe {
+		return true, true
+	}
+	return false, false
+}
+
 // setOpenAIContinuityHeaders 将账号连续性调度结果暴露给客户端和调试工具。
 func setOpenAIContinuityHeaders(c *gin.Context, decision service.OpenAIAccountScheduleDecision, accountID int64) {
 	if c == nil {
@@ -404,8 +416,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
-			if len(failedAccountIDs) == 0 {
-				infiniteProbe := h.cfg != nil && h.cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled
+			shouldProbe, infiniteProbe := h.openAISchedulerExhaustionProbeMode(len(failedAccountIDs))
+			if shouldProbe {
 				recovered, probeErr := h.gatewayService.RecoverOpenAISchedulerExhaustion(
 					c.Request.Context(),
 					service.OpenAISchedulerExhaustionProbeOptions{
@@ -421,6 +433,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						zap.Bool("require_compact", requireCompact),
 						zap.Bool("infinite_wait", infiniteProbe),
 					)
+					failedAccountIDs = make(map[int64]struct{})
+					sameAccountRetryCount = make(map[int64]int)
+					switchCount = 0
+					lastFailoverErr = nil
 					continue
 				}
 				if probeErr != nil {
@@ -431,6 +447,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						zap.Bool("infinite_wait", infiniteProbe),
 					)
 				}
+			}
+			if len(failedAccountIDs) == 0 {
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				if errors.Is(err, service.ErrNoAvailableCompactAccounts) {
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "compact_not_supported", "No available OpenAI accounts support /responses/compact", streamStarted)
