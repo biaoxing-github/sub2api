@@ -304,7 +304,8 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		req.Header.Set("anthropic-beta", claude.DefaultBetaHeader)
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	} else {
-		req.Header.Set("anthropic-beta", claude.APIKeyBetaHeader)
+		apiKeyBetaHeader := mergeAnthropicBeta(requiredAnthropicAPIKeyBetaTokens(account), claude.APIKeyBetaHeader)
+		req.Header.Set("anthropic-beta", apiKeyBetaHeader)
 		req.Header.Set("x-api-key", authToken)
 	}
 
