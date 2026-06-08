@@ -489,7 +489,7 @@ func NewOpenAIGatewayService(
 		userSubRepo:         userSubRepo,
 		cache:               cache,
 		cfg:                 cfg,
-		codexDetector:       NewOpenAICodexClientRestrictionDetector(cfg),
+		codexDetector:       NewOpenAICodexClientRestrictionDetector(),
 		schedulerSnapshot:   schedulerSnapshot,
 		concurrencyService:  concurrencyService,
 		billingService:      billingService,
@@ -669,11 +669,7 @@ func (s *OpenAIGatewayService) getCodexClientRestrictionDetector() CodexClientRe
 	if s != nil && s.codexDetector != nil {
 		return s.codexDetector
 	}
-	var cfg *config.Config
-	if s != nil {
-		cfg = s.cfg
-	}
-	return NewOpenAICodexClientRestrictionDetector(cfg)
+	return NewOpenAICodexClientRestrictionDetector()
 }
 
 func (s *OpenAIGatewayService) getOpenAIWSProtocolResolver() OpenAIWSProtocolResolver {
@@ -4115,7 +4111,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 		}
 	}
 
-	// 透传模式也支持账户自定义 User-Agent 与 ForceCodexCLI 兜底。
+	// 透传模式支持账户自定义 User-Agent；账号级模拟开关会在下方统一覆盖为 Codex CLI 请求头。
 	customUA := account.GetOpenAIUserAgent()
 	if customUA != "" {
 		req.Header.Set("user-agent", customUA)

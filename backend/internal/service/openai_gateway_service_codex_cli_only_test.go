@@ -42,7 +42,7 @@ func TestOpenAIGatewayService_GetCodexClientRestrictionDetector(t *testing.T) {
 	})
 
 	t.Run("service 未注入 detector 时返回默认 detector", func(t *testing.T) {
-		svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: true}}}
+		svc := &OpenAIGatewayService{cfg: &config.Config{}}
 		got := svc.getCodexClientRestrictionDetector()
 		require.NotNil(t, got)
 
@@ -54,8 +54,8 @@ func TestOpenAIGatewayService_GetCodexClientRestrictionDetector(t *testing.T) {
 
 		result := got.Detect(c, account, nil)
 		require.True(t, result.Enabled)
-		require.True(t, result.Matched)
-		require.Equal(t, CodexClientRestrictionReasonForceCodexCLI, result.Reason)
+		require.False(t, result.Matched)
+		require.Equal(t, CodexClientRestrictionReasonNotMatchedUA, result.Reason)
 	})
 }
 
@@ -265,7 +265,7 @@ func TestOpenAIGatewayService_Forward_LogsInstructionsRequiredDetails(t *testing
 	}
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{
-			Gateway: config.GatewayConfig{ForceCodexCLI: false},
+			Gateway: config.GatewayConfig{},
 		},
 		httpUpstream: upstream,
 	}
@@ -316,7 +316,7 @@ func TestOpenAIGatewayService_Forward_TransientProcessingErrorTriggersFailover(t
 	}
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{
-			Gateway: config.GatewayConfig{ForceCodexCLI: false},
+			Gateway: config.GatewayConfig{},
 		},
 		httpUpstream: upstream,
 	}
@@ -364,7 +364,7 @@ func TestOpenAIGatewayService_Forward_ModelCapacityErrorTriggersFailoverAndSameA
 	}
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{
-			Gateway: config.GatewayConfig{ForceCodexCLI: false},
+			Gateway: config.GatewayConfig{},
 		},
 		httpUpstream: upstream,
 	}

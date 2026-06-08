@@ -359,7 +359,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamKeepsToolNameAndBodyNormali
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 		openAITokenProvider: &OpenAITokenProvider{ // minimal: will be bypassed by nil cache/service, but GetAccessToken uses provider only if non-nil
 			accountRepo: nil,
@@ -434,7 +434,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_CompactUsesJSONAndKeepsNonStreami
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 
@@ -492,7 +492,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamRequestIgnoresClientCance
 	}}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 	account := &Account{
@@ -539,7 +539,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_CodexMissingInstructionsRejectedB
 	}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 
@@ -724,7 +724,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_DisabledUsesLegacyTransform(t *te
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 
@@ -773,7 +773,7 @@ func TestOpenAIGatewayService_OAuthLegacy_UpstreamRequestIgnoresClientCancel(t *
 	}}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 	account := &Account{
@@ -815,7 +815,7 @@ func TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator(t 
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 
@@ -873,7 +873,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_ResponseHeadersAllowXCodex(t *tes
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 
@@ -915,7 +915,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_UpstreamErrorIncludesPassthroughF
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 
@@ -1056,7 +1056,7 @@ func TestOpenAIGatewayService_OpenAIPassthrough_429And529TriggerFailover(t *test
 			}
 
 			svc := &OpenAIGatewayService{
-				cfg:              &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+				cfg:              &config.Config{Gateway: config.GatewayConfig{}},
 				httpUpstream:     upstream,
 				rateLimitService: rateSvc,
 			}
@@ -1104,7 +1104,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_NonCodexUAFallbackToCodexUA(t *te
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 
@@ -1139,7 +1139,7 @@ func TestOpenAIGatewayService_CodexCLIOnly_RejectsNonCodexClient(t *testing.T) {
 	inputBody := []byte(`{"model":"gpt-5.2","stream":false,"store":true,"input":[{"type":"text","text":"hi"}]}`)
 
 	svc := &OpenAIGatewayService{
-		cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg: &config.Config{Gateway: config.GatewayConfig{}},
 	}
 
 	account := &Account{
@@ -1195,7 +1195,7 @@ func TestOpenAIGatewayService_CodexCLIOnly_AllowOfficialClientFamilies(t *testin
 			upstream := &httpUpstreamRecorder{resp: resp}
 
 			svc := &OpenAIGatewayService{
-				cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+				cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 				httpUpstream: upstream,
 			}
 
@@ -1243,7 +1243,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamingSetsFirstTokenMs(t *test
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 
@@ -1299,7 +1299,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_StreamClientDisconnectStillCollec
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 
@@ -1344,7 +1344,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_PreservesBodyAndUsesResponsesEnd
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 
@@ -1392,7 +1392,7 @@ func TestOpenAIGatewayService_APIKeyCodexCLISimulation_ForcesHeadersAndPreserves
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 	account := &Account{
@@ -1441,7 +1441,7 @@ func TestOpenAIGatewayService_APIKeyCodexCLISimulation_DisabledKeepsDefaultRules
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 	account := &Account{
@@ -1471,22 +1471,6 @@ func TestOpenAIGatewayService_APIKeyCodexCLISimulation_DisabledKeepsDefaultRules
 	require.False(t, gjson.GetBytes(upstream.lastBody, "safety_identifier").Exists())
 }
 
-func TestOpenAIGatewayService_ShouldSimulateCodexCLIUsesAccountSwitchOnly(t *testing.T) {
-	svc := &OpenAIGatewayService{
-		cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: true}},
-	}
-	account := &Account{
-		Platform: PlatformOpenAI,
-		Type:     AccountTypeAPIKey,
-		Extra:    map[string]any{OpenAICodexCLISimulationEnabledExtraKey: false},
-	}
-
-	require.False(t, svc.shouldSimulateOpenAICodexCLI(account))
-
-	account.Extra[OpenAICodexCLISimulationEnabledExtraKey] = true
-	require.True(t, svc.shouldSimulateOpenAICodexCLI(account))
-}
-
 func TestOpenAIGatewayService_APIKeyPassthroughCodexCLISimulation_ForcesHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1505,7 +1489,7 @@ func TestOpenAIGatewayService_APIKeyPassthroughCodexCLISimulation_ForcesHeaders(
 	upstream := &httpUpstreamRecorder{resp: resp}
 
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 	account := &Account{
@@ -1551,7 +1535,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_WarnOnTimeoutHeadersForStream(t *
 	}
 	upstream := &httpUpstreamRecorder{resp: resp}
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 	account := &Account{
@@ -1592,7 +1576,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_InfoWhenStreamEndsWithoutDone(t *
 	}
 	upstream := &httpUpstreamRecorder{resp: resp}
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 	account := &Account{
@@ -1638,7 +1622,7 @@ func TestOpenAIGatewayService_OAuthPassthrough_DefaultFiltersTimeoutHeaders(t *t
 	}
 	upstream := &httpUpstreamRecorder{resp: resp}
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+		cfg:          &config.Config{Gateway: config.GatewayConfig{}},
 		httpUpstream: upstream,
 	}
 	account := &Account{
@@ -1685,7 +1669,6 @@ func TestOpenAIGatewayService_OAuthPassthrough_AllowTimeoutHeadersWhenConfigured
 	upstream := &httpUpstreamRecorder{resp: resp}
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{Gateway: config.GatewayConfig{
-			ForceCodexCLI:                        false,
 			OpenAIPassthroughAllowTimeoutHeaders: true,
 		}},
 		httpUpstream: upstream,

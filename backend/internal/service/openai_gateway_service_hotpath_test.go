@@ -406,7 +406,6 @@ func TestOpenAIGatewayService_Forward_CodexBridgeInjectionSetsImageBilling(t *te
 	}
 	cfg := &config.Config{}
 	cfg.Security.URLAllowlist.Enabled = false
-	cfg.Gateway.ForceCodexCLI = true
 	cfg.Gateway.CodexImageGenerationBridgeEnabled = true
 	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
 	account := &Account{
@@ -419,7 +418,10 @@ func TestOpenAIGatewayService_Forward_CodexBridgeInjectionSetsImageBilling(t *te
 			"api_key":  "sk-test",
 			"base_url": "https://example.com",
 		},
-		Extra: map[string]any{"use_responses_api": true},
+		Extra: map[string]any{
+			"use_responses_api":                     true,
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
 	}
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
