@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { defineComponent, nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateAccountMock, deleteAccountAPIKeyMock, checkMixedChannelRiskMock } = vi.hoisted(() => ({
+const { updateAccountMock, deleteAccountAPIKeyMock, restoreAccountAPIKeyStateMock, checkMixedChannelRiskMock } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   deleteAccountAPIKeyMock: vi.fn(),
+  restoreAccountAPIKeyStateMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn()
 }))
 
@@ -27,6 +28,7 @@ vi.mock('@/api/admin', () => ({
     accounts: {
       update: updateAccountMock,
       deleteAccountAPIKey: deleteAccountAPIKeyMock,
+      restoreAccountAPIKeyState: restoreAccountAPIKeyStateMock,
       checkMixedChannelRisk: checkMixedChannelRiskMock
     },
     settings: {
@@ -117,6 +119,66 @@ const SelectStub = defineComponent({
   `
 })
 
+const AccountErrorHandlingCardStub = defineComponent({
+  name: 'AccountErrorHandlingCard',
+  props: {
+    rules: {
+      type: Array,
+      default: () => []
+    }
+  },
+  emits: ['update:rules'],
+  template: `
+    <div data-testid="account-error-handling-card">
+      <span data-testid="account-error-handling-rules">
+        {{ rules.map(rule => rule.name + ':' + rule.action + ':' + rule.status_codes + ':' + rule.keywords).join('|') }}
+      </span>
+      <button
+        type="button"
+        data-testid="replace-error-handling-rules"
+        @click="$emit('update:rules', [
+          {
+            enabled: true,
+            name: 'Disable 500',
+            priority: 1,
+            status_codes: '500',
+            error_codes: '',
+            error_types: '',
+            keywords: '',
+            action: 'error_disabled',
+            durationMinutes: null,
+            reset_strategy: 'daily',
+            duration_hours: null,
+            daily_reset_hour: null,
+            weekly_reset_day: null,
+            weekly_reset_hour: null,
+            description: 'disable 500'
+          },
+          {
+            enabled: true,
+            name: 'Temp 503',
+            priority: 2,
+            status_codes: '503',
+            error_codes: '',
+            error_types: '',
+            keywords: 'overloaded, slow',
+            action: 'temp_unschedulable',
+            durationMinutes: 45,
+            reset_strategy: 'daily',
+            duration_hours: null,
+            daily_reset_hour: null,
+            weekly_reset_day: null,
+            weekly_reset_hour: null,
+            description: 'temp 503'
+          }
+        ])"
+      >
+        replace rules
+      </button>
+    </div>
+  `
+})
+
 function buildAccount() {
   return {
     id: 1,
@@ -141,6 +203,23 @@ function buildAccount() {
     expires_at: null,
     auto_pause_on_expired: false
   } as any
+}
+
+function buildAnthropicAPIKeyAccount() {
+  const account = buildAccount()
+  account.id = 3
+  account.name = 'Anthropic Key'
+  account.platform = 'anthropic'
+  account.type = 'apikey'
+  account.credentials = {
+    api_key: 'sk-ant-test',
+    base_url: 'https://api.anthropic.com',
+    model_mapping: {
+      'claude-opus-4-7': 'claude-opus-4-7[1m]'
+    }
+  }
+  account.extra = {}
+  return account
 }
 
 function buildVertexAccount() {
@@ -184,13 +263,178 @@ function mountModal(account = buildAccount()) {
         Icon: true,
         ProxySelector: true,
         GroupSelector: true,
-        ModelWhitelistSelector: ModelWhitelistSelectorStub
+        ModelWhitelistSelector: ModelWhitelistSelectorStub,
+        AccountErrorHandlingCard: AccountErrorHandlingCardStub
       }
     }
   })
 }
 
 describe('EditAccountModal', () => {
+  it('loads unified account error handling rules and saves legacy compatibility fields', async () => {
+    const account = buildAccount()
+    account.credentials = {
+      ...account.credentials,
+      error_handling_rules: [
+        {
+          enabled: true,
+          name: 'Temp quota 429',
+          priority: 1,
+          status_codes: [429],
+          keywords: ['quota exceeded'],
+          action: 'temp_unschedulable',
+          durationMinutes: 30,
+          description: 'quota temp'
+        }
+      ]
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.get('[data-testid="account-error-handling-rules"]').text()).toContain('Temp quota 429:temp_unschedulable:429:quota exceeded')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials?.error_handling_rules).toEqual([
+      {
+        enabled: true,
+        name: 'Temp quota 429',
+        priority: 1,
+        status_codes: [429],
+        keywords: ['quota exceeded'],
+        action: 'temp_unschedulable',
+        durationMinutes: 30,
+        description: 'quota temp'
+      }
+    ])
+    expect(credentials?.temp_unschedulable_enabled).toBe(true)
+    expect(credentials?.temp_unschedulable_rules).toEqual([
+      {
+        error_code: 429,
+        keywords: ['quota exceeded'],
+        duration_minutes: 30,
+        description: 'quota temp'
+      }
+    ])
+    expect(credentials?.custom_error_codes_enabled).toBeUndefined()
+    expect(credentials?.custom_error_codes).toBeUndefined()
+  })
+
+  it('saves edited unified account error handling rules with custom code and temp-unsched legacy fields', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    await wrapper.get('[data-testid="replace-error-handling-rules"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials?.error_handling_rules).toEqual([
+      {
+        enabled: true,
+        name: 'Disable 500',
+        priority: 1,
+        status_codes: [500],
+        action: 'error_disabled',
+        description: 'disable 500'
+      },
+      {
+        enabled: true,
+        name: 'Temp 503',
+        priority: 2,
+        status_codes: [503],
+        keywords: ['overloaded', 'slow'],
+        action: 'temp_unschedulable',
+        durationMinutes: 45,
+        description: 'temp 503'
+      }
+    ])
+    expect(credentials?.custom_error_codes_enabled).toBe(true)
+    expect(credentials?.custom_error_codes).toEqual([500])
+    expect(credentials?.temp_unschedulable_enabled).toBe(true)
+    expect(credentials?.temp_unschedulable_rules).toEqual([
+      {
+        error_code: 503,
+        keywords: ['overloaded', 'slow'],
+        duration_minutes: 45,
+        description: 'temp 503'
+      }
+    ])
+  })
+
+  it('round-trips legacy custom error codes and temp-unsched rules through the unified edit flow', async () => {
+    const account = buildAccount()
+    account.credentials = {
+      ...account.credentials,
+      custom_error_codes_enabled: true,
+      custom_error_codes: [500],
+      temp_unschedulable_enabled: true,
+      temp_unschedulable_rules: [
+        {
+          error_code: 503,
+          keywords: ['overloaded'],
+          duration_minutes: 15,
+          description: 'legacy temp'
+        }
+      ]
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.get('[data-testid="account-error-handling-rules"]').text()).toContain('Legacy custom error 500:error_disabled:500:')
+    expect(wrapper.get('[data-testid="account-error-handling-rules"]').text()).toContain('legacy temp:temp_unschedulable:503:overloaded')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials?.error_handling_rules).toEqual([
+      {
+        enabled: true,
+        name: 'Legacy custom error 500',
+        priority: 1,
+        status_codes: [500],
+        action: 'error_disabled',
+        description: 'Generated from custom_error_codes'
+      },
+      {
+        enabled: true,
+        name: 'legacy temp',
+        priority: 2,
+        status_codes: [503],
+        keywords: ['overloaded'],
+        action: 'temp_unschedulable',
+        durationMinutes: 15
+      }
+    ])
+    expect(credentials?.custom_error_codes_enabled).toBe(true)
+    expect(credentials?.custom_error_codes).toEqual([500])
+    expect(credentials?.temp_unschedulable_enabled).toBe(true)
+    expect(credentials?.temp_unschedulable_rules).toEqual([
+      {
+        error_code: 503,
+        keywords: ['overloaded'],
+        duration_minutes: 15,
+        description: ''
+      }
+    ])
+  })
+
   it('deletes an existing API key by fingerprint', async () => {
     const account = {
       ...buildAccount(),
@@ -212,6 +456,33 @@ describe('EditAccountModal', () => {
     await flushPromises()
 
     expect(deleteAccountAPIKeyMock).toHaveBeenCalledWith(1, 'fp-delete')
+    expect(wrapper.emitted('updated')?.[0]).toEqual([updatedAccount])
+  })
+
+  it('restores a disabled existing API key by fingerprint', async () => {
+    const account = {
+      ...buildAccount(),
+      api_key_items: [
+        { fingerprint: 'fp-disabled', masked: 'sk-...bled', disabled: true, reason: 'rate_limited' },
+        { fingerprint: 'fp-active', masked: 'sk-...tive' }
+      ]
+    }
+    const updatedAccount = {
+      ...account,
+      api_key_items: [
+        { fingerprint: 'fp-disabled', masked: 'sk-...bled' },
+        { fingerprint: 'fp-active', masked: 'sk-...tive' }
+      ]
+    }
+    restoreAccountAPIKeyStateMock.mockReset()
+    restoreAccountAPIKeyStateMock.mockResolvedValue(updatedAccount)
+
+    const wrapper = mountModal(account)
+
+    await wrapper.get('button[title="admin.accounts.restoreApiKey"]').trigger('click')
+    await flushPromises()
+
+    expect(restoreAccountAPIKeyStateMock).toHaveBeenCalledWith(1, 'fp-disabled')
     expect(wrapper.emitted('updated')?.[0]).toEqual([updatedAccount])
   })
 
@@ -355,6 +626,26 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.codex_image_generation_bridge).toBe(true)
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('codex_image_generation_bridge_enabled')
+  })
+
+  it('submits Anthropic APIKey 1M context switch state', async () => {
+    const account = buildAnthropicAPIKeyAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const contextButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('admin.accounts.anthropic.context1MDisabled'))
+
+    expect(contextButton).toBeTruthy()
+    await contextButton!.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.anthropic_context_1m_enabled).toBe(true)
   })
 
   it('allows saving apikey account when backend redacted api_key but credentials_status reports it exists', async () => {
