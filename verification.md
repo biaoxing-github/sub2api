@@ -2610,3 +2610,64 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 候选验证：等待 65 秒后，`sub2api-blue` 为 `ConfigImage=sub2api:v0.1.134.7` 且 healthy；`http://127.0.0.1:18083/health` 200，根路径 200，`GET /api/v1/admin/dashboard/stats` 未登录 401，`POST /responses` 未登录 401；blue 精确错误日志过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 为空。
 - 切流验证：将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-green:8080` 改为 `sub2api-blue:8080`；`docker exec sub2api-proxy nginx -t` 与 reload 通过；切流后 `8080/health`、`18081/health`、`18083/health`、`18082/health` 均 200，公网根路径 200，admin 未登录 401，`POST /responses` 未登录 401；proxy/blue 错误日志过滤为空，green 继续作为回滚容器。
 - free5 实测：DB 确认 `free5` 为 account_id `416`，OpenAI APIKey，base_url `https://new.sharedchat.cc/codex`；已设置 `openai_codex_cli_simulation_enabled=true` 并恢复 `schedulable=true`。第一次用现有 `自用` 分组请求命中其他同组账号 `426`，因此创建仅绑定 `free5` 的临时验证分组 `temp_group_id=8` 和临时 key `temp_api_key_id=7`；真实 `POST http://127.0.0.1:8080/responses` 返回 HTTP 200，响应 `output_text=OK`，blue 日志确认 `account_id=416`，未出现 `codex_access_restricted`。临时 key 和临时分组已标记 inactive/deleted。
+
+## 2026-06-08 12:59 +08:00 - 删除全局 Force Codex CLI 开关
+
+- 执行者：Devil
+- 目标：账号级 `openai_codex_cli_simulation_enabled` 已替代全局模拟语义，删除旧的全局 `gateway.force_codex_cli` / `GATEWAY_FORCE_CODEX_CLI` 配置和放行逻辑，避免全局影响所有客户端或首 token 表现。
+- 变更：删除 `backend/internal/config/config.go` 中的 `GatewayConfig.ForceCodexCLI` 字段和默认值；删除 `openai_gateway_handler.go` 紧凑日志里的 `force_codex_cli` 字段；删除 `openai_client_restriction_detector.go` 中 `CodexClientRestrictionReasonForceCodexCLI` 和全局配置兜底放行分支；更新相关测试，图片桥接测试改为通过账号级模拟开关触发 Codex 判定；删除 `deploy/.env.example` 与 `deploy/config.example.yaml` 中的全局配置示例；同时清理 `D:\sub2api-deploy\.env` 中的旧变量。
+- 保留：账号级 `openai_codex_cli_simulation_enabled` 继续控制上游请求模拟；OAuth 账号 `codex_cli_only` 仍存在，但只按官方 UA/originator、账号级/全局 allowed clients 判定，不再被全局 force 配置绕过。
+- 验证：残留扫描 `ForceCodexCLI|force_codex_cli|FORCE_CODEX_CLI|CodexClientRestrictionReasonForceCodexCLI` 为空；`go test ./internal/config -count=1` 通过；`go test ./internal/service -run "TestOpenAICodexClientRestrictionDetector|TestOpenAIGatewayService_GetCodexClientRestrictionDetector|TestOpenAIGatewayService_CodexCLIOnly|TestOpenAIGatewayService_APIKey(CodexCLISimulation|PassthroughCodexCLISimulation)|TestOpenAIGatewayService_Forward_CodexBridgeInjectionSetsImageBilling" -count=1 -v` 通过；`go test ./internal/handler -run TestDoesNotExist -count=1` 通过；`git diff --check` 仅提示既有 `deploy/.env.example` LF-to-CRLF 工作区提示。
+- 说明：本轮未提交、未构建 Docker 镜像、未部署；当前线上 active 仍是上一轮 `sub2api-blue:v0.1.134.7`，需要后续按蓝绿流程发布后线上二进制才会彻底移除该配置读取。
+
+## 2026-06-08 14:52 +08:00 - JUHE 统一错误处理规则和 Anthropic 1M 开关接线
+
+- 执行者：Devil
+- 目标：把 juhe feature 最新可借鉴的统一错误处理规则 schema、恢复策略和规则引导接到 sub2api 账号创建/编辑弹窗，同时补齐 Anthropic API Key 1M 上下文开关读写。
+- 变更：新增 `AccountErrorHandlingCard`、`accountErrorHandling*` helper、统一 payload / validation / legacy compat 桥；Create/Edit 账号弹窗统一写 `error_handling_rules` 并同步兼容旧 `custom_error_codes` / `temp_unschedulable_rules`；Anthropic 1M 开关也跟随 `extra.anthropic_context_1m_enabled` 读写。
+- 验证：`npm run typecheck` 通过；`npm run test:run -- src/components/account/__tests__/errorHandlingRules.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts` 通过；`go test ./internal/service -run "TestAccountGetErrorHandlingRules_NormalizesUnifiedSchema|TestCheckErrorPolicy_UnifiedErrorHandlingRules|TestHandleUpstreamError_UnifiedErrorHandlingRules|TestResolveUnifiedRateLimitResetAt" -count=1` 通过。
+- 说明：CodeGraph 连续 3 次 `Transport closed`，按项目规则已降级为 PowerShell 源码检索继续推进；本轮未部署。
+
+## 2026-06-08 15:04 +08:00 - Anthropic API Key 1M 上下文按钮与 anyrouter 开启
+
+- 执行者：Devil
+- 目标：给 Anthropic API Key 账号增加“1M 上下文”按钮，并把现有 `anyrouter` 账号直接开启，止住 `context-1m` 未启用导致的上游 400。
+- 变更：Create/Edit 账号弹窗新增 `anthropic_context_1m_enabled` 按钮态，按钮状态写入/读取 `extra.anthropic_context_1m_enabled`；后端在 Anthropic API Key 场景自动补 `context-1m-2025-08-07` beta，并在账号级开启时覆盖全局 beta 过滤；`anyrouter` 账号（id=444）已在数据库里改为开启。
+- 验证：`go test ./internal/service -run 'TestComputeFinalAnthropicBeta_APIKey|TestComputeFinalCountTokensAnthropicBeta_APIKey|TestEffectiveAnthropicBetaDropSet_Context1MAccountOverride|TestMergeAnthropicBetaDropping_Context1M' -count=1` 通过；`npm run typecheck` 通过；`npm run test:run -- src/components/account/__tests__/EditAccountModal.spec.ts` 通过；浏览器本地首页加载正常，受保护 `/admin/accounts` 跳转到登录页且控制台无错误。
+- 说明：本轮未提交、未构建、未部署；如果要让线上二进制生效，还需要按当前蓝绿流程再发候选镜像。
+
+## 2026-06-08 15:26 +08:00 - Anthropic API key 透传剥离 cch_session_id
+
+- 执行者：Devil
+- 目标：在 Anthropic API key 透传链路里剥离 `cch_session_id`，避免 Claude Code 本地调度把内部会话字段原样送到 Anthropic 上游触发 400。
+- 变更：在 `gateway_request.go` 新增 `sanitizeAnthropicAPIKeyPassthroughBody`，并把它接到 Anthropic `messages`、`count_tokens` 与通用构建链路；回归测试补入 `cch_session_id` 断言。
+- 验证：`gofmt -w backend/internal/service/gateway_request.go backend/internal/service/gateway_service.go backend/internal/service/gateway_anthropic_apikey_passthrough_test.go`；`git diff --check`；`go test ./internal/service -run "TestGatewayService_AnthropicAPIKeyPassthrough_(ForwardStreamPreservesBodyAndAuthReplacement|ForwardCountTokensPreservesBody|ModelMappingEdgeCases)" -count=1`；`go test ./internal/service -run "TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBody" -count=1 -v`，均通过。
+- 说明：仅补回这次相关的窄测，工作树里原本就存在的其他 Anthropic 透传失败用例未处理。
+
+## 2026-06-08 16:03 +08:00 - 账号单个 API Key 状态恢复
+
+- 执行者：Devil
+- 目标：给管理员账号编辑里的单个已停用 API Key 增加按 fingerprint 恢复状态功能，只清除该 Key 的停用元数据，不改原始 Key 列表。
+- 变更：`AdminService` 新增 `RestoreAccountAPIKeyState`，复用 `Account.RestoreAPIKeyByFingerprint` 和 `persistAccountCredentials`；新增 `POST /api/v1/admin/accounts/:id/api-keys/:fingerprint/restore-state`；前端账号编辑弹窗在 disabled key chip 上显示恢复按钮，调用 `restoreAccountAPIKeyState` 并返回更新后的账号快照。
+- 验证：`go test -tags unit ./internal/service -run "TestAdminService_RestoreAccountAPIKeyState|TestAdminService_DeleteAccountAPIKey" -count=1` 通过；`go test ./internal/handler/admin -run "TestAccountHandlerRestoreAPIKeyStateByFingerprint" -count=1` 通过；`go test ./internal/server/routes -run TestDoesNotExist -count=1` 通过；`go test -tags unit ./internal/service -run "TestAccount_.*APIKey|TestAdminService_RestoreAccountAPIKeyState|TestAdminService_DeleteAccountAPIKey" -count=1` 通过；`npm run test:run -- src/api/__tests__/admin.accounts.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts` 通过，36 tests；`npm run typecheck` 通过；`go test ./internal/server -run TestDoesNotExist -count=1` 通过；`git diff --check -- <本轮相关文件>` 通过。
+- 说明：本轮未提交、未构建 Docker 镜像、未部署、未切流。
+
+## 2026-06-08 16:18 +08:00 - 账号单个 API Key 状态恢复接管复核
+
+- 执行者：Devil
+- 目标：接续上一轮“单独 key 状态恢复”实现，复核实际代码路径和 fresh 验证结果，确认交付结论不只依赖上一轮摘要。
+- 复核：CodeGraph 正常定位 `RestoreAccountAPIKeyState`、`RestoreAPIKeyState`、`RestoreAPIKeyByFingerprint`、`hasAPIKeyFingerprint` 和 `removeDisabledAPIKeyFingerprint`；确认恢复动作只删除 `api_keys_disabled[fingerprint]`，保留 `api_keys` / `api_key` 原始 Key，未知 fingerprint 返回 `ErrAccountAPIKeyNotFound`，未停用但仍存在的 fingerprint 不重复持久化。
+- 范围校正：本功能相关文件包括 `backend/internal/service/account.go`、`backend/internal/service/account_api_keys_test.go`、`backend/internal/service/admin_service.go`、`backend/internal/service/admin_service_credentials_merge_test.go`、`backend/internal/handler/admin/account_handler.go`、`backend/internal/handler/admin/admin_service_stub_test.go`、`backend/internal/handler/admin/account_refresh_handler_test.go`、`backend/internal/server/routes/admin.go`、`frontend/src/api/admin/accounts.ts`、`frontend/src/api/__tests__/admin.accounts.spec.ts`、`frontend/src/components/account/EditAccountModal.vue`、`frontend/src/components/account/__tests__/EditAccountModal.spec.ts`、`frontend/src/i18n/locales/zh.ts`、`frontend/src/i18n/locales/en.ts`。
+- Fresh 验证：`go test -tags unit ./internal/service -run "TestAccount.*APIKey|TestAdminService_RestoreAccountAPIKeyState|TestAdminService_DeleteAccountAPIKey" -count=1` 通过；`go test ./internal/handler/admin -run "TestAccountHandlerRestoreAPIKeyStateByFingerprint" -count=1` 通过；`npm run test:run -- src/api/__tests__/admin.accounts.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts` 通过，2 files / 36 tests；`npm run typecheck` 通过；`go test ./internal/server/routes -run TestDoesNotExist -count=1` 通过；`go test ./internal/server -run TestDoesNotExist -count=1` 通过；`git diff --check -- <本轮相关文件>` 通过，仅提示 docs JSONL LF/CRLF 工作区警告。
+- 说明：本轮未提交、未构建 Docker 镜像、未部署、未切流；工作树仍包含此前多项未提交改动，未做回退或整理。
+
+## 2026-06-08 17:58 +08:00 - v0.1.134.8 构建与 green 切流
+
+- 执行者：Devil
+- 目标：把已提交的 `5d0d6b4736b9` 构建为不可变镜像并按蓝绿流程发布，保留 `sub2api-blue:v0.1.134.7` 作为回滚目标。
+- 发布前状态：`active.conf` 原指向 `sub2api-blue:8080`；`sub2api-blue` 为 `sub2api:v0.1.134.7`、healthy、running；`sub2api-green` 为 `sub2api:v0.1.134.4`、healthy、running。
+- 构建：目标镜像 `sub2api:v0.1.134.8` 不存在后开始构建；第一次构建失败在 Alpine `apk add` 下载 `zstd-libs` 时出现 `unexpected end of file`，未生成半成品镜像；第二次重试成功，镜像 label 为 `org.opencontainers.image.version=v0.1.134.8`、`org.opencontainers.image.revision=5d0d6b4736b9`，ImageID `sha256:6a9ebb7be521d41c22fd536b8262312e76ad215255b7694acc675dcd2f59a2c5`。前端生产构建通过，仅保留既有 Browserslist/chunk size/dynamic import 警告。
+- 候选部署：仅重建 idle `sub2api-green`，未重建 active blue；等待 65 秒后 `sub2api-green` 为 `sub2api:v0.1.134.8`、healthy、running。候选端口 `18082/health` 200，根路径 200，静态资源 `/assets/index-D_mBlHt-.js` 200，`GET /api/v1/admin/dashboard/stats` 未登录 401，`POST /responses` 未登录 401，最近 5 分钟 green 日志关键错误过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 为 0。
+- 切流：将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-blue:8080` 改为 `sub2api-green:8080`；`docker exec sub2api-proxy nginx -t` 通过；`docker exec sub2api-proxy nginx -s reload` 成功；同时把 `D:\sub2api-deploy\docker-compose.green.yml` 默认镜像更新为 `sub2api:v0.1.134.8`。
+- 切流后验证：`8080/health`、`18081/health`、`18082/health`、`18083/health` 均 200；`8080` 根路径 200，静态资源 `/assets/index-D_mBlHt-.js` 200，`GET /api/v1/admin/dashboard/stats` 未登录 401，`POST /responses` 未登录 401；`sub2api-green` 为 `sub2api:v0.1.134.8` healthy，`sub2api-blue` 为 `sub2api:v0.1.134.7` healthy；proxy 和 green 最近 5 分钟关键错误过滤均为 0。
+- 当前状态：active 已切到 green `sub2api:v0.1.134.8`；blue `sub2api:v0.1.134.7` 保留运行作为回滚目标。本轮未推送远端。
