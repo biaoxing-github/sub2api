@@ -3770,6 +3770,45 @@
                     >
                       {{
                         t(
+                          "admin.settings.openaiSchedulerExhaustionProbeNotify.channel",
+                        )
+                      }}
+                    </label>
+                    <select
+                      v-model="
+                        form.openai_scheduler_exhaustion_probe_notify_channel
+                      "
+                      class="input"
+                    >
+                      <option value="feishu_webhook">
+                        {{
+                          t(
+                            "admin.settings.openaiSchedulerExhaustionProbeNotify.channelWebhook",
+                          )
+                        }}
+                      </option>
+                      <option value="feishu_app">
+                        {{
+                          t(
+                            "admin.settings.openaiSchedulerExhaustionProbeNotify.channelFeishuApp",
+                          )
+                        }}
+                      </option>
+                    </select>
+                  </div>
+
+                  <div
+                    v-if="
+                      form.openai_scheduler_exhaustion_probe_notify_channel !==
+                      'feishu_app'
+                    "
+                    class="md:col-span-2"
+                  >
+                    <label
+                      class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
                           "admin.settings.openaiSchedulerExhaustionProbeNotify.feishuWebhook",
                         )
                       }}
@@ -3787,6 +3826,134 @@
                       "
                     />
                   </div>
+
+                  <template
+                    v-if="
+                      form.openai_scheduler_exhaustion_probe_notify_channel ===
+                      'feishu_app'
+                    "
+                  >
+                    <div>
+                      <label
+                        class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        {{
+                          t(
+                            "admin.settings.openaiSchedulerExhaustionProbeNotify.feishuAppID",
+                          )
+                        }}
+                      </label>
+                      <input
+                        v-model="
+                          form.openai_scheduler_exhaustion_probe_notify_feishu_app_id
+                        "
+                        type="text"
+                        class="input"
+                        :placeholder="
+                          t(
+                            'admin.settings.openaiSchedulerExhaustionProbeNotify.feishuAppIDPlaceholder',
+                          )
+                        "
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        {{
+                          t(
+                            "admin.settings.openaiSchedulerExhaustionProbeNotify.feishuAppSecret",
+                          )
+                        }}
+                      </label>
+                      <input
+                        v-model="
+                          form.openai_scheduler_exhaustion_probe_notify_feishu_app_secret
+                        "
+                        type="password"
+                        autocomplete="new-password"
+                        class="input"
+                        :placeholder="
+                          t(
+                            'admin.settings.openaiSchedulerExhaustionProbeNotify.feishuAppSecretPlaceholder',
+                          )
+                        "
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        {{
+                          t(
+                            "admin.settings.openaiSchedulerExhaustionProbeNotify.feishuDomain",
+                          )
+                        }}
+                      </label>
+                      <input
+                        v-model="
+                          form.openai_scheduler_exhaustion_probe_notify_feishu_domain
+                        "
+                        type="text"
+                        class="input"
+                        :placeholder="
+                          t(
+                            'admin.settings.openaiSchedulerExhaustionProbeNotify.feishuDomainPlaceholder',
+                          )
+                        "
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        {{
+                          t(
+                            "admin.settings.openaiSchedulerExhaustionProbeNotify.feishuReceiveIDType",
+                          )
+                        }}
+                      </label>
+                      <select
+                        v-model="
+                          form.openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type
+                        "
+                        class="input"
+                      >
+                        <option value="open_id">open_id</option>
+                        <option value="user_id">user_id</option>
+                        <option value="union_id">union_id</option>
+                        <option value="email">email</option>
+                        <option value="chat_id">chat_id</option>
+                      </select>
+                    </div>
+
+                    <div class="md:col-span-2">
+                      <label
+                        class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        {{
+                          t(
+                            "admin.settings.openaiSchedulerExhaustionProbeNotify.feishuReceiveID",
+                          )
+                        }}
+                      </label>
+                      <input
+                        v-model="
+                          form.openai_scheduler_exhaustion_probe_notify_feishu_receive_id
+                        "
+                        type="text"
+                        class="input"
+                        :placeholder="
+                          t(
+                            'admin.settings.openaiSchedulerExhaustionProbeNotify.feishuReceiveIDPlaceholder',
+                          )
+                        "
+                      />
+                    </div>
+                  </template>
 
                   <div class="flex items-center justify-between md:col-span-2">
                     <div>
@@ -7420,9 +7587,15 @@ type SettingsForm = Omit<
   openai_advanced_scheduler_enabled: boolean;
   openai_scheduler_exhaustion_probe_infinite_wait_enabled: boolean;
   openai_scheduler_exhaustion_probe_notify_enabled: boolean;
+  openai_scheduler_exhaustion_probe_notify_channel: string;
   openai_scheduler_exhaustion_probe_notify_after_seconds: number;
   openai_scheduler_exhaustion_probe_notify_repeat_seconds: number;
   openai_scheduler_exhaustion_probe_notify_feishu_webhook_url: string;
+  openai_scheduler_exhaustion_probe_notify_feishu_app_id: string;
+  openai_scheduler_exhaustion_probe_notify_feishu_app_secret: string;
+  openai_scheduler_exhaustion_probe_notify_feishu_domain: string;
+  openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type: string;
+  openai_scheduler_exhaustion_probe_notify_feishu_receive_id: string;
   openai_scheduler_exhaustion_probe_notify_recovered_enabled: boolean;
   // OpenAI OAuth 上游兼容模式：关闭、Cockpit Tools 或 Codex Desktop 直连形态。
   openai_oauth_compat_mode: OpenAIOAuthCompatMode;
@@ -7638,9 +7811,15 @@ const form = reactive<SettingsForm>({
   openai_advanced_scheduler_enabled: false,
   openai_scheduler_exhaustion_probe_infinite_wait_enabled: false,
   openai_scheduler_exhaustion_probe_notify_enabled: false,
+  openai_scheduler_exhaustion_probe_notify_channel: "feishu_webhook",
   openai_scheduler_exhaustion_probe_notify_after_seconds: 60,
   openai_scheduler_exhaustion_probe_notify_repeat_seconds: 300,
   openai_scheduler_exhaustion_probe_notify_feishu_webhook_url: "",
+  openai_scheduler_exhaustion_probe_notify_feishu_app_id: "",
+  openai_scheduler_exhaustion_probe_notify_feishu_app_secret: "",
+  openai_scheduler_exhaustion_probe_notify_feishu_domain: "feishu",
+  openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type: "chat_id",
+  openai_scheduler_exhaustion_probe_notify_feishu_receive_id: "",
   openai_scheduler_exhaustion_probe_notify_recovered_enabled: true,
   // Gateway forwarding behavior
   enable_fingerprint_unification: true,
@@ -8894,6 +9073,8 @@ async function saveSettings() {
         form.openai_scheduler_exhaustion_probe_infinite_wait_enabled,
       openai_scheduler_exhaustion_probe_notify_enabled:
         form.openai_scheduler_exhaustion_probe_notify_enabled,
+      openai_scheduler_exhaustion_probe_notify_channel:
+        form.openai_scheduler_exhaustion_probe_notify_channel || "feishu_webhook",
       openai_scheduler_exhaustion_probe_notify_after_seconds:
         Number(form.openai_scheduler_exhaustion_probe_notify_after_seconds) ||
         60,
@@ -8902,6 +9083,17 @@ async function saveSettings() {
         300,
       openai_scheduler_exhaustion_probe_notify_feishu_webhook_url:
         form.openai_scheduler_exhaustion_probe_notify_feishu_webhook_url.trim(),
+      openai_scheduler_exhaustion_probe_notify_feishu_app_id:
+        form.openai_scheduler_exhaustion_probe_notify_feishu_app_id.trim(),
+      openai_scheduler_exhaustion_probe_notify_feishu_app_secret:
+        form.openai_scheduler_exhaustion_probe_notify_feishu_app_secret.trim(),
+      openai_scheduler_exhaustion_probe_notify_feishu_domain:
+        form.openai_scheduler_exhaustion_probe_notify_feishu_domain.trim(),
+      openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type:
+        form.openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type ||
+        "chat_id",
+      openai_scheduler_exhaustion_probe_notify_feishu_receive_id:
+        form.openai_scheduler_exhaustion_probe_notify_feishu_receive_id.trim(),
       openai_scheduler_exhaustion_probe_notify_recovered_enabled:
         form.openai_scheduler_exhaustion_probe_notify_recovered_enabled,
       // 余额、订阅到期与账号限额通知
