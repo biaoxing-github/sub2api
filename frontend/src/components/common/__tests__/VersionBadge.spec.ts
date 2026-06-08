@@ -55,6 +55,8 @@ describe('VersionBadge', () => {
       }
     })
 
+    expect(wrapper.find('button').text()).toContain('v0.1.134.3')
+
     await wrapper.find('button').trigger('click')
     await nextTick()
 

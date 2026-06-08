@@ -2671,3 +2671,29 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 切流：将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-blue:8080` 改为 `sub2api-green:8080`；`docker exec sub2api-proxy nginx -t` 通过；`docker exec sub2api-proxy nginx -s reload` 成功；同时把 `D:\sub2api-deploy\docker-compose.green.yml` 默认镜像更新为 `sub2api:v0.1.134.8`。
 - 切流后验证：`8080/health`、`18081/health`、`18082/health`、`18083/health` 均 200；`8080` 根路径 200，静态资源 `/assets/index-D_mBlHt-.js` 200，`GET /api/v1/admin/dashboard/stats` 未登录 401，`POST /responses` 未登录 401；`sub2api-green` 为 `sub2api:v0.1.134.8` healthy，`sub2api-blue` 为 `sub2api:v0.1.134.7` healthy；proxy 和 green 最近 5 分钟关键错误过滤均为 0。
 - 当前状态：active 已切到 green `sub2api:v0.1.134.8`；blue `sub2api:v0.1.134.7` 保留运行作为回滚目标。本轮未推送远端。
+
+## 2026-06-08 18:26 +08:00 - 发版版本日志规则补入验证
+
+- 执行者：Devil
+- 观察：`docs/SUB2API_V0_1_134_ABSORPTION_LIST_CN.md` 是近期 v0.1.134 release note 吸收清单；`docs/process_list.jsonl` / `docs/feature_list.jsonl` 尾部记录了 `v0.1.134.8` green 发布流水。
+- 变更：`AGENTS.md` 已新增发版版本日志要求，规定每次发版在 `docs/releases/<不可变版本号>.md` 写日期、执行者、Git 提交、镜像标签、active/idle、更新内容、验证结果、回滚目标和遗留风险，并明确 JSONL 过程流水不能替代版本日志。
+- 验证：`git diff --check -- AGENTS.md` 通过，仅有 LF-to-CRLF 工作区换行提示。
+- 说明：本轮只改文档规则，未构建、未部署、未运行 Go/前端测试。
+
+## 2026-06-08 19:25 +08:00 - OpenAI Responses 调度耗尽无限探测
+
+- 执行者：Devil
+- 目标：修复 `openai_scheduler_exhaustion_probe_infinite_wait_enabled=true` 时，`/v1/responses` 在 failover 已排除账号后仍直接返回最后一次 429/502 的问题；只要调度池仍有探测候选账号，就进入原有无限探测，不再受 `failedAccountIDs` 非空阻断。
+- 变更：`OpenAIGatewayHandler.Responses` 的选号失败分支改为通过 `openAISchedulerExhaustionProbeMode` 判断探测模式；初始选号失败保持原 finite/infinite 语义，failover 后仅在 infinite 开启时继续调用 `RecoverOpenAISchedulerExhaustion`。探测恢复成功后清空失败账号集合、同账号重试计数、切换计数和最后 failover 错误，再重新选号。
+- 验证：新增决策红测先失败于 helper 缺失；实现后 handler 聚焦测试、OpenAI scheduler exhaustion service 测试和本轮 Go 文件 `git diff --check` 均通过。
+- 已知无关失败：`go test ./internal/handler -count=1` 仍失败在 `TestGatewayEnsureForwardErrorResponse_DoesNotOverrideWrittenResponse` 与 `TestOpenAIResponsesWebSocket_ContinuityReplayForwardsSanitizedBodyToNextAccount`，单独复跑同样失败，本轮未处理。
+- 说明：本轮未提交、未构建 Docker 镜像、未部署、未切流；线上 `sub2api:v0.1.134.8` 需要后续发版才会包含该修复。
+
+## 2026-06-08 19:37 +08:00 - JUHE 可用时段与删除清理队列取舍收口
+
+- 执行者：Devil
+- 目标：继续完成 JUHE 可借鉴功能，把账号可用时段计划接入账号创建/编辑与服务端调度判断；同时复核 JUHE 删除账号关联数据清理队列是否适合吸收，并把镜像小版本页面展示规则补入项目手册。
+- 变更：新增 `extra.availability_schedule` schema、后端 `Account.IsSchedulableAt` 和可用时段解析/判断；新增前端 `AccountAvailabilityScheduleEditor`、helper、类型与中英文文案，Create/Edit 账号弹窗会读写同一字段。`VersionBadge` 测试补充关闭态按钮必须显示 `image_version`，`AGENTS.md` 已要求发布或版本接口变更时页面展示不可变镜像小版本。
+- JUHE 清理队列取舍：复核 `adminServiceImpl.DeleteAccount`、`accountRepository.Delete`、`backend/migrations/001_init.sql`、`066_add_scheduled_test_tables.sql`、`143_add_account_probe_runs.sql`、`145_add_account_batch_test_runs.sql` 后，决定不新增账号删除清理 target/worker。当前账号硬关联数据通过 SQL `ON DELETE CASCADE`、`scheduled_test_plans` 显式删除、Redis 调度快照清理和 scheduler outbox 覆盖；`ops_error_logs` 没有账号外键，按历史审计快照保留。
+- 验证：`go test -tags unit ./internal/service -run "TestAccountIsSchedulableAt_AvailabilitySchedule|TestAccountIsSchedulable_QuotaExceeded|TestOpenAISchedulerExhaustionProbe" -count=1` 通过；`go test ./internal/handler -run "TestOpenAISchedulerExhaustionProbeMode|TestOpenAIFailoverRetryWindow" -count=1` 通过；`npm run test:run -- src/components/account/__tests__/AccountAvailabilitySchedule.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/components/common/__tests__/VersionBadge.spec.ts` 通过，28 tests；`npm run typecheck` 通过；`git diff --check` 通过，仅有 `AGENTS.md`、`docs/feature_list.jsonl`、`docs/process_list.jsonl` 的 LF/CRLF 工作区提示。
+- 说明：`docs/JUHE_AI_FEATURE_20250605_BORROWABLE_FEATURES_CN.md` 属于 `.gitignore` 的 `docs/*` 本地忽略范围，本轮已写入本地文档；可追溯结论同步写入本文件和 JSONL 过程记录。

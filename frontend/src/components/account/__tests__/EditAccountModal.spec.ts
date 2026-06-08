@@ -586,6 +586,39 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_responses_supported).toBe(false)
   })
 
+  it('loads and saves account availability schedule extra', async () => {
+    const account = buildAccount()
+    account.extra = {
+      keep_me: true,
+      availability_schedule: {
+        enabled: true,
+        timezone: 'UTC',
+        mode: 'allow_windows',
+        windows: [{ daysOfWeek: [1], start: '09:00', end: '17:00' }],
+        exceptions: [{ date: '2026-06-08', action: 'deny' }]
+      }
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.text()).toContain('admin.accounts.availabilitySchedule.title')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.keep_me).toBe(true)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.availability_schedule).toEqual({
+      enabled: true,
+      timezone: 'UTC',
+      mode: 'allow_windows',
+      windows: [{ daysOfWeek: [1], start: '09:00', end: '17:00' }],
+      exceptions: [{ date: '2026-06-08', action: 'deny' }]
+    })
+  })
+
   it('clears OpenAI APIKey Responses override when set back to auto', async () => {
     const account = buildAccount()
     account.extra = {

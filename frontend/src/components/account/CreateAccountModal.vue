@@ -2935,6 +2935,12 @@
         </div>
       </div>
 
+      <AccountAvailabilityScheduleEditor
+        v-model="accountAvailabilitySchedule"
+        :summary="availabilityScheduleSummary"
+        :validation-error="availabilityScheduleValidationError"
+      />
+
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <!-- Mixed Scheduling (only for antigravity accounts) -->
         <div v-if="form.platform === 'antigravity'" class="flex items-center gap-2">
@@ -3394,11 +3400,20 @@ import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import AccountErrorHandlingCard from '@/components/account/AccountErrorHandlingCard.vue'
+import AccountAvailabilityScheduleEditor from '@/components/account/AccountAvailabilityScheduleEditor.vue'
 import {
   validateAccountErrorHandlingRules,
   writeAccountErrorHandlingToCredentials
 } from '@/components/account/accountErrorHandlingPayload'
 import type { AccountErrorHandlingRuleForm } from '@/components/account/accountErrorHandlingTypes'
+import {
+  accountScheduleSummary,
+  buildAccountAvailabilitySchedulePayload,
+  createAccountAvailabilityScheduleForm,
+  validateAccountAvailabilityScheduleForm,
+  writeAccountAvailabilityScheduleToExtra,
+  type AccountAvailabilityScheduleForm
+} from '@/components/account/accountAvailabilitySchedule'
 import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
@@ -3604,6 +3619,7 @@ const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
+const accountAvailabilitySchedule = ref<AccountAvailabilityScheduleForm>(createAccountAvailabilityScheduleForm())
 const openaiPassthroughEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
@@ -3698,6 +3714,35 @@ function buildAntigravityExtra(): Record<string, unknown> | undefined {
   if (mixedScheduling.value) extra.mixed_scheduling = true
   if (allowOverages.value) extra.allow_overages = true
   return Object.keys(extra).length > 0 ? extra : undefined
+}
+
+const availabilityScheduleValidationError = computed(() =>
+  validateAccountAvailabilityScheduleForm(accountAvailabilitySchedule.value)
+)
+const availabilityScheduleSummary = computed(() => {
+  if (availabilityScheduleValidationError.value) return ''
+  return accountScheduleSummary(buildAccountAvailabilitySchedulePayload(accountAvailabilitySchedule.value))
+})
+const buildAvailabilityScheduleExtra = (base?: Record<string, unknown>) => {
+  const validationError = validateAccountAvailabilityScheduleForm(accountAvailabilitySchedule.value)
+  if (validationError) {
+    appStore.showError(validationError)
+    return { ok: false as const }
+  }
+  const extra: Record<string, unknown> = { ...(base || {}) }
+  writeAccountAvailabilityScheduleToExtra(extra, accountAvailabilitySchedule.value)
+  return {
+    ok: true as const,
+    extra: Object.keys(extra).length > 0 ? extra : undefined
+  }
+}
+const withAvailabilitySchedulePayload = <T extends { extra?: Record<string, unknown> }>(payload: T): T | null => {
+  const result = buildAvailabilityScheduleExtra(payload.extra)
+  if (!result.ok) return null
+  return {
+    ...payload,
+    extra: result.extra
+  }
 }
 
 const buildOpenAICompactModelMapping = () =>
@@ -4358,9 +4403,11 @@ const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<v
 }
 
 const submitCreateAccount = async (payload: CreateAccountRequest) => {
+  const finalPayload = withAvailabilitySchedulePayload(payload)
+  if (!finalPayload) return
   submitting.value = true
   try {
-    await adminAPI.accounts.create(withAntigravityConfirmFlag(payload))
+    await adminAPI.accounts.create(withAntigravityConfirmFlag(finalPayload))
     appStore.showSuccess(t('admin.accounts.accountCreated'))
     emit('created')
     handleClose()
@@ -4370,7 +4417,7 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
         message: error.response?.data?.message,
         onConfirm: async () => {
           antigravityMixedChannelConfirmed.value = true
-          await submitCreateAccount(payload)
+          await submitCreateAccount(finalPayload)
         }
       })
       return
@@ -4430,6 +4477,7 @@ const resetForm = () => {
   accountErrorHandlingRules.value = []
   interceptWarmupRequests.value = false
   autoPauseOnExpired.value = true
+  accountAvailabilitySchedule.value = createAccountAvailabilityScheduleForm()
   openaiPassthroughEnabled.value = false
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
@@ -4982,6 +5030,11 @@ const createAccountAndFinish = async (
       delete credentials.compact_model_mapping
     }
   }
+  const availabilityExtra = buildAvailabilityScheduleExtra(finalExtra)
+  if (!availabilityExtra.ok) {
+    return
+  }
+  finalExtra = availabilityExtra.extra
   await doCreateAccount({
     name: form.name,
     notes: form.notes,
@@ -5049,7 +5102,7 @@ const handleOpenAIExchange = async (authCode: string) => {
     }
 
     if (shouldCreateOpenAI) {
-      await adminAPI.accounts.create({
+      const createPayload = withAvailabilitySchedulePayload({
         name: form.name,
         notes: form.notes,
         platform: 'openai',
@@ -5064,7 +5117,9 @@ const handleOpenAIExchange = async (authCode: string) => {
         group_ids: form.group_ids,
         expires_at: form.expires_at,
         auto_pause_on_expired: autoPauseOnExpired.value
-      })
+      } satisfies CreateAccountRequest)
+      if (!createPayload) return
+      await adminAPI.accounts.create(createPayload)
       appStore.showSuccess(t('admin.accounts.accountCreated'))
     }
 
@@ -5129,7 +5184,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
 
   try {
     const extra = buildOpenAIExtra()
-    const result = await adminAPI.accounts.importCodexSession({
+    const importPayload = withAvailabilitySchedulePayload({
       content: trimmed,
       name: form.name,
       notes: form.notes || null,
@@ -5145,6 +5200,8 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       extra,
       update_existing: true
     })
+    if (!importPayload) return
+    const result = await adminAPI.accounts.importCodexSession(importPayload)
 
     const successCount = result.created + result.updated
     const params = {
@@ -5256,7 +5313,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
         const accountName = refreshTokens.length > 1 ? `${baseName} #${i + 1}` : baseName
 
         if (shouldCreateOpenAI) {
-          await adminAPI.accounts.create({
+          const createPayload = withAvailabilitySchedulePayload({
             name: accountName,
             notes: form.notes,
             platform: 'openai',
@@ -5271,7 +5328,9 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             group_ids: form.group_ids,
             expires_at: form.expires_at,
             auto_pause_on_expired: autoPauseOnExpired.value
-          })
+          } satisfies CreateAccountRequest)
+          if (!createPayload) return
+          await adminAPI.accounts.create(createPayload)
         }
 
         successCount++
@@ -5354,7 +5413,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
         const accountName = refreshTokens.length > 1 ? `${form.name} #${i + 1}` : form.name
 
         // Note: Antigravity doesn't have buildExtraInfo, so we pass empty extra or rely on credentials
-        const createPayload = withAntigravityConfirmFlag({
+        const createPayload = withAvailabilitySchedulePayload(withAntigravityConfirmFlag({
           name: accountName,
           notes: form.notes,
           platform: 'antigravity',
@@ -5369,7 +5428,8 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           group_ids: form.group_ids,
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
-        })
+        }))
+        if (!createPayload) return
         if (!applyTempUnschedConfig(credentials)) {
           continue
         }
@@ -5694,7 +5754,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           return
         }
 
-        await adminAPI.accounts.create({
+        const createPayload = withAvailabilitySchedulePayload({
           name: accountName,
           notes: form.notes,
           platform: form.platform,
@@ -5710,6 +5770,8 @@ const handleCookieAuth = async (sessionKey: string) => {
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
         })
+        if (!createPayload) return
+        await adminAPI.accounts.create(createPayload)
 
         successCount++
       } catch (error: any) {

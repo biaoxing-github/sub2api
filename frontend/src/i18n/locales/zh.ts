@@ -3763,6 +3763,22 @@ export default {
       interceptWarmupRequestsDesc: '启用后，标题生成等预热请求将返回 mock 响应，不消耗上游 token',
       autoPauseOnExpired: '过期自动暂停调度',
       autoPauseOnExpiredDesc: '启用后，账号过期将自动暂停调度',
+      availabilitySchedule: {
+        title: '可用时段',
+        description: '启用后，账号只会在设定时区和时间窗内参与调度。',
+        toggle: '启用可用时段',
+        timezone: '时区',
+        startDate: '开始日期',
+        endDate: '结束日期',
+        windows: '每周时段',
+        addWindow: '添加时段',
+        exceptions: '例外日期',
+        addException: '添加例外',
+        noExceptions: '暂无例外日期',
+        deny: '整日停用',
+        allow: '仅允许时段',
+        addExceptionWindow: '添加例外时段'
+      },
       // Quota control (Anthropic OAuth/SetupToken only)
       quotaControl: {
         title: '配额控制',

@@ -122,6 +122,203 @@ func TestAccountIsSchedulable_QuotaExceeded(t *testing.T) {
 	}
 }
 
+func TestAccountIsSchedulableAt_AvailabilitySchedule(t *testing.T) {
+	mondayMorning := time.Date(2026, 6, 8, 10, 30, 0, 0, time.UTC)
+	mondayEvening := time.Date(2026, 6, 8, 18, 0, 0, 0, time.UTC)
+	tuesdayEarly := time.Date(2026, 6, 9, 1, 30, 0, 0, time.UTC)
+
+	tests := []struct {
+		name  string
+		now   time.Time
+		extra map[string]any
+		want  bool
+	}{
+		{
+			name:  "missing schedule keeps account schedulable",
+			now:   mondayMorning,
+			extra: nil,
+			want:  true,
+		},
+		{
+			name: "disabled schedule keeps account schedulable",
+			now:  mondayMorning,
+			extra: map[string]any{
+				AccountAvailabilityScheduleExtraKey: map[string]any{
+					"enabled": false,
+				},
+			},
+			want: true,
+		},
+		{
+			name: "allows inside matching weekday window",
+			now:  mondayMorning,
+			extra: map[string]any{
+				AccountAvailabilityScheduleExtraKey: map[string]any{
+					"enabled":  true,
+					"timezone": "UTC",
+					"mode":     "allow_windows",
+					"windows": []any{
+						map[string]any{
+							"daysOfWeek": []any{float64(1)},
+							"start":      "09:00",
+							"end":        "17:00",
+						},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "blocks outside matching weekday window",
+			now:  mondayEvening,
+			extra: map[string]any{
+				AccountAvailabilityScheduleExtraKey: map[string]any{
+					"enabled":  true,
+					"timezone": "UTC",
+					"mode":     "allow_windows",
+					"windows": []any{
+						map[string]any{
+							"daysOfWeek": []any{float64(1)},
+							"start":      "09:00",
+							"end":        "17:00",
+						},
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "allows crossing midnight from previous weekday",
+			now:  tuesdayEarly,
+			extra: map[string]any{
+				AccountAvailabilityScheduleExtraKey: map[string]any{
+					"enabled":  true,
+					"timezone": "UTC",
+					"mode":     "allow_windows",
+					"windows": []any{
+						map[string]any{
+							"daysOfWeek": []any{float64(1)},
+							"start":      "22:00",
+							"end":        "02:00",
+						},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "date range blocks dates before start",
+			now:  mondayMorning,
+			extra: map[string]any{
+				AccountAvailabilityScheduleExtraKey: map[string]any{
+					"enabled":  true,
+					"timezone": "UTC",
+					"mode":     "allow_windows",
+					"dateRange": map[string]any{
+						"startDate": "2026-06-09",
+					},
+					"windows": []any{
+						map[string]any{
+							"daysOfWeek": []any{float64(1), float64(2)},
+							"start":      "00:00",
+							"end":        "23:59",
+						},
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "deny exception blocks matching date",
+			now:  mondayMorning,
+			extra: map[string]any{
+				AccountAvailabilityScheduleExtraKey: map[string]any{
+					"enabled":  true,
+					"timezone": "UTC",
+					"mode":     "allow_windows",
+					"exceptions": []any{
+						map[string]any{
+							"date":   "2026-06-08",
+							"action": "deny",
+						},
+					},
+					"windows": []any{
+						map[string]any{
+							"daysOfWeek": []any{float64(1)},
+							"start":      "09:00",
+							"end":        "17:00",
+						},
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "allow exception overrides normal weekday windows",
+			now:  mondayMorning,
+			extra: map[string]any{
+				AccountAvailabilityScheduleExtraKey: map[string]any{
+					"enabled":  true,
+					"timezone": "UTC",
+					"mode":     "allow_windows",
+					"exceptions": []any{
+						map[string]any{
+							"date":   "2026-06-08",
+							"action": "allow",
+							"windows": []any{
+								map[string]any{
+									"start": "10:00",
+									"end":   "11:00",
+								},
+							},
+						},
+					},
+					"windows": []any{
+						map[string]any{
+							"daysOfWeek": []any{float64(2)},
+							"start":      "09:00",
+							"end":        "17:00",
+						},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "enabled malformed schedule blocks scheduling",
+			now:  mondayMorning,
+			extra: map[string]any{
+				AccountAvailabilityScheduleExtraKey: map[string]any{
+					"enabled":  true,
+					"timezone": "Invalid/Timezone",
+					"mode":     "allow_windows",
+					"windows": []any{
+						map[string]any{
+							"daysOfWeek": []any{float64(1)},
+							"start":      "09:00",
+							"end":        "17:00",
+						},
+					},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &Account{
+				Status:      StatusActive,
+				Schedulable: true,
+				Type:        AccountTypeOAuth,
+				Extra:       tt.extra,
+			}
+
+			require.Equal(t, tt.want, account.IsSchedulableAt(tt.now))
+		})
+	}
+}
+
 func TestAccountCodexExtraEffectiveRateLimit(t *testing.T) {
 	now := time.Now().UTC()
 	resetAt := now.Add(6 * time.Hour).Truncate(time.Second)

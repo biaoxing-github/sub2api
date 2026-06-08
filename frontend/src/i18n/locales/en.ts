@@ -3624,6 +3624,22 @@ export default {
         'When enabled, warmup requests like title generation will return mock responses without consuming upstream tokens',
       autoPauseOnExpired: 'Auto Pause On Expired',
       autoPauseOnExpiredDesc: 'When enabled, the account will auto pause scheduling after it expires',
+      availabilitySchedule: {
+        title: 'Availability Schedule',
+        description: 'When enabled, this account is scheduled only inside the configured timezone and windows.',
+        toggle: 'Enable availability schedule',
+        timezone: 'Timezone',
+        startDate: 'Start Date',
+        endDate: 'End Date',
+        windows: 'Weekly Windows',
+        addWindow: 'Add Window',
+        exceptions: 'Exception Dates',
+        addException: 'Add Exception',
+        noExceptions: 'No exception dates',
+        deny: 'Deny Whole Day',
+        allow: 'Allow Windows Only',
+        addExceptionWindow: 'Add Exception Window'
+      },
       // Quota control (Anthropic OAuth/SetupToken only)
       quotaControl: {
         title: 'Quota Control',

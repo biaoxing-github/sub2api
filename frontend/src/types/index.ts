@@ -1009,6 +1009,37 @@ export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bed
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
 
+export interface AccountAvailabilityScheduleWindow {
+  daysOfWeek: number[]
+  start: string
+  end: string
+}
+
+export interface AccountAvailabilityScheduleDateRange {
+  startDate?: string
+  endDate?: string
+}
+
+export interface AccountAvailabilityScheduleExceptionWindow {
+  start: string
+  end: string
+}
+
+export interface AccountAvailabilityScheduleException {
+  date: string
+  action: 'allow' | 'deny'
+  windows?: AccountAvailabilityScheduleExceptionWindow[]
+}
+
+export interface AccountAvailabilitySchedule {
+  enabled: true
+  timezone: string
+  mode: 'allow_windows'
+  windows: AccountAvailabilityScheduleWindow[]
+  dateRange?: AccountAvailabilityScheduleDateRange
+  exceptions?: AccountAvailabilityScheduleException[]
+}
+
 // Claude Model type (returned by /v1/models and account models API)
 export interface ClaudeModel {
   id: string

@@ -177,10 +177,14 @@ func (a *Account) EffectiveLoadFactor() int {
 }
 
 func (a *Account) IsSchedulable() bool {
+	return a.IsSchedulableAt(time.Now())
+}
+
+// IsSchedulableAt 按指定时间判断账号是否可进入调度候选池，便于测试和后台快照复用同一套规则。
+func (a *Account) IsSchedulableAt(now time.Time) bool {
 	if !a.IsActive() || !a.Schedulable {
 		return false
 	}
-	now := time.Now()
 	if a.AutoPauseOnExpired && a.ExpiresAt != nil && !now.Before(*a.ExpiresAt) {
 		return false
 	}
@@ -194,6 +198,9 @@ func (a *Account) IsSchedulable() bool {
 		return false
 	}
 	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
+		return false
+	}
+	if !a.IsAvailabilityScheduleAllowedAt(now) {
 		return false
 	}
 	return true

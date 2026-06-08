@@ -1809,6 +1809,12 @@
         </div>
       </div>
 
+      <AccountAvailabilityScheduleEditor
+        v-model="accountAvailabilitySchedule"
+        :summary="availabilityScheduleSummary"
+        :validation-error="availabilityScheduleValidationError"
+      />
+
       <!-- 配额控制 (Anthropic OAuth/SetupToken: 亲和 + 窗口费用 + 会话 + RPM 等) -->
       <div
         v-if="account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token')"
@@ -2335,6 +2341,16 @@ import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import { loadAccountErrorHandlingRules } from '@/components/account/errorHandlingRules'
 import { writeAccountErrorHandlingToCredentials } from '@/components/account/accountErrorHandlingPayload'
 import type { AccountErrorHandlingRuleForm } from '@/components/account/accountErrorHandlingTypes'
+import AccountAvailabilityScheduleEditor from '@/components/account/AccountAvailabilityScheduleEditor.vue'
+import {
+  accountScheduleSummary,
+  buildAccountAvailabilitySchedulePayload,
+  createAccountAvailabilityScheduleForm,
+  readAccountAvailabilityScheduleFromExtra,
+  validateAccountAvailabilityScheduleForm,
+  writeAccountAvailabilityScheduleToExtra,
+  type AccountAvailabilityScheduleForm
+} from '@/components/account/accountAvailabilitySchedule'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
@@ -2569,6 +2585,7 @@ const openAIResponseTextErrorEnabled = ref(false)
 const openAIResponseTextErrorKeywordsText = ref('')
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(false)
+const accountAvailabilitySchedule = ref<AccountAvailabilityScheduleForm>(createAccountAvailabilityScheduleForm())
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
@@ -2781,6 +2798,13 @@ const openAICompactStatusKey = computed(() => {
   }
   return 'admin.accounts.openai.compactAuto'
 })
+const availabilityScheduleValidationError = computed(() =>
+  validateAccountAvailabilityScheduleForm(accountAvailabilitySchedule.value)
+)
+const availabilityScheduleSummary = computed(() => {
+  if (availabilityScheduleValidationError.value) return ''
+  return accountScheduleSummary(buildAccountAvailabilitySchedulePayload(accountAvailabilitySchedule.value))
+})
 const loadFactorSuggestion = computed(() => props.account?.load_factor_advice?.suggested_load_factor ?? null)
 const loadFactorSuggestionReasons = computed(() => props.account?.load_factor_advice?.reasons ?? [])
 const loadFactorSuggestionTitle = computed(() => loadFactorSuggestionReasons.value.join('\n'))
@@ -2916,6 +2940,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   mixedScheduling.value = false
   allowOverages.value = false
   const extra = newAccount.extra as Record<string, unknown> | undefined
+  accountAvailabilitySchedule.value = createAccountAvailabilityScheduleForm(
+    readAccountAvailabilityScheduleFromExtra(extra)
+  )
   mixedScheduling.value = extra?.mixed_scheduling === true
   allowOverages.value = extra?.allow_overages === true
 
@@ -4147,6 +4174,23 @@ const handleSubmit = async () => {
       // Quota notify config
       writeQuotaNotifyToExtra(newExtra, 'update')
       updatePayload.extra = newExtra
+    }
+
+    const availabilityScheduleError = validateAccountAvailabilityScheduleForm(accountAvailabilitySchedule.value)
+    if (availabilityScheduleError) {
+      appStore.showError(availabilityScheduleError)
+      return
+    }
+    const extraWithAvailability: Record<string, unknown> = {
+      ...(((updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) ||
+        {}))
+    }
+    writeAccountAvailabilityScheduleToExtra(extraWithAvailability, accountAvailabilitySchedule.value)
+    if (Object.keys(extraWithAvailability).length > 0 || props.account.extra) {
+      updatePayload.extra = extraWithAvailability
+    } else {
+      delete updatePayload.extra
     }
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {
