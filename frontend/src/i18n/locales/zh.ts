@@ -3662,6 +3662,9 @@ export default {
         responsesStatusForcedChatCompletions: '已强制 Chat Completions',
         codexCLIOnly: '仅允许 Codex 官方客户端',
         codexCLIOnlyDesc: '仅对 OpenAI OAuth 生效。开启后仅允许 Codex 官方客户端家族访问；关闭后完全绕过并保持原逻辑。',
+        codexCLISimulation: '请求上游时模拟 Codex CLI',
+        codexCLISimulationDesc:
+          '仅对当前 OpenAI 账号生效。开启后发往上游的 /responses 请求会使用 Codex CLI 的 User-Agent、originator 和版本头；关闭后保持默认规则。',
         codexImageGenerationBridge: 'Codex 图片生成桥接',
         codexImageGenerationBridgeDesc:
           '账号级策略优先于渠道和全局配置。仅控制 Codex 走 /responses 文本端点时是否注入 image_generation 工具；不影响独立图片生成接口。',

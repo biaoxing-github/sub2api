@@ -2592,3 +2592,11 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 变更：新增 `openai_scheduler_exhaustion_probe_notify_*` 配置和管理端设置，支持通知开关、首次通知秒数、重复通知秒数、飞书机器人 webhook 和恢复通知开关；无限探测循环超过阈值后发送 waiting 通知并按重复间隔限流，已发送等待通知后账号恢复会按配置发送 recovered 通知。飞书通知使用 5 秒超时的 text webhook，通知失败只写日志，不中断调度探测。
 - 验证：`go test ./internal/service -run "TestOpenAISchedulerExhaustionProbe" -count=1` 通过；`go test -tags unit ./internal/service -run "TestSettingService_UpdateSettings_OpenAISchedulerExhaustionProbe" -count=1` 通过；`go test ./internal/handler/admin -run TestNonExistent -count=0` 通过；`npm run typecheck` 通过。
 - 说明：本轮未提交、未构建 Docker 镜像、未部署、未切流；飞书 webhook 默认留空，通知开关默认关闭。
+
+## 2026-06-08 12:14 +08:00 - OpenAI 账号级 Codex CLI 模拟开关
+
+- 执行者：Devil
+- 目标：让 `free5` 这类 OpenAI API Key 账号可通过账号级开关在请求上游时模拟 Codex CLI；未开启时不改变默认上游请求规则，避免全局影响首字/首 token 表现。
+- 变更：前端新增、编辑、批量编辑账号弹窗已提供 `请求上游时模拟 Codex CLI` 配置入口；开关写入账号 extra 的 `openai_codex_cli_simulation_enabled`。后端按账号 extra 显式 true 才在 HTTP/SSE、自动透传和 WS 上游请求中应用 Codex CLI User-Agent、originator 与版本头，并保留 Codex 请求体字段；关闭或未设置时保持原规则。
+- 验证：`npm run typecheck` 通过；`go test ./internal/service -run "TestAccount_IsOpenAICodexCLISimulationEnabled|TestOpenAIGatewayService_APIKey(CodexCLISimulation|PassthroughCodexCLISimulation)|TestOpenAIGatewayService_OAuthLegacy_CompositeCodexUAUsesCodexOriginator" -count=1 -v` 通过。
+- 说明：本轮未构建 Docker 镜像、未部署、未切流；需要上线后在对应 OpenAI 账号上手动开启该账号级开关。

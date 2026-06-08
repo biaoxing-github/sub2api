@@ -71,6 +71,58 @@ func TestAccount_IsOpenAIOAuthPassthroughEnabled(t *testing.T) {
 	})
 }
 
+func TestAccount_IsOpenAICodexCLISimulationEnabled(t *testing.T) {
+	t.Run("显式开启", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"base_url": "https://api.openai.com",
+			},
+			Extra: map[string]any{
+				OpenAICodexCLISimulationEnabledExtraKey: true,
+			},
+		}
+		require.True(t, account.IsOpenAICodexCLISimulationEnabled())
+	})
+
+	t.Run("显式关闭", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"base_url": "https://new.sharedchat.cc/codex",
+			},
+			Extra: map[string]any{
+				OpenAICodexCLISimulationEnabledExtraKey: false,
+			},
+		}
+		require.False(t, account.IsOpenAICodexCLISimulationEnabled())
+	})
+
+	t.Run("字段缺失默认关闭", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"base_url": "https://new.sharedchat.cc/codex",
+			},
+		}
+		require.False(t, account.IsOpenAICodexCLISimulationEnabled())
+	})
+
+	t.Run("非 OpenAI 账号关闭", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformAnthropic,
+			Type:     AccountTypeAPIKey,
+			Extra: map[string]any{
+				OpenAICodexCLISimulationEnabledExtraKey: true,
+			},
+		}
+		require.False(t, account.IsOpenAICodexCLISimulationEnabled())
+	})
+}
+
 func TestAccount_IsCodexCLIOnlyEnabled(t *testing.T) {
 	t.Run("OpenAI OAuth 开启", func(t *testing.T) {
 		account := &Account{

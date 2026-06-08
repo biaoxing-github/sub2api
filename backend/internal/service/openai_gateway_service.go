@@ -1788,6 +1788,27 @@ func resolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool) stri
 	return "opencode"
 }
 
+func (s *OpenAIGatewayService) shouldSimulateOpenAICodexCLI(account *Account) bool {
+	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+		return true
+	}
+	return account != nil && account.IsOpenAICodexCLISimulationEnabled()
+}
+
+func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Request, account *Account) {
+	if req == nil || !s.shouldSimulateOpenAICodexCLI(account) {
+		return
+	}
+	req.Header.Set("user-agent", codexCLIUserAgent)
+	req.Header.Set("originator", "codex_cli_rs")
+	if req.Header.Get("OpenAI-Beta") == "" {
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
+	}
+	if req.Header.Get("version") == "" {
+		req.Header.Set("version", codexCLIVersion)
+	}
+}
+
 // BindStickySession sets session -> account binding with standard TTL.
 func (s *OpenAIGatewayService) BindStickySession(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
 	if sessionHash == "" || accountID <= 0 {
@@ -2931,7 +2952,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	compatMessagesBridge := isOpenAICompatMessagesBridgeBody(body)
 	setOpenAICompatMessagesBridgeContext(c, compatMessagesBridge)
 
-	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || (s.cfg != nil && s.cfg.Gateway.ForceCodexCLI)
+	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || s.shouldSimulateOpenAICodexCLI(account)
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
 	clientTransport := GetOpenAIClientTransport(c)
 	// 仅允许 WS 入站请求走 WS 上游，避免出现 HTTP -> WS 协议混用。
@@ -3834,7 +3855,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		c.Set("openai_passthrough", true)
 	}
 
-	policy := s.openAICodexStabilityPolicy(openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || (s.cfg != nil && s.cfg.Gateway.ForceCodexCLI))
+	policy := s.openAICodexStabilityPolicy(openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator")) || s.shouldSimulateOpenAICodexCLI(account))
 	requestBaseURLs := s.orderedOpenAIRequestBaseURLsForForward(account, OpenAIUpstreamTransportHTTPSSE)
 	if len(requestBaseURLs) == 0 {
 		requestBaseURLs = []string{""}
@@ -4102,11 +4123,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 	if customUA != "" {
 		req.Header.Set("user-agent", customUA)
 	}
-	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-		req.Header.Set("user-agent", codexCLIUserAgent)
-	}
-	// OAuth 安全透传：对非 Codex UA 统一兜底，降低被上游风控拦截概率。
-	if account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
+	if s.shouldSimulateOpenAICodexCLI(account) {
+		s.applyOpenAICodexCLISimulationHeaders(req, account)
+	} else if account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
+		// OAuth 安全透传：对非 Codex UA 统一兜底，降低被上游风控拦截概率。
 		req.Header.Set("user-agent", codexCLIUserAgent)
 	}
 
@@ -5114,11 +5134,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 		req.Header.Set("user-agent", customUA)
 	}
 
-	// 若开启 ForceCodexCLI，则强制将上游 User-Agent 伪装为 Codex CLI。
-	// 用于网关未透传/改写 User-Agent 时，仍能命中 Codex 侧识别逻辑。
-	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-		req.Header.Set("user-agent", codexCLIUserAgent)
-	}
+	s.applyOpenAICodexCLISimulationHeaders(req, account)
 
 	// 浏览器型 UA 兜底：仅 OAuth（ChatGPT 内部接口）账号生效，若最终 user-agent 仍为浏览器
 	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。

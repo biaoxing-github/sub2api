@@ -3518,6 +3518,9 @@ export default {
         codexCLIOnly: 'Codex official clients only',
         codexCLIOnlyDesc:
           'Only applies to OpenAI OAuth. When enabled, only Codex official client families are allowed; when disabled, the gateway bypasses this restriction and keeps existing behavior.',
+        codexCLISimulation: 'Simulate Codex CLI upstream',
+        codexCLISimulationDesc:
+          'Only applies to this OpenAI account. When enabled, upstream /responses requests use Codex CLI User-Agent, originator, and version headers; when disabled, default routing is preserved.',
         codexImageGenerationBridge: 'Codex image-generation bridge',
         codexImageGenerationBridgeDesc:
           'Account policy takes precedence over channel and global settings. Only controls whether Codex requests through the /responses text endpoint receive the image_generation tool; standalone image-generation endpoints are unaffected.',

@@ -25,6 +25,8 @@ var accountAPIKeyRoundRobin sync.Map // map[int64]*atomic.Uint64
 const (
 	CredentialAPIKeysDisabled = "api_keys_disabled"
 	apiKeyFingerprintPrefix   = "sha256:"
+	// OpenAICodexCLISimulationEnabledExtraKey 控制单个 OpenAI 账号是否把上游请求模拟为 Codex CLI。
+	OpenAICodexCLISimulationEnabledExtraKey = "openai_codex_cli_simulation_enabled"
 )
 
 type Account struct {
@@ -1761,6 +1763,20 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 		return enabled
 	}
 	return false
+}
+
+// IsOpenAICodexCLISimulationEnabled 返回账号是否启用 OpenAI 上游 Codex CLI 模拟。
+//
+// 只读取账号级显式开关；未配置或类型不正确时保持默认上游规则。
+func (a *Account) IsOpenAICodexCLISimulationEnabled() bool {
+	if a == nil || !a.IsOpenAI() {
+		return false
+	}
+	if a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra[OpenAICodexCLISimulationEnabledExtraKey].(bool)
+	return ok && enabled
 }
 
 // IsOpenAIResponsesWebSocketV2Enabled 返回 OpenAI 账号是否开启 Responses WebSocket v2。
