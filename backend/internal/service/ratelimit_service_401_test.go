@@ -15,6 +15,7 @@ import (
 
 type rateLimitAccountRepoStub struct {
 	mockAccountRepoForGemini
+	account                *Account
 	setErrorCalls          int
 	tempCalls              int
 	rateLimitedCalls       int
@@ -25,6 +26,13 @@ type rateLimitAccountRepoStub struct {
 	lastErrorMsg           string
 	lastTempReason         string
 	lastRateLimitedUntil   *time.Time
+}
+
+func (r *rateLimitAccountRepoStub) GetByID(ctx context.Context, id int64) (*Account, error) {
+	if r.account != nil && r.account.ID == id {
+		return r.account, nil
+	}
+	return r.mockAccountRepoForGemini.GetByID(ctx, id)
 }
 
 func (r *rateLimitAccountRepoStub) SetError(ctx context.Context, id int64, errorMsg string) error {
@@ -55,6 +63,79 @@ func (r *rateLimitAccountRepoStub) UpdateExtra(ctx context.Context, id int64, up
 	r.updateExtraCalls++
 	r.lastExtraUpdates = cloneCredentials(updates)
 	return nil
+}
+
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyLastKey429RecordsAccountBlock(t *testing.T) {
+	account := &Account{
+		ID:          62001,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"api_keys": []any{"last-key"},
+		},
+	}
+	require.Equal(t, "last-key", account.GetAPIKey())
+	repo := &rateLimitAccountRepoStub{account: account}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+
+	shouldDisable := service.HandleUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, []byte(`{"error":{"code":"rate_limited","message":"too many requests"}}`))
+
+	require.True(t, shouldDisable)
+	require.Empty(t, account.GetAPIKeys())
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.Equal(t, 1, repo.rateLimitedCalls)
+	require.Equal(t, 1, repo.updateExtraCalls)
+	health, ok := repo.lastExtraUpdates[AccountProbeHealthExtraKey].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, AccountProbeHealthRateLimited, health["level"])
+	require.Equal(t, "gateway", health["last_probe_source"])
+	require.Equal(t, "rate_limited", health["reason"])
+}
+
+func TestRateLimitService_RecordAccountProbeOutcomeManualFailureWritesHealth(t *testing.T) {
+	account := &Account{
+		ID:          62002,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-a"},
+		},
+	}
+	repo := &rateLimitAccountRepoStub{account: account}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	latencyMs := 1234
+	firstTokenMs := 456
+
+	transition, err := service.RecordAccountProbeOutcome(context.Background(), AccountProbeOutcome{
+		AccountID:    account.ID,
+		Account:      account,
+		Source:       AccountProbeOutcomeSourceManualTest,
+		Success:      false,
+		HTTPStatus:   http.StatusPaymentRequired,
+		Reason:       "payment_required",
+		ErrorMessage: "insufficient balance",
+		LatencyMs:    &latencyMs,
+		FirstTokenMs: &firstTokenMs,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeHealthNormal, transition.PreviousLevel)
+	require.Equal(t, AccountProbeHealthQuotaExhausted, transition.NextLevel)
+	require.True(t, transition.StateChanged)
+	require.NotNil(t, transition.BlockedUntil)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, 1, repo.updateExtraCalls)
+	health, ok := repo.lastExtraUpdates[AccountProbeHealthExtraKey].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, AccountProbeHealthQuotaExhausted, health["level"])
+	require.Equal(t, 1, health["failure_count"])
+	require.Equal(t, float64(http.StatusPaymentRequired), health["http_status"])
+	require.Equal(t, latencyMs, health["latency_ms"])
+	require.Equal(t, firstTokenMs, health["first_token_ms"])
 }
 
 type tokenCacheInvalidatorRecorder struct {

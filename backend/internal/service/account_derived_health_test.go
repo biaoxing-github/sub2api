@@ -46,6 +46,20 @@ func TestDeriveAccountHealthState(t *testing.T) {
 			account: &Account{Status: StatusError, ErrorMessage: "", Schedulable: false},
 			want:    AccountDerivedHealthPendingRetest,
 		},
+		{
+			name: "probe light abnormal",
+			account: &Account{Status: StatusActive, Schedulable: true, Extra: map[string]any{
+				AccountProbeHealthExtraKey: map[string]any{"level": AccountProbeHealthLightAbnormal, "reason": "upstream_abnormal"},
+			}},
+			want: AccountDerivedHealthLightAbnormal,
+		},
+		{
+			name: "probe quota exhausted",
+			account: &Account{Status: StatusActive, Schedulable: true, Extra: map[string]any{
+				AccountProbeHealthExtraKey: map[string]any{"level": AccountProbeHealthQuotaExhausted, "reason": "payment_required", "next_probe_at": resetAt.Format(time.RFC3339)},
+			}},
+			want: AccountDerivedHealthQuotaExhausted,
+		},
 	}
 
 	for _, tc := range cases {

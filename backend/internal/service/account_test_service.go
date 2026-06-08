@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 // sseDataPrefix matches SSE data lines with optional whitespace after colon.
 // Some upstream APIs return non-standard "data:" without space (should be "data: ").
 var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
+var accountTestHTTPStatusPattern = regexp.MustCompile(`(?i)(?:api returned|http|status)\s+(\d{3})`)
 
 const (
 	testClaudeAPIURL   = "https://api.anthropic.com/v1/messages?beta=true"
@@ -38,17 +40,23 @@ const (
 
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
-	Type         string `json:"type"`
-	Text         string `json:"text,omitempty"`
-	Model        string `json:"model,omitempty"`
-	Status       string `json:"status,omitempty"`
-	Code         string `json:"code,omitempty"`
-	ImageURL     string `json:"image_url,omitempty"`
-	MimeType     string `json:"mime_type,omitempty"`
-	Data         any    `json:"data,omitempty"`
-	Success      bool   `json:"success,omitempty"`
-	Error        string `json:"error,omitempty"`
-	FirstTokenMs *int   `json:"first_token_ms,omitempty"`
+	Type         string     `json:"type"`
+	Text         string     `json:"text,omitempty"`
+	Model        string     `json:"model,omitempty"`
+	Status       string     `json:"status,omitempty"`
+	Code         string     `json:"code,omitempty"`
+	ImageURL     string     `json:"image_url,omitempty"`
+	MimeType     string     `json:"mime_type,omitempty"`
+	Data         any        `json:"data,omitempty"`
+	Success      bool       `json:"success,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	FirstTokenMs *int       `json:"first_token_ms,omitempty"`
+	LatencyMs    *int       `json:"latency_ms,omitempty"`
+	StateBefore  string     `json:"state_before,omitempty"`
+	StateAfter   string     `json:"state_after,omitempty"`
+	StateChanged bool       `json:"state_changed,omitempty"`
+	StateReason  string     `json:"state_reason,omitempty"`
+	BlockedUntil *time.Time `json:"blocked_until,omitempty"`
 }
 
 const (
@@ -56,6 +64,26 @@ const (
 	defaultGeminiImageTestPrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
 	defaultOpenAIImageTestPrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
 )
+
+const (
+	accountTestStartedAtContextKey  = "account_test_started_at"
+	accountTestLatencyMsContextKey  = "account_test_latency_ms"
+	accountTestFirstTokenContextKey = "account_test_first_token_ms"
+	accountTestErrorContextKey      = "account_test_error"
+)
+
+// AccountTestConnectionResult 是人工测试连接返回给 handler 的结构化结果。
+type AccountTestConnectionResult struct {
+	AccountID    int64
+	Success      bool
+	ErrorMessage string
+	HTTPStatus   int
+	Reason       string
+	LatencyMs    *int
+	FirstTokenMs *int
+	StartedAt    time.Time
+	FinishedAt   time.Time
+}
 
 // isOpenAIImageModel checks if the model is an OpenAI image generation model (e.g. gpt-image-2).
 func isOpenAIImageModel(model string) bool {
@@ -209,6 +237,44 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
+}
+
+// TestAccountConnectionWithResult 在保留 SSE 输出的同时返回人工探测的结构化结果。
+func (s *AccountTestService) TestAccountConnectionWithResult(c *gin.Context, accountID int64, modelID string, prompt string, mode string) (*AccountTestConnectionResult, error) {
+	startedAt := time.Now()
+	if c != nil {
+		c.Set(accountTestStartedAtContextKey, startedAt)
+	}
+
+	err := s.TestAccountConnection(c, accountID, modelID, prompt, mode)
+	finishedAt := time.Now()
+	latencyMs := int(finishedAt.Sub(startedAt).Milliseconds())
+	if recorded, ok := accountTestContextInt(c, accountTestLatencyMsContextKey); ok {
+		latencyMs = recorded
+	}
+	var firstTokenMs *int
+	if recorded, ok := accountTestContextInt(c, accountTestFirstTokenContextKey); ok {
+		firstTokenMs = &recorded
+	}
+	errorMessage := ""
+	if recorded, ok := accountTestContextString(c, accountTestErrorContextKey); ok {
+		errorMessage = recorded
+	}
+	if errorMessage == "" && err != nil {
+		errorMessage = err.Error()
+	}
+	result := &AccountTestConnectionResult{
+		AccountID:    accountID,
+		Success:      err == nil && errorMessage == "",
+		ErrorMessage: errorMessage,
+		HTTPStatus:   accountTestHTTPStatusFromError(errorMessage),
+		LatencyMs:    &latencyMs,
+		FirstTokenMs: firstTokenMs,
+		StartedAt:    startedAt,
+		FinishedAt:   finishedAt,
+	}
+	result.Reason = accountTestOutcomeReason(result)
+	return result, err
 }
 
 // testClaudeAccountConnection tests an Anthropic Claude account's connection
@@ -1766,12 +1832,36 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 }
 
 func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
+	if c != nil {
+		if event.FirstTokenMs != nil {
+			c.Set(accountTestFirstTokenContextKey, *event.FirstTokenMs)
+		}
+		if event.Type == "test_complete" || event.Type == "error" {
+			if event.LatencyMs == nil {
+				if startedAt, ok := accountTestContextTime(c, accountTestStartedAtContextKey); ok {
+					ms := int(time.Since(startedAt).Milliseconds())
+					event.LatencyMs = &ms
+				}
+			}
+			if event.LatencyMs != nil {
+				c.Set(accountTestLatencyMsContextKey, *event.LatencyMs)
+			}
+		}
+		if event.Type == "error" && strings.TrimSpace(event.Error) != "" {
+			c.Set(accountTestErrorContextKey, strings.TrimSpace(event.Error))
+		}
+	}
 	eventJSON, _ := json.Marshal(event)
 	if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", eventJSON); err != nil {
 		log.Printf("failed to write SSE event: %v", err)
 		return
 	}
 	c.Writer.Flush()
+}
+
+// SendTestEvent 允许 handler 在测试完成后继续通过同一条 SSE 流追加状态变化。
+func (s *AccountTestService) SendTestEvent(c *gin.Context, event TestEvent) {
+	s.sendEvent(c, event)
 }
 
 // sendErrorAndEnd sends an error event and ends the stream
@@ -1857,4 +1947,83 @@ func recordTestFirstTokenMs(slot **int, startedAt time.Time) *int {
 	ms := int(time.Since(startedAt).Milliseconds())
 	*slot = &ms
 	return *slot
+}
+
+func accountTestContextTime(c *gin.Context, key string) (time.Time, bool) {
+	if c == nil {
+		return time.Time{}, false
+	}
+	value, ok := c.Get(key)
+	if !ok {
+		return time.Time{}, false
+	}
+	t, ok := value.(time.Time)
+	return t, ok
+}
+
+func accountTestContextInt(c *gin.Context, key string) (int, bool) {
+	if c == nil {
+		return 0, false
+	}
+	value, ok := c.Get(key)
+	if !ok {
+		return 0, false
+	}
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	default:
+		return 0, false
+	}
+}
+
+func accountTestContextString(c *gin.Context, key string) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	value, ok := c.Get(key)
+	if !ok {
+		return "", false
+	}
+	text, ok := value.(string)
+	return strings.TrimSpace(text), ok
+}
+
+func accountTestHTTPStatusFromError(message string) int {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return 0
+	}
+	matches := accountTestHTTPStatusPattern.FindStringSubmatch(message)
+	if len(matches) < 2 {
+		return 0
+	}
+	status, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0
+	}
+	return status
+}
+
+func accountTestOutcomeReason(result *AccountTestConnectionResult) string {
+	if result == nil || result.Success {
+		return "probe_success"
+	}
+	msg := strings.ToLower(strings.TrimSpace(result.ErrorMessage))
+	switch {
+	case result.HTTPStatus == http.StatusTooManyRequests:
+		return "rate_limited"
+	case result.HTTPStatus == http.StatusPaymentRequired:
+		return "payment_required"
+	case result.HTTPStatus == http.StatusUnauthorized || strings.Contains(msg, "invalid api key"):
+		return "invalid_api_key"
+	case strings.Contains(msg, "insufficient balance") || strings.Contains(msg, "insufficient quota") || strings.Contains(msg, "credit balance"):
+		return "insufficient_balance"
+	case strings.Contains(msg, "eof") || strings.Contains(msg, "timeout") || strings.Contains(msg, "proxy") || strings.Contains(msg, "network"):
+		return "line_degraded"
+	default:
+		return "upstream_abnormal"
+	}
 }

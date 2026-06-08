@@ -26,7 +26,11 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
+      t: (key: string, params?: Record<string, string | number>) => {
+        if (key === 'admin.accounts.firstTokenLatency') return `first-token-${params?.ms}ms`
+        if (key === 'admin.accounts.testLatency') return `total-latency-${params?.ms}ms`
+        return key
+      }
     })
   }
 })
@@ -188,6 +192,49 @@ describe('AccountTestModal', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('已通过 /v1/chat/completions 验证')
+  })
+
+  it('renders first token and backend total latency from test SSE', async () => {
+    const encoder = new TextEncoder()
+    const chunks = [
+      encoder.encode('data: {"type":"content","text":"hi","first_token_ms":321}\n\n'),
+      encoder.encode('data: {"type":"test_complete","success":true,"latency_ms":1456}\n\n')
+    ]
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: vi.fn().mockImplementation(() => Promise.resolve(
+            chunks.length > 0
+              ? { done: false, value: chunks.shift() }
+              : { done: true, value: undefined }
+          ))
+        })
+      }
+    } as any)
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: true,
+        account: buildAccount()
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          Select: SelectStub,
+          TextArea: TextAreaStub,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    ;(wrapper.vm as any).selectedModelId = 'gpt-5.4'
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('first-token-321ms')
+    expect(wrapper.text()).toContain('total-latency-1456ms')
   })
 
   it('defaults free OpenAI accounts to gpt-5.5', async () => {

@@ -209,7 +209,11 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// API Key 列表账号的单 Key 错误必须先写入 key 状态，避免通用临时不可调度规则误伤整个账号。
 	apiKeyDisabled := false
 	if account.Type == AccountTypeAPIKey && shouldDisableCurrentAPIKey(statusCode, responseBody) {
-		apiKeyDisabled = disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody))
+		apiKeyDisableReason := disableAPIKeyReason(statusCode, responseBody)
+		apiKeyDisabled = disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), apiKeyDisableReason)
+		if apiKeyDisabled && len(account.GetAPIKeys()) == 0 {
+			return s.recordLastAPIKeyDisabledOutcome(ctx, account, statusCode, headers, responseBody, upstreamMsg, apiKeyDisableReason)
+		}
 		if apiKeyDisabled && statusCode != 401 {
 			return false
 		}
@@ -251,6 +255,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			if !shouldDisable {
 				break
 			}
+			return s.recordLastAPIKeyDisabledOutcome(ctx, account, statusCode, headers, responseBody, upstreamMsg, disableAPIKeyReason(statusCode, responseBody))
 		}
 		// OpenAI: token_invalidated / token_revoked 表示 token 被永久作废（非过期），直接标记 error
 		openai401Code := extractUpstreamErrorCode(responseBody)
@@ -366,6 +371,9 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	case 429:
 		if !apiKeyDisabled && account.Type == AccountTypeAPIKey {
 			if disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody)) {
+				if len(account.GetAPIKeys()) == 0 {
+					return s.recordLastAPIKeyDisabledOutcome(ctx, account, statusCode, headers, responseBody, upstreamMsg, disableAPIKeyReason(statusCode, responseBody))
+				}
 				shouldDisable = false
 				break
 			}

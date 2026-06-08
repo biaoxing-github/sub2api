@@ -193,6 +193,71 @@ data: {"type":"response.completed"}
 	require.Contains(t, recorder.Body.String(), `"first_token_ms"`)
 }
 
+func TestAccountTestService_TestAccountConnectionWithResultReturnsLatencyAndFirstToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	account := &Account{
+		ID:          1,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+	repo := &openAIAccountTestRepo{
+		mockAccountRepoForGemini: mockAccountRepoForGemini{
+			accountsByID: map[int64]*Account{1: account},
+		},
+	}
+	resp := newJSONResponse(http.StatusOK, strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"hi"}`,
+		``,
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
+		``,
+	}, "\n"))
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+
+	result, err := svc.TestAccountConnectionWithResult(ctx, 1, "gpt-5.4", "", "")
+
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.NotNil(t, result.LatencyMs)
+	require.GreaterOrEqual(t, *result.LatencyMs, 0)
+	require.NotNil(t, result.FirstTokenMs)
+	require.GreaterOrEqual(t, *result.FirstTokenMs, 0)
+	require.Contains(t, recorder.Body.String(), `"latency_ms"`)
+	require.Contains(t, recorder.Body.String(), `"first_token_ms"`)
+}
+
+func TestAccountTestService_TestAccountConnectionWithResultClassifiesFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	account := &Account{
+		ID:          1,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{"access_token": "test-token"},
+	}
+	repo := &openAIAccountTestRepo{
+		mockAccountRepoForGemini: mockAccountRepoForGemini{
+			accountsByID: map[int64]*Account{1: account},
+		},
+	}
+	resp := newJSONResponse(http.StatusPaymentRequired, `{"error":{"message":"insufficient balance"}}`)
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp}}
+	svc := &AccountTestService{accountRepo: repo, httpUpstream: upstream}
+
+	result, err := svc.TestAccountConnectionWithResult(ctx, 1, "gpt-5.4", "", "")
+
+	require.Error(t, err)
+	require.False(t, result.Success)
+	require.Equal(t, http.StatusPaymentRequired, result.HTTPStatus)
+	require.Equal(t, "payment_required", result.Reason)
+	require.NotNil(t, result.LatencyMs)
+	require.Contains(t, recorder.Body.String(), `"latency_ms"`)
+}
+
 func TestAccountTestService_OpenAIChatCompletionsStreamEmitsFirstTokenMs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

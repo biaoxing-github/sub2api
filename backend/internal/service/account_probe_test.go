@@ -527,6 +527,47 @@ func TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples(t *testing.T) {
 	require.NotContains(t, repo.samples[0].APIKeyMasked, "sk-one")
 }
 
+func TestAccountProbeService_RunRecordsAccountProbeOutcomeFailure(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       129,
+		Name:     "probe-outcome",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://example.test/v1",
+			"api_keys": []any{"sk-one"},
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	probeRepo := &accountProbeRepoStub{}
+	rateRepo := &rateLimitAccountRepoStub{account: account}
+	client := &sequencedAccountProbeHTTPClientStub{
+		responses: []*http.Response{
+			accountProbeJSONResponse(http.StatusPaymentRequired, `{"error":{"message":"insufficient balance"}}`),
+		},
+	}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, probeRepo, client, nil)
+	svc.SetRateLimitService(&RateLimitService{accountRepo: rateRepo})
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID: 129,
+		Profile:   AccountProbeProfileQuick,
+		Model:     "gpt-test",
+	})
+
+	require.NoError(t, err)
+	require.NotEqual(t, AccountProbeStatusSuccess, result.Status)
+	require.Equal(t, 1, rateRepo.updateExtraCalls)
+	health, ok := rateRepo.lastExtraUpdates[AccountProbeHealthExtraKey].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, AccountProbeHealthQuotaExhausted, health["level"])
+	require.Equal(t, AccountProbeOutcomeSourceAccountProbe, health["last_probe_source"])
+	require.Equal(t, float64(http.StatusPaymentRequired), health["http_status"])
+}
+
 func TestEvaluateAccountProbeModelValidationEvidence(t *testing.T) {
 	t.Parallel()
 

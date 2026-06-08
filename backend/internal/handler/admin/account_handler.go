@@ -1064,17 +1064,53 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	// Allow empty body, model_id is optional
 	_ = c.ShouldBindJSON(&req)
 
-	// Use AccountTestService to test the account with SSE streaming
-	if err := h.accountTestService.TestAccountConnection(c, accountID, req.ModelID, req.Prompt, req.Mode); err != nil {
-		// Error already sent via SSE, just log
-		return
-	}
-
-	if h.rateLimitService != nil {
-		if _, err := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), accountID); err != nil {
+	result, testErr := h.accountTestService.TestAccountConnectionWithResult(c, accountID, req.ModelID, req.Prompt, req.Mode)
+	if h.rateLimitService != nil && result != nil {
+		transition, err := h.rateLimitService.RecordAccountProbeOutcome(c.Request.Context(), service.AccountProbeOutcome{
+			AccountID:    accountID,
+			Source:       service.AccountProbeOutcomeSourceManualTest,
+			Success:      result.Success,
+			ErrorMessage: result.ErrorMessage,
+			HTTPStatus:   result.HTTPStatus,
+			Reason:       result.Reason,
+			LatencyMs:    result.LatencyMs,
+			FirstTokenMs: result.FirstTokenMs,
+			ObservedAt:   result.FinishedAt,
+		})
+		if err != nil {
 			_ = c.Error(err)
+		} else {
+			h.sendAccountTestTransitionEvent(c, transition)
 		}
 	}
+	if testErr != nil {
+		// Error already sent via SSE; state transition has been recorded above.
+		return
+	}
+}
+
+func (h *AccountHandler) sendAccountTestTransitionEvent(c *gin.Context, transition *service.AccountProbeTransitionResult) {
+	if h == nil || h.accountTestService == nil || c == nil || transition == nil {
+		return
+	}
+	before := service.AccountProbeHealthLabel(transition.PreviousLevel)
+	after := service.AccountProbeHealthLabel(transition.NextLevel)
+	text := fmt.Sprintf("账号状态：%s -> %s", before, after)
+	if !transition.StateChanged {
+		text = fmt.Sprintf("账号状态保持：%s", after)
+	}
+	if transition.Reason != "" {
+		text = fmt.Sprintf("%s（%s）", text, transition.Reason)
+	}
+	h.accountTestService.SendTestEvent(c, service.TestEvent{
+		Type:         "status",
+		Text:         text,
+		StateBefore:  transition.PreviousLevel,
+		StateAfter:   transition.NextLevel,
+		StateChanged: transition.StateChanged,
+		StateReason:  transition.Reason,
+		BlockedUntil: transition.BlockedUntil,
+	})
 }
 
 // BatchTestNonAPIKey tests all non-api-key accounts matching optional filters.

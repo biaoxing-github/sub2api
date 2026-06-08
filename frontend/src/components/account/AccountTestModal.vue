@@ -280,6 +280,8 @@ const outputLines = ref<OutputLine[]>([])
 const streamingContent = ref('')
 const errorMessage = ref('')
 const firstTokenMs = ref<number | null>(null)
+const totalLatencyMs = ref<number | null>(null)
+const testStartedAt = ref<number | null>(null)
 const availableModels = ref<ClaudeModel[]>([])
 const selectedModelId = ref('')
 const testPrompt = ref('')
@@ -384,6 +386,8 @@ const resetState = () => {
   streamingContent.value = ''
   errorMessage.value = ''
   firstTokenMs.value = null
+  totalLatencyMs.value = null
+  testStartedAt.value = null
   generatedImages.value = []
   previewImageUrl.value = ''
 }
@@ -412,10 +416,21 @@ const scrollToBottom = async () => {
   }
 }
 
+const resolveTotalLatency = (latencyMs?: number | null) => {
+  if (totalLatencyMs.value != null) return
+
+  const resolvedLatency = latencyMs ?? (testStartedAt.value == null ? null : Date.now() - testStartedAt.value)
+  if (resolvedLatency == null || resolvedLatency < 0) return
+
+  totalLatencyMs.value = Math.round(resolvedLatency)
+  addLine(t('admin.accounts.testLatency', { ms: totalLatencyMs.value }), 'text-cyan-300')
+}
+
 const startTest = async () => {
   if (!props.account || !selectedModelId.value) return
 
   resetState()
+  testStartedAt.value = Date.now()
   status.value = 'connecting'
   addLine(t('admin.accounts.startingTestForAccount', { name: props.account.name }), 'text-blue-400')
   addLine(t('admin.accounts.testAccountTypeLabel', { type: props.account.type }), 'text-gray-400')
@@ -499,6 +514,7 @@ const handleEvent = (event: {
   image_url?: string
   mime_type?: string
   first_token_ms?: number | null
+  latency_ms?: number | null
 }) => {
   switch (event.type) {
     case 'test_start':
@@ -549,6 +565,7 @@ const handleEvent = (event: {
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''
       }
+      resolveTotalLatency(event.latency_ms)
       if (event.success) {
         status.value = 'success'
       } else {
@@ -564,6 +581,7 @@ const handleEvent = (event: {
         addLine(streamingContent.value, 'text-green-300')
         streamingContent.value = ''
       }
+      resolveTotalLatency(event.latency_ms)
       break
   }
 }

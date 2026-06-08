@@ -1866,6 +1866,9 @@ func isOpenAIAccountEligibleForRequest(ctx context.Context, account *Account, re
 	if account == nil || !account.IsOpenAI() || !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 		return false
 	}
+	if account.IsOpenAIApiKey() && len(account.GetAPIKeys()) == 0 {
+		return false
+	}
 	if paused, reason := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
 		// Debug level: this fires per-candidate on the scheduling hot path, so Info
 		// would amplify into log spam once several accounts cross the threshold.

@@ -1100,6 +1100,9 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 	if account == nil {
 		return false
 	}
+	if account.IsOpenAIApiKey() && len(account.GetAPIKeys()) == 0 {
+		return false
+	}
 	if s != nil && s.service != nil && s.service.isOpenAIAccountRuntimeBlocked(account) {
 		return false
 	}

@@ -397,7 +397,7 @@ func (a *Account) GetCredential(key string) string {
 func (a *Account) GetAPIKey() string {
 	keys := a.GetAPIKeys()
 	if len(keys) == 0 {
-		return a.rememberSelectedAPIKey(a.GetCredential("api_key"))
+		return a.rememberSelectedAPIKey("")
 	}
 	if len(keys) == 1 {
 		return a.rememberSelectedAPIKey(keys[0])
@@ -431,17 +431,24 @@ func (a *Account) GetAPIKeys() []string {
 		return nil
 	}
 	raw, ok := a.Credentials["api_keys"]
-	if !ok || raw == nil {
+	disabled := a.disabledAPIKeyFingerprints()
+	if ok && raw != nil {
+		keys := normalizeAPIKeys(raw)
+		if len(keys) > 0 {
+			keys = filterDisabledAPIKeys(keys, disabled)
+		}
+		if len(keys) > 0 {
+			return keys
+		}
+	}
+	legacy := strings.TrimSpace(a.GetCredential("api_key"))
+	if legacy == "" {
 		return nil
 	}
-	keys := normalizeAPIKeys(raw)
-	if len(keys) > 0 {
-		keys = filterDisabledAPIKeys(keys, a.disabledAPIKeyFingerprints())
+	if _, blocked := disabled[FingerprintAPIKey(legacy)]; blocked {
+		return nil
 	}
-	if len(keys) > 0 {
-		return keys
-	}
-	return nil
+	return []string{legacy}
 }
 
 func (a *Account) disabledAPIKeyFingerprints() map[string]struct{} {

@@ -4276,6 +4276,7 @@ export default {
       connectedToApi: '已连接到 API',
       usingModel: '使用模型：{model}',
       firstTokenLatency: '首 Token：{ms}ms',
+      testLatency: '总耗时：{ms}ms',
       sendingTestMessage: '发送测试消息："hi"',
       sendingImageRequest: '发送生图测试请求...',
       response: '响应：',

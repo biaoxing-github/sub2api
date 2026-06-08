@@ -108,6 +108,9 @@ func ProvideAdminAccountHandler(
 			accountProbeService.SetOpenAIPathHealthTracker(tracker)
 		}
 	}
+	if accountProbeService != nil {
+		accountProbeService.SetRateLimitService(rateLimitService)
+	}
 	h.SetAccountProbeService(accountProbeService)
 	h.SetAccountBatchTestRepository(accountBatchTestRepo)
 	h.SetOpenAIPathHealthReader(openAIGatewayService)

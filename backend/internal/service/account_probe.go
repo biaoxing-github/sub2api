@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"sort"
@@ -276,11 +277,12 @@ type AccountProbeAccountReader interface {
 }
 
 type AccountProbeService struct {
-	accounts AccountProbeAccountReader
-	repo     AccountProbeRepository
-	client   AccountProbeHTTPClient
-	testSvc  *AccountTestService
-	health   *OpenAIPathHealthTracker
+	accounts         AccountProbeAccountReader
+	repo             AccountProbeRepository
+	client           AccountProbeHTTPClient
+	testSvc          *AccountTestService
+	health           *OpenAIPathHealthTracker
+	rateLimitService *RateLimitService
 }
 
 var accountProbeBaseURLLocks sync.Map
@@ -301,6 +303,13 @@ func (s *AccountProbeService) SetOpenAIPathHealthTracker(tracker *OpenAIPathHeal
 		return
 	}
 	s.health = tracker
+}
+
+func (s *AccountProbeService) SetRateLimitService(rateLimitService *RateLimitService) {
+	if s == nil {
+		return
+	}
+	s.rateLimitService = rateLimitService
 }
 
 func (s *AccountProbeService) DeleteReports(ctx context.Context, runIDs []int64) (AccountProbeReportDeleteResult, error) {
@@ -450,6 +459,7 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 			return run, err
 		}
 	}
+	s.recordAccountProbeOutcome(account, run)
 	return run, nil
 }
 
@@ -471,6 +481,65 @@ func (s *AccountProbeService) recordProbePathHealth(account *Account, baseURL st
 		reason = fmt.Sprintf("http_%d", sample.HTTPStatus)
 	}
 	s.health.RecordFailure(key, reason, &headerWait)
+}
+
+func (s *AccountProbeService) recordAccountProbeOutcome(account *Account, run AccountProbeResult) {
+	if s == nil || s.rateLimitService == nil || account == nil {
+		return
+	}
+	outcome := accountProbeOutcomeFromRun(account, run)
+	persistCtx, cancel := context.WithTimeout(context.Background(), accountProbePersistenceTimeout)
+	defer cancel()
+	if _, err := s.rateLimitService.RecordAccountProbeOutcome(persistCtx, outcome); err != nil {
+		slog.Warn("account_probe_outcome_record_failed", "account_id", account.ID, "run_id", run.ID, "status", run.Status, "error", err)
+	}
+}
+
+func accountProbeOutcomeFromRun(account *Account, run AccountProbeResult) AccountProbeOutcome {
+	success := run.Status == AccountProbeStatusSuccess
+	latencyMs := run.AvgLatencyMillis
+	if latencyMs <= 0 {
+		latencyMs = run.Latency.AvgMillis
+	}
+	var latencyPtr *int
+	if latencyMs >= 0 {
+		latencyPtr = &latencyMs
+	}
+	httpStatus, reason, errorMessage, keyFingerprint := accountProbeFailureSummary(run)
+	observedAt := time.Now()
+	if run.FinishedAt != nil {
+		observedAt = *run.FinishedAt
+	}
+	return AccountProbeOutcome{
+		AccountID:      account.ID,
+		Account:        account,
+		Source:         AccountProbeOutcomeSourceAccountProbe,
+		Success:        success,
+		ErrorMessage:   errorMessage,
+		HTTPStatus:     httpStatus,
+		Reason:         reason,
+		LatencyMs:      latencyPtr,
+		FirstTokenMs:   run.FirstTokenMillis,
+		KeyFingerprint: keyFingerprint,
+		ObservedAt:     observedAt,
+	}
+}
+
+func accountProbeFailureSummary(run AccountProbeResult) (int, string, string, string) {
+	if run.Status == AccountProbeStatusSuccess {
+		return 0, "probe_success", "", ""
+	}
+	for _, sample := range run.Samples {
+		if sample.Status != AccountProbeSampleFailed {
+			continue
+		}
+		reason := strings.TrimSpace(sample.ErrorCode)
+		if reason == "" && sample.HTTPStatus > 0 {
+			reason = fmt.Sprintf("http_%d", sample.HTTPStatus)
+		}
+		return sample.HTTPStatus, reason, firstNonEmptyString(sample.ErrorMessage, run.ErrorMessage, reason), sample.APIKeyFingerprint
+	}
+	return 0, strings.TrimSpace(run.Status), strings.TrimSpace(run.ErrorMessage), ""
 }
 
 func acquireAccountProbeBaseURLLock(ctx context.Context, baseURL string) func() {

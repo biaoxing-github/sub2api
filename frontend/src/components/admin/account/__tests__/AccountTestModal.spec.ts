@@ -33,6 +33,8 @@ vi.mock('vue-i18n', async () => {
         if (key === 'admin.accounts.imageReceived' && params?.count) {
           return `received-${params.count}`
         }
+        if (key === 'admin.accounts.firstTokenLatency') return `first-token-${params?.ms}ms`
+        if (key === 'admin.accounts.testLatency') return `total-latency-${params?.ms}ms`
         return messages[key] || key
       }
     })
@@ -192,6 +194,65 @@ describe('AccountTestModal', () => {
     expect(probeDialog.attributes('data-show')).toBe('true')
     expect(probeDialog.attributes('data-account-id')).toBe('128')
     expect(probeDialog.attributes('data-model-id')).toBe('gpt-5.4')
+  })
+
+  it('测试连接展示首字耗时并在缺少后端总耗时时使用本地耗时', async () => {
+    getAvailableModels.mockResolvedValueOnce([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' }
+    ])
+    const encoder = new TextEncoder()
+    let now = 1_000
+    let index = 0
+    const chunks = [
+      encoder.encode('data: {"type":"content","text":"ok","first_token_ms":234}\n'),
+      encoder.encode('data: {"type":"test_complete","success":true}\n')
+    ]
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: vi.fn().mockImplementation(async () => {
+            if (index === 1) now = 2_750
+            if (index < chunks.length) {
+              return { done: false, value: chunks[index++] }
+            }
+            return { done: true, value: undefined }
+          })
+        })
+      }
+    } as Response) as any
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: {
+          id: 129,
+          name: 'openai-key',
+          platform: 'openai',
+          type: 'apikey',
+          status: 'active'
+        }
+      } as any,
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Select: { template: '<div class="select-stub"></div>' },
+          TextArea: true,
+          Icon: true,
+          AccountProbeDialog: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    ;(wrapper.vm as any).selectedModelId = 'gpt-5.4'
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('first-token-234ms')
+    expect(wrapper.text()).toContain('total-latency-1750ms')
   })
 
   it('free OpenAI accounts default to gpt-5.5 when testing', async () => {

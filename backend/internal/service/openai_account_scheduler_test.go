@@ -33,7 +33,7 @@ func (r schedulerGroupAwareOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatfor
 	for _, acc := range r.accounts {
 		account := acc
 		if acc.Platform == platform && isAccountInRequestedGroup(&account, &groupID) {
-			result = append(result, acc)
+			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
 		}
 	}
 	return result, nil
@@ -44,7 +44,7 @@ func (r schedulerGroupAwareOpenAIAccountRepo) ListSchedulableUngroupedByPlatform
 	for _, acc := range r.accounts {
 		account := acc
 		if acc.Platform == platform && isAccountInRequestedGroup(&account, nil) {
-			result = append(result, acc)
+			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
 		}
 	}
 	return result, nil
@@ -58,10 +58,19 @@ func schedulerTestBalanceExtra(available float64) map[string]any {
 	}
 }
 
+func schedulerTestEnsureOpenAIAPIKeyCredentials(account Account) Account {
+	if !account.IsOpenAIApiKey() || len(account.GetAPIKeys()) > 0 || account.Credentials != nil {
+		return account
+	}
+	account.Credentials = map[string]any{"api_key": fmt.Sprintf("scheduler-test-key-%d", account.ID)}
+	return account
+}
+
 func (r schedulerTestOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
 	for i := range r.accounts {
 		if r.accounts[i].ID == id {
-			return &r.accounts[i], nil
+			account := schedulerTestEnsureOpenAIAPIKeyCredentials(r.accounts[i])
+			return &account, nil
 		}
 	}
 	return nil, errors.New("account not found")
@@ -71,7 +80,7 @@ func (r schedulerTestOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx 
 	var result []Account
 	for _, acc := range r.accounts {
 		if acc.Platform == platform {
-			result = append(result, acc)
+			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
 		}
 	}
 	return result, nil
@@ -81,7 +90,7 @@ func (r schedulerTestOpenAIAccountRepo) ListSchedulableByPlatform(ctx context.Co
 	var result []Account
 	for _, acc := range r.accounts {
 		if acc.Platform == platform {
-			result = append(result, acc)
+			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
 		}
 	}
 	return result, nil
@@ -246,6 +255,58 @@ func newOpenAIAdvancedSchedulerRateLimitService(enabled string) *RateLimitServic
 	}
 	return &RateLimitService{
 		settingService: NewSettingService(repo, &config.Config{}),
+	}
+}
+
+func TestOpenAIAccountSchedulerSkipsAPIKeyAccountWithNoActiveKeys(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	blocked := Account{
+		ID:          60101,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    0,
+		Credentials: map[string]any{
+			"api_keys": []any{"disabled-key"},
+		},
+	}
+	require.True(t, blocked.DisableAPIKey("disabled-key", "rate_limited", testNow()))
+	require.Empty(t, blocked.GetAPIKeys())
+
+	healthy := Account{
+		ID:          60102,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Priority:    1,
+		Credentials: map[string]any{
+			"api_keys": []any{"healthy-key"},
+		},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{blocked, healthy}},
+		cfg:                &config.Config{},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+	scheduler := newDefaultOpenAIAccountScheduler(svc, nil)
+
+	selection, decision, err := scheduler.Select(context.Background(), OpenAIAccountScheduleRequest{
+		RequiredTransport: OpenAIUpstreamTransportAny,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, healthy.ID, selection.Account.ID)
+	require.Equal(t, 1, decision.CandidateCount)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
 	}
 }
 

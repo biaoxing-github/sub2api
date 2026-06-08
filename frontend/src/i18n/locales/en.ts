@@ -4149,6 +4149,7 @@ export default {
       connectedToApi: 'Connected to API',
       usingModel: 'Using model: {model}',
       firstTokenLatency: 'First token: {ms}ms',
+      testLatency: 'Total latency: {ms}ms',
       sendingTestMessage: 'Sending test message: "hi"',
       sendingImageRequest: 'Sending image generation test request...',
       response: 'Response:',
