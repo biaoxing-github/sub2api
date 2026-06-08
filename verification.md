@@ -2549,3 +2549,12 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 变更：新增 `OpenAIGatewayService.RecoverOpenAISchedulerExhaustion`，当 handler 调度失败且本次请求还没有失败账号时触发；候选账号限定在同一调度范围，保留 active、schedulable、模型和 `/responses` 能力过滤，但不使用运行时 `IsSchedulable()`，因此可探测 rate-limit/temp-unsched/runtime block 状态中的账号。探测成功后清理运行时调度屏蔽、恢复 rate-limit 状态、写 path health 成功并重新进入真实调度。新增 `openai_scheduler_exhaustion_probe_infinite_wait_enabled` 全局设置，管理端可开关，默认关闭。
 - 验证：`gofmt` 已执行；旧长命名扫描无命中；后端设置热刷新、探测次数/成功/无限等待、相邻 service failover、handler `/responses` 聚焦用例均通过；前端 `npm run typecheck` 通过；`git diff --check` 退出 0，仅提示既有 `docs/feature_list.jsonl` 与 `docs/process_list.jsonl` LF-to-CRLF。
 - 已知无关失败：更宽的 `go test ./internal/handler -run "TestOpenAI" -count=1` 仍失败于既有 WebSocket continuity 用例 `TestOpenAIResponsesWebSocket_ContinuityReplayForwardsSanitizedBodyToNextAccount`，期望 `resp_handler_continuity_replayed`，实际 `resp_should_not_use_exhausted`；本轮未改 WebSocket continuity 路径。
+
+## 2026-06-08 07:58 +08:00 - v0.1.134.3 green 国内源构建部署与切流验证
+
+- 执行者：Devil
+- 提交与标签：`901e5e0f0 docs(git): 记录按功能提交整理`；Git tag `v0.1.134.3` 指向该提交。
+- 构建：使用国内源基础镜像参数 `m.daocloud.io/docker.io/library/node:24-alpine`、`golang:1.26.3-alpine`、`alpine:3.21`、`postgres:18-alpine` 从 `git archive HEAD` 构建不可变镜像 `sub2api:v0.1.134.3`。镜像 label revision 为 `901e5e0f0fe9`，`docker run --rm --entrypoint /app/sub2api sub2api:v0.1.134.3 --version` 输出 `Sub2API 0.1.134 (commit: 901e5e0f0fe9, built: 2026-06-07T23:52:49Z)`。
+- 部署：部署前 `active.conf` 指向 `sub2api-blue:8080`，active blue 运行 `sub2api:v0.1.134.2` 且 healthy；本轮只更新 idle green，`D:\sub2api-deploy\docker-compose.green.yml` 默认镜像改为 `sub2api:v0.1.134.3`，执行 `docker compose -f docker-compose.green.yml up -d --no-deps --force-recreate sub2api-green`。未重启 PostgreSQL、Redis、proxy 或 active blue。
+- green 候选验证：等待 65 秒后，`sub2api-green` 为 `ConfigImage=sub2api:v0.1.134.3` 且 healthy；`http://127.0.0.1:18082/health` 200，根路径 200，`GET /api/v1/admin/dashboard/stats` 未登录 401，`POST /responses` 未登录 401；候选日志精确过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 为 0。
+- 切流验证：将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-blue:8080` 改为 `sub2api-green:8080`，`docker exec sub2api-proxy nginx -t` 与 reload 通过。切流后 `8080/health`、`18081/health`、`18082/health`、`18083/health` 均 200；公网根路径 200，admin 未登录 401，`POST /responses` 未登录 401；`sub2api-green` active healthy，`sub2api-blue` 继续运行 `sub2api:v0.1.134.2` 作为回滚目标，proxy 错误日志过滤为 0。
