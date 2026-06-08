@@ -544,27 +544,62 @@ func (a *Account) RemoveAPIKeyByFingerprint(fingerprint string) bool {
 	return true
 }
 
-// removeDisabledAPIKeyFingerprint 清除已删除 Key 对应的停用记录，避免 DTO 继续暴露陈旧状态。
-func removeDisabledAPIKeyFingerprint(credentials map[string]any, fingerprint string) {
+// RestoreAPIKeyByFingerprint 按非敏感指纹恢复单个已停用 Key 的状态，并保留原始 Key。
+func (a *Account) RestoreAPIKeyByFingerprint(fingerprint string) (exists bool, restored bool) {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if a == nil || a.Credentials == nil || fingerprint == "" {
+		return false, false
+	}
+	if !a.hasAPIKeyFingerprint(fingerprint) {
+		return false, false
+	}
+	return true, removeDisabledAPIKeyFingerprint(a.Credentials, fingerprint)
+}
+
+// hasAPIKeyFingerprint 判断账号凭证中是否仍保存指定 Key 指纹。
+func (a *Account) hasAPIKeyFingerprint(fingerprint string) bool {
+	if a == nil || a.Credentials == nil {
+		return false
+	}
+	for _, key := range normalizeAPIKeys(a.Credentials["api_keys"]) {
+		if FingerprintAPIKey(key) == fingerprint {
+			return true
+		}
+	}
+	legacy := strings.TrimSpace(a.GetCredential("api_key"))
+	return legacy != "" && FingerprintAPIKey(legacy) == fingerprint
+}
+
+// removeDisabledAPIKeyFingerprint 清除已删除或已恢复 Key 对应的停用记录，避免 DTO 继续暴露陈旧状态。
+func removeDisabledAPIKeyFingerprint(credentials map[string]any, fingerprint string) bool {
 	if credentials == nil {
-		return
+		return false
 	}
 	switch disabled := credentials[CredentialAPIKeysDisabled].(type) {
 	case map[string]any:
+		if _, ok := disabled[fingerprint]; !ok {
+			return false
+		}
 		delete(disabled, fingerprint)
 		if len(disabled) == 0 {
 			delete(credentials, CredentialAPIKeysDisabled)
 		} else {
 			credentials[CredentialAPIKeysDisabled] = disabled
 		}
+		return true
 	case map[string]string:
+		if _, ok := disabled[fingerprint]; !ok {
+			return false
+		}
 		delete(disabled, fingerprint)
 		if len(disabled) == 0 {
 			delete(credentials, CredentialAPIKeysDisabled)
 		} else {
 			credentials[CredentialAPIKeysDisabled] = disabled
 		}
+		return true
 	}
+	return false
 }
 
 func normalizeAPIKeys(raw any) []string {

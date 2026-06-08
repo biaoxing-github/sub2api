@@ -106,6 +106,43 @@ func TestAccountRemoveAPIKeyByFingerprintSupportsLegacySingleAPIKey(t *testing.T
 	require.Empty(t, account.GetAPIKey())
 }
 
+// 确认恢复单个 Key 状态只清理停用元数据，不删除账号中保存的 Key。
+func TestAccountRestoreAPIKeyByFingerprintClearsDisabledMetadata(t *testing.T) {
+	account := &Account{
+		ID:   45,
+		Type: AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-a", "key-b"},
+		},
+	}
+	require.True(t, account.DisableAPIKey("key-a", "rate_limited", testNow()))
+
+	exists, restored := account.RestoreAPIKeyByFingerprint(FingerprintAPIKey("key-a"))
+
+	require.True(t, exists)
+	require.True(t, restored)
+	require.Equal(t, []string{"key-a", "key-b"}, account.GetAPIKeys())
+	disabled, _ := account.Credentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.NotContains(t, disabled, FingerprintAPIKey("key-a"))
+}
+
+// 确认恢复不存在的 Key 不会误改账号凭证。
+func TestAccountRestoreAPIKeyByFingerprintRejectsUnknownFingerprint(t *testing.T) {
+	account := &Account{
+		ID:   46,
+		Type: AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-a"},
+		},
+	}
+
+	exists, restored := account.RestoreAPIKeyByFingerprint(FingerprintAPIKey("missing"))
+
+	require.False(t, exists)
+	require.False(t, restored)
+	require.Equal(t, []string{"key-a"}, account.GetAPIKeys())
+}
+
 func testNow() time.Time {
 	return time.Unix(1700000000, 0).UTC()
 }

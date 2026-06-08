@@ -117,3 +117,36 @@ func TestListAccountsReturnsUsageTotalsAndPassesUsageSort(t *testing.T) {
 	require.Equal(t, 12.3456, resp.Data.Items[0].TotalAccountCost)
 	require.Equal(t, int64(42), resp.Data.Items[0].TotalRequests)
 }
+
+func TestAccountHandlerRestoreAPIKeyStateByFingerprint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adminSvc := newStubAdminService()
+	adminSvc.accounts = []service.Account{
+		{
+			ID:          31,
+			Name:        "multi-key",
+			Platform:    service.PlatformOpenAI,
+			Type:        service.AccountTypeAPIKey,
+			Status:      service.StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{
+				"api_keys": []any{"sk-disabled"},
+				service.CredentialAPIKeysDisabled: map[string]any{
+					"sha256:disabled": map[string]any{"reason": "rate_limited"},
+				},
+			},
+		},
+	}
+	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/:id/api-keys/:fingerprint/restore-state", handler.RestoreAPIKeyState)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/31/api-keys/sha256:disabled/restore-state", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []int64{31}, adminSvc.restoredAPIKeyIDs)
+	require.Equal(t, []string{"sha256:disabled"}, adminSvc.restoredAPIKeyFPs)
+	require.Contains(t, rec.Body.String(), `"id":31`)
+}

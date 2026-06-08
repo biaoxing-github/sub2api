@@ -3608,6 +3608,7 @@ export default {
       apiKeysSummary: '共 {total} 个',
       apiKeysSummaryWithDisabled: '共 {total} 个，已停用 {disabled} 个',
       apiKeyDisabled: '停用',
+      restoreApiKey: '恢复这个 Key',
       apiKeysAppendMode: '追加新 Key',
       apiKeysReplaceMode: '替换全部 Key',
       apiKeysAppendHint: '只填写要新增的 Key；旧 Key 会保留并自动去重。',

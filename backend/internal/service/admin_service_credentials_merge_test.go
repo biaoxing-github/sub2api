@@ -185,3 +185,55 @@ func TestAdminService_DeleteAccountAPIKeyRemovesFingerprintFromStoredList(t *tes
 	disabled, _ := repo.account.Credentials[CredentialAPIKeysDisabled].(map[string]any)
 	require.NotContains(t, disabled, FingerprintAPIKey(deletedKey))
 }
+
+func TestAdminService_RestoreAccountAPIKeyStateClearsDisabledFingerprint(t *testing.T) {
+	accountID := int64(207)
+	restoredKey := "sk-restore"
+	keptKey := "sk-keep"
+	repo := &updateAccountCredsRepoStub{
+		account: &Account{
+			ID:       accountID,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Status:   StatusActive,
+			Credentials: map[string]any{
+				"api_keys": []any{restoredKey, keptKey},
+				"api_keys_disabled": map[string]any{
+					FingerprintAPIKey(restoredKey): map[string]any{"reason": "rate_limited"},
+				},
+			},
+		},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	updated, err := svc.RestoreAccountAPIKeyState(context.Background(), accountID, FingerprintAPIKey(restoredKey))
+
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	require.Equal(t, 1, repo.updateCalls)
+	require.Equal(t, []string{restoredKey, keptKey}, repo.account.GetAPIKeys())
+	disabled, _ := repo.account.Credentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.NotContains(t, disabled, FingerprintAPIKey(restoredKey))
+}
+
+func TestAdminService_RestoreAccountAPIKeyStateRejectsUnknownFingerprint(t *testing.T) {
+	accountID := int64(208)
+	repo := &updateAccountCredsRepoStub{
+		account: &Account{
+			ID:       accountID,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Status:   StatusActive,
+			Credentials: map[string]any{
+				"api_keys": []any{"sk-existing"},
+			},
+		},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	updated, err := svc.RestoreAccountAPIKeyState(context.Background(), accountID, FingerprintAPIKey("sk-missing"))
+
+	require.ErrorIs(t, err, ErrAccountAPIKeyNotFound)
+	require.Nil(t, updated)
+	require.Zero(t, repo.updateCalls)
+}

@@ -23,6 +23,8 @@ type stubAdminService struct {
 	updatedAccountIDs     []int64
 	updatedAccounts       []*service.UpdateAccountInput
 	clearedAccountIDs     []int64
+	restoredAPIKeyIDs     []int64
+	restoredAPIKeyFPs     []string
 	schedulableAccountIDs []int64
 	schedulableValues     []bool
 	setErrorAccountIDs    []int64
@@ -401,6 +403,22 @@ func (s *stubAdminService) DeleteAccountAPIKey(ctx context.Context, id int64, fi
 			return &account, nil
 		}
 	}
+	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
+	return &account, nil
+}
+
+func (s *stubAdminService) RestoreAccountAPIKeyState(ctx context.Context, id int64, fingerprint string) (*service.Account, error) {
+	s.mu.Lock()
+	s.restoredAPIKeyIDs = append(s.restoredAPIKeyIDs, id)
+	s.restoredAPIKeyFPs = append(s.restoredAPIKeyFPs, fingerprint)
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			account := s.accounts[i]
+			s.mu.Unlock()
+			return &account, nil
+		}
+	}
+	s.mu.Unlock()
 	account := service.Account{ID: id, Name: "account", Status: service.StatusActive}
 	return &account, nil
 }

@@ -3461,6 +3461,7 @@ export default {
       apiKeysSummary: '{total} total',
       apiKeysSummaryWithDisabled: '{total} total, {disabled} disabled',
       apiKeyDisabled: 'disabled',
+      restoreApiKey: 'Restore this key',
       apiKeysAppendMode: 'Append keys',
       apiKeysReplaceMode: 'Replace all',
       apiKeysAppendHint: 'Enter only new keys; existing keys are kept and de-duplicated.',

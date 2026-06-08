@@ -80,6 +80,7 @@ type AdminService interface {
 	UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error)
 	DeleteAccount(ctx context.Context, id int64) error
 	DeleteAccountAPIKey(ctx context.Context, id int64, fingerprint string) (*Account, error)
+	RestoreAccountAPIKeyState(ctx context.Context, id int64, fingerprint string) (*Account, error)
 	RefreshAccountCredentials(ctx context.Context, id int64) (*Account, error)
 	ClearAccountError(ctx context.Context, id int64) (*Account, error)
 	SetAccountError(ctx context.Context, id int64, errorMsg string) error
@@ -2938,6 +2939,28 @@ func (s *adminServiceImpl) DeleteAccountAPIKey(ctx context.Context, id int64, fi
 	}
 	if err := persistAccountCredentials(ctx, s.accountRepo, account, account.Credentials); err != nil {
 		return nil, err
+	}
+	return account, nil
+}
+
+// RestoreAccountAPIKeyState 按非敏感指纹恢复账号中单个 API Key 的停用状态。
+func (s *adminServiceImpl) RestoreAccountAPIKeyState(ctx context.Context, id int64, fingerprint string) (*Account, error) {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if fingerprint == "" {
+		return nil, infraerrors.BadRequest("INVALID_API_KEY_FINGERPRINT", "api key fingerprint is required")
+	}
+	account, err := s.accountRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	exists, restored := account.RestoreAPIKeyByFingerprint(fingerprint)
+	if !exists {
+		return nil, ErrAccountAPIKeyNotFound
+	}
+	if restored {
+		if err := persistAccountCredentials(ctx, s.accountRepo, account, account.Credentials); err != nil {
+			return nil, err
+		}
 	}
 	return account, nil
 }

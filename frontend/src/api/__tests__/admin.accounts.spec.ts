@@ -33,7 +33,8 @@ import {
   list,
   listBatchTestNonAPIKeyRuns,
   refreshUpstreamBalance,
-  refreshUpstreamBalances
+  refreshUpstreamBalances,
+  restoreAccountAPIKeyState
 } from '@/api/admin/accounts'
 
 describe('admin accounts api usage summary', () => {
@@ -166,6 +167,15 @@ describe('admin accounts api usage summary', () => {
     expect(post).toHaveBeenNthCalledWith(2, '/admin/accounts/26/refresh-upstream-balance', undefined, {
       timeout: 120000,
     })
+  })
+
+  it('restores a disabled account API key state by fingerprint', async () => {
+    const response = { id: 26, api_key_items: [{ fingerprint: 'sha256:abc', masked: 'sk-...abc' }] }
+    post.mockResolvedValueOnce({ data: response })
+
+    await expect(restoreAccountAPIKeyState(26, 'sha256:abc')).resolves.toEqual(response)
+
+    expect(post).toHaveBeenCalledWith('/admin/accounts/26/api-keys/sha256%3Aabc/restore-state')
   })
 
   it('loads dashboard summary with account list filters in one request', async () => {

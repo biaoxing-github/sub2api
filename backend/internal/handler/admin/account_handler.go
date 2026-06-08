@@ -943,6 +943,29 @@ func (h *AccountHandler) DeleteAPIKey(c *gin.Context) {
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
+// RestoreAPIKeyState 恢复账号中指定指纹的单个已停用 API Key。
+// POST /api/v1/admin/accounts/:id/api-keys/:fingerprint/restore-state
+func (h *AccountHandler) RestoreAPIKeyState(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	fingerprint := strings.TrimSpace(c.Param("fingerprint"))
+	if fingerprint == "" {
+		response.BadRequest(c, "Invalid API key fingerprint")
+		return
+	}
+
+	account, err := h.adminService.RestoreAccountAPIKeyState(c.Request.Context(), accountID, fingerprint)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
+}
+
 // TestAccountRequest represents the request body for testing an account
 type TestAccountRequest struct {
 	ModelID string `json:"model_id"`

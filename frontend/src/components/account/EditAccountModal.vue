@@ -115,12 +115,34 @@
                 {{ item.masked }}
                 <span v-if="item.disabled" class="font-sans">{{ t('admin.accounts.apiKeyDisabled') }}</span>
                 <button
+                  v-if="item.fingerprint && item.disabled"
+                  type="button"
+                  class="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
+                  :title="t('admin.accounts.restoreApiKey')"
+                  :aria-label="t('admin.accounts.restoreApiKey')"
+                  :disabled="
+                    restoringApiKeyFingerprint === item.fingerprint ||
+                    deletingApiKeyFingerprint === item.fingerprint
+                  "
+                  @click="handleRestoreAPIKeyState(item.fingerprint)"
+                >
+                  <Icon
+                    name="refresh"
+                    size="xs"
+                    :class="{ 'animate-spin': restoringApiKeyFingerprint === item.fingerprint }"
+                    :stroke-width="2"
+                  />
+                </button>
+                <button
                   v-if="item.fingerprint"
                   type="button"
                   class="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
                   :title="t('admin.accounts.deleteApiKey')"
                   :aria-label="t('admin.accounts.deleteApiKey')"
-                  :disabled="deletingApiKeyFingerprint === item.fingerprint"
+                  :disabled="
+                    deletingApiKeyFingerprint === item.fingerprint ||
+                    restoringApiKeyFingerprint === item.fingerprint
+                  "
                   @click="handleDeleteAPIKey(item.fingerprint)"
                 >
                   <Icon name="trash" size="xs" :stroke-width="2" />
@@ -2496,6 +2518,7 @@ const editApiKey = ref('')
 const editApiKeysText = ref('')
 const apiKeysEditMode = ref<'append' | 'replace'>('append')
 const deletingApiKeyFingerprint = ref<string | null>(null)
+const restoringApiKeyFingerprint = ref<string | null>(null)
 const upstreamAuthUsername = ref('')
 const upstreamAuthPassword = ref('')
 const upstreamCommonRateMultiplier = ref<number | null>(null)
@@ -3524,7 +3547,7 @@ const handleClose = () => {
 
 // 按后端返回的非敏感指纹删除单个已保存 Key，并把更新后的账号状态交给父组件刷新。
 const handleDeleteAPIKey = async (fingerprint: string) => {
-  if (!props.account || !fingerprint || deletingApiKeyFingerprint.value) {
+  if (!props.account || !fingerprint || deletingApiKeyFingerprint.value || restoringApiKeyFingerprint.value) {
     return
   }
   deletingApiKeyFingerprint.value = fingerprint
@@ -3536,6 +3559,23 @@ const handleDeleteAPIKey = async (fingerprint: string) => {
     appStore.showError(error.message || t('admin.accounts.failedToUpdate'))
   } finally {
     deletingApiKeyFingerprint.value = null
+  }
+}
+
+// 按后端返回的非敏感指纹恢复单个已停用 Key，并把更新后的账号状态交给父组件刷新。
+const handleRestoreAPIKeyState = async (fingerprint: string) => {
+  if (!props.account || !fingerprint || restoringApiKeyFingerprint.value || deletingApiKeyFingerprint.value) {
+    return
+  }
+  restoringApiKeyFingerprint.value = fingerprint
+  try {
+    const updatedAccount = await adminAPI.accounts.restoreAccountAPIKeyState(props.account.id, fingerprint)
+    appStore.showSuccess(t('admin.accounts.accountUpdated'))
+    emit('updated', updatedAccount)
+  } catch (error: any) {
+    appStore.showError(error.message || t('admin.accounts.failedToUpdate'))
+  } finally {
+    restoringApiKeyFingerprint.value = null
   }
 }
 

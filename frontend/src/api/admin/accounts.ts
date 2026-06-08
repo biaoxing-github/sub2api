@@ -267,6 +267,16 @@ export async function deleteAccountAPIKey(id: number, fingerprint: string): Prom
 }
 
 /**
+ * 按非敏感指纹恢复账号保存的单个已停用 API Key。
+ */
+export async function restoreAccountAPIKeyState(id: number, fingerprint: string): Promise<Account> {
+  const { data } = await apiClient.post<Account>(
+    `/admin/accounts/${id}/api-keys/${encodeURIComponent(fingerprint)}/restore-state`
+  )
+  return data
+}
+
+/**
  * Check mixed-channel risk for account-group binding.
  */
 export async function checkMixedChannelRisk(
@@ -1058,6 +1068,7 @@ export const accountsAPI = {
   create,
   update,
   deleteAccountAPIKey,
+  restoreAccountAPIKeyState,
   checkMixedChannelRisk,
   delete: deleteAccount,
   toggleStatus,
