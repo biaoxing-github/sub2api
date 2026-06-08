@@ -1789,9 +1789,6 @@ func resolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool) stri
 }
 
 func (s *OpenAIGatewayService) shouldSimulateOpenAICodexCLI(account *Account) bool {
-	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
-		return true
-	}
 	return account != nil && account.IsOpenAICodexCLISimulationEnabled()
 }
 

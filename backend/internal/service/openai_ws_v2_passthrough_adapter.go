@@ -334,7 +334,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if c != nil {
 		isCodexCLI = openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator"))
 	}
-	if s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
+	if s.shouldSimulateOpenAICodexCLI(account) {
 		isCodexCLI = true
 	}
 	headers, _ := s.buildOpenAIWSHeaders(c, account, token, wsDecision, isCodexCLI, "", "", "")

@@ -1471,6 +1471,22 @@ func TestOpenAIGatewayService_APIKeyCodexCLISimulation_DisabledKeepsDefaultRules
 	require.False(t, gjson.GetBytes(upstream.lastBody, "safety_identifier").Exists())
 }
 
+func TestOpenAIGatewayService_ShouldSimulateCodexCLIUsesAccountSwitchOnly(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: true}},
+	}
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra:    map[string]any{OpenAICodexCLISimulationEnabledExtraKey: false},
+	}
+
+	require.False(t, svc.shouldSimulateOpenAICodexCLI(account))
+
+	account.Extra[OpenAICodexCLISimulationEnabledExtraKey] = true
+	require.True(t, svc.shouldSimulateOpenAICodexCLI(account))
+}
+
 func TestOpenAIGatewayService_APIKeyPassthroughCodexCLISimulation_ForcesHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
