@@ -81,9 +81,15 @@ func NewGatewayHandler(
 		pingInterval = time.Duration(cfg.Concurrency.PingInterval) * time.Second
 		if cfg.Gateway.MaxAccountSwitches > 0 {
 			maxAccountSwitches = cfg.Gateway.MaxAccountSwitches
+		} else if cfg.Gateway.MaxAccountSwitches < 0 {
+			// 配置为负数时表示无限调度
+			maxAccountSwitches = 999999
 		}
 		if cfg.Gateway.MaxAccountSwitchesGemini > 0 {
 			maxAccountSwitchesGemini = cfg.Gateway.MaxAccountSwitchesGemini
+		} else if cfg.Gateway.MaxAccountSwitchesGemini < 0 {
+			// 配置为负数时表示无限调度
+			maxAccountSwitchesGemini = 999999
 		}
 	}
 

@@ -326,11 +326,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			shouldDisable = true
 		}
 	case 402:
-		if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey {
-			s.apply429FallbackRateLimit(ctx, account, "payment_required")
-			shouldDisable = false
-			break
-		}
 		// OpenAI: deactivated_workspace 表示工作区已停用，直接标记 error
 		if account.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace" {
 			msg := "Workspace deactivated (402): workspace has been deactivated"
@@ -338,7 +333,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			shouldDisable = true
 			break
 		}
-		// 支付要求：余额不足或计费问题，停止调度
+		// 支付要求：余额不足或计费问题，永久停止调度
 		msg := "Payment required (402): insufficient balance or billing issue"
 		if upstreamMsg != "" {
 			msg = "Payment required (402): " + upstreamMsg
@@ -346,9 +341,14 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		s.handleAuthError(ctx, account, msg)
 		shouldDisable = true
 	case 403:
+		// OpenAI 403 + insufficient_balance：余额不足，永久停用
 		if account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey && isInsufficientBalanceBody(responseBody) {
-			s.apply429FallbackRateLimit(ctx, account, "insufficient_balance")
-			shouldDisable = false
+			msg := "Insufficient balance (403): account balance exhausted"
+			if upstreamMsg != "" {
+				msg = "Insufficient balance (403): " + upstreamMsg
+			}
+			s.handleAuthError(ctx, account, msg)
+			shouldDisable = true
 			break
 		}
 		if account.Platform == PlatformOpenAI && IsOpenAIImageGenerationNotEnabledError(statusCode, upstreamMsg, responseBody) {

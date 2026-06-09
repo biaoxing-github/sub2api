@@ -193,6 +193,9 @@ func NewOpenAIGatewayHandler(
 		pingInterval = time.Duration(cfg.Concurrency.PingInterval) * time.Second
 		if cfg.Gateway.MaxAccountSwitches > 0 {
 			maxAccountSwitches = cfg.Gateway.MaxAccountSwitches
+		} else if cfg.Gateway.MaxAccountSwitches < 0 {
+			// 配置为负数时表示无限调度（实际设为足够大的值）
+			maxAccountSwitches = 999999
 		}
 	}
 	return &OpenAIGatewayHandler{

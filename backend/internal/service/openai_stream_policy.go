@@ -66,8 +66,12 @@ func classifyOpenAIUpstreamErrorPolicy(phase openAIUpstreamErrorPolicyPhase, inp
 	switch classification.Category {
 	case UpstreamErrorCategoryUnauthorized, UpstreamErrorCategoryReauthRequired, UpstreamErrorCategoryQuota, UpstreamErrorCategoryRateLimited, UpstreamErrorCategoryClientIPCircuitOpen:
 		action = OpenAIStreamActionAvoidAccountTTL
-	case UpstreamErrorCategoryCloudflareWAF, UpstreamErrorCategoryUnexpectedEOF, UpstreamErrorCategoryHeaderTimeout, UpstreamErrorCategoryTimeout, UpstreamErrorCategoryUpstream5xx:
+	case UpstreamErrorCategoryCloudflareWAF, UpstreamErrorCategoryUnexpectedEOF, UpstreamErrorCategoryHeaderTimeout, UpstreamErrorCategoryTimeout:
 		action = OpenAIStreamActionAvoidUpstreamBucketTTL
+	case UpstreamErrorCategoryUpstream5xx:
+		// 502/503/504 等上游 5xx 错误：触发账号级冷却
+		// 确保频繁 502 的账号被临时摘除，避免持续调度到不可用账号
+		action = OpenAIStreamActionAvoidAccountTTL
 	case UpstreamErrorCategoryBusinessLimited, UpstreamErrorCategoryPreviousResponseNotFound, UpstreamErrorCategoryRequestTooLarge:
 		action = OpenAIStreamActionRetryNextAccount
 	case UpstreamErrorCategoryUpstreamError:
