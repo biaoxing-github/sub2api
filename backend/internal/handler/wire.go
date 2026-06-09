@@ -114,6 +114,7 @@ func ProvideAdminAccountHandler(
 	h.SetAccountProbeService(accountProbeService)
 	h.SetAccountBatchTestRepository(accountBatchTestRepo)
 	h.SetOpenAIPathHealthReader(openAIGatewayService)
+	h.SetOpenAIAccountSchedulingPoolReader(openAIGatewayService)
 	return h
 }
 

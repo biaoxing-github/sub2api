@@ -1202,6 +1202,66 @@ export interface AccountDerivedHealth {
   last_failure_reason?: string
 }
 
+// OpenAI 调度池中线路健康快照；字段与后端 OpenAIPathHealthRecord 保持 snake_case。
+export interface OpenAIPathHealthSnapshot {
+  key?: string
+  state?: string
+  success_count?: number
+  failure_count?: number
+  consecutive_failures?: number
+  window_failures?: number
+  last_failure_reason?: string
+  cooldown_until?: string | null
+}
+
+// OpenAI 调度池运行时阻断状态。
+export interface OpenAIAccountRuntimeBlock {
+  reason?: string
+  until?: string | null
+}
+
+export type OpenAIAccountSchedulingPoolStatus =
+  | 'schedulable'
+  | 'degraded'
+  | 'blocked'
+  | 'filtered'
+  | string
+
+export interface OpenAIAccountSchedulingPoolItem {
+  account: Account
+  pool_status: OpenAIAccountSchedulingPoolStatus
+  pool_reasons?: string[]
+  runtime_block?: OpenAIAccountRuntimeBlock | null
+  path_health: OpenAIPathHealthSnapshot
+  path_health_available: boolean
+  derived_health?: AccountDerivedHealth | null
+  effective_load_factor: number
+}
+
+export interface OpenAIAccountSchedulingPoolResponse {
+  items: OpenAIAccountSchedulingPoolItem[]
+  total: number
+  schedulable_count: number
+  degraded_count: number
+  blocked_count: number
+  filtered_count: number
+  generated_at: string
+  group_id?: number | null
+  model?: string
+  endpoint?: string
+  transport?: string
+  image_capability?: string
+}
+
+export interface OpenAIAccountSchedulingPoolFilters {
+  group?: string
+  model?: string
+  endpoint?: '' | 'responses' | 'chat_completions' | 'embeddings' | string
+  transport?: '' | 'http_sse' | 'responses_websockets' | 'responses_websockets_v2' | string
+  image_capability?: '' | 'images-basic' | 'images-native' | string
+  search?: string
+}
+
 export interface Account {
   id: number
   name: string

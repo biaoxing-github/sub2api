@@ -363,6 +363,7 @@ export default {
     availableChannels: '可用渠道',
     subscriptions: '订阅管理',
     accounts: '账号管理',
+    accountSchedulingPool: '调度池',
     accountProbeReports: '上游体检报告',
     accountModelProbes: '模型探针',
     proxies: 'IP管理',
@@ -4950,6 +4951,66 @@ export default {
           failed: '失败',
           canceled: '已取消'
         }
+      }
+    },
+
+    accountSchedulingPool: {
+      title: 'OpenAI 调度池',
+      description: '查看当前 OpenAI 调度池中的可调度账号、健康状态与降级原因',
+      searchPlaceholder: '搜索账号、ID 或分组',
+      group: '分组 ID',
+      model: '模型',
+      account: '账号',
+      poolStatus: '池内状态',
+      health: '健康状态',
+      capacity: '调度参数',
+      reasons: '原因',
+      runtimeBlock: '运行时阻断',
+      pathHealth: '线路',
+      priority: '优先级',
+      concurrency: '并发',
+      loadFactor: '负载',
+      disableScheduling: '停止调度',
+      disableConfirm: '确定将账号 {name} 改为非调度状态？',
+      disabledSuccess: '已停止账号 {name} 的调度',
+      disabledFailed: '停止调度失败',
+      empty: '当前筛选下没有调度池账号',
+      failedToLoad: '加载调度池失败',
+      metrics: {
+        total: '池内账号',
+        schedulable: '可调度',
+        degraded: '已降级',
+        blocked: '被阻断',
+        filtered: '不匹配'
+      },
+      statuses: {
+        schedulable: '可调度',
+        degraded: '降级',
+        blocked: '阻断',
+        filtered: '不匹配'
+      },
+      pathHealthStates: {
+        healthy: '健康',
+        degraded: '降级',
+        open_circuit: '熔断',
+        half_open: '半开'
+      },
+      endpoints: {
+        all: '全部接口',
+        responses: 'Responses',
+        chatCompletions: 'Chat Completions',
+        embeddings: 'Embeddings'
+      },
+      transports: {
+        any: '任意传输',
+        httpSse: 'HTTP/SSE',
+        responsesWebsocket: 'Responses WS',
+        responsesWebsocketV2: 'Responses WS v2'
+      },
+      imageCapabilities: {
+        all: '全部图像能力',
+        basic: 'Images Basic',
+        native: 'Images Native'
       }
     },
 

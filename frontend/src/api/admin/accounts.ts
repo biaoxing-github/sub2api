@@ -14,6 +14,8 @@ import type {
   AccountPoolUsageSummary,
   AccountDashboardSummary,
   AccountActionItemsResponse,
+  OpenAIAccountSchedulingPoolFilters,
+  OpenAIAccountSchedulingPoolResponse,
   WindowStats,
   ClaudeModel,
   AccountUsageStatsResponse,
@@ -122,6 +124,8 @@ export type AccountActionItemsFilters = Pick<
   AccountUsageSummaryFilters,
   'platform' | 'type' | 'status' | 'group' | 'search' | 'plan_type' | 'privacy_mode'
 >
+
+export type AccountSchedulingPoolFilters = OpenAIAccountSchedulingPoolFilters
 
 const accountStatusSummaryStatuses = [
   'active',
@@ -628,6 +632,22 @@ export async function getActionItems(
   return data
 }
 
+/**
+ * Get the current OpenAI account scheduling pool snapshot.
+ */
+export async function listSchedulingPool(
+  filters?: AccountSchedulingPoolFilters,
+  options?: {
+    signal?: AbortSignal
+  }
+): Promise<OpenAIAccountSchedulingPoolResponse> {
+  const { data } = await apiClient.get<OpenAIAccountSchedulingPoolResponse>('/admin/accounts/scheduling-pool', {
+    params: filters,
+    signal: options?.signal
+  })
+  return data
+}
+
 export async function refreshUpstreamBalances(): Promise<UpstreamBalanceRefreshResult> {
   const { data } = await apiClient.post<UpstreamBalanceRefreshResult>(
     '/admin/accounts/refresh-upstream-balances',
@@ -1094,6 +1114,7 @@ export const accountsAPI = {
   getStatusSummary,
   getDashboardSummary,
   getActionItems,
+  listSchedulingPool,
   refreshUpstreamBalances,
   refreshUpstreamBalance,
   getTodayStats,

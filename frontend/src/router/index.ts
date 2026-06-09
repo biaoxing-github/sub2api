@@ -501,6 +501,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/account-scheduling-pool',
+    name: 'AdminAccountSchedulingPool',
+    component: () => import('@/views/admin/AccountSchedulingPoolView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Account Scheduling Pool',
+      titleKey: 'admin.accountSchedulingPool.title',
+      descriptionKey: 'admin.accountSchedulingPool.description'
+    }
+  },
+  {
     path: '/admin/account-probe-reports',
     name: 'AdminAccountProbeReports',
     component: () => import('@/views/admin/AccountProbeReportsView.vue'),

@@ -191,6 +191,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	accountHandler := admin.NewAccountHandler(adminService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, rateLimitService, accountUsageService, accountTestService, upstreamBalanceService, concurrencyService, crsSyncService, sessionLimitCache, rpmCache, compositeTokenCacheInvalidator)
 	accountHandler.SetAccountProbeService(accountProbeService)
 	accountHandler.SetAccountBatchTestRepository(accountBatchTestRepository)
+	accountHandler.SetOpenAIPathHealthReader(openAIGatewayService)
+	accountHandler.SetOpenAIAccountSchedulingPoolReader(openAIGatewayService)
 	adminAnnouncementHandler := admin.NewAnnouncementHandler(announcementService)
 	dataManagementService := service.NewDataManagementService()
 	dataManagementHandler := admin.NewDataManagementHandler(dataManagementService)

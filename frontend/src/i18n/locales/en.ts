@@ -363,6 +363,7 @@ export default {
     availableChannels: 'Available Channels',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
+    accountSchedulingPool: 'Scheduling Pool',
     accountProbeReports: 'Probe Reports',
     accountModelProbes: 'Model Probes',
     proxies: 'Proxies',
@@ -4796,6 +4797,66 @@ export default {
           failed: 'Failed',
           canceled: 'Canceled'
         }
+      }
+    },
+
+    accountSchedulingPool: {
+      title: 'OpenAI Scheduling Pool',
+      description: 'Review schedulable OpenAI accounts, health status, and degradation reasons',
+      searchPlaceholder: 'Search account, ID, or group',
+      group: 'Group ID',
+      model: 'Model',
+      account: 'Account',
+      poolStatus: 'Pool Status',
+      health: 'Health',
+      capacity: 'Scheduling',
+      reasons: 'Reasons',
+      runtimeBlock: 'Runtime block',
+      pathHealth: 'Path',
+      priority: 'Priority',
+      concurrency: 'Concurrency',
+      loadFactor: 'Load',
+      disableScheduling: 'Disable',
+      disableConfirm: 'Disable scheduling for {name}?',
+      disabledSuccess: 'Disabled scheduling for {name}',
+      disabledFailed: 'Failed to disable scheduling',
+      empty: 'No accounts in the scheduling pool for the current filters',
+      failedToLoad: 'Failed to load scheduling pool',
+      metrics: {
+        total: 'Pool accounts',
+        schedulable: 'Schedulable',
+        degraded: 'Degraded',
+        blocked: 'Blocked',
+        filtered: 'Filtered'
+      },
+      statuses: {
+        schedulable: 'Schedulable',
+        degraded: 'Degraded',
+        blocked: 'Blocked',
+        filtered: 'Filtered'
+      },
+      pathHealthStates: {
+        healthy: 'Healthy',
+        degraded: 'Degraded',
+        open_circuit: 'Open circuit',
+        half_open: 'Half open'
+      },
+      endpoints: {
+        all: 'All endpoints',
+        responses: 'Responses',
+        chatCompletions: 'Chat Completions',
+        embeddings: 'Embeddings'
+      },
+      transports: {
+        any: 'Any transport',
+        httpSse: 'HTTP/SSE',
+        responsesWebsocket: 'Responses WS',
+        responsesWebsocketV2: 'Responses WS v2'
+      },
+      imageCapabilities: {
+        all: 'All image capabilities',
+        basic: 'Images Basic',
+        native: 'Images Native'
       }
     },
 

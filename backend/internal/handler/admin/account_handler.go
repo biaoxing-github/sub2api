@@ -62,24 +62,25 @@ func NewOAuthHandler(oauthService *service.OAuthService) *OAuthHandler {
 
 // AccountHandler handles admin account management
 type AccountHandler struct {
-	adminService            service.AdminService
-	oauthService            *service.OAuthService
-	openaiOAuthService      *service.OpenAIOAuthService
-	geminiOAuthService      *service.GeminiOAuthService
-	antigravityOAuthService *service.AntigravityOAuthService
-	rateLimitService        *service.RateLimitService
-	accountUsageService     *service.AccountUsageService
-	accountTestService      *service.AccountTestService
-	batchAccountTester      batchAccountTester
-	accountBatchTestRepo    service.AccountBatchTestRepository
-	accountProbeService     accountProbeRunner
-	upstreamBalanceService  *service.UpstreamBalanceService
-	concurrencyService      *service.ConcurrencyService
-	crsSyncService          *service.CRSSyncService
-	sessionLimitCache       service.SessionLimitCache
-	rpmCache                service.RPMCache
-	tokenCacheInvalidator   service.TokenCacheInvalidator
-	openAIPathHealthReader  accountPathHealthReader
+	adminService                      service.AdminService
+	oauthService                      *service.OAuthService
+	openaiOAuthService                *service.OpenAIOAuthService
+	geminiOAuthService                *service.GeminiOAuthService
+	antigravityOAuthService           *service.AntigravityOAuthService
+	rateLimitService                  *service.RateLimitService
+	accountUsageService               *service.AccountUsageService
+	accountTestService                *service.AccountTestService
+	batchAccountTester                batchAccountTester
+	accountBatchTestRepo              service.AccountBatchTestRepository
+	accountProbeService               accountProbeRunner
+	upstreamBalanceService            *service.UpstreamBalanceService
+	concurrencyService                *service.ConcurrencyService
+	crsSyncService                    *service.CRSSyncService
+	sessionLimitCache                 service.SessionLimitCache
+	rpmCache                          service.RPMCache
+	tokenCacheInvalidator             service.TokenCacheInvalidator
+	openAIPathHealthReader            accountPathHealthReader
+	openAIAccountSchedulingPoolReader accountSchedulingPoolReader
 }
 
 type accountProbeRunner interface {
@@ -97,6 +98,10 @@ type accountProbeRunner interface {
 
 type accountPathHealthReader interface {
 	SnapshotOpenAIPathHealthForAccount(account *service.Account, transport service.OpenAIUpstreamTransport) (service.OpenAIPathHealthRecord, bool)
+}
+
+type accountSchedulingPoolReader interface {
+	ListOpenAIAccountSchedulingPool(ctx context.Context, filter service.OpenAIAccountSchedulingPoolFilter, now time.Time) (service.OpenAIAccountSchedulingPoolSnapshot, error)
 }
 
 type batchAccountTester interface {
@@ -149,6 +154,10 @@ func (h *AccountHandler) SetAccountBatchTestRepository(repo service.AccountBatch
 
 func (h *AccountHandler) SetOpenAIPathHealthReader(reader accountPathHealthReader) {
 	h.openAIPathHealthReader = reader
+}
+
+func (h *AccountHandler) SetOpenAIAccountSchedulingPoolReader(reader accountSchedulingPoolReader) {
+	h.openAIAccountSchedulingPoolReader = reader
 }
 
 // CreateAccountRequest represents create account request
@@ -233,6 +242,34 @@ type AccountWithConcurrency struct {
 	CurrentWindowCost *float64 `json:"current_window_cost,omitempty"` // 当前窗口费用
 	ActiveSessions    *int     `json:"active_sessions,omitempty"`     // 当前活跃会话数
 	CurrentRPM        *int     `json:"current_rpm,omitempty"`         // 当前分钟 RPM 计数
+}
+
+// AccountSchedulingPoolResponse 表示管理端看到的 OpenAI 调度池快照。
+type AccountSchedulingPoolResponse struct {
+	Items            []AccountSchedulingPoolItem `json:"items"`
+	Total            int                         `json:"total"`
+	SchedulableCount int                         `json:"schedulable_count"`
+	DegradedCount    int                         `json:"degraded_count"`
+	BlockedCount     int                         `json:"blocked_count"`
+	FilteredCount    int                         `json:"filtered_count"`
+	GeneratedAt      time.Time                   `json:"generated_at"`
+	GroupID          *int64                      `json:"group_id,omitempty"`
+	Model            string                      `json:"model,omitempty"`
+	Endpoint         string                      `json:"endpoint,omitempty"`
+	Transport        string                      `json:"transport,omitempty"`
+	ImageCapability  string                      `json:"image_capability,omitempty"`
+}
+
+// AccountSchedulingPoolItem 表示一个账号在当前调度约束下的池内状态。
+type AccountSchedulingPoolItem struct {
+	Account             *dto.Account                               `json:"account"`
+	PoolStatus          string                                     `json:"pool_status"`
+	PoolReasons         []string                                   `json:"pool_reasons,omitempty"`
+	RuntimeBlock        *service.OpenAIAccountRuntimeBlockSnapshot `json:"runtime_block,omitempty"`
+	PathHealth          service.OpenAIPathHealthRecord             `json:"path_health"`
+	PathHealthAvailable bool                                       `json:"path_health_available"`
+	DerivedHealth       *dto.AccountDerivedHealth                  `json:"derived_health,omitempty"`
+	EffectiveLoadFactor int                                        `json:"effective_load_factor"`
 }
 
 const accountListGroupUngroupedQueryValue = "ungrouped"
@@ -455,6 +492,25 @@ func (h *AccountHandler) List(c *gin.Context) {
 	response.Paginated(c, result, total, page, pageSize)
 }
 
+// ListSchedulingPool handles OpenAI scheduling pool visualization.
+// GET /api/v1/admin/accounts/scheduling-pool
+func (h *AccountHandler) ListSchedulingPool(c *gin.Context) {
+	if h.openAIAccountSchedulingPoolReader == nil {
+		response.InternalError(c, "OpenAI scheduling pool reader is not configured")
+		return
+	}
+	filter, ok := parseAccountSchedulingPoolFilter(c)
+	if !ok {
+		return
+	}
+	snapshot, err := h.openAIAccountSchedulingPoolReader.ListOpenAIAccountSchedulingPool(c.Request.Context(), filter, time.Now())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, accountSchedulingPoolResponseFromService(snapshot))
+}
+
 func (h *AccountHandler) attachAccountLoadFactorAdvice(out *dto.Account, account *service.Account) {
 	if out == nil || account == nil {
 		return
@@ -471,6 +527,121 @@ func (h *AccountHandler) attachAccountLoadFactorAdvice(out *dto.Account, account
 	}
 	advice := service.NewAccountLoadFactorAdvisor(service.AccountLoadFactorAdvisorOptions{}).Advise(account, health)
 	out.LoadFactorAdvice = dto.AccountLoadFactorAdviceFromService(advice)
+}
+
+func parseAccountSchedulingPoolFilter(c *gin.Context) (service.OpenAIAccountSchedulingPoolFilter, bool) {
+	var filter service.OpenAIAccountSchedulingPoolFilter
+	if groupText := strings.TrimSpace(c.Query("group")); groupText != "" {
+		groupID, err := strconv.ParseInt(groupText, 10, 64)
+		if err != nil || groupID < 0 {
+			response.BadRequest(c, "Invalid group filter")
+			return filter, false
+		}
+		filter.GroupID = &groupID
+	}
+	filter.Model = strings.TrimSpace(c.Query("model"))
+	filter.Search = strings.TrimSpace(c.Query("search"))
+	if len(filter.Search) > 100 {
+		filter.Search = filter.Search[:100]
+	}
+
+	endpoint, ok := parseOpenAIEndpointCapabilityQuery(c, "endpoint")
+	if !ok {
+		return filter, false
+	}
+	transport, ok := parseOpenAIUpstreamTransportQuery(c, "transport")
+	if !ok {
+		return filter, false
+	}
+	imageCapability, ok := parseOpenAIImagesCapabilityQuery(c, "image_capability")
+	if !ok {
+		return filter, false
+	}
+	filter.Endpoint = endpoint
+	filter.Transport = transport
+	filter.ImageCapability = imageCapability
+	return filter, true
+}
+
+func parseOpenAIEndpointCapabilityQuery(c *gin.Context, key string) (service.OpenAIEndpointCapability, bool) {
+	value := strings.TrimSpace(c.Query(key))
+	switch service.OpenAIEndpointCapability(value) {
+	case "", service.OpenAIEndpointCapabilityResponses, service.OpenAIEndpointCapabilityChatCompletions, service.OpenAIEndpointCapabilityEmbeddings:
+		return service.OpenAIEndpointCapability(value), true
+	default:
+		response.BadRequest(c, "Invalid endpoint capability")
+		return "", false
+	}
+}
+
+func parseOpenAIUpstreamTransportQuery(c *gin.Context, key string) (service.OpenAIUpstreamTransport, bool) {
+	value := strings.TrimSpace(c.Query(key))
+	switch service.OpenAIUpstreamTransport(value) {
+	case service.OpenAIUpstreamTransportAny, service.OpenAIUpstreamTransportHTTPSSE, service.OpenAIUpstreamTransportResponsesWebsocket, service.OpenAIUpstreamTransportResponsesWebsocketV2:
+		return service.OpenAIUpstreamTransport(value), true
+	default:
+		response.BadRequest(c, "Invalid OpenAI upstream transport")
+		return "", false
+	}
+}
+
+func parseOpenAIImagesCapabilityQuery(c *gin.Context, key string) (service.OpenAIImagesCapability, bool) {
+	value := strings.TrimSpace(c.Query(key))
+	switch service.OpenAIImagesCapability(value) {
+	case "", service.OpenAIImagesCapabilityBasic, service.OpenAIImagesCapabilityNative:
+		return service.OpenAIImagesCapability(value), true
+	default:
+		response.BadRequest(c, "Invalid OpenAI image capability")
+		return "", false
+	}
+}
+
+func accountSchedulingPoolResponseFromService(snapshot service.OpenAIAccountSchedulingPoolSnapshot) AccountSchedulingPoolResponse {
+	items := make([]AccountSchedulingPoolItem, 0, len(snapshot.Items))
+	for i := range snapshot.Items {
+		items = append(items, accountSchedulingPoolItemFromService(snapshot.Items[i]))
+	}
+	return AccountSchedulingPoolResponse{
+		Items:            items,
+		Total:            snapshot.Total,
+		SchedulableCount: snapshot.SchedulableCount,
+		DegradedCount:    snapshot.DegradedCount,
+		BlockedCount:     snapshot.BlockedCount,
+		FilteredCount:    snapshot.FilteredCount,
+		GeneratedAt:      snapshot.GeneratedAt,
+		GroupID:          cloneAccountSchedulingPoolInt64Ptr(snapshot.GroupID),
+		Model:            snapshot.Model,
+		Endpoint:         snapshot.Endpoint,
+		Transport:        snapshot.Transport,
+		ImageCapability:  snapshot.ImageCapability,
+	}
+}
+
+func cloneAccountSchedulingPoolInt64Ptr(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+func accountSchedulingPoolItemFromService(item service.OpenAIAccountSchedulingPoolItem) AccountSchedulingPoolItem {
+	account := dto.AccountFromServiceShallow(&item.Account)
+	if account != nil {
+		account.DerivedHealth = dto.AccountDerivedHealthFromService(item.DerivedHealth)
+		advice := service.NewAccountLoadFactorAdvisor(service.AccountLoadFactorAdvisorOptions{}).Advise(&item.Account, item.PathHealth)
+		account.LoadFactorAdvice = dto.AccountLoadFactorAdviceFromService(advice)
+	}
+	return AccountSchedulingPoolItem{
+		Account:             account,
+		PoolStatus:          item.PoolStatus,
+		PoolReasons:         item.PoolReasons,
+		RuntimeBlock:        item.RuntimeBlock,
+		PathHealth:          item.PathHealth,
+		PathHealthAvailable: item.PathHealthAvailable,
+		DerivedHealth:       dto.AccountDerivedHealthFromService(item.DerivedHealth),
+		EffectiveLoadFactor: item.EffectiveLoadFactor,
+	}
 }
 
 // GetUsageSummary handles aggregated OpenAI account usage by ChatGPT plan and account type.

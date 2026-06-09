@@ -734,6 +734,7 @@ const adminNavItems = computed((): NavItem[] => {
     },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
+    { path: '/admin/account-scheduling-pool', label: t('nav.accountSchedulingPool'), icon: SignalIcon },
     { path: '/admin/account-probe-reports', label: t('nav.accountProbeReports'), icon: ChartIcon },
     { path: '/admin/model-probes', label: t('nav.accountModelProbes'), icon: SignalIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
