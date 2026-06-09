@@ -2916,7 +2916,7 @@ func TestOpenAIUpstreamTLSProfileCodexDirectAppliesToOAuthAndAPIKey(t *testing.T
 	}}
 	require.Nil(t, offSvc.openAIUpstreamTLSProfile(oauthAccount))
 	require.Nil(t, offSvc.openAIUpstreamTLSProfile(apiKeyAccount))
-	require.Equal(t, builtInDefaultTLSFingerprintProfileName, offSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount).Name)
+	require.Nil(t, offSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount))
 
 	codexSvc := &OpenAIGatewayService{cfg: &config.Config{
 		Gateway: config.GatewayConfig{OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect},
