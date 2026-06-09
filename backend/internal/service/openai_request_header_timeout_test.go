@@ -107,17 +107,21 @@ func TestOpenAIRequestHeaderTimeoutForBodyCanBeDisabled(t *testing.T) {
 	require.Equal(t, time.Duration(0), svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"hello"}`)))
 }
 
-func TestOpenAIUpstreamCodexDirectUsesTLSProfile(t *testing.T) {
+func TestOpenAIUpstreamAccountCodexSimulationUsesTLSProfile(t *testing.T) {
 	upstream := &headerRaceHTTPUpstreamStub{}
 	svc := &OpenAIGatewayService{
-		cfg: &config.Config{Gateway: config.GatewayConfig{
-			OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect,
-		}},
+		cfg:          &config.Config{},
 		httpUpstream: upstream,
 	}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, chatgptCodexURL, strings.NewReader(`{}`))
 	require.NoError(t, err)
-	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
+	}
 
 	resp, err := svc.doOpenAIUpstreamWithHeaderTimeout(context.Background(), req, "", account, []byte(`{}`), openAICodexStabilityPolicy{}, "")
 

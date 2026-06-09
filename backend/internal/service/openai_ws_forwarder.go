@@ -278,12 +278,28 @@ func resolveOpenAIWSSessionHeaders(c *gin.Context, promptCacheKey string) openAI
 			resolution.SessionID = sessionID
 			resolution.SessionSource = "header_session_id"
 		}
+		if resolution.SessionID == "" {
+			if sessionID := strings.TrimSpace(c.Request.Header.Get("session-id")); sessionID != "" {
+				resolution.SessionID = sessionID
+				resolution.SessionSource = "header_session_id"
+			}
+		}
 		if conversationID := strings.TrimSpace(c.Request.Header.Get("conversation_id")); conversationID != "" {
 			resolution.ConversationID = conversationID
 			resolution.ConversationSource = "header_conversation_id"
 			if resolution.SessionID == "" {
 				resolution.SessionID = conversationID
 				resolution.SessionSource = "header_conversation_id"
+			}
+		}
+		if resolution.ConversationID == "" {
+			if conversationID := strings.TrimSpace(c.Request.Header.Get("thread-id")); conversationID != "" {
+				resolution.ConversationID = conversationID
+				resolution.ConversationSource = "header_conversation_id"
+				if resolution.SessionID == "" {
+					resolution.SessionID = conversationID
+					resolution.SessionSource = "header_conversation_id"
+				}
 			}
 		}
 	}
@@ -1178,8 +1194,8 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	}
 	if s.shouldSimulateOpenAICodexCLI(account) {
 		headers.Set("user-agent", codexCLIUserAgent)
-		headers.Set("originator", "codex_cli_rs")
-		headers.Set("version", codexCLIVersion)
+		headers.Set("originator", codexCLIOriginator)
+		headers.Del("version")
 	} else if account != nil && account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(headers.Get("user-agent")) {
 		headers.Set("user-agent", codexCLIUserAgent)
 	}

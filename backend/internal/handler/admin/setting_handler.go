@@ -1555,10 +1555,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		req.OpenAIOAuthCompatMode = &normalized
 		switch normalized {
 		case config.GatewayOpenAIOAuthCompatModeOff,
-			config.GatewayOpenAIOAuthCompatModeCockpitTools,
-			config.GatewayOpenAIOAuthCompatModeCodexDirect:
+			config.GatewayOpenAIOAuthCompatModeCockpitTools:
 		default:
-			response.Error(c, http.StatusBadRequest, "openai_oauth_compat_mode must be off, cockpit_tools, or codex_direct")
+			response.Error(c, http.StatusBadRequest, "openai_oauth_compat_mode must be off or cockpit_tools")
 			return
 		}
 	}

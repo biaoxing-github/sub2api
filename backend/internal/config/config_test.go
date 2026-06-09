@@ -145,7 +145,7 @@ func TestLoadOpenAICockpitToolsCompatConfig(t *testing.T) {
 	cfg, err = Load()
 	require.NoError(t, err)
 	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
-	require.Equal(t, GatewayOpenAIOAuthCompatModeCodexDirect, cfg.Gateway.OpenAIOAuthCompatMode)
+	require.Equal(t, GatewayOpenAIOAuthCompatModeOff, cfg.Gateway.OpenAIOAuthCompatMode)
 	require.True(t, cfg.Gateway.OpenAICodexDirectForceWS)
 }
 

@@ -662,7 +662,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 	}
 }
 
-func TestOpenAIGatewayService_BuildOpenAIWSHeadersCodexDirectForceWS(t *testing.T) {
+func TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationForceWS(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -674,17 +674,19 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersCodexDirectForceWS(t *testing.
 	c.Request.Header.Set("X-Codex-Turn-Metadata", `{"thread_source":"user"}`)
 
 	cfg := &config.Config{}
-	cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCodexDirect
 	cfg.Gateway.OpenAICodexDirectForceWS = true
 	svc := &OpenAIGatewayService{cfg: cfg}
 	account := &Account{
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+		Extra: map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
 	}
 	decision := OpenAIWSProtocolDecision{
 		Transport:     OpenAIUpstreamTransportResponsesWebsocketV2,
-		Reason:        "codex_direct_force_ws_v2",
+		Reason:        "account_codex_cli_force_ws_v2",
 		AllowHTTPToWS: true,
 	}
 

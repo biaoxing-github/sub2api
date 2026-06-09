@@ -69,26 +69,28 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 		require.Equal(t, "cockpit_tools_compat", decision.Reason)
 	})
 
-	t.Run("Codex直连兼容模式强制OAuth走HTTP", func(t *testing.T) {
+	t.Run("遗留全局Codex直连不影响普通OAuth", func(t *testing.T) {
 		cfg := *baseCfg
 		cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCodexDirect
 		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(openAIOAuthEnabled)
-		require.Equal(t, OpenAIUpstreamTransportHTTPSSE, decision.Transport)
-		require.Equal(t, "openai_oauth_compat_codex_direct", decision.Reason)
+		require.Equal(t, OpenAIUpstreamTransportResponsesWebsocketV2, decision.Transport)
+		require.Equal(t, "ws_v2_enabled", decision.Reason)
 	})
 
-	t.Run("Codex直连开启强制WS时OAuth走WSv2", func(t *testing.T) {
+	t.Run("账号级Codex模拟开启强制WS时OAuth走WSv2", func(t *testing.T) {
 		cfg := *baseCfg
 		cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCodexDirect
 		cfg.Gateway.OpenAICodexDirectForceWS = true
 		account := *openAIOAuthEnabled
-		account.Extra = map[string]any{}
+		account.Extra = map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		}
 		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(&account)
 		require.Equal(t, OpenAIUpstreamTransportResponsesWebsocketV2, decision.Transport)
-		require.Equal(t, "codex_direct_force_ws_v2", decision.Reason)
+		require.Equal(t, "account_codex_cli_force_ws_v2", decision.Reason)
 	})
 
-	t.Run("Codex直连强制WS不影响API Key账号", func(t *testing.T) {
+	t.Run("账号级Codex强制WS不影响API Key账号", func(t *testing.T) {
 		cfg := *baseCfg
 		cfg.Gateway.OpenAIOAuthCompatMode = config.GatewayOpenAIOAuthCompatModeCodexDirect
 		cfg.Gateway.OpenAICodexDirectForceWS = true
@@ -97,6 +99,7 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 			Type:     AccountTypeAPIKey,
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
+				OpenAICodexCLISimulationEnabledExtraKey:         true,
 			},
 		}
 
@@ -113,7 +116,9 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 		cfg.Gateway.OpenAICodexDirectForceWS = true
 		cfg.Gateway.OpenAIWS.ForceHTTP = true
 		account := *openAIOAuthEnabled
-		account.Extra = map[string]any{}
+		account.Extra = map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		}
 
 		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(&account)
 
@@ -128,7 +133,9 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 		cfg.Gateway.OpenAICodexDirectForceWS = true
 		cfg.Gateway.OpenAIWS.Enabled = false
 		account := *openAIOAuthEnabled
-		account.Extra = map[string]any{}
+		account.Extra = map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		}
 
 		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(&account)
 

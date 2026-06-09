@@ -2853,7 +2853,7 @@ func TestOpenAIPassthroughCockpitToolsCompatibilityHeaders(t *testing.T) {
 	require.Empty(t, req.Header.Get("Session_id"))
 }
 
-func TestOpenAIBuildUpstreamRequestCodexDirectCompatibilityHeaders(t *testing.T) {
+func TestOpenAIBuildUpstreamRequestAccountCodexSimulationHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -2869,13 +2869,14 @@ func TestOpenAIBuildUpstreamRequestCodexDirectCompatibilityHeaders(t *testing.T)
 	c.Request.Header.Set("Forwarded", "for=203.0.113.8")
 	c.Request.Header.Set("Via", "1.1 proxy")
 
-	svc := &OpenAIGatewayService{cfg: &config.Config{
-		Gateway: config.GatewayConfig{OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect},
-	}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
 	account := &Account{
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+		Extra: map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
 	}
 
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", true, "prompt-cache-key", false)
@@ -2894,7 +2895,7 @@ func TestOpenAIBuildUpstreamRequestCodexDirectCompatibilityHeaders(t *testing.T)
 	require.Equal(t, "terminal_resize_reflow,memories", req.Header.Get("X-Codex-Beta-Features"))
 	require.Equal(t, `{"thread_source":"user"}`, req.Header.Get("X-Codex-Turn-Metadata"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"))
-	require.Empty(t, req.Header.Get("conversation_id"))
+	require.Equal(t, isolateOpenAISessionID(0, "prompt-cache-key"), req.Header.Get("conversation_id"))
 	require.Empty(t, req.Header.Get("X-Forwarded-For"))
 	require.Empty(t, req.Header.Get("Forwarded"))
 	require.Empty(t, req.Header.Get("Via"))

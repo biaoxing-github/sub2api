@@ -50,10 +50,6 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 		switch normalizeOpenAIOAuthCompatMode(r.cfg.Gateway.OpenAIOAuthCompatMode, r.cfg.Gateway.OpenAICockpitToolsCompat) {
 		case config.GatewayOpenAIOAuthCompatModeCockpitTools:
 			return openAIWSHTTPDecision("cockpit_tools_compat")
-		case config.GatewayOpenAIOAuthCompatModeCodexDirect:
-			if !r.cfg.Gateway.OpenAICodexDirectForceWS {
-				return openAIWSHTTPDecision("openai_oauth_compat_codex_direct")
-			}
 		}
 	}
 
@@ -65,7 +61,7 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 		return openAIWSHTTPDecision("global_disabled")
 	}
 	codexDirectForceWS := account.Type == AccountTypeOAuth &&
-		normalizeOpenAIOAuthCompatMode(r.cfg.Gateway.OpenAIOAuthCompatMode, r.cfg.Gateway.OpenAICockpitToolsCompat) == config.GatewayOpenAIOAuthCompatModeCodexDirect &&
+		account.IsOpenAICodexCLISimulationEnabled() &&
 		r.cfg.Gateway.OpenAICodexDirectForceWS
 	if account.IsOpenAIOAuth() {
 		if !wsCfg.OAuthEnabled {
@@ -82,7 +78,7 @@ func (r *defaultOpenAIWSProtocolResolver) Resolve(account *Account) OpenAIWSProt
 		if wsCfg.ResponsesWebsocketsV2 {
 			return OpenAIWSProtocolDecision{
 				Transport:     OpenAIUpstreamTransportResponsesWebsocketV2,
-				Reason:        "codex_direct_force_ws_v2",
+				Reason:        "account_codex_cli_force_ws_v2",
 				AllowHTTPToWS: true,
 			}
 		}

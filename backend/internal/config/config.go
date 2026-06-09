@@ -807,12 +807,13 @@ type GatewayConfig struct {
 	// 开启后 OAuth 账号强制走 HTTP SSE，并使用 cockpit-tools 的 header 集合，避免网关自有 WS/session/header 改写。
 	OpenAICockpitToolsCompat bool `mapstructure:"openai_cockpit_tools_compat"`
 	// OpenAIOAuthCompatMode: OpenAI OAuth 上游兼容模式。
-	// off=默认路径，cockpit_tools=按 cockpit-tools HTTP executor，codex_direct=按 Codex Desktop 直连形态。
+	// off=默认路径，cockpit_tools=按 cockpit-tools HTTP executor。
+	// codex_direct 已废弃：Codex 模拟只能通过账号级 openai_codex_cli_simulation_enabled 开启。
 	OpenAIOAuthCompatMode string `mapstructure:"openai_oauth_compat_mode"`
-	// OpenAICodexDirectForceWS: Codex 直连模式下允许 HTTP/SSE 入站请求强制转为上游 WSv2。
-	// 默认关闭，开启后仍受 gateway.openai_ws.enabled/oauth_enabled/force_http 约束。
+	// OpenAICodexDirectForceWS: 账号级 Codex CLI 模拟开启时，允许 HTTP/SSE 入站请求强制转为上游 WSv2。
+	// 默认关闭，开启后仍受 gateway.openai_ws.enabled/oauth_enabled/force_http 和账号级模拟开关约束。
 	OpenAICodexDirectForceWS bool `mapstructure:"openai_codex_direct_force_ws"`
-	// OpenAICodexDirectTLSFingerprintProfileID: Codex 直连模式上游 HTTP 请求的 TLS 指纹模板 ID。
+	// OpenAICodexDirectTLSFingerprintProfileID: 账号级 Codex CLI 模拟上游 HTTP 请求的 TLS 指纹模板 ID。
 	// 0=内置默认 Node.js 24.x，-1=随机已有模板，>0=指定模板。
 	OpenAICodexDirectTLSFingerprintProfileID int64 `mapstructure:"openai_codex_direct_tls_fingerprint_profile_id"`
 	// OpenAISchedulerProbeInfiniteWaitEnabled: OpenAI 调度耗尽时是否无限小请求探测等待。
@@ -2631,18 +2632,18 @@ func (c *Config) Validate() error {
 			c.Gateway.OpenAIOAuthCompatMode = GatewayOpenAIOAuthCompatModeOff
 		}
 	}
+	if c.Gateway.OpenAIOAuthCompatMode == GatewayOpenAIOAuthCompatModeCodexDirect {
+		c.Gateway.OpenAIOAuthCompatMode = GatewayOpenAIOAuthCompatModeOff
+	}
 	switch c.Gateway.OpenAIOAuthCompatMode {
 	case GatewayOpenAIOAuthCompatModeOff:
 		c.Gateway.OpenAICockpitToolsCompat = false
 	case GatewayOpenAIOAuthCompatModeCockpitTools:
 		c.Gateway.OpenAICockpitToolsCompat = true
-	case GatewayOpenAIOAuthCompatModeCodexDirect:
-		c.Gateway.OpenAICockpitToolsCompat = false
 	default:
-		return fmt.Errorf("gateway.openai_oauth_compat_mode must be one of: %s/%s/%s",
+		return fmt.Errorf("gateway.openai_oauth_compat_mode must be one of: %s/%s",
 			GatewayOpenAIOAuthCompatModeOff,
-			GatewayOpenAIOAuthCompatModeCockpitTools,
-			GatewayOpenAIOAuthCompatModeCodexDirect)
+			GatewayOpenAIOAuthCompatModeCockpitTools)
 	}
 	if c.Gateway.OpenAICodexDirectTLSFingerprintProfileID < -1 {
 		return fmt.Errorf("gateway.openai_codex_direct_tls_fingerprint_profile_id must be -1 or greater")

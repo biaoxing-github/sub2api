@@ -46,11 +46,10 @@ export type PaymentVisibleMethodSource =
   | "easypay_wxpay";
 export type WeChatConnectMode = "open" | "mp" | "mobile";
 
-// OpenAI OAuth 兼容模式：off=默认转发，cockpit_tools=复用 cockpit-tools 请求形态，codex_direct=复用 Codex Desktop 直连形态。
+// OpenAI OAuth 兼容模式：off=默认转发，cockpit_tools=复用 cockpit-tools 请求形态；codex_direct 仅兼容历史返回值。
 export type OpenAIOAuthCompatMode =
   | "off"
   | "cockpit_tools"
-  | "codex_direct"
   | string;
 
 export interface PaymentVisibleMethodSourceOption {

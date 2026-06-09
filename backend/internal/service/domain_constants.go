@@ -415,11 +415,11 @@ const (
 	SettingKeyOpenAIAllowClaudeCodeCodexPlugin = "openai_allow_claude_code_codex_plugin"
 	// SettingKeyOpenAICockpitToolsCompat 是否按 cockpit-tools 的 Codex HTTP executor 方式发送 OpenAI OAuth Responses 请求。
 	SettingKeyOpenAICockpitToolsCompat = "openai_cockpit_tools_compat"
-	// SettingKeyOpenAIOAuthCompatMode OpenAI OAuth 上游兼容模式：off/cockpit_tools/codex_direct。
+	// SettingKeyOpenAIOAuthCompatMode OpenAI OAuth 上游兼容模式：off/cockpit_tools；codex_direct 仅作为历史值归一为 off。
 	SettingKeyOpenAIOAuthCompatMode = "openai_oauth_compat_mode"
-	// SettingKeyOpenAICodexDirectForceWS Codex 直连模式下是否允许 HTTP/SSE 入站请求强制转上游 WSv2。
+	// SettingKeyOpenAICodexDirectForceWS 账号级 Codex CLI 模拟开启时是否允许 HTTP/SSE 入站请求强制转上游 WSv2。
 	SettingKeyOpenAICodexDirectForceWS = "openai_codex_direct_force_ws"
-	// SettingKeyOpenAICodexDirectTLSFingerprintProfileID Codex 直连模式上游 HTTP 请求使用的 TLS 指纹模板 ID。
+	// SettingKeyOpenAICodexDirectTLSFingerprintProfileID 账号级 Codex CLI 模拟上游 HTTP 请求使用的 TLS 指纹模板 ID。
 	SettingKeyOpenAICodexDirectTLSFingerprintProfileID = "openai_codex_direct_tls_fingerprint_profile_id"
 	// SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled 是否在 OpenAI 可调度账号耗尽时无限小请求探测等待。
 	SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled = "openai_scheduler_exhaustion_probe_infinite_wait_enabled"

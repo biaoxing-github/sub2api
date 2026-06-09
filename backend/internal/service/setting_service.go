@@ -3804,7 +3804,8 @@ func normalizeOpenAIOAuthCompatMode(mode string, legacyCockpitCompat bool) strin
 	case config.GatewayOpenAIOAuthCompatModeCockpitTools:
 		return config.GatewayOpenAIOAuthCompatModeCockpitTools
 	case config.GatewayOpenAIOAuthCompatModeCodexDirect:
-		return config.GatewayOpenAIOAuthCompatModeCodexDirect
+		// codex_direct 是历史全局开关；Codex 模拟只允许走账号级 extra 开关。
+		return config.GatewayOpenAIOAuthCompatModeOff
 	default:
 		if legacyCockpitCompat {
 			return config.GatewayOpenAIOAuthCompatModeCockpitTools

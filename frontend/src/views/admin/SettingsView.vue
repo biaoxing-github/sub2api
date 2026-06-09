@@ -4210,13 +4210,6 @@
                       )
                     }}
                   </option>
-                  <option value="codex_direct">
-                    {{
-                      t(
-                        "admin.settings.gatewayForwarding.openaiOAuthCompatModeCodexDirect",
-                      )
-                    }}
-                  </option>
                 </select>
                 <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                   {{
@@ -4228,7 +4221,6 @@
               </div>
 
               <div
-                v-if="form.openai_oauth_compat_mode === 'codex_direct'"
                 class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700"
               >
                 <div class="flex items-center justify-between gap-4">
@@ -7597,12 +7589,12 @@ type SettingsForm = Omit<
   openai_scheduler_exhaustion_probe_notify_feishu_receive_id_type: string;
   openai_scheduler_exhaustion_probe_notify_feishu_receive_id: string;
   openai_scheduler_exhaustion_probe_notify_recovered_enabled: boolean;
-  // OpenAI OAuth 上游兼容模式：关闭、Cockpit Tools 或 Codex Desktop 直连形态。
+  // OpenAI OAuth 上游兼容模式：关闭或 Cockpit Tools；codex_direct 历史返回值会显示为关闭。
   openai_oauth_compat_mode: OpenAIOAuthCompatMode;
   openai_cockpit_tools_compat: boolean;
-  // Codex 直连模式下允许把 Codex HTTP/SSE 入站强制转为上游 WSv2。
+  // 账号级 Codex CLI 模拟开启时，允许把 Codex HTTP/SSE 入站强制转为上游 WSv2。
   openai_codex_direct_force_ws: boolean;
-  // Codex 直连模式下上游 HTTP 请求使用的 TLS 指纹模板 ID，0 表示内置默认。
+  // 账号级 Codex CLI 模拟上游 HTTP 请求使用的 TLS 指纹模板 ID，0 表示内置默认。
   openai_codex_direct_tls_fingerprint_profile_id: number;
   client_request_debug_log_enabled: boolean;
   codex_stability_mode: "off" | "codex" | "all_openai_responses" | string;
@@ -8471,8 +8463,12 @@ async function loadSettings() {
     }
     // 兼容旧后端只返回布尔开关的场景，避免设置页展示为空值。
     form.openai_oauth_compat_mode =
-      settings.openai_oauth_compat_mode ||
-      (settings.openai_cockpit_tools_compat ? "cockpit_tools" : "off");
+      settings.openai_oauth_compat_mode === "cockpit_tools" ||
+      settings.openai_oauth_compat_mode === "off"
+        ? settings.openai_oauth_compat_mode
+        : settings.openai_cockpit_tools_compat
+          ? "cockpit_tools"
+          : "off";
     form.openai_cockpit_tools_compat =
       form.openai_oauth_compat_mode === "cockpit_tools";
     form.openai_codex_direct_force_ws =
@@ -8985,19 +8981,14 @@ async function saveSettings() {
       openai_cockpit_tools_compat:
         form.openai_oauth_compat_mode === "cockpit_tools",
       openai_codex_direct_force_ws:
-        form.openai_oauth_compat_mode === "codex_direct" &&
         form.openai_codex_direct_force_ws,
       openai_codex_direct_tls_fingerprint_profile_id:
-        form.openai_oauth_compat_mode === "codex_direct"
-          ? Math.max(
-              -1,
-              Math.floor(
-                Number(
-                  form.openai_codex_direct_tls_fingerprint_profile_id,
-                ) || 0,
-              ),
-            )
-          : 0,
+        Math.max(
+          -1,
+          Math.floor(
+            Number(form.openai_codex_direct_tls_fingerprint_profile_id) || 0,
+          ),
+        ),
       client_request_debug_log_enabled: form.client_request_debug_log_enabled,
       codex_stability_mode: form.codex_stability_mode || "codex",
       codex_stability_dynamic_header_timeout_enabled:
@@ -9156,8 +9147,12 @@ async function saveSettings() {
       }
     }
     form.openai_oauth_compat_mode =
-      updated.openai_oauth_compat_mode ||
-      (updated.openai_cockpit_tools_compat ? "cockpit_tools" : "off");
+      updated.openai_oauth_compat_mode === "cockpit_tools" ||
+      updated.openai_oauth_compat_mode === "off"
+        ? updated.openai_oauth_compat_mode
+        : updated.openai_cockpit_tools_compat
+          ? "cockpit_tools"
+          : "off";
     form.openai_cockpit_tools_compat =
       form.openai_oauth_compat_mode === "cockpit_tools";
     form.openai_codex_direct_force_ws =
