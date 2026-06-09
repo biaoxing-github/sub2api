@@ -1247,6 +1247,7 @@ export interface OpenAIAccountSchedulingPoolResponse {
   filtered_count: number
   generated_at: string
   group_id?: number | null
+  platform?: 'openai' | 'anthropic' | string
   model?: string
   endpoint?: string
   transport?: string
@@ -1255,6 +1256,7 @@ export interface OpenAIAccountSchedulingPoolResponse {
 
 export interface OpenAIAccountSchedulingPoolFilters {
   group?: string
+  platform?: 'openai' | 'anthropic' | string
   model?: string
   endpoint?: '' | 'responses' | 'chat_completions' | 'embeddings' | string
   transport?: '' | 'http_sse' | 'responses_websockets' | 'responses_websockets_v2' | string

@@ -13,14 +13,12 @@
               @input="handleSearchInput"
             />
           </div>
-          <input
-            v-model="filters.group"
-            type="number"
-            min="0"
-            class="input w-full sm:w-32"
-            :placeholder="t('admin.accountSchedulingPool.group')"
-            @change="applyFilters"
-          />
+          <div class="w-full sm:w-44">
+            <Select data-test="platform-filter" v-model="filters.platform" :options="platformOptions" @change="applyFilters" />
+          </div>
+          <div class="w-full sm:w-56">
+            <Select data-test="group-filter" v-model="filters.group" :options="groupOptions" @change="applyFilters" />
+          </div>
           <input
             v-model="filters.model"
             type="text"
@@ -29,13 +27,13 @@
             @change="applyFilters"
             @keyup.enter="applyFilters"
           />
-          <div class="w-full sm:w-44">
+          <div v-if="isOpenAIPlatform" class="w-full sm:w-44">
             <Select v-model="filters.endpoint" :options="endpointOptions" @change="applyFilters" />
           </div>
-          <div class="w-full sm:w-52">
+          <div v-if="isOpenAIPlatform" class="w-full sm:w-52">
             <Select v-model="filters.transport" :options="transportOptions" @change="applyFilters" />
           </div>
-          <div class="w-full sm:w-44">
+          <div v-if="isOpenAIPlatform" class="w-full sm:w-44">
             <Select v-model="filters.image_capability" :options="imageCapabilityOptions" @change="applyFilters" />
           </div>
           <button type="button" class="btn btn-secondary px-3" :disabled="loading" @click="loadPool">
@@ -90,7 +88,7 @@
                 <td>
                   <div class="font-medium text-gray-900 dark:text-gray-100">{{ item.account.name }}</div>
                   <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    #{{ item.account.id }} · {{ formatAccountType(item.account.type) }}
+                    #{{ item.account.id }} · {{ formatAccountPlatform(item.account.platform) }} · {{ formatAccountType(item.account.type) }}
                   </div>
                   <div v-if="formatGroups(item.account)" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                     {{ formatGroups(item.account) }}
@@ -108,10 +106,10 @@
                   <span :class="healthClass(item.derived_health?.state)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium">
                     {{ item.derived_health?.label || formatPathHealth(item.path_health?.state) }}
                   </span>
-                  <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  <div v-if="item.path_health_available" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     {{ t('admin.accountSchedulingPool.pathHealth') }}: {{ formatPathHealth(item.path_health?.state) }}
                   </div>
-                  <div v-if="item.path_health?.last_failure_reason" class="mt-0.5 max-w-xs break-words text-xs text-gray-500 dark:text-gray-400">
+                  <div v-if="item.path_health_available && item.path_health?.last_failure_reason" class="mt-0.5 max-w-xs break-words text-xs text-gray-500 dark:text-gray-400">
                     {{ item.path_health.last_failure_reason }}
                   </div>
                 </td>
@@ -168,8 +166,10 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { listSchedulingPool, setSchedulable } from '@/api/admin/accounts'
+import groupsAPI from '@/api/admin/groups'
 import type {
   Account,
+  AdminGroup,
   OpenAIAccountSchedulingPoolFilters,
   OpenAIAccountSchedulingPoolItem,
   OpenAIAccountSchedulingPoolResponse,
@@ -180,6 +180,7 @@ const { t } = useI18n()
 
 const filters = reactive<OpenAIAccountSchedulingPoolFilters>({
   group: '',
+  platform: 'openai',
   model: '',
   endpoint: '',
   transport: 'http_sse',
@@ -188,6 +189,7 @@ const filters = reactive<OpenAIAccountSchedulingPoolFilters>({
 })
 
 const snapshot = ref<OpenAIAccountSchedulingPoolResponse | null>(null)
+const groups = ref<AdminGroup[]>([])
 const loading = ref(false)
 const error = ref('')
 const message = ref('')
@@ -197,12 +199,26 @@ let listAbortController: AbortController | null = null
 let searchTimer: number | null = null
 
 const items = computed(() => snapshot.value?.items || [])
+const isOpenAIPlatform = computed(() => filters.platform === 'openai')
 const metrics = computed(() => [
   { key: 'total', label: t('admin.accountSchedulingPool.metrics.total'), value: snapshot.value?.total ?? 0 },
   { key: 'schedulable', label: t('admin.accountSchedulingPool.metrics.schedulable'), value: snapshot.value?.schedulable_count ?? 0 },
   { key: 'degraded', label: t('admin.accountSchedulingPool.metrics.degraded'), value: snapshot.value?.degraded_count ?? 0 },
   { key: 'blocked', label: t('admin.accountSchedulingPool.metrics.blocked'), value: snapshot.value?.blocked_count ?? 0 },
   { key: 'filtered', label: t('admin.accountSchedulingPool.metrics.filtered'), value: snapshot.value?.filtered_count ?? 0 },
+])
+
+const platformOptions = computed<SelectOption[]>(() => [
+  { value: 'openai', label: t('admin.accountSchedulingPool.platforms.openai') },
+  { value: 'anthropic', label: t('admin.accountSchedulingPool.platforms.anthropic') },
+])
+
+const groupOptions = computed<SelectOption[]>(() => [
+  { value: '', label: t('admin.accountSchedulingPool.ungrouped') },
+  ...groups.value.map(group => ({
+    value: String(group.id),
+    label: formatGroupOption(group),
+  })),
 ])
 
 const endpointOptions = computed<SelectOption[]>(() => [
@@ -226,14 +242,36 @@ const imageCapabilityOptions = computed<SelectOption[]>(() => [
 ])
 
 function buildFilters(): OpenAIAccountSchedulingPoolFilters {
-  return {
+  const built: OpenAIAccountSchedulingPoolFilters = {
     group: filters.group?.trim() || undefined,
+    platform: filters.platform || 'openai',
     model: filters.model?.trim() || undefined,
-    endpoint: filters.endpoint || undefined,
-    transport: filters.transport || undefined,
-    image_capability: filters.image_capability || undefined,
     search: filters.search?.trim() || undefined,
   }
+  if (filters.platform === 'openai') {
+    built.endpoint = filters.endpoint || undefined
+    built.transport = filters.transport || undefined
+    built.image_capability = filters.image_capability || undefined
+  }
+  return built
+}
+
+async function loadGroups() {
+  try {
+    groups.value = await groupsAPI.getAll()
+    if (!filters.group) {
+      filters.group = defaultGroupValue()
+    }
+  } catch (err: any) {
+    error.value = err?.response?.data?.error || err?.message || t('admin.accountSchedulingPool.failedToLoadGroups')
+  }
+}
+
+function defaultGroupValue(): string {
+  const activeGroups = groups.value.filter(group => group.status === 'active')
+  const selfUse = activeGroups.find(group => group.name?.trim() === '自用')
+  const selected = selfUse || activeGroups[0]
+  return selected ? String(selected.id) : ''
 }
 
 async function loadPool() {
@@ -268,7 +306,8 @@ function handleSearchInput() {
 
 function resetFilters() {
   Object.assign(filters, {
-    group: '',
+    group: defaultGroupValue(),
+    platform: 'openai',
     model: '',
     endpoint: '',
     transport: 'http_sse',
@@ -328,6 +367,17 @@ function formatAccountType(type: string): string {
   return translated === key ? type : translated
 }
 
+function formatAccountPlatform(platform: string): string {
+  const key = `admin.accountSchedulingPool.platforms.${platform}`
+  const translated = t(key)
+  return translated === key ? platform : translated
+}
+
+function formatGroupOption(group: AdminGroup): string {
+  const platform = formatAccountPlatform(group.platform)
+  return `${group.name} · ${platform}`
+}
+
 function formatGroups(account: Account): string {
   const groupNames = (account.groups || [])
     .map(group => group?.name || (group?.id != null ? `#${group.id}` : ''))
@@ -352,8 +402,9 @@ function healthClass(state?: string): string {
   return 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-200'
 }
 
-onMounted(() => {
-  loadPool()
+onMounted(async () => {
+  await loadGroups()
+  await loadPool()
 })
 
 onUnmounted(() => {

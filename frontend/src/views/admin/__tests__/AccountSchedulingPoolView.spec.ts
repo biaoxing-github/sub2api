@@ -8,6 +8,10 @@ const { listSchedulingPool, setSchedulable } = vi.hoisted(() => ({
   setSchedulable: vi.fn(),
 }))
 
+const { getAllGroups } = vi.hoisted(() => ({
+  getAllGroups: vi.fn(),
+}))
+
 vi.mock('@/api/admin/accounts', () => ({
   default: {
     listSchedulingPool,
@@ -15,6 +19,13 @@ vi.mock('@/api/admin/accounts', () => ({
   },
   listSchedulingPool,
   setSchedulable,
+}))
+
+vi.mock('@/api/admin/groups', () => ({
+  default: {
+    getAll: getAllGroups,
+  },
+  getAll: getAllGroups,
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -51,6 +62,11 @@ describe('AccountSchedulingPoolView', () => {
   beforeEach(() => {
     listSchedulingPool.mockReset()
     setSchedulable.mockReset()
+    getAllGroups.mockReset()
+    getAllGroups.mockResolvedValue([
+      { id: 2, name: '自用', platform: 'openai', status: 'active' },
+      { id: 3, name: '备用', platform: 'anthropic', status: 'active' },
+    ])
     listSchedulingPool.mockResolvedValue({
       items: [
         {
@@ -117,7 +133,8 @@ describe('AccountSchedulingPoolView', () => {
     })
     await flushPromises()
 
-    expect(listSchedulingPool).toHaveBeenCalledWith(expect.objectContaining({ transport: 'http_sse' }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(getAllGroups).toHaveBeenCalled()
+    expect(listSchedulingPool).toHaveBeenCalledWith(expect.objectContaining({ group: '2', platform: 'openai', transport: 'http_sse' }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('ready-pool')
     expect(wrapper.text()).toContain('线路降级')
     expect(wrapper.text()).toContain('path_health:degraded:unexpected_eof')
@@ -129,5 +146,24 @@ describe('AccountSchedulingPoolView', () => {
     expect(window.confirm).toHaveBeenCalled()
     expect(setSchedulable).toHaveBeenCalledWith(101, false)
     expect(listSchedulingPool).toHaveBeenCalledTimes(2)
+  })
+
+  it('queries anthropic scheduling pool with the selected group', async () => {
+    const wrapper = mount(AccountSchedulingPoolView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="platform-filter"]').setValue('anthropic')
+    await flushPromises()
+
+    expect(listSchedulingPool).toHaveBeenLastCalledWith(expect.objectContaining({ group: '2', platform: 'anthropic' }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 })

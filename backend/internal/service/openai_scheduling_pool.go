@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 const (
@@ -22,6 +25,7 @@ const (
 // OpenAIAccountSchedulingPoolFilter 描述管理端查看调度池时使用的筛选条件。
 type OpenAIAccountSchedulingPoolFilter struct {
 	GroupID         *int64
+	Platform        string
 	Model           string
 	Endpoint        OpenAIEndpointCapability
 	Transport       OpenAIUpstreamTransport
@@ -39,6 +43,7 @@ type OpenAIAccountSchedulingPoolSnapshot struct {
 	FilteredCount    int                               `json:"filtered_count"`
 	GeneratedAt      time.Time                         `json:"generated_at"`
 	GroupID          *int64                            `json:"group_id,omitempty"`
+	Platform         string                            `json:"platform,omitempty"`
 	Model            string                            `json:"model,omitempty"`
 	Endpoint         string                            `json:"endpoint,omitempty"`
 	Transport        string                            `json:"transport,omitempty"`
@@ -63,7 +68,7 @@ func (s *OpenAIGatewayService) ListOpenAIAccountSchedulingPool(ctx context.Conte
 		now = time.Now()
 	}
 	filter = normalizeOpenAIAccountSchedulingPoolFilter(filter)
-	accounts, err := s.listSchedulableAccounts(ctx, filter.GroupID)
+	accounts, useMixed, err := s.listSchedulingPoolAccounts(ctx, filter.GroupID, filter.Platform)
 	if err != nil {
 		return OpenAIAccountSchedulingPoolSnapshot{}, err
 	}
@@ -71,7 +76,10 @@ func (s *OpenAIGatewayService) ListOpenAIAccountSchedulingPool(ctx context.Conte
 	items := make([]OpenAIAccountSchedulingPoolItem, 0, len(accounts))
 	for i := range accounts {
 		account := accounts[i]
-		if !account.IsOpenAI() || !account.IsSchedulableAt(now) {
+		if !account.IsSchedulableAt(now) {
+			continue
+		}
+		if !openAIAccountSchedulingPoolPlatformAllowed(&account, filter.Platform, useMixed) {
 			continue
 		}
 		if !openAIAccountSchedulingPoolMatchesSearch(&account, filter.Search) {
@@ -96,6 +104,7 @@ func (s *OpenAIGatewayService) ListOpenAIAccountSchedulingPool(ctx context.Conte
 		Total:           len(items),
 		GeneratedAt:     now,
 		GroupID:         cloneInt64Ptr(filter.GroupID),
+		Platform:        filter.Platform,
 		Model:           filter.Model,
 		Endpoint:        string(filter.Endpoint),
 		Transport:       string(filter.Transport),
@@ -117,6 +126,10 @@ func (s *OpenAIGatewayService) ListOpenAIAccountSchedulingPool(ctx context.Conte
 }
 
 func normalizeOpenAIAccountSchedulingPoolFilter(filter OpenAIAccountSchedulingPoolFilter) OpenAIAccountSchedulingPoolFilter {
+	filter.Platform = strings.ToLower(strings.TrimSpace(filter.Platform))
+	if filter.Platform == "" {
+		filter.Platform = PlatformOpenAI
+	}
 	filter.Model = strings.TrimSpace(filter.Model)
 	filter.Search = strings.ToLower(strings.TrimSpace(filter.Search))
 	if filter.Transport == "" {
@@ -125,7 +138,74 @@ func normalizeOpenAIAccountSchedulingPoolFilter(filter OpenAIAccountSchedulingPo
 	return filter
 }
 
+func (s *OpenAIGatewayService) listSchedulingPoolAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, bool, error) {
+	if s.schedulerSnapshot != nil {
+		accounts, useMixed, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)
+		return accounts, useMixed, err
+	}
+	useMixed := platform == PlatformAnthropic
+	if useMixed {
+		platforms := []string{platform, PlatformAntigravity}
+		var accounts []Account
+		var err error
+		if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+			accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
+		} else if groupID != nil {
+			accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, platforms)
+		} else {
+			accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, platforms)
+		}
+		if err != nil {
+			return nil, useMixed, fmt.Errorf("query accounts failed: %w", err)
+		}
+		filtered := make([]Account, 0, len(accounts))
+		for _, account := range accounts {
+			if account.Platform == PlatformAntigravity && !account.IsMixedSchedulingEnabled() {
+				continue
+			}
+			filtered = append(filtered, account)
+		}
+		return filtered, useMixed, nil
+	}
+
+	if platform == PlatformOpenAI {
+		accounts, err := s.listSchedulableAccounts(ctx, groupID)
+		return accounts, false, err
+	}
+
+	var accounts []Account
+	var err error
+	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
+	} else if groupID != nil {
+		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, platform)
+	} else {
+		accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, platform)
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("query accounts failed: %w", err)
+	}
+	return accounts, false, nil
+}
+
+func openAIAccountSchedulingPoolPlatformAllowed(account *Account, platform string, useMixed bool) bool {
+	if account == nil {
+		return false
+	}
+	if useMixed {
+		if account.Platform == platform {
+			return true
+		}
+		return account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()
+	}
+	return account.Platform == platform
+}
+
 func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Account, filter OpenAIAccountSchedulingPoolFilter, now time.Time) OpenAIAccountSchedulingPoolItem {
+	if filter.Platform != PlatformOpenAI || !account.IsOpenAI() {
+		return buildGenericAccountSchedulingPoolItem(account, filter, now)
+	}
+
 	reasons := make([]string, 0, 4)
 	status := OpenAIAccountSchedulingPoolStatusSchedulable
 
@@ -187,6 +267,25 @@ func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Acco
 		PathHealth:          pathHealth,
 		PathHealthAvailable: pathHealthAvailable,
 		DerivedHealth:       DeriveAccountHealthState(&account, pathHealth, now),
+		EffectiveLoadFactor: account.EffectiveLoadFactor(),
+	}
+}
+
+func buildGenericAccountSchedulingPoolItem(account Account, filter OpenAIAccountSchedulingPoolFilter, now time.Time) OpenAIAccountSchedulingPoolItem {
+	reasons := make([]string, 0, 2)
+	status := OpenAIAccountSchedulingPoolStatusSchedulable
+	if filter.Model != "" && !account.IsModelSupported(filter.Model) {
+		status = OpenAIAccountSchedulingPoolStatusFiltered
+		reasons = append(reasons, "model_unsupported:"+filter.Model)
+	}
+	health := OpenAIPathHealthRecord{Key: OpenAIPathHealthKeyForAccount(&account, ""), State: OpenAIPathHealthStateHealthy}
+	return OpenAIAccountSchedulingPoolItem{
+		Account:             account,
+		PoolStatus:          status,
+		PoolReasons:         uniqueNonEmptyStrings(reasons),
+		PathHealth:          health,
+		PathHealthAvailable: false,
+		DerivedHealth:       DeriveAccountHealthState(&account, health, now),
 		EffectiveLoadFactor: account.EffectiveLoadFactor(),
 	}
 }

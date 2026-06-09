@@ -113,6 +113,59 @@ func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolShowsHealthAndReaso
 	require.Contains(t, items[104].PoolReasons, "model_unsupported:gpt-5.5")
 }
 
+func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolSupportsAnthropicGroup(t *testing.T) {
+	now := time.Date(2026, 6, 9, 15, 0, 0, 0, time.UTC)
+	accounts := []Account{
+		{
+			ID:            201,
+			Name:          "anthropic-self-use",
+			Platform:      PlatformAnthropic,
+			Type:          AccountTypeOAuth,
+			Status:        StatusActive,
+			Schedulable:   true,
+			Concurrency:   3,
+			Priority:      10,
+			AccountGroups: []AccountGroup{{GroupID: 2}},
+		},
+		{
+			ID:            202,
+			Name:          "openai-self-use",
+			Platform:      PlatformOpenAI,
+			Type:          AccountTypeAPIKey,
+			Status:        StatusActive,
+			Schedulable:   true,
+			Credentials:   map[string]any{"api_key": "sk-openai"},
+			AccountGroups: []AccountGroup{{GroupID: 2}},
+		},
+		{
+			ID:            203,
+			Name:          "anthropic-other-group",
+			Platform:      PlatformAnthropic,
+			Type:          AccountTypeOAuth,
+			Status:        StatusActive,
+			Schedulable:   true,
+			AccountGroups: []AccountGroup{{GroupID: 3}},
+		},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo: schedulingPoolGroupAwareAccountRepo{
+			schedulerTestOpenAIAccountRepo: schedulerTestOpenAIAccountRepo{accounts: accounts},
+		},
+	}
+
+	snapshot, err := svc.ListOpenAIAccountSchedulingPool(context.Background(), OpenAIAccountSchedulingPoolFilter{
+		GroupID:  schedulingPoolInt64Ptr(2),
+		Platform: PlatformAnthropic,
+	}, now)
+
+	require.NoError(t, err)
+	require.Equal(t, PlatformAnthropic, snapshot.Platform)
+	require.Equal(t, 1, snapshot.Total)
+	require.Equal(t, []int64{201}, openAISchedulingPoolItemIDs(snapshot.Items))
+	require.Equal(t, OpenAIAccountSchedulingPoolStatusSchedulable, snapshot.Items[0].PoolStatus)
+	require.False(t, snapshot.Items[0].PathHealthAvailable)
+}
+
 func openAISchedulingPoolItemsByID(items []OpenAIAccountSchedulingPoolItem) map[int64]OpenAIAccountSchedulingPoolItem {
 	out := make(map[int64]OpenAIAccountSchedulingPoolItem, len(items))
 	for _, item := range items {
@@ -131,4 +184,69 @@ func openAISchedulingPoolItemIDs(items []OpenAIAccountSchedulingPoolItem) []int6
 
 func schedulingPoolInt64Ptr(v int64) *int64 {
 	return &v
+}
+
+type schedulingPoolGroupAwareAccountRepo struct {
+	schedulerTestOpenAIAccountRepo
+}
+
+func (r schedulingPoolGroupAwareAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	return r.listByGroupAndPlatforms(groupID, []string{platform}), nil
+}
+
+func (r schedulingPoolGroupAwareAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
+	return r.listByGroupAndPlatforms(groupID, platforms), nil
+}
+
+func (r schedulingPoolGroupAwareAccountRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.listUngroupedByPlatforms([]string{platform}), nil
+}
+
+func (r schedulingPoolGroupAwareAccountRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.listUngroupedByPlatforms(platforms), nil
+}
+
+func (r schedulingPoolGroupAwareAccountRepo) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.listByPlatforms(platforms), nil
+}
+
+func (r schedulingPoolGroupAwareAccountRepo) listByGroupAndPlatforms(groupID int64, platforms []string) []Account {
+	result := make([]Account, 0, len(r.accounts))
+	for _, acc := range r.accounts {
+		account := acc
+		if schedulingPoolPlatformIn(acc.Platform, platforms) && isAccountInRequestedGroup(&account, &groupID) {
+			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
+		}
+	}
+	return result
+}
+
+func (r schedulingPoolGroupAwareAccountRepo) listUngroupedByPlatforms(platforms []string) []Account {
+	result := make([]Account, 0, len(r.accounts))
+	for _, acc := range r.accounts {
+		account := acc
+		if schedulingPoolPlatformIn(acc.Platform, platforms) && isAccountInRequestedGroup(&account, nil) {
+			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
+		}
+	}
+	return result
+}
+
+func (r schedulingPoolGroupAwareAccountRepo) listByPlatforms(platforms []string) []Account {
+	result := make([]Account, 0, len(r.accounts))
+	for _, acc := range r.accounts {
+		if schedulingPoolPlatformIn(acc.Platform, platforms) {
+			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
+		}
+	}
+	return result
+}
+
+func schedulingPoolPlatformIn(platform string, platforms []string) bool {
+	for _, item := range platforms {
+		if platform == item {
+			return true
+		}
+	}
+	return false
 }

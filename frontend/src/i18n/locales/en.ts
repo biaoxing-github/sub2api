@@ -4801,10 +4801,11 @@ export default {
     },
 
     accountSchedulingPool: {
-      title: 'OpenAI Scheduling Pool',
-      description: 'Review schedulable OpenAI accounts, health status, and degradation reasons',
+      title: 'Scheduling Pool',
+      description: 'Review schedulable accounts, health status, and degradation reasons for the selected group',
       searchPlaceholder: 'Search account, ID, or group',
-      group: 'Group ID',
+      group: 'Group',
+      ungrouped: 'Ungrouped pool',
       model: 'Model',
       account: 'Account',
       poolStatus: 'Pool Status',
@@ -4822,12 +4823,17 @@ export default {
       disabledFailed: 'Failed to disable scheduling',
       empty: 'No accounts in the scheduling pool for the current filters',
       failedToLoad: 'Failed to load scheduling pool',
+      failedToLoadGroups: 'Failed to load groups',
       metrics: {
         total: 'Pool accounts',
         schedulable: 'Schedulable',
         degraded: 'Degraded',
         blocked: 'Blocked',
         filtered: 'Filtered'
+      },
+      platforms: {
+        openai: 'OpenAI',
+        anthropic: 'Anthropic'
       },
       statuses: {
         schedulable: 'Schedulable',

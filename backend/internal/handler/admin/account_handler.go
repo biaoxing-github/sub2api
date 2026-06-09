@@ -244,7 +244,7 @@ type AccountWithConcurrency struct {
 	CurrentRPM        *int     `json:"current_rpm,omitempty"`         // 当前分钟 RPM 计数
 }
 
-// AccountSchedulingPoolResponse 表示管理端看到的 OpenAI 调度池快照。
+// AccountSchedulingPoolResponse 表示管理端看到的协议调度池快照。
 type AccountSchedulingPoolResponse struct {
 	Items            []AccountSchedulingPoolItem `json:"items"`
 	Total            int                         `json:"total"`
@@ -254,6 +254,7 @@ type AccountSchedulingPoolResponse struct {
 	FilteredCount    int                         `json:"filtered_count"`
 	GeneratedAt      time.Time                   `json:"generated_at"`
 	GroupID          *int64                      `json:"group_id,omitempty"`
+	Platform         string                      `json:"platform,omitempty"`
 	Model            string                      `json:"model,omitempty"`
 	Endpoint         string                      `json:"endpoint,omitempty"`
 	Transport        string                      `json:"transport,omitempty"`
@@ -492,11 +493,11 @@ func (h *AccountHandler) List(c *gin.Context) {
 	response.Paginated(c, result, total, page, pageSize)
 }
 
-// ListSchedulingPool handles OpenAI scheduling pool visualization.
+// ListSchedulingPool handles protocol scheduling pool visualization.
 // GET /api/v1/admin/accounts/scheduling-pool
 func (h *AccountHandler) ListSchedulingPool(c *gin.Context) {
 	if h.openAIAccountSchedulingPoolReader == nil {
-		response.InternalError(c, "OpenAI scheduling pool reader is not configured")
+		response.InternalError(c, "Scheduling pool reader is not configured")
 		return
 	}
 	filter, ok := parseAccountSchedulingPoolFilter(c)
@@ -544,6 +545,11 @@ func parseAccountSchedulingPoolFilter(c *gin.Context) (service.OpenAIAccountSche
 	if len(filter.Search) > 100 {
 		filter.Search = filter.Search[:100]
 	}
+	platform, ok := parseAccountSchedulingPoolPlatform(c)
+	if !ok {
+		return filter, false
+	}
+	filter.Platform = platform
 
 	endpoint, ok := parseOpenAIEndpointCapabilityQuery(c, "endpoint")
 	if !ok {
@@ -561,6 +567,17 @@ func parseAccountSchedulingPoolFilter(c *gin.Context) (service.OpenAIAccountSche
 	filter.Transport = transport
 	filter.ImageCapability = imageCapability
 	return filter, true
+}
+
+func parseAccountSchedulingPoolPlatform(c *gin.Context) (string, bool) {
+	value := strings.ToLower(strings.TrimSpace(c.DefaultQuery("platform", service.PlatformOpenAI)))
+	switch value {
+	case service.PlatformOpenAI, service.PlatformAnthropic:
+		return value, true
+	default:
+		response.BadRequest(c, "Invalid scheduling pool platform")
+		return "", false
+	}
 }
 
 func parseOpenAIEndpointCapabilityQuery(c *gin.Context, key string) (service.OpenAIEndpointCapability, bool) {
@@ -610,6 +627,7 @@ func accountSchedulingPoolResponseFromService(snapshot service.OpenAIAccountSche
 		FilteredCount:    snapshot.FilteredCount,
 		GeneratedAt:      snapshot.GeneratedAt,
 		GroupID:          cloneAccountSchedulingPoolInt64Ptr(snapshot.GroupID),
+		Platform:         snapshot.Platform,
 		Model:            snapshot.Model,
 		Endpoint:         snapshot.Endpoint,
 		Transport:        snapshot.Transport,

@@ -2736,3 +2736,17 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`npm run test:run -- src/components/account/__tests__/AccountStatusIndicator.spec.ts` 通过，7/7 tests passed。
 - GREEN：`npm run typecheck` 通过。
 - 说明：本轮不部署线上、不构建镜像、不切流，只提交本地代码。
+
+## 2026-06-09 17:42 +08:00 - 调度池分组下拉与 Anthropic 查询
+
+- 执行者：Devil
+- 根因：上一版调度池页面默认不传分组，后端复杂模式下按未分组 OpenAI 池查询；当前真实可调度账号绑定在“自用”分组，所以页面为空。调度池接口也没有暴露 `platform`，只能看 OpenAI。
+- RED：`go test -tags unit ./internal/service -run "TestOpenAIGatewayService_ListOpenAIAccountSchedulingPool" -count=1` 先因 `OpenAIAccountSchedulingPoolFilter.Platform` / snapshot `Platform` 缺失编译失败；`go test -tags unit ./internal/handler/admin -run "TestAccountHandlerListSchedulingPool" -count=1` 同样因平台字段缺失失败；`npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts` 先失败于未加载分组和缺少协议下拉。
+- 变更：调度池过滤和响应新增 `platform`，默认 OpenAI，支持 `openai` / `anthropic`；Anthropic 查询复用 scheduler snapshot 的分组调度口径，包含已启用 mixed scheduling 的 antigravity 账号；前端把手填分组 ID 改为分组下拉，默认选中名为“自用”的 active 分组，并新增协议下拉，Anthropic 模式隐藏 OpenAI endpoint/transport/image 专属筛选。
+- GREEN：`go test -tags unit ./internal/handler/admin ./internal/service -run "(TestAccountHandlerListSchedulingPool|TestOpenAIGatewayService_ListOpenAIAccountSchedulingPool)" -count=1` 通过。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- GREEN：`npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts` 通过，2/2 tests passed。
+- GREEN：`npm run typecheck` 通过。
+- GREEN：`git diff --check` 通过。
+- 浏览器冒烟：本地 `http://127.0.0.1:5173/admin/account-scheduling-pool` 返回 200；Playwright 打开后按未登录规则跳转登录页，console 0 errors。
+- 说明：本轮只改调度池管理端和接口，不构建镜像、不部署、不切流。

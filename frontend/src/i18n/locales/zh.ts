@@ -4955,10 +4955,11 @@ export default {
     },
 
     accountSchedulingPool: {
-      title: 'OpenAI 调度池',
-      description: '查看当前 OpenAI 调度池中的可调度账号、健康状态与降级原因',
+      title: '调度池',
+      description: '查看当前分组调度池中的可调度账号、健康状态与降级原因',
       searchPlaceholder: '搜索账号、ID 或分组',
-      group: '分组 ID',
+      group: '分组',
+      ungrouped: '未分组池',
       model: '模型',
       account: '账号',
       poolStatus: '池内状态',
@@ -4976,12 +4977,17 @@ export default {
       disabledFailed: '停止调度失败',
       empty: '当前筛选下没有调度池账号',
       failedToLoad: '加载调度池失败',
+      failedToLoadGroups: '加载分组失败',
       metrics: {
         total: '池内账号',
         schedulable: '可调度',
         degraded: '已降级',
         blocked: '被阻断',
         filtered: '不匹配'
+      },
+      platforms: {
+        openai: 'OpenAI',
+        anthropic: 'Anthropic'
       },
       statuses: {
         schedulable: '可调度',

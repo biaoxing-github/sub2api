@@ -44,6 +44,7 @@ func TestAccountHandlerListSchedulingPoolMapsFilterAndRedactsAccount(t *testing.
 			DegradedCount:   1,
 			GeneratedAt:     generatedAt,
 			GroupID:         schedulingPoolHandlerInt64Ptr(7),
+			Platform:        service.PlatformAnthropic,
 			Model:           "gpt-5.5",
 			Endpoint:        string(service.OpenAIEndpointCapabilityResponses),
 			Transport:       string(service.OpenAIUpstreamTransportHTTPSSE),
@@ -55,12 +56,13 @@ func TestAccountHandlerListSchedulingPoolMapsFilterAndRedactsAccount(t *testing.
 	router.GET("/api/v1/admin/accounts/scheduling-pool", handler.ListSchedulingPool)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/scheduling-pool?group=7&model=gpt-5.5&endpoint=responses&transport=http_sse&image_capability=images-native&search=ready", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/scheduling-pool?group=7&platform=anthropic&model=gpt-5.5&endpoint=responses&transport=http_sse&image_capability=images-native&search=ready", nil)
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NotNil(t, reader.filter.GroupID)
 	require.Equal(t, int64(7), *reader.filter.GroupID)
+	require.Equal(t, service.PlatformAnthropic, reader.filter.Platform)
 	require.Equal(t, "gpt-5.5", reader.filter.Model)
 	require.Equal(t, service.OpenAIEndpointCapabilityResponses, reader.filter.Endpoint)
 	require.Equal(t, service.OpenAIUpstreamTransportHTTPSSE, reader.filter.Transport)
@@ -68,6 +70,7 @@ func TestAccountHandlerListSchedulingPoolMapsFilterAndRedactsAccount(t *testing.
 	require.Equal(t, "ready", reader.filter.Search)
 	require.Contains(t, rec.Body.String(), `"name":"ready-pool"`)
 	require.Contains(t, rec.Body.String(), `"pool_status":"degraded"`)
+	require.Contains(t, rec.Body.String(), `"platform":"anthropic"`)
 	require.Contains(t, rec.Body.String(), `"pool_reasons":["path_health:degraded:unexpected_eof"]`)
 	require.Contains(t, rec.Body.String(), `"derived_health":{"state":"line_degraded"`)
 	require.NotContains(t, rec.Body.String(), "sk-should-not-leak")
