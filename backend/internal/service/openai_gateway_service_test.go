@@ -2900,7 +2900,7 @@ func TestOpenAIBuildUpstreamRequestCodexDirectCompatibilityHeaders(t *testing.T)
 	require.Empty(t, req.Header.Get("Via"))
 }
 
-func TestOpenAIUpstreamTLSProfileCodexDirectAppliesToOAuthAndAPIKey(t *testing.T) {
+func TestOpenAIUpstreamTLSProfileUsesAccountLevelCodexSimulationOnly(t *testing.T) {
 	oauthAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	apiKeyAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	apiKeyCodexSimulationAccount := &Account{
@@ -2916,13 +2916,14 @@ func TestOpenAIUpstreamTLSProfileCodexDirectAppliesToOAuthAndAPIKey(t *testing.T
 	}}
 	require.Nil(t, offSvc.openAIUpstreamTLSProfile(oauthAccount))
 	require.Nil(t, offSvc.openAIUpstreamTLSProfile(apiKeyAccount))
-	require.Nil(t, offSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount))
+	require.Equal(t, builtInDefaultTLSFingerprintProfileName, offSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount).Name)
 
 	codexSvc := &OpenAIGatewayService{cfg: &config.Config{
 		Gateway: config.GatewayConfig{OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect},
 	}}
-	require.Equal(t, builtInDefaultTLSFingerprintProfileName, codexSvc.openAIUpstreamTLSProfile(oauthAccount).Name)
-	require.Equal(t, builtInDefaultTLSFingerprintProfileName, codexSvc.openAIUpstreamTLSProfile(apiKeyAccount).Name)
+	require.Nil(t, codexSvc.openAIUpstreamTLSProfile(oauthAccount))
+	require.Nil(t, codexSvc.openAIUpstreamTLSProfile(apiKeyAccount))
+	require.Equal(t, builtInDefaultTLSFingerprintProfileName, codexSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount).Name)
 
 	profileSvc := &TLSFingerprintProfileService{
 		localCache: map[int64]*model.TLSFingerprintProfile{
@@ -2938,7 +2939,8 @@ func TestOpenAIUpstreamTLSProfileCodexDirectAppliesToOAuthAndAPIKey(t *testing.T
 		},
 		tlsFPProfileService: profileSvc,
 	}
-	require.Equal(t, "Custom Codex TLS", customSvc.openAIUpstreamTLSProfile(apiKeyAccount).Name)
+	require.Nil(t, customSvc.openAIUpstreamTLSProfile(apiKeyAccount))
+	require.Equal(t, "Custom Codex TLS", customSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount).Name)
 }
 
 // ==================== P1-08 修复：model 替换性能优化测试 ====================
