@@ -2770,3 +2770,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts` 通过，3/3 tests passed。
 - GREEN：`npm run typecheck` 通过。
 - GREEN：`git diff --check` 通过。
+
+## 2026-06-09 19:44 +08:00 - v0.1.134.18 蓝绿构建、部署、验证
+
+- 执行者：Devil
+- 构建：从已提交 `72372cab5040` 执行 `git archive --format=tar HEAD | docker build --pull=false -t sub2api:v0.1.134.18 --label org.opencontainers.image.version=v0.1.134.18 --label org.opencontainers.image.revision=72372cab5040 --build-arg COMMIT=72372cab5040 --build-arg VERSION=v0.1.134 --build-arg IMAGE_VERSION=v0.1.134.18 -` 通过，镜像 ID `sha256:d9056cc3f0cb3acf7190b8a1220980b7df81ca29d2288ea1ae77019fb47c1c22`。
+- 候选部署：发布前 active 为 `sub2api-blue/sub2api:v0.1.134.17`，只重建 idle `sub2api-green` 到 `sub2api:v0.1.134.18`，未重启 PostgreSQL/Redis。
+- 候选验证：`18082` health/root/admin/static 均 200；未登录 admin accounts 与 `/responses` 均 401；管理鉴权的 `system/version` 与 `check-updates` 返回 `image_version=v0.1.134.18`；`groups/all` 找到“自用”；调度池 `platform=openai&group=2` 返回 `total=6` 且 6 条带雷达异常状态 `needs_probe/normal`；`platform=anthropic&group=2` 返回 `total=0`；green 60 秒 healthy 稳定；关键错误日志命中 0。
+- 切流：`active.conf` 从 `sub2api-blue:8080` 切到 `sub2api-green:8080`，`docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 成功；`docker-compose.green.yml` 默认镜像同步为 `sub2api:v0.1.134.18`。
+- 切流后验证：`8080` health/root/admin/static 均 200；未登录 admin accounts 与 `/responses` 均 401；管理鉴权的 `system/version` 与 `check-updates` 返回 `image_version=v0.1.134.18`；OpenAI/Anthropic 调度池分组查询同候选验证通过；green 应用日志关键错误命中 0，proxy 最近 15 分钟关键错误日志命中 0。
+- 当前状态：active 已切到 `sub2api-green/sub2api:v0.1.134.18`；回滚容器 `sub2api-blue/sub2api:v0.1.134.17` 保持 running/healthy。
