@@ -638,6 +638,7 @@ type GatewayService struct {
 	resolver              *ModelPricingResolver
 	debugGatewayBodyFile  atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
 	tlsFPProfileService   *TLSFingerprintProfileService
+	openaiPathHealth      *OpenAIPathHealthTracker
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 }
@@ -725,6 +726,14 @@ func NewGatewayService(
 		svc.initDebugGatewayBodyFile(path)
 	}
 	return svc
+}
+
+// SetOpenAIPathHealthTracker 让通用 /responses 入口把真实 OpenAI 成功调用写入调度池健康样本。
+func (s *GatewayService) SetOpenAIPathHealthTracker(tracker *OpenAIPathHealthTracker) {
+	if s == nil {
+		return
+	}
+	s.openaiPathHealth = tracker
 }
 
 // GenerateSessionHash 从预解析请求计算粘性会话 hash
@@ -9015,6 +9024,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
+		s.recordOpenAIPathHealthSuccess(account, result.FirstTokenMs)
 		return nil
 	}
 
@@ -9043,8 +9053,17 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+	s.recordOpenAIPathHealthSuccess(account, result.FirstTokenMs)
 
 	return nil
+}
+
+func (s *GatewayService) recordOpenAIPathHealthSuccess(account *Account, firstTokenMs *int) {
+	if s == nil || s.openaiPathHealth == nil || account == nil || !account.IsOpenAI() {
+		return
+	}
+	key := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	s.openaiPathHealth.RecordSuccess(key, firstTokenMs, nil)
 }
 
 // calculateRecordUsageCost 根据请求类型和选项计算费用。

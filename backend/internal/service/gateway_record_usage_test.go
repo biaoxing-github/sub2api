@@ -141,6 +141,36 @@ func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(
 	require.Equal(t, payloadHash, billingRepo.lastCmd.RequestPayloadHash)
 }
 
+func TestGatewayServiceRecordUsage_OpenAIResponsesFeedsPathHealthSample(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true})
+	svc.SetOpenAIPathHealthTracker(tracker)
+
+	firstTokenMs := 4321
+	account := &Account{ID: 709, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID:    "gateway_openai_path_health",
+			Usage:        ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:        "gpt-5.5",
+			Duration:     time.Second,
+			FirstTokenMs: &firstTokenMs,
+			Stream:       true,
+		},
+		APIKey:  &APIKey{ID: 501, Quota: 100},
+		User:    &User{ID: 601},
+		Account: account,
+	})
+	require.NoError(t, err)
+
+	snapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE)))
+	require.Equal(t, int64(1), snapshot.Samples)
+	require.Equal(t, int64(1), snapshot.SuccessCount)
+	require.InDelta(t, firstTokenMs, snapshot.TTFTEWMAMs, 0.01)
+}
+
 func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}

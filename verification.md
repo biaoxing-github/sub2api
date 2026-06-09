@@ -2791,6 +2791,17 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 验证：`go test -tags unit ./internal/handler/admin ./internal/service -run "(TestAccountHandlerListSchedulingPool|TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample|TestAccountLoadFactorAdvisor)" -count=1` 通过。
 - 验证：`git diff --check` 通过。
 
+## 2026-06-09 21:43 +08:00 - 通用 Responses 调用写入调度池健康样本
+
+- 执行者：Devil
+- 根因：线上 `usage_logs` 已证明真实 `/responses -> /v1/responses` 调度在增长，但这条热路径由 `GatewayHandler.Responses -> GatewayService.RecordUsage` 记录用量，不走 `OpenAIGatewayService.RecordUsage`。上一轮只在 OpenAI 专用 RecordUsage 成功出口写入 `OpenAIPathHealthTracker`，所以通用 `/responses` 的真实成功调用不会增加调度池内存健康样本，调度池仍显示 `samples=0`。
+- 修复：`GatewayService` 新增共享 `OpenAIPathHealthTracker` 注入点；`GatewayHandler` 构造时把 `OpenAIGatewayService.OpenAIPathHealthTracker()` 注入给通用网关；`GatewayService.recordUsageCore` 在普通计费和 simple mode 成功记录 usage log 后，对 OpenAI 账号写入账号级 `RecordSuccess`。
+- 验证：`go test -tags unit ./internal/service -run "TestGatewayServiceRecordUsage_OpenAIResponsesFeedsPathHealthSample|TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample|TestAccountLoadFactorAdvisor|TestOpenAIGatewayService_ListOpenAIAccountSchedulingPool" -count=1` 通过。
+- 验证：`go test -tags unit ./internal/handler/admin ./internal/service -run "(TestAccountHandlerListSchedulingPool|TestGatewayServiceRecordUsage_OpenAIResponsesFeedsPathHealthSample|TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample|TestAccountLoadFactorAdvisor)" -count=1` 通过。
+- 验证：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- 验证：`git diff --check` 通过。
+- 已知无关阻塞：`go test -tags unit ./internal/handler ./internal/service -run "(TestGatewayServiceRecordUsage_OpenAIResponsesFeedsPathHealthSample|TestAccountHandlerListSchedulingPool)" -count=1` 中 `internal/service` 通过，但 `internal/handler` 整包编译失败在既有 `userHandlerRepoStub` 缺少 `GetByIDIncludeDeleted`，本轮未修改该测试桩链路。
+
 ## 2026-06-09 21:01 +08:00 - v0.1.134.19 蓝绿构建、部署、验证
 
 - 执行者：Devil

@@ -72,6 +72,7 @@ func NewGatewayHandler(
 	userMsgQueueService *service.UserMessageQueueService,
 	cfg *config.Config,
 	settingService *service.SettingService,
+	openAIGatewayService *service.OpenAIGatewayService,
 ) *GatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 10
@@ -90,6 +91,9 @@ func NewGatewayHandler(
 	var umqHelper *UserMsgQueueHelper
 	if userMsgQueueService != nil && cfg != nil {
 		umqHelper = NewUserMsgQueueHelper(userMsgQueueService, SSEPingFormatClaude, pingInterval)
+	}
+	if gatewayService != nil && openAIGatewayService != nil {
+		gatewayService.SetOpenAIPathHealthTracker(openAIGatewayService.OpenAIPathHealthTracker())
 	}
 
 	return &GatewayHandler{
