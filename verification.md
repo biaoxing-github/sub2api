@@ -2790,3 +2790,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 验证：`go test -tags unit ./internal/service -run "(TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample|TestOpenAIGatewayService_OpenAIAccountSchedulerMetrics|TestOpenAIPathHealth|TestAccountLoadFactorAdvisor|TestOpenAIGatewayService_ListOpenAIAccountSchedulingPool)" -count=1` 通过。
 - 验证：`go test -tags unit ./internal/handler/admin ./internal/service -run "(TestAccountHandlerListSchedulingPool|TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample|TestAccountLoadFactorAdvisor)" -count=1` 通过。
 - 验证：`git diff --check` 通过。
+
+## 2026-06-09 21:01 +08:00 - v0.1.134.19 蓝绿构建、部署、验证
+
+- 执行者：Devil
+- 构建：从已提交 `92d113d86e96` 构建不可变镜像 `sub2api:v0.1.134.19` 成功；镜像 ID `sha256:870e9eca1d4cc770155413da93b94a877757fae601fc9c0edfd6d8ae051b8c9f`；镜像标签确认 `org.opencontainers.image.version=v0.1.134.19`、`org.opencontainers.image.revision=92d113d86e96`。
+- 候选部署：发布前 active 为 `sub2api-green/sub2api:v0.1.134.18`，只重建 idle `sub2api-blue` 到 `sub2api:v0.1.134.19`，未重启 PostgreSQL/Redis。
+- 候选验证：`18083` health/root/admin/static/settings 均 200；未登录 admin accounts 与 `/responses` 均 401；管理鉴权的 `system/version` 返回 `image_version=v0.1.134.19`；`groups/all` 找到“自用”；OpenAI/Anthropic 调度池分组查询均 200；blue 运行健康且关键错误日志命中 0。
+- 切流：`active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 成功；`docker-compose.blue.yml` 默认镜像同步为 `sub2api:v0.1.134.19`。
+- 切流后验证：`8080` health/root/admin/settings 均 200，管理前端静态资源 6/6 返回 200；未登录 admin accounts 与 `/responses` 均 401；管理鉴权的 `system/version` 返回 `image_version=v0.1.134.19`；`groups/all` 选中 `2:自用`；OpenAI 调度池 `total=6`、`schedulable=6`、`degraded=0`、`blocked=0`，Anthropic 调度池 `total=0`；blue 和 proxy 关键错误日志命中 0。
+- 当前状态：active 已切到 `sub2api-blue/sub2api:v0.1.134.19`；回滚容器 `sub2api-green/sub2api:v0.1.134.18` 保持 running/healthy。
