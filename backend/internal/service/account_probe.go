@@ -1229,7 +1229,7 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 	if sample.ExpectedModel == "" || sample.PairedModel != "" {
 		sample.ExpectedModel = requestModel
 	}
-	endpoint := buildOpenAIResponsesURL(baseURL)
+	endpoint := buildOpenAIAccountResponsesURL(baseURL, account)
 	method := http.MethodPost
 	stream := normalizeAccountProbeRequestMode(requestMode) == AccountProbeRequestModeStream
 	if sample.RequestMode != "" {

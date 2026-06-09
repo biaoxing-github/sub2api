@@ -269,7 +269,7 @@ func (s *OpenAIGatewayService) openAISchedulerExhaustionProbeURL(account *Accoun
 		if err != nil {
 			return "", err
 		}
-		targetURL = buildOpenAIResponsesURL(validatedURL)
+		targetURL = buildOpenAIAccountResponsesURL(validatedURL, account)
 	default:
 		return "", fmt.Errorf("unsupported openai probe account type: %s", account.Type)
 	}

@@ -1419,7 +1419,7 @@ func TestOpenAIGatewayService_APIKeyCodexCLISimulation_ForcesHeadersAndPreserves
 	require.NotNil(t, upstream.lastReq)
 	require.NotNil(t, upstream.lastTLSProfile)
 	require.Equal(t, builtInDefaultTLSFingerprintProfileName, upstream.lastTLSProfile.Name)
-	require.Equal(t, "https://new.sharedchat.cc/codex/v1/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "https://new.sharedchat.cc/codex/responses", upstream.lastReq.URL.String())
 	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, codexCLIOriginator, upstream.lastReq.Header.Get("originator"))
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))

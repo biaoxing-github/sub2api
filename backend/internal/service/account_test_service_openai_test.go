@@ -576,7 +576,7 @@ func TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationH
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.5", "ping", "")
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, "https://new.sharedchat.cc/codex/v1/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "https://new.sharedchat.cc/codex/responses", upstream.lastReq.URL.String())
 	require.NotNil(t, upstream.lastTLSProfile)
 	require.Equal(t, builtInDefaultTLSFingerprintProfileName, upstream.lastTLSProfile.Name)
 	require.Equal(t, "Bearer sk-free5", upstream.lastReq.Header.Get("Authorization"))

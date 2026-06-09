@@ -2760,6 +2760,29 @@ func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t 
 	}
 }
 
+func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationUsesCodexProviderResponsesPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader([]byte(`{"model":"gpt-5.5"}`)))
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}}
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://new.sharedchat.cc/codex",
+		},
+		Extra: map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
+	}
+
+	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5.5"}`), "token", true, "", true)
+	require.NoError(t, err)
+	require.Equal(t, "https://new.sharedchat.cc/codex/responses", req.URL.String())
+}
+
 func TestOpenAIBuildUpstreamRequestCockpitToolsCompatibilityHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

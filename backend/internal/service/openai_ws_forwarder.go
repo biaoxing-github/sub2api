@@ -1086,7 +1086,7 @@ func (s *OpenAIGatewayService) buildOpenAIResponsesWSURL(account *Account) (stri
 			if err != nil {
 				return "", err
 			}
-			targetURL = buildOpenAIResponsesURL(validatedURL)
+			targetURL = buildOpenAIAccountResponsesURL(validatedURL, account)
 		}
 	default:
 		targetURL = openaiPlatformAPIURL
