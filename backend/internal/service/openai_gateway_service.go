@@ -46,7 +46,7 @@ const (
 	// 与 @openai/codex@0.138.0 在 Windows 上的真实 exec 请求对齐。
 	codexCLIUserAgent    = "Codex Desktop/0.138.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.138.0)"
 	codexCLIOriginator   = "Codex Desktop"
-	codexCLIBetaFeatures = "terminal_resize_reflow,memories"
+	codexCLIBetaFeatures = "terminal_resize_reflow"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
