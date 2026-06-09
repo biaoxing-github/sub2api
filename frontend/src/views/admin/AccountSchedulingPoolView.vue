@@ -84,7 +84,11 @@
                   {{ t('admin.accountSchedulingPool.empty') }}
                 </td>
               </tr>
-              <tr v-for="item in items" :key="item.account.id" class="hover:bg-gray-50 dark:hover:bg-dark-700/40">
+              <tr
+                v-for="item in items"
+                :key="item.account.id"
+                :class="['hover:bg-gray-50 dark:hover:bg-dark-700/40', schedulingPoolRowClass(item)]"
+              >
                 <td>
                   <div class="font-medium text-gray-900 dark:text-gray-100">{{ item.account.name }}</div>
                   <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
@@ -106,6 +110,9 @@
                   <span :class="healthClass(item.derived_health?.state)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium">
                     {{ item.derived_health?.label || formatPathHealth(item.path_health?.state) }}
                   </span>
+                  <div v-if="item.account.load_factor_advice" class="mt-1">
+                    <AccountAvailabilityRadarBadge :advice="item.account.load_factor_advice" />
+                  </div>
                   <div v-if="item.path_health_available" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     {{ t('admin.accountSchedulingPool.pathHealth') }}: {{ formatPathHealth(item.path_health?.state) }}
                   </div>
@@ -125,9 +132,9 @@
                   </div>
                 </td>
                 <td>
-                  <div v-if="item.pool_reasons?.length" class="flex max-w-xl flex-wrap gap-1.5">
+                  <div v-if="visiblePoolReasons(item).length" class="flex max-w-xl flex-wrap gap-1.5">
                     <span
-                      v-for="reason in item.pool_reasons"
+                      v-for="reason in visiblePoolReasons(item)"
                       :key="reason"
                       class="rounded-md bg-gray-100 px-2 py-1 font-mono text-xs text-gray-700 dark:bg-dark-700 dark:text-gray-200"
                     >
@@ -165,6 +172,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
+import AccountAvailabilityRadarBadge from '@/components/account/AccountAvailabilityRadarBadge.vue'
 import { listSchedulingPool, setSchedulable } from '@/api/admin/accounts'
 import groupsAPI from '@/api/admin/groups'
 import type {
@@ -397,9 +405,64 @@ function poolStatusClass(status: string): string {
 
 function healthClass(state?: string): string {
   if (state === 'normal') return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200'
-  if (state === 'line_degraded' || state === 'pending_retest') return 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
-  if (state === 'rate_limited_cooldown' || state === 'unauthorized_invalid' || state === 'upstream_abnormal') return 'bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200'
+  if (state === 'light_abnormal') return 'bg-sky-50 text-sky-700 dark:bg-sky-900/30 dark:text-sky-200'
+  if (state === 'moderate_abnormal' || state === 'rate_limited_cooldown' || state === 'pending_retest') return 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
+  if (state === 'line_degraded' || state === 'temp_unschedulable') return 'bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-200'
+  if (state === 'quota_low' || state === 'quota_exhausted' || state === 'disabled' || state === 'unauthorized_invalid' || state === 'upstream_abnormal') return 'bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200'
   return 'bg-gray-100 text-gray-700 dark:bg-dark-700 dark:text-gray-200'
+}
+
+function visiblePoolReasons(item: OpenAIAccountSchedulingPoolItem): string[] {
+  const advice = item.account.load_factor_advice
+  return uniqueVisibleReasons([
+    ...(item.pool_reasons || []),
+    item.derived_health?.reason || '',
+    item.derived_health?.last_failure_reason || '',
+    ...(advice?.availability_radar?.reasons || []),
+    ...(advice?.reasons || []),
+  ])
+}
+
+function schedulingPoolRowClass(item: OpenAIAccountSchedulingPoolItem): string {
+  if (item.pool_status === 'blocked') return 'bg-rose-50/60 dark:bg-rose-950/20'
+  if (item.pool_status === 'filtered') return 'bg-sky-50/50 dark:bg-sky-950/20'
+  if (item.pool_status === 'degraded') return 'bg-amber-50/60 dark:bg-amber-950/20'
+
+  const state = item.derived_health?.state
+  if (state === 'quota_low' || state === 'quota_exhausted' || state === 'disabled' || state === 'unauthorized_invalid' || state === 'upstream_abnormal') {
+    return 'bg-rose-50/60 dark:bg-rose-950/20'
+  }
+  if (state === 'line_degraded' || state === 'temp_unschedulable' || state === 'moderate_abnormal' || state === 'rate_limited_cooldown') {
+    return 'bg-amber-50/60 dark:bg-amber-950/20'
+  }
+  if (state === 'light_abnormal' || state === 'pending_retest') {
+    return 'bg-sky-50/50 dark:bg-sky-950/20'
+  }
+
+  switch (item.account.load_factor_advice?.availability_radar?.status) {
+    case 'unstable':
+    case 'cooldown':
+      return 'bg-rose-50/60 dark:bg-rose-950/20'
+    case 'balance_risk':
+    case 'needs_probe':
+      return 'bg-amber-50/60 dark:bg-amber-950/20'
+    case 'slow_usable':
+      return 'bg-sky-50/50 dark:bg-sky-950/20'
+    default:
+      return ''
+  }
+}
+
+function uniqueVisibleReasons(values: string[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const raw of values) {
+    const value = String(raw || '').trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    result.push(value)
+  }
+  return result
 }
 
 onMounted(async () => {

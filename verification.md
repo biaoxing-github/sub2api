@@ -2760,3 +2760,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 切流：`active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 成功。
 - 切流后验证：`8080` health/root/admin/settings 均 200；未登录 admin accounts 与 `/responses` 均 401；check-updates 返回 `image_version=v0.1.134.17`；`groups/all` 与 OpenAI/Anthropic 调度池分组查询同候选验证通过；blue 应用日志关键错误命中 0，proxy 最近 10 分钟错误日志命中 0。
 - 当前状态：active 已切到 `sub2api-blue/sub2api:v0.1.134.17`；回滚容器 `sub2api-green/sub2api:v0.1.134.16` 保持 running/healthy。
+
+## 2026-06-09 19:32 +08:00 - 调度池可用性雷达异常展示
+
+- 执行者：Devil
+- 根因：账号列表的“不稳定/待探测”等异常来自 `load_factor_advice.availability_radar` 与账号探测写入的 `derived_health`；调度池页面只展示 `pool_status`、`path_health` 与 `pool_reasons`，没有渲染同源雷达 badge，也没有给 `light_abnormal`、`moderate_abnormal`、`temp_unschedulable`、`quota_low`、`quota_exhausted` 等派生健康状态上色。
+- RED：`npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts` 先失败，新增用例里的池内账号 `unstable-pool` 能显示“轻微异常”，但调度池看不到“不稳定”和雷达原因。
+- 变更：`AccountSchedulingPoolView` 健康列复用 `AccountAvailabilityRadarBadge`；原因列合并 `pool_reasons`、`derived_health.reason`、`derived_health.last_failure_reason`、`availability_radar.reasons` 与 `load_factor_advice.reasons`；行底色和健康标签补齐探测异常、临时不可调度、额度异常、冷却与雷达异常状态。
+- GREEN：`npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts` 通过，3/3 tests passed。
+- GREEN：`npm run typecheck` 通过。
+- GREEN：`git diff --check` 通过。

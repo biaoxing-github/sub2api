@@ -104,9 +104,54 @@ describe('AccountSchedulingPoolView', () => {
           derived_health: { state: 'line_degraded', label: '线路降级', last_failure_reason: 'unexpected_eof' },
           effective_load_factor: 3,
         },
+        {
+          account: {
+            id: 102,
+            name: 'unstable-pool',
+            platform: 'openai',
+            type: 'apikey',
+            status: 'active',
+            schedulable: true,
+            priority: 10,
+            concurrency: 2,
+            load_factor: 2,
+            load_factor_advice: {
+              suggested_load_factor: 1,
+              reasons: ['成功率 50%', '线路状态 degraded'],
+              availability_radar: {
+                status: 'unstable',
+                label: '不稳定',
+                reasons: ['最近探测失败率升高'],
+              },
+              path_health_samples: 4,
+            },
+            error_message: null,
+            rate_limited_at: null,
+            rate_limit_reset_at: null,
+            overload_until: null,
+            temp_unschedulable_until: null,
+            temp_unschedulable_reason: null,
+            session_window_start: null,
+            session_window_end: null,
+            session_window_status: null,
+            proxy_id: null,
+            expires_at: null,
+            auto_pause_on_expired: false,
+            created_at: '2026-06-09T10:00:00Z',
+            updated_at: '2026-06-09T10:00:00Z',
+            derived_health: { state: 'light_abnormal', label: '轻微异常', reason: 'probe_failed' },
+          },
+          pool_status: 'schedulable',
+          pool_reasons: [],
+          runtime_block: null,
+          path_health: { state: 'healthy' },
+          path_health_available: true,
+          derived_health: { state: 'light_abnormal', label: '轻微异常', reason: 'probe_failed' },
+          effective_load_factor: 2,
+        },
       ],
-      total: 1,
-      schedulable_count: 0,
+      total: 2,
+      schedulable_count: 1,
       degraded_count: 1,
       blocked_count: 0,
       filtered_count: 0,
@@ -146,6 +191,26 @@ describe('AccountSchedulingPoolView', () => {
     expect(window.confirm).toHaveBeenCalled()
     expect(setSchedulable).toHaveBeenCalledWith(101, false)
     expect(listSchedulingPool).toHaveBeenCalledTimes(2)
+  })
+
+  it('renders availability radar abnormalities and reasons in the scheduling pool', async () => {
+    const wrapper = mount(AccountSchedulingPoolView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('unstable-pool')
+    expect(wrapper.text()).toContain('轻微异常')
+    expect(wrapper.text()).toContain('不稳定')
+    expect(wrapper.text()).toContain('最近探测失败率升高')
+    expect(wrapper.text()).toContain('成功率 50%')
   })
 
   it('queries anthropic scheduling pool with the selected group', async () => {
