@@ -1294,17 +1294,10 @@ func isClientRequestCanceled(c *gin.Context) bool {
 }
 
 func (s *OpenAIGatewayService) openAIUpstreamTLSProfile(account *Account) *tlsfingerprint.Profile {
-	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIOAuthCompatMode != config.GatewayOpenAIOAuthCompatModeCodexDirect {
-		return nil
+	if s == nil {
+		return resolveOpenAIUpstreamTLSProfile(nil, nil, account)
 	}
-	profileID := s.cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID
-	if s.tlsFPProfileService != nil {
-		return s.tlsFPProfileService.ResolveProfileID(profileID)
-	}
-	if profileID > 0 {
-		return nil
-	}
-	return BuiltInDefaultTLSFingerprintProfile()
+	return resolveOpenAIUpstreamTLSProfile(s.cfg, s.tlsFPProfileService, account)
 }
 
 func (s *OpenAIGatewayService) openAIRequestHeaderTimeoutForBody(body []byte) time.Duration {

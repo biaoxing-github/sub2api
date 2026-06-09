@@ -33,6 +33,9 @@ type httpUpstreamRecorder struct {
 	responses []*http.Response
 	err       error
 	errs      []error
+
+	lastTLSProfile *tlsfingerprint.Profile
+	tlsProfiles    []*tlsfingerprint.Profile
 }
 
 func (u *httpUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
@@ -64,6 +67,8 @@ func (u *httpUpstreamRecorder) Do(req *http.Request, proxyURL string, accountID 
 }
 
 func (u *httpUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
+	u.lastTLSProfile = profile
+	u.tlsProfiles = append(u.tlsProfiles, profile)
 	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
@@ -1412,11 +1417,13 @@ func TestOpenAIGatewayService_APIKeyCodexCLISimulation_ForcesHeadersAndPreserves
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, upstream.lastReq)
+	require.NotNil(t, upstream.lastTLSProfile)
+	require.Equal(t, builtInDefaultTLSFingerprintProfileName, upstream.lastTLSProfile.Name)
 	require.Equal(t, "https://new.sharedchat.cc/codex/v1/responses", upstream.lastReq.URL.String())
 	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
-	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("originator"))
-	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
-	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
+	require.Equal(t, codexCLIOriginator, upstream.lastReq.Header.Get("originator"))
+	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.Empty(t, upstream.lastReq.Header.Get("Version"))
 	require.True(t, gjson.GetBytes(upstream.lastBody, "max_output_tokens").Exists())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "max_completion_tokens").Exists())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_retention").Exists())

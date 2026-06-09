@@ -2880,12 +2880,20 @@ func TestOpenAIBuildUpstreamRequestCodexDirectCompatibilityHeaders(t *testing.T)
 func TestOpenAIUpstreamTLSProfileCodexDirectAppliesToOAuthAndAPIKey(t *testing.T) {
 	oauthAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
 	apiKeyAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	apiKeyCodexSimulationAccount := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra: map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
+	}
 
 	offSvc := &OpenAIGatewayService{cfg: &config.Config{
 		Gateway: config.GatewayConfig{OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeOff},
 	}}
 	require.Nil(t, offSvc.openAIUpstreamTLSProfile(oauthAccount))
 	require.Nil(t, offSvc.openAIUpstreamTLSProfile(apiKeyAccount))
+	require.Equal(t, builtInDefaultTLSFingerprintProfileName, offSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount).Name)
 
 	codexSvc := &OpenAIGatewayService{cfg: &config.Config{
 		Gateway: config.GatewayConfig{OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect},

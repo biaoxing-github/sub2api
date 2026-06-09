@@ -2481,6 +2481,9 @@ func extractAccountProbeStreamError(event map[string]any, fallback string) strin
 
 func (s *AccountProbeService) doAccountProbeHTTP(req *http.Request, proxyURL string, account *Account) (*http.Response, error) {
 	if s.testSvc != nil && s.testSvc.httpUpstream != nil && account != nil {
+		if account.IsOpenAI() {
+			return s.testSvc.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.testSvc.openAIUpstreamTLSProfile(account))
+		}
 		return s.testSvc.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.testSvc.tlsFPProfileService.ResolveTLSProfile(account))
 	}
 	return s.client.Do(req)
