@@ -2726,3 +2726,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 变更：把 Codex CLI 模拟和默认 OpenAI Codex UA 统一到 npm 当前 `@openai/codex` 最新 `0.138.0`；新增 `buildOpenAITestResponsesRequest`，让 OpenAI Responses/compact 人工测试复用正式网关 builder，并在人工测试入口补齐入站 Codex 客户端身份。
 - GREEN：上述 RED 命令通过；`go test -tags unit ./internal/service -run "TestAccountTestService_OpenAI|TestAccountTestService_TestAccountConnection_OpenAICompact|TestOpenAIGatewayService_APIKeyCodexCLISimulation|TestAccount_IsOpenAICodexCLISimulationEnabled" -count=1` 通过；`go test ./cmd/server ./internal/handler -run TestNoSuchTest -count=1` 通过；`git diff --check` 退出码 0，仅有 docs JSONL LF/CRLF 工作区警告。
 - 已知无关失败：`go test -tags unit ./internal/service -count=1` 仍失败在既有 `TestOpenAINonStreamingConfiguredResponseTextReturnsFailover`、OpenAI image bridge 403 fallback、OAuth client-cancel、OpenAI passthrough failover stub panic 等路径，本轮未修改这些失败链路。
+
+## 2026-06-09 09:57 +08:00 - 账号页当前降级策略展示
+
+- 执行者：Devil
+- 目标：让管理员在账号页面一眼看到当前账号处于哪一种降级策略，而不是只看到普通状态或派生健康标签。
+- RED：`npm run test:run -- src/components/account/__tests__/AccountStatusIndicator.spec.ts` 先失败，失败点为账号状态组件未直接展示 `admin.accounts.status.degradationStrategy`。
+- 变更：`AccountStatusIndicator` 新增降级策略 badge，覆盖轻微异常、中度异常、线路降级、临时不可调度、429 冷却、余额不足、余额耗尽、停用、待复测；保留原 tooltip 展示原因和恢复时间。
+- GREEN：`npm run test:run -- src/components/account/__tests__/AccountStatusIndicator.spec.ts` 通过，7/7 tests passed。
+- GREEN：`npm run typecheck` 通过。
+- 说明：本轮不部署线上、不构建镜像、不切流，只提交本地代码。

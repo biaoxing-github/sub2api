@@ -205,4 +205,30 @@ describe('AccountStatusIndicator', () => {
     expect(wrapper.text()).toContain('header_timeout')
     expect(wrapper.text()).toContain('path=degraded')
   })
+
+  it('在账号页直接展示当前降级策略', () => {
+    const wrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({
+          id: 6,
+          name: 'openai-moderate-abnormal',
+          derived_health: {
+            state: 'moderate_abnormal',
+            label: '中度异常',
+            reason: 'upstream_abnormal',
+            until: '2099-03-15T00:05:00Z'
+          }
+        })
+      },
+      global: {
+        stubs: {
+          Icon: true
+        }
+      }
+    })
+
+    expect(wrapper.text()).toContain('admin.accounts.status.degradationStrategy')
+    expect(wrapper.text()).toContain('中度异常')
+    expect(wrapper.text()).toContain('upstream_abnormal')
+  })
 })

@@ -3172,6 +3172,7 @@ export default {
         creditsExhausted: 'Credits Exhausted',
         creditsExhaustedUntil: 'AI Credits exhausted, expected recovery at {time}',
         overloadedUntil: 'Overloaded until {time}',
+        degradationStrategy: 'Degradation',
         viewTempUnschedDetails: 'View temp unschedulable details'
       },
       columns: {

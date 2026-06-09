@@ -28,7 +28,22 @@
       </span>
     </template>
 
-    <div v-if="showDerivedHealth" class="group/health relative">
+    <div v-if="showDegradationStrategy" class="group/health relative">
+      <span :class="['inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium', degradationStrategyClass]">
+        <span class="opacity-75">{{ t('admin.accounts.status.degradationStrategy') }}</span>
+        <span>{{ degradationStrategyLabel }}</span>
+      </span>
+      <div
+        class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 whitespace-normal rounded bg-gray-900 px-3 py-2 text-xs leading-relaxed text-white opacity-0 transition-opacity group-hover/health:opacity-100 dark:bg-gray-700"
+      >
+        {{ derivedHealthTitle }}
+        <div
+          class="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-gray-900 dark:border-t-gray-700"
+        ></div>
+      </div>
+    </div>
+
+    <div v-else-if="showDerivedHealth" class="group/health relative">
       <span :class="['inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium', derivedHealthClass]">
         {{ account.derived_health?.label || account.derived_health?.state }}
       </span>
@@ -313,6 +328,48 @@ const isQuotaExceeded = computed(() => {
 const showDerivedHealth = computed(() => {
   const state = props.account.derived_health?.state
   return !!state && state !== 'normal' && state !== 'rate_limited_cooldown'
+})
+
+const degradationStrategyStates = new Set([
+  'light_abnormal',
+  'moderate_abnormal',
+  'line_degraded',
+  'temp_unschedulable',
+  'rate_limited_cooldown',
+  'quota_low',
+  'quota_exhausted',
+  'disabled',
+  'pending_retest',
+])
+
+const showDegradationStrategy = computed(() => {
+  const state = props.account.derived_health?.state
+  return !!state && degradationStrategyStates.has(state)
+})
+
+const degradationStrategyLabel = computed(() => {
+  return props.account.derived_health?.label || props.account.derived_health?.state || ''
+})
+
+const degradationStrategyClass = computed(() => {
+  switch (props.account.derived_health?.state) {
+    case 'light_abnormal':
+      return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
+    case 'moderate_abnormal':
+    case 'rate_limited_cooldown':
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+    case 'line_degraded':
+    case 'temp_unschedulable':
+      return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'
+    case 'quota_low':
+    case 'quota_exhausted':
+    case 'disabled':
+      return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+    case 'pending_retest':
+      return 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'
+    default:
+      return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
+  }
 })
 
 const derivedHealthClass = computed(() => {
