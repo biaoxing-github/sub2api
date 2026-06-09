@@ -2750,3 +2750,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`git diff --check` 通过。
 - 浏览器冒烟：本地 `http://127.0.0.1:5173/admin/account-scheduling-pool` 返回 200；Playwright 打开后按未登录规则跳转登录页，console 0 errors。
 - 说明：本轮只改调度池管理端和接口，不构建镜像、不部署、不切流。
+
+## 2026-06-09 18:13 +08:00 - v0.1.134.17 蓝绿构建、部署、验证
+
+- 执行者：Devil
+- 构建：从已提交 `ed18ce9ab114` 执行 `git archive --format=tar HEAD | docker build --pull=false -t sub2api:v0.1.134.17 --label org.opencontainers.image.version=v0.1.134.17 --label org.opencontainers.image.revision=ed18ce9ab114 --build-arg COMMIT=ed18ce9ab114 --build-arg VERSION=v0.1.134 --build-arg IMAGE_VERSION=v0.1.134.17 -` 成功；镜像 ID `sha256:57b37199d0e341194b7f17f59e425094c362e693d6ce800b47f68b01b20ac73c`。
+- 候选部署：发布前 active 为 `sub2api-green/sub2api:v0.1.134.16`，只重建 idle `sub2api-blue` 到 `sub2api:v0.1.134.17`，未重启 PostgreSQL/Redis。
+- 候选验证：`18083` health/root/admin/settings 均 200；未登录 admin accounts 与 `/responses` 均 401；管理端 check-updates 返回 `image_version=v0.1.134.17`；`groups/all` 找到“自用” `id=2`；调度池 `platform=openai&group=2` 返回 `total=7`，`platform=anthropic&group=2` 返回 `total=0`；blue 60 秒 healthy 稳定；关键错误日志命中 0。
+- 切流：`active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 成功。
+- 切流后验证：`8080` health/root/admin/settings 均 200；未登录 admin accounts 与 `/responses` 均 401；check-updates 返回 `image_version=v0.1.134.17`；`groups/all` 与 OpenAI/Anthropic 调度池分组查询同候选验证通过；blue 应用日志关键错误命中 0，proxy 最近 10 分钟错误日志命中 0。
+- 当前状态：active 已切到 `sub2api-blue/sub2api:v0.1.134.17`；回滚容器 `sub2api-green/sub2api:v0.1.134.16` 保持 running/healthy。
