@@ -2780,3 +2780,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 切流：`active.conf` 从 `sub2api-blue:8080` 切到 `sub2api-green:8080`，`docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 成功；`docker-compose.green.yml` 默认镜像同步为 `sub2api:v0.1.134.18`。
 - 切流后验证：`8080` health/root/admin/static 均 200；未登录 admin accounts 与 `/responses` 均 401；管理鉴权的 `system/version` 与 `check-updates` 返回 `image_version=v0.1.134.18`；OpenAI/Anthropic 调度池分组查询同候选验证通过；green 应用日志关键错误命中 0，proxy 最近 15 分钟关键错误日志命中 0。
 - 当前状态：active 已切到 `sub2api-green/sub2api:v0.1.134.18`；回滚容器 `sub2api-blue/sub2api:v0.1.134.17` 保持 running/healthy。
+
+## 2026-06-09 20:21 +08:00 - 调度池待探测样本口径修复
+
+- 执行者：Devil
+- 根因：`待探测` 由 `AccountLoadFactorAdvisor` 根据 `OpenAIPathHealthRecord.Samples < MinSamples` 计算；此前真实 OpenAI 成功调用只写 usage log，没有稳定调用账号级 `RecordSuccess`，所以真实请求成功后调度池仍可能一直显示 `needs_probe/待探测`。
+- 修复：`OpenAIGatewayService.RecordUsage` 在普通模式和 simple 模式的成功用量记录出口调用 `recordOpenAIAccountSuccessfulCall`，使用当前账号对象写入账号级 `OpenAIPathHealthTracker.RecordSuccess`，并同步调度器运行时成功统计。
+- 验证：`go test -tags unit ./internal/service -run "TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample|TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog" -count=1` 通过。
+- 验证：`go test -tags unit ./internal/service -run "(TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample|TestOpenAIGatewayService_OpenAIAccountSchedulerMetrics|TestOpenAIPathHealth|TestAccountLoadFactorAdvisor|TestOpenAIGatewayService_ListOpenAIAccountSchedulingPool)" -count=1` 通过。
+- 验证：`go test -tags unit ./internal/handler/admin ./internal/service -run "(TestAccountHandlerListSchedulingPool|TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample|TestAccountLoadFactorAdvisor)" -count=1` 通过。
+- 验证：`git diff --check` 通过。

@@ -1464,21 +1464,33 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 }
 
 func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(accountID int64, success bool, firstTokenMs *int) {
-	scheduler := s.getOpenAIAccountScheduler(context.Background())
-	if scheduler != nil {
-		scheduler.ReportResult(accountID, success, firstTokenMs)
-	}
-	if s == nil || s.openaiPathHealth == nil || accountID <= 0 {
+	if !success || s == nil || s.openaiPathHealth == nil || accountID <= 0 {
+		scheduler := s.getOpenAIAccountScheduler(context.Background())
+		if scheduler != nil {
+			scheduler.ReportResult(accountID, success, firstTokenMs)
+		}
 		return
 	}
 	account, err := s.getSchedulableAccount(context.Background(), accountID)
 	if err != nil || account == nil {
 		account = &Account{ID: accountID, Platform: PlatformOpenAI}
 	}
-	key := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
-	if success {
-		s.openaiPathHealth.RecordSuccess(key, firstTokenMs, nil)
+	s.recordOpenAIAccountSuccessfulCall(account, firstTokenMs)
+}
+
+func (s *OpenAIGatewayService) recordOpenAIAccountSuccessfulCall(account *Account, firstTokenMs *int) {
+	if s == nil || account == nil || account.ID <= 0 {
+		return
 	}
+	scheduler := s.getOpenAIAccountScheduler(context.Background())
+	if scheduler != nil {
+		scheduler.ReportResult(account.ID, true, firstTokenMs)
+	}
+	if s.openaiPathHealth == nil || !account.IsOpenAI() {
+		return
+	}
+	key := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	s.openaiPathHealth.RecordSuccess(key, firstTokenMs, nil)
 }
 
 func (s *OpenAIGatewayService) RecordOpenAIAccountSwitch() {

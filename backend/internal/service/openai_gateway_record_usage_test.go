@@ -246,6 +246,49 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 	require.Zero(t, billingRepo.lastCmd.AccountQuotaCost)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	subRepo := &openAIRecordUsageSubRepoStub{}
+	quotaSvc := &openAIRecordUsageAPIKeyQuotaStub{}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, userRepo, subRepo, nil)
+	svc.openaiPathHealth = NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true})
+	firstTokenMs := 180
+	account := &Account{
+		ID:          3010,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 2,
+	}
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:    "resp_path_health_sample",
+			Usage:        OpenAIUsage{},
+			Model:        "gpt-5.1",
+			Duration:     time.Second,
+			FirstTokenMs: &firstTokenMs,
+		},
+		APIKey:        &APIKey{ID: 1010, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:          &User{ID: 2010},
+		Account:       account,
+		APIKeyService: quotaSvc,
+	})
+
+	require.NoError(t, err)
+	key := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	snapshot := svc.openaiPathHealth.Snapshot(key)
+	require.Equal(t, int64(1), snapshot.Samples)
+	require.Equal(t, int64(1), snapshot.SuccessCount)
+	require.Equal(t, int64(0), snapshot.FailureCount)
+
+	advice := NewAccountLoadFactorAdvisor(AccountLoadFactorAdvisorOptions{MinSamples: 1}).Advise(account, snapshot)
+	require.NotEqual(t, AccountAvailabilityRadarNeedsProbe, advice.AvailabilityRadar.Status)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
