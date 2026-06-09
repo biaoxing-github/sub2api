@@ -59,6 +59,14 @@ func TestOpenAIGatewayService_GetCodexClientRestrictionDetector(t *testing.T) {
 	})
 }
 
+func TestOpenAICodexCLISimulationUsesLatestClientVersion(t *testing.T) {
+	require.Equal(t, "0.138.0", codexCLIVersion)
+	require.Contains(t, codexCLIUserAgent, "codex_cli_rs/0.138.0 ")
+	require.NotContains(t, codexCLIUserAgent, "0.125.0")
+	require.Contains(t, DefaultOpenAICodexUserAgent, "0.138.0")
+	require.NotContains(t, DefaultOpenAICodexUserAgent, "0.125.0")
+}
+
 func TestGetAPIKeyIDFromContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

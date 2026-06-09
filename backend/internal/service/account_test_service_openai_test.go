@@ -538,6 +538,54 @@ func TestAccountTestService_OpenAIAPIKeyTriesNextRequestBaseURLOnTransientError(
 	require.Equal(t, "https://good.example.com/v1/responses", upstream.requests[1].URL.String())
 }
 
+func TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	ctx.Request.Header.Set("User-Agent", "curl/8.0")
+	ctx.Request.Header.Set("originator", "opencode")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"pong"}`,
+			"",
+			`data: {"type":"response.completed"}`,
+			"",
+		}, "\n"))),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          416,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-free5",
+			"base_url": "https://new.sharedchat.cc/codex",
+		},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesSupported: true,
+			OpenAICodexCLISimulationEnabledExtraKey:  true,
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.5", "ping", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://new.sharedchat.cc/codex/v1/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer sk-free5", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Content-Type"))
+	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("version"))
+	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
+}
+
 func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

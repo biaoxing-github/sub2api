@@ -2717,3 +2717,12 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 验证：`go test ./internal/server/middleware -run ''^TestApiKeyAuthWithSubscriptionGoogleRejectsExclusiveGroupWithoutUserGrant$'' -count=1 -v` 通过。
 - 验证：`go test ./internal/service -run ''^TestOpenAIGatewayService_SelectAccountWithScheduler_(EnabledUsesAdvancedPreviousResponseRouting|PreviousResponseSkipsAccountOutsideGroup|SessionStickySkipsAccountOutsideGroup)$|^TestOpenAIWSStateStore_ResponseAccountLocalCacheIsGroupScoped$'' -count=1 -v` 通过。
 - 说明：这轮主要是文档状态同步和聚焦验证，未提交、未构建镜像、未部署。
+
+## 2026-06-09 08:52 +08:00 - free5 Codex 最新客户端模拟与人工测试请求流修复
+
+- 执行者：Devil
+- 根因：账号级 `openai_codex_cli_simulation_enabled=true` 已生效，但上游 403 文案要求最新版 Codex 客户端；当前模拟常量仍是 `codex_cli_rs/0.125.0` / `version=0.125.0`。同时 `AccountTestService.testOpenAIAccountConnection` 普通 Responses 人工测试绕过正式 `OpenAIGatewayService.buildUpstreamRequestWithBaseURL`，只手写 `Content-Type` / `Authorization`，导致人工测试与真实网关热路径不一致。
+- RED：`go test -tags unit ./internal/service -run "TestOpenAICodexCLISimulationUsesLatestClientVersion|TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationHeaders" -count=1 -v` 先失败，分别证明版本仍为 `0.125.0`、人工测试上游 `User-Agent` 为空。
+- 变更：把 Codex CLI 模拟和默认 OpenAI Codex UA 统一到 npm 当前 `@openai/codex` 最新 `0.138.0`；新增 `buildOpenAITestResponsesRequest`，让 OpenAI Responses/compact 人工测试复用正式网关 builder，并在人工测试入口补齐入站 Codex 客户端身份。
+- GREEN：上述 RED 命令通过；`go test -tags unit ./internal/service -run "TestAccountTestService_OpenAI|TestAccountTestService_TestAccountConnection_OpenAICompact|TestOpenAIGatewayService_APIKeyCodexCLISimulation|TestAccount_IsOpenAICodexCLISimulationEnabled" -count=1` 通过；`go test ./cmd/server ./internal/handler -run TestNoSuchTest -count=1` 通过；`git diff --check` 退出码 0，仅有 docs JSONL LF/CRLF 工作区警告。
+- 已知无关失败：`go test -tags unit ./internal/service -count=1` 仍失败在既有 `TestOpenAINonStreamingConfiguredResponseTextReturnsFailover`、OpenAI image bridge 403 fallback、OAuth client-cancel、OpenAI passthrough failover stub panic 等路径，本轮未修改这些失败链路。

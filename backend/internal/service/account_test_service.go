@@ -141,6 +141,66 @@ func (s *AccountTestService) validateUpstreamBaseURL(raw string) (string, error)
 	return normalized, nil
 }
 
+// buildOpenAITestResponsesRequest 复用网关正式链路构造 OpenAI /responses 探测请求。
+// 人工测试必须和用户真实请求保持同一套 header、URL 和账号级 Codex CLI 模拟规则。
+func (s *AccountTestService) buildOpenAITestResponsesRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, requestBaseURL string, requestPath string) (*http.Request, error) {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return nil, errors.New("gin request is not available")
+	}
+
+	restoreClientHeaders := applyOpenAITestDefaultClientHeaders(c)
+	defer restoreClientHeaders()
+
+	cfg := s.cfg
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	gateway := &OpenAIGatewayService{cfg: cfg}
+	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator"))
+	if account != nil && account.IsOpenAICodexCLISimulationEnabled() {
+		isCodexCLI = true
+	}
+
+	if strings.TrimSpace(requestPath) == "" {
+		return gateway.buildUpstreamRequestWithBaseURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, requestBaseURL)
+	}
+
+	originalPath := c.Request.URL.Path
+	originalRawPath := c.Request.URL.RawPath
+	c.Request.URL.Path = requestPath
+	c.Request.URL.RawPath = ""
+	defer func() {
+		c.Request.URL.Path = originalPath
+		c.Request.URL.RawPath = originalRawPath
+	}()
+
+	return gateway.buildUpstreamRequestWithBaseURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, requestBaseURL)
+}
+
+// applyOpenAITestDefaultClientHeaders 为管理端人工测试补齐入站 Codex 客户端身份。
+// 后续仍由正式网关 builder 决定哪些 header 能进入上游，避免人工测试维护第二套路由逻辑。
+func applyOpenAITestDefaultClientHeaders(c *gin.Context) func() {
+	if c == nil || c.Request == nil {
+		return func() {}
+	}
+	uaWasEmpty := strings.TrimSpace(c.Request.Header.Get("User-Agent")) == ""
+	originatorWasEmpty := strings.TrimSpace(c.Request.Header.Get("originator")) == ""
+	if uaWasEmpty {
+		c.Request.Header.Set("User-Agent", codexCLIUserAgent)
+	}
+	if originatorWasEmpty {
+		c.Request.Header.Set("originator", "codex_cli_rs")
+	}
+	return func() {
+		if uaWasEmpty {
+			c.Request.Header.Del("User-Agent")
+		}
+		if originatorWasEmpty {
+			c.Request.Header.Del("originator")
+		}
+	}
+}
+
 func (s *AccountTestService) SetOpenAIPathHealthTracker(tracker *OpenAIPathHealthTracker) {
 	if s == nil {
 		return
@@ -605,12 +665,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.testOpenAIImageOAuth(c, ctx, account, testModelID, imagePrompt)
 	}
 
-	// Determine authentication method and API URL
+	// Determine authentication method and upstream base URL
 	var authToken string
-	var apiURL string
-	var apiURLs []string
+	var requestBaseURLs []string
 	var isOAuth bool
-	var chatgptAccountID string
 
 	if account.IsOAuth() {
 		isOAuth = true
@@ -620,10 +678,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
 
-		// OAuth uses ChatGPT internal API
-		apiURL = chatgptCodexAPIURL
-		apiURLs = []string{apiURL}
-		chatgptAccountID = account.GetChatGPTAccountID()
+		requestBaseURLs = []string{""}
 	} else if account.Type == "apikey" {
 		// API Key - use Platform API
 		if len(account.GetAPIKeys()) == 0 && account.GetOpenAIApiKey() == "" {
@@ -649,9 +704,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURLs[0], authToken)
 		}
-		for _, normalizedBaseURL := range normalizedBaseURLs {
-			apiURLs = append(apiURLs, buildOpenAIResponsesURL(normalizedBaseURL))
-		}
+		requestBaseURLs = normalizedBaseURLs
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -683,9 +736,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 	}
 	for attempt := 0; attempt < attempts; attempt++ {
-		urlsForAttempt := apiURLs
-		if len(urlsForAttempt) == 0 {
-			urlsForAttempt = []string{apiURL}
+		baseURLsForAttempt := requestBaseURLs
+		if len(baseURLsForAttempt) == 0 {
+			baseURLsForAttempt = []string{""}
 		}
 		if account.Type == AccountTypeAPIKey {
 			authToken = account.GetOpenAIApiKey()
@@ -694,29 +747,16 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 		}
 
-		for urlIdx, currentAPIURL := range urlsForAttempt {
-			req, err := http.NewRequestWithContext(ctx, "POST", currentAPIURL, bytes.NewReader(payloadBytes))
+		for urlIdx, requestBaseURL := range baseURLsForAttempt {
+			req, err := s.buildOpenAITestResponsesRequest(ctx, c, account, payloadBytes, authToken, true, "", requestBaseURL, "/v1/responses")
 			if err != nil {
 				return s.sendErrorAndEnd(c, "Failed to create request")
-			}
-
-			// Set common headers
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer "+authToken)
-
-			// Set OAuth-specific headers for ChatGPT internal API
-			if isOAuth {
-				req.Host = "chatgpt.com"
-				req.Header.Set("accept", "text/event-stream")
-				if chatgptAccountID != "" {
-					req.Header.Set("chatgpt-account-id", chatgptAccountID)
-				}
 			}
 
 			requestStartedAt := time.Now()
 			resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 			if err != nil {
-				if account.Type == AccountTypeAPIKey && isOpenAIRequestPhaseTransientError(err) && urlIdx+1 < len(urlsForAttempt) {
+				if account.Type == AccountTypeAPIKey && isOpenAIRequestPhaseTransientError(err) && urlIdx+1 < len(baseURLsForAttempt) {
 					continue
 				}
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
@@ -733,7 +773,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			if resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)
 				_ = resp.Body.Close()
-				if account.Type == AccountTypeAPIKey && shouldFailoverOpenAIRequestBaseURLResponse(resp.StatusCode, extractUpstreamErrorMessage(body), body) && urlIdx+1 < len(urlsForAttempt) {
+				if account.Type == AccountTypeAPIKey && shouldFailoverOpenAIRequestBaseURLResponse(resp.StatusCode, extractUpstreamErrorMessage(body), body) && urlIdx+1 < len(baseURLsForAttempt) {
 					continue
 				}
 				keyDisabled := s.disableOpenAIAPIKeyFromTestError(ctx, account, authToken, resp.StatusCode, body)
@@ -826,19 +866,14 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	ctx := c.Request.Context()
 
 	authToken := ""
-	apiURL := ""
-	isOAuth := false
-	chatgptAccountID := ""
+	requestBaseURL := ""
 
 	switch {
 	case account.IsOAuth():
-		isOAuth = true
 		authToken = account.GetOpenAIAccessToken()
 		if authToken == "" {
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
-		apiURL = chatgptCodexAPIURL + "/compact"
-		chatgptAccountID = account.GetChatGPTAccountID()
 	case account.Type == AccountTypeAPIKey:
 		authToken = account.GetOpenAIApiKey()
 		if authToken == "" {
@@ -852,7 +887,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		apiURL = appendOpenAIResponsesRequestPathSuffix(buildOpenAIResponsesURL(normalizedBaseURL), "/compact")
+		requestBaseURL = normalizedBaseURL
 	default:
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -865,28 +900,11 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 
 	payloadBytes, _ := json.Marshal(createOpenAICompactProbePayload(testModelID))
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	c.Set(openAICompactSessionSeedKey, compactProbeSessionID(account.ID))
 
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
+	req, err := s.buildOpenAITestResponsesRequest(ctx, c, account, payloadBytes, authToken, false, "", requestBaseURL, "/v1/responses/compact")
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create request")
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+authToken)
-	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	req.Header.Set("Originator", "codex_cli_rs")
-	req.Header.Set("User-Agent", codexCLIUserAgent)
-	req.Header.Set("Version", codexCLIVersion)
-	probeSessionID := compactProbeSessionID(account.ID)
-	req.Header.Set("Session_ID", probeSessionID)
-	req.Header.Set("Conversation_ID", probeSessionID)
-
-	if isOAuth {
-		req.Host = "chatgpt.com"
-		if chatgptAccountID != "" {
-			req.Header.Set("chatgpt-account-id", chatgptAccountID)
-		}
 	}
 
 	proxyURL := ""
