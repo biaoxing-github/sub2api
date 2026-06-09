@@ -166,6 +166,50 @@ func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolSupportsAnthropicGr
 	require.False(t, snapshot.Items[0].PathHealthAvailable)
 }
 
+func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolReadsPathHealthWithFullAPIKeyBaseURL(t *testing.T) {
+	now := time.Date(2026, 6, 9, 22, 10, 0, 0, time.UTC)
+	listedAccount := Account{
+		ID:            301,
+		Name:          "listed-without-base-url",
+		Platform:      PlatformOpenAI,
+		Type:          AccountTypeAPIKey,
+		Status:        StatusActive,
+		Schedulable:   true,
+		Credentials:   map[string]any{"api_key": "sk-listed"},
+		AccountGroups: []AccountGroup{{GroupID: 2}},
+	}
+	fullAccount := listedAccount
+	fullAccount.Credentials = map[string]any{
+		"api_key":           "sk-listed",
+		"base_url":          "https://custom-upstream.example/v1",
+		"request_base_urls": []any{"https://custom-upstream.example/v1"},
+	}
+	firstTokenMs := 3456
+	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true})
+	pathHealth.RecordSuccess(OpenAIPathHealthKeyForAccount(&fullAccount, string(OpenAIUpstreamTransportHTTPSSE)), &firstTokenMs, nil)
+
+	svc := &OpenAIGatewayService{
+		accountRepo: schedulingPoolPathHealthAccountRepo{
+			listed: []Account{listedAccount},
+			full:   map[int64]Account{fullAccount.ID: fullAccount},
+		},
+		openaiPathHealth: pathHealth,
+	}
+
+	snapshot, err := svc.ListOpenAIAccountSchedulingPool(context.Background(), OpenAIAccountSchedulingPoolFilter{
+		GroupID:   schedulingPoolInt64Ptr(2),
+		Platform:  PlatformOpenAI,
+		Transport: OpenAIUpstreamTransportHTTPSSE,
+	}, now)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, snapshot.Total)
+	require.Equal(t, int64(1), snapshot.Items[0].PathHealth.Samples)
+	require.Equal(t, int64(1), snapshot.Items[0].PathHealth.SuccessCount)
+	require.Equal(t, "https://custom-upstream.example/v1", snapshot.Items[0].PathHealth.Key.Upstream)
+	require.InDelta(t, firstTokenMs, snapshot.Items[0].PathHealth.TTFTEWMAMs, 0.01)
+}
+
 func openAISchedulingPoolItemsByID(items []OpenAIAccountSchedulingPoolItem) map[int64]OpenAIAccountSchedulingPoolItem {
 	out := make(map[int64]OpenAIAccountSchedulingPoolItem, len(items))
 	for _, item := range items {
@@ -249,4 +293,27 @@ func schedulingPoolPlatformIn(platform string, platforms []string) bool {
 		}
 	}
 	return false
+}
+
+type schedulingPoolPathHealthAccountRepo struct {
+	AccountRepository
+	listed []Account
+	full   map[int64]Account
+}
+
+func (r schedulingPoolPathHealthAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
+	if account, ok := r.full[id]; ok {
+		return &account, nil
+	}
+	return nil, ErrAccountNotFound
+}
+
+func (r schedulingPoolPathHealthAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	result := make([]Account, 0, len(r.listed))
+	for _, account := range r.listed {
+		if account.Platform == platform && isAccountInRequestedGroup(&account, &groupID) {
+			result = append(result, account)
+		}
+	}
+	return result, nil
 }

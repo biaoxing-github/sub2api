@@ -85,7 +85,8 @@ func (s *OpenAIGatewayService) ListOpenAIAccountSchedulingPool(ctx context.Conte
 		if !openAIAccountSchedulingPoolMatchesSearch(&account, filter.Search) {
 			continue
 		}
-		items = append(items, s.buildOpenAIAccountSchedulingPoolItem(account, filter, now))
+		healthAccount := s.resolveOpenAIAccountForSchedulingPoolPathHealth(ctx, account)
+		items = append(items, s.buildOpenAIAccountSchedulingPoolItem(account, healthAccount, filter, now))
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		leftRank := openAIAccountSchedulingPoolStatusRank(items[i].PoolStatus)
@@ -188,6 +189,17 @@ func (s *OpenAIGatewayService) listSchedulingPoolAccounts(ctx context.Context, g
 	return accounts, false, nil
 }
 
+func (s *OpenAIGatewayService) resolveOpenAIAccountForSchedulingPoolPathHealth(ctx context.Context, account Account) Account {
+	if s == nil || s.accountRepo == nil || !account.IsOpenAIApiKey() || account.ID <= 0 {
+		return account
+	}
+	fullAccount, err := s.accountRepo.GetByID(ctx, account.ID)
+	if err != nil || fullAccount == nil || !fullAccount.IsOpenAI() {
+		return account
+	}
+	return *fullAccount
+}
+
 func openAIAccountSchedulingPoolPlatformAllowed(account *Account, platform string, useMixed bool) bool {
 	if account == nil {
 		return false
@@ -201,9 +213,13 @@ func openAIAccountSchedulingPoolPlatformAllowed(account *Account, platform strin
 	return account.Platform == platform
 }
 
-func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Account, filter OpenAIAccountSchedulingPoolFilter, now time.Time) OpenAIAccountSchedulingPoolItem {
+func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Account, healthAccount Account, filter OpenAIAccountSchedulingPoolFilter, now time.Time) OpenAIAccountSchedulingPoolItem {
 	if filter.Platform != PlatformOpenAI || !account.IsOpenAI() {
 		return buildGenericAccountSchedulingPoolItem(account, filter, now)
+	}
+	evalAccount := account
+	if healthAccount.ID == account.ID && healthAccount.IsOpenAI() {
+		evalAccount = healthAccount
 	}
 
 	reasons := make([]string, 0, 4)
@@ -224,15 +240,15 @@ func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Acco
 		filtered = true
 		reasons = append(reasons, "model_unsupported:"+filter.Model)
 	}
-	if !account.SupportsOpenAIEndpointCapability(filter.Endpoint) {
+	if !evalAccount.SupportsOpenAIEndpointCapability(filter.Endpoint) {
 		filtered = true
 		reasons = append(reasons, "endpoint_unsupported:"+string(filter.Endpoint))
 	}
-	if !s.isOpenAIAccountTransportCompatible(&account, filter.Transport) {
+	if !s.isOpenAIAccountTransportCompatible(&evalAccount, filter.Transport) {
 		filtered = true
 		reasons = append(reasons, "transport_unsupported:"+string(filter.Transport))
 	}
-	if !account.SupportsOpenAIImageCapability(filter.ImageCapability) {
+	if !evalAccount.SupportsOpenAIImageCapability(filter.ImageCapability) {
 		filtered = true
 		reasons = append(reasons, "image_capability_unsupported:"+string(filter.ImageCapability))
 	}
@@ -240,7 +256,7 @@ func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Acco
 		status = OpenAIAccountSchedulingPoolStatusFiltered
 	}
 
-	pathHealth, pathHealthAvailable := s.snapshotOpenAIPathHealthForSchedulingPool(&account, filter.Transport)
+	pathHealth, pathHealthAvailable := s.snapshotOpenAIPathHealthForSchedulingPool(&evalAccount, filter.Transport)
 	pathReason := openAIAccountSchedulingPoolPathReason(pathHealth)
 	if pathHealth.State == OpenAIPathHealthStateDegraded {
 		reasons = append(reasons, pathReason)

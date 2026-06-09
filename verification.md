@@ -2802,6 +2802,17 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 验证：`git diff --check` 通过。
 - 已知无关阻塞：`go test -tags unit ./internal/handler ./internal/service -run "(TestGatewayServiceRecordUsage_OpenAIResponsesFeedsPathHealthSample|TestAccountHandlerListSchedulingPool)" -count=1` 中 `internal/service` 通过，但 `internal/handler` 整包编译失败在既有 `userHandlerRepoStub` 缺少 `GetByIDIncludeDeleted`，本轮未修改该测试桩链路。
 
+## 2026-06-09 22:16 +08:00 - 调度池 path-health 读取完整 OpenAI BaseURL
+
+- 执行者：Devil
+- 根因：v0.1.134.20 切流后 green 日志和 `usage_logs` 证明 `/responses` 成功调用已经进入 OpenAI 账号 `free6` / `dengxian-4`，但调度池 samples 仍为 0。进一步比对发现真实调用记录样本时使用完整账号 credentials 中的 `base_url` / `request_base_urls`，而调度池从 scheduler snapshot 读取的账号对象不一定带完整 OpenAI BaseURL，导致调度池按默认 `https://api.openai.com` key 读取，和真实样本写入的 `https://ai2.hhhl.cc/v1` / `https://api.denxio.top` key 不一致。
+- 修复：调度池列表仍返回调度快照账号，但构建 OpenAI APIKey 账号的 path-health 时按账号 ID 读取完整账号，仅用于计算内部 health key 和能力判断，避免把样本读到错误 upstream。
+- RED/GREEN：新增 `TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolReadsPathHealthWithFullAPIKeyBaseURL`，覆盖列表账号缺少 base_url、完整账号带自定义 upstream、样本写在完整 key 上时调度池必须读到 samples 的场景。
+- 验证：`go test -tags unit ./internal/service -run "TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolReadsPathHealthWithFullAPIKeyBaseURL|TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolShowsHealthAndReasons|TestGatewayServiceRecordUsage_OpenAIResponsesFeedsPathHealthSample|TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample|TestAccountLoadFactorAdvisor" -count=1` 通过。
+- 验证：`go test -tags unit ./internal/handler/admin ./internal/service -run "(TestAccountHandlerListSchedulingPool|TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolReadsPathHealthWithFullAPIKeyBaseURL|TestOpenAIGatewayService_ListOpenAIAccountSchedulingPool|TestGatewayServiceRecordUsage_OpenAIResponsesFeedsPathHealthSample|TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample|TestAccountLoadFactorAdvisor)" -count=1` 通过。
+- 验证：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- 验证：`git diff --check` 通过。
+
 ## 2026-06-09 21:01 +08:00 - v0.1.134.19 蓝绿构建、部署、验证
 
 - 执行者：Devil
