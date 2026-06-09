@@ -189,7 +189,7 @@ func applyOpenAITestDefaultClientHeaders(c *gin.Context) func() {
 		c.Request.Header.Set("User-Agent", codexCLIUserAgent)
 	}
 	if originatorWasEmpty {
-		c.Request.Header.Set("originator", "codex_cli_rs")
+		c.Request.Header.Set("originator", codexCLIOriginator)
 	}
 	return func() {
 		if uaWasEmpty {
@@ -1399,10 +1399,19 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 	}
 }
 
-// createOpenAITestPayload creates a test payload for OpenAI Responses API
-func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
+// createOpenAITestPayload 构造管理端人工测试使用的 OpenAI Responses 请求体。
+// API Key 和 OAuth 账号都走正式网关 builder，payload 保持接近真实 Codex CLI 的普通请求。
+func createOpenAITestPayload(modelID string, _ bool) map[string]any {
+	promptCacheKey := uuid.NewString()
 	payload := map[string]any{
 		"model": modelID,
+		"client_metadata": map[string]any{
+			"originator": codexCLIOriginator,
+			"session_id": promptCacheKey,
+		},
+		"include": []string{
+			"reasoning.encrypted_content",
+		},
 		"input": []map[string]any{
 			{
 				"role": "user",
@@ -1414,12 +1423,16 @@ func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 				},
 			},
 		},
+		"parallel_tool_calls": true,
+		"prompt_cache_key":    promptCacheKey,
+		"reasoning": map[string]any{
+			"effort": "low",
+		},
+		"store":  false,
 		"stream": true,
-	}
-
-	// OAuth accounts using ChatGPT internal API require store: false
-	if isOAuth {
-		payload["store"] = false
+		"text": map[string]any{
+			"verbosity": "low",
+		},
 	}
 
 	// All accounts require instructions for Responses API

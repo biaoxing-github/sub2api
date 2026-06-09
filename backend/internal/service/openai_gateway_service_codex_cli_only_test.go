@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -61,10 +62,44 @@ func TestOpenAIGatewayService_GetCodexClientRestrictionDetector(t *testing.T) {
 
 func TestOpenAICodexCLISimulationUsesLatestClientVersion(t *testing.T) {
 	require.Equal(t, "0.138.0", codexCLIVersion)
-	require.Contains(t, codexCLIUserAgent, "codex_cli_rs/0.138.0 ")
+	require.Contains(t, codexCLIUserAgent, "Codex Desktop/0.138.0 ")
+	require.Contains(t, codexCLIUserAgent, "(codex_exec; 0.138.0)")
 	require.NotContains(t, codexCLIUserAgent, "0.125.0")
 	require.Contains(t, DefaultOpenAICodexUserAgent, "0.138.0")
 	require.NotContains(t, DefaultOpenAICodexUserAgent, "0.125.0")
+	require.Equal(t, "Codex Desktop", codexCLIOriginator)
+}
+
+func TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(nil))
+	req.Header.Set("User-Agent", "codex_cli_rs/0.125.0")
+	req.Header.Set("originator", "codex_cli_rs")
+	req.Header.Set("OpenAI-Beta", "responses=experimental")
+	req.Header.Set("version", "0.125.0")
+	req.Header.Set("thread-id", "thread-from-client")
+	body := []byte(`{"prompt_cache_key":"prompt-cache-from-body"}`)
+
+	applyOpenAICodexLatestClientHeaders(req, body)
+
+	require.Equal(t, codexCLIUserAgent, req.Header.Get("User-Agent"))
+	require.Equal(t, codexCLIOriginator, req.Header.Get("originator"))
+	require.Empty(t, req.Header.Get("OpenAI-Beta"))
+	require.Empty(t, req.Header.Get("version"))
+	require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
+	require.Equal(t, codexCLIBetaFeatures, req.Header.Get("X-Codex-Beta-Features"))
+	require.Equal(t, "prompt-cache-from-body", req.Header.Get("Session-Id"))
+	require.Equal(t, "thread-from-client", req.Header.Get("Thread-Id"))
+	require.Equal(t, "prompt-cache-from-body", req.Header.Get("X-Client-Request-Id"))
+	require.Equal(t, "prompt-cache-from-body:0", req.Header.Get("X-Codex-Window-Id"))
+
+	var turnMetadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(req.Header.Get("X-Codex-Turn-Metadata")), &turnMetadata))
+	require.Equal(t, "prompt-cache-from-body", turnMetadata["session_id"])
+	require.Equal(t, "thread-from-client", turnMetadata["thread_id"])
+	require.Equal(t, "prompt-cache-from-body:0", turnMetadata["window_id"])
+	require.Equal(t, "turn", turnMetadata["request_kind"])
+	require.NotEmpty(t, turnMetadata["turn_id"])
+	require.NotZero(t, turnMetadata["turn_started_at_unix_ms"])
 }
 
 func TestGetAPIKeyIDFromContext(t *testing.T) {

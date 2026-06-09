@@ -43,10 +43,10 @@ const (
 	// OpenAI Platform API for API Key accounts (fallback)
 	openaiPlatformAPIURL   = "https://api.openai.com/v1/responses"
 	openaiStickySessionTTL = time.Hour // 粘性会话TTL
-	// 与真实 Codex CLI 的 User-Agent 结构对齐：
-	// {originator}/{version} ({OS} {OS_version}; {arch}) {terminal}
-	// 旧值 "codex_cli_rs/0.125.0" 缺少 OS/架构/终端后缀，易被上游指纹识别为非官方客户端。
-	codexCLIUserAgent = "codex_cli_rs/0.138.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	// 与 @openai/codex@0.138.0 在 Windows 上的真实 exec 请求对齐。
+	codexCLIUserAgent    = "Codex Desktop/0.138.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.138.0)"
+	codexCLIOriginator   = "Codex Desktop"
+	codexCLIBetaFeatures = "terminal_resize_reflow,memories"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
@@ -73,29 +73,46 @@ const (
 
 // OpenAI allowed headers whitelist (for non-passthrough).
 var openaiAllowedHeaders = map[string]bool{
-	"accept-language":       true,
-	"content-type":          true,
-	"conversation_id":       true,
-	"user-agent":            true,
-	"originator":            true,
-	"session_id":            true,
-	"x-codex-turn-state":    true,
-	"x-codex-turn-metadata": true,
+	"accept":                                true,
+	"accept-language":                       true,
+	"content-type":                          true,
+	"conversation_id":                       true,
+	"session-id":                            true,
+	"thread-id":                             true,
+	"user-agent":                            true,
+	"originator":                            true,
+	"session_id":                            true,
+	"x-client-request-id":                   true,
+	"x-codex-beta-features":                 true,
+	"x-codex-installation-id":               true,
+	"x-codex-turn-state":                    true,
+	"x-codex-turn-metadata":                 true,
+	"x-codex-window-id":                     true,
+	"x-oai-attestation":                     true,
+	"x-responsesapi-include-timing-metrics": true,
 }
 
 // OpenAI passthrough allowed headers whitelist.
 // 透传模式下仅放行这些低风险请求头，避免将非标准/环境噪声头传给上游触发风控。
 var openaiPassthroughAllowedHeaders = map[string]bool{
-	"accept":                true,
-	"accept-language":       true,
-	"content-type":          true,
-	"conversation_id":       true,
-	"openai-beta":           true,
-	"user-agent":            true,
-	"originator":            true,
-	"session_id":            true,
-	"x-codex-turn-state":    true,
-	"x-codex-turn-metadata": true,
+	"accept":                                true,
+	"accept-language":                       true,
+	"content-type":                          true,
+	"conversation_id":                       true,
+	"openai-beta":                           true,
+	"session-id":                            true,
+	"thread-id":                             true,
+	"user-agent":                            true,
+	"originator":                            true,
+	"session_id":                            true,
+	"x-client-request-id":                   true,
+	"x-codex-beta-features":                 true,
+	"x-codex-installation-id":               true,
+	"x-codex-turn-state":                    true,
+	"x-codex-turn-metadata":                 true,
+	"x-codex-window-id":                     true,
+	"x-oai-attestation":                     true,
+	"x-responsesapi-include-timing-metrics": true,
 }
 
 // codex_cli_only 拒绝时记录的请求头白名单（仅用于诊断日志，不参与上游透传）
@@ -1781,7 +1798,7 @@ func resolveOpenAIUpstreamOriginator(c *gin.Context, isOfficialClient bool) stri
 		}
 	}
 	if isOfficialClient {
-		return "codex_cli_rs"
+		return codexCLIOriginator
 	}
 	return "opencode"
 }
@@ -1790,17 +1807,78 @@ func (s *OpenAIGatewayService) shouldSimulateOpenAICodexCLI(account *Account) bo
 	return account != nil && account.IsOpenAICodexCLISimulationEnabled()
 }
 
-func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Request, account *Account) {
+func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Request, account *Account, body []byte) {
 	if req == nil || !s.shouldSimulateOpenAICodexCLI(account) {
 		return
 	}
-	req.Header.Set("user-agent", codexCLIUserAgent)
-	req.Header.Set("originator", "codex_cli_rs")
-	if req.Header.Get("OpenAI-Beta") == "" {
-		req.Header.Set("OpenAI-Beta", "responses=experimental")
+	applyOpenAICodexLatestClientHeaders(req, body)
+}
+
+// applyOpenAICodexLatestClientHeaders 将账号级模拟请求收敛到真实 Codex Desktop 0.138.0 的请求头形态。
+// 这里主动移除旧实验头，避免人工测试和普通网关请求继续携带过期客户端指纹。
+func applyOpenAICodexLatestClientHeaders(req *http.Request, body []byte) {
+	if req == nil {
+		return
 	}
-	if req.Header.Get("version") == "" {
-		req.Header.Set("version", codexCLIVersion)
+	req.Header.Set("user-agent", codexCLIUserAgent)
+	req.Header.Set("originator", codexCLIOriginator)
+	req.Header.Del("OpenAI-Beta")
+	req.Header.Del("version")
+	if req.Header.Get("accept") == "" {
+		req.Header.Set("accept", "text/event-stream")
+	}
+	if req.Header.Get("x-codex-beta-features") == "" {
+		req.Header.Set("x-codex-beta-features", codexCLIBetaFeatures)
+	}
+
+	sessionID := strings.TrimSpace(req.Header.Get("session-id"))
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(req.Header.Get("session_id"))
+	}
+	if sessionID == "" && len(body) > 0 {
+		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
+	}
+	if sessionID == "" {
+		sessionID = uuid.NewString()
+	}
+	threadID := strings.TrimSpace(req.Header.Get("thread-id"))
+	if threadID == "" {
+		threadID = sessionID
+	}
+	clientRequestID := strings.TrimSpace(req.Header.Get("x-client-request-id"))
+	if clientRequestID == "" {
+		clientRequestID = sessionID
+	}
+	windowID := strings.TrimSpace(req.Header.Get("x-codex-window-id"))
+	if windowID == "" {
+		windowID = sessionID + ":0"
+	}
+	if req.Header.Get("session-id") == "" {
+		req.Header.Set("session-id", sessionID)
+	}
+	if req.Header.Get("thread-id") == "" {
+		req.Header.Set("thread-id", threadID)
+	}
+	if req.Header.Get("x-client-request-id") == "" {
+		req.Header.Set("x-client-request-id", clientRequestID)
+	}
+	if req.Header.Get("x-codex-window-id") == "" {
+		req.Header.Set("x-codex-window-id", windowID)
+	}
+	if req.Header.Get("x-codex-turn-metadata") == "" {
+		turnMetadata := map[string]any{
+			"session_id":              sessionID,
+			"thread_id":               threadID,
+			"thread_source":           "user",
+			"turn_id":                 uuid.NewString(),
+			"sandbox":                 "none",
+			"turn_started_at_unix_ms": time.Now().UnixMilli(),
+			"request_kind":            "turn",
+			"window_id":               windowID,
+		}
+		if data, err := json.Marshal(turnMetadata); err == nil {
+			req.Header.Set("x-codex-turn-metadata", string(data))
+		}
 	}
 }
 
@@ -4112,7 +4190,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 		req.Header.Set("user-agent", customUA)
 	}
 	if s.shouldSimulateOpenAICodexCLI(account) {
-		s.applyOpenAICodexCLISimulationHeaders(req, account)
+		s.applyOpenAICodexCLISimulationHeaders(req, account, body)
 	} else if account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
 		// OAuth 安全透传：对非 Codex UA 统一兜底，降低被上游风控拦截概率。
 		req.Header.Set("user-agent", codexCLIUserAgent)
@@ -5174,7 +5252,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 		req.Header.Set("user-agent", customUA)
 	}
 
-	s.applyOpenAICodexCLISimulationHeaders(req, account)
+	s.applyOpenAICodexCLISimulationHeaders(req, account, body)
 
 	// 浏览器型 UA 兜底：仅 OAuth（ChatGPT 内部接口）账号生效，若最终 user-agent 仍为浏览器
 	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。
