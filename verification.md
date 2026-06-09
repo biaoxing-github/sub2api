@@ -2813,6 +2813,19 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 验证：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
 - 验证：`git diff --check` 通过。
 
+## 2026-06-09 22:30 +08:00 - v0.1.134.20 / v0.1.134.21 蓝绿发布验证
+
+- 执行者：Devil
+- v0.1.134.20：从提交 `79b4b9480fcc` 构建 `sub2api:v0.1.134.20` 成功，部署到 idle green 并切流；基础冒烟通过，但切流后真实 OpenAI `/responses` 200 已进入 DB 和 green 日志时，调度池 samples 仍为 0。该版本判定为特性验证失败，已被 v0.1.134.21 替代。
+- v0.1.134.21：从提交 `d017b05e786f` 构建 `sub2api:v0.1.134.21` 成功，部署到 idle blue；候选 `18083` health/root/admin/settings 200，静态资源 6/6 200，未登录 admin accounts 与 `/responses` 均 401，管理端版本返回 `image_version=v0.1.134.21`。
+- 候选验证：OpenAI 调度池 group=2 返回 `total=3`、`schedulable_count=3`，health key upstream 为 `https://ai2.hhhl.cc/v1`、`https://api.denxio.top`、`https://api.denxio.top`，证明 key 错位已修复。
+- 稳定窗口：blue 60 秒后仍 `Health=healthy`，blue 关键错误日志过滤命中 0。
+- 切流：`active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`nginx -t` 与 reload 成功，`docker-compose.blue.yml` 默认镜像同步为 `sub2api:v0.1.134.21`。
+- 切流后冒烟：`8080` health/root/admin/settings 200，静态资源 6/6 200，未登录 admin accounts 与 `/responses` 均 401，管理端版本返回 `image_version=v0.1.134.21`。
+- 真实流量验证：`2026-06-09 22:26:48+08` 后 DB 中 OpenAI 账号 `free6` 有 5 次 usage log，5 次都有 `first_token_ms`；调度池最终显示 `free6 samples=14 success=14 ttft_ewma_ms=14900.55 upstream=https://ai2.hhhl.cc/v1`。
+- 日志验证：切流后 `sub2api-blue` 与 `sub2api-proxy` 关键错误日志过滤命中 0。
+- 当前状态：active=`sub2api-blue/sub2api:v0.1.134.21`；rollback=`sub2api-green/sub2api:v0.1.134.20`，green 保持 running/healthy；未重启 PostgreSQL 和 Redis。
+
 ## 2026-06-09 21:01 +08:00 - v0.1.134.19 蓝绿构建、部署、验证
 
 - 执行者：Devil
