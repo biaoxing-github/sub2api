@@ -61,7 +61,7 @@ func NewFailoverState(maxSwitches int, hasBoundSession bool) *FailoverState {
 }
 
 // HandleFailoverError 处理 UpstreamFailoverError，返回下一步动作。
-// 包含：缓存计费判断、同账号重试、临时封禁、切换计数、Antigravity 延时。
+// 包含：缓存计费判断、智能重试策略、临时封禁、切换计数、Antigravity 延时。
 func (s *FailoverState) HandleFailoverError(
 	ctx context.Context,
 	gatewayService TempUnscheduler,
@@ -76,24 +76,69 @@ func (s *FailoverState) HandleFailoverError(
 		s.ForceCacheBilling = true
 	}
 
-	// 同账号重试：对 RetryableOnSameAccount 的临时性错误，先在同一账号上重试
-	if failoverErr.RetryableOnSameAccount && s.SameAccountRetryCount[accountID] < maxSameAccountRetries {
-		s.SameAccountRetryCount[accountID]++
-		logger.FromContext(ctx).Warn("gateway.failover_same_account_retry",
-			zap.Int64("account_id", accountID),
-			zap.Int("upstream_status", failoverErr.StatusCode),
-			zap.Int("same_account_retry_count", s.SameAccountRetryCount[accountID]),
-			zap.Int("same_account_retry_max", maxSameAccountRetries),
-		)
-		if !sleepWithContext(ctx, sameAccountRetryDelay) {
-			return FailoverCanceled
+	// 智能重试策略：根据状态码差异化处理
+	statusCode := failoverErr.StatusCode
+	switch statusCode {
+	case http.StatusTooManyRequests: // 429 限流
+		// 429 限流：同账号重试，等待 RetryAfter 或固定延时
+		if s.SameAccountRetryCount[accountID] < maxSameAccountRetries {
+			s.SameAccountRetryCount[accountID]++
+			logger.FromContext(ctx).Warn("gateway.failover_429_same_account_retry",
+				zap.Int64("account_id", accountID),
+				zap.Int("same_account_retry_count", s.SameAccountRetryCount[accountID]),
+				zap.Int("same_account_retry_max", maxSameAccountRetries),
+			)
+			if !sleepWithContext(ctx, sameAccountRetryDelay) {
+				return FailoverCanceled
+			}
+			return FailoverContinue
 		}
-		return FailoverContinue
-	}
-
-	// 同账号重试用尽，执行临时封禁
-	if failoverErr.RetryableOnSameAccount {
+		// 同账号重试用尽，执行临时封禁后切换
 		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
+
+	case http.StatusServiceUnavailable: // 503 容量不足
+		// 503 容量不足：立即切换下一账号，不冷却当前账号
+		logger.FromContext(ctx).Warn("gateway.failover_503_immediate_switch",
+			zap.Int64("account_id", accountID),
+		)
+		// 不执行 TempUnscheduleRetryableError，直接加入失败列表
+
+	case http.StatusBadGateway, http.StatusGatewayTimeout: // 502/504 网关错误
+		// 502/504 网关错误：同账号重试 1 次，等待 1s
+		if s.SameAccountRetryCount[accountID] < 1 {
+			s.SameAccountRetryCount[accountID]++
+			logger.FromContext(ctx).Warn("gateway.failover_5xx_gateway_retry",
+				zap.Int64("account_id", accountID),
+				zap.Int("upstream_status", statusCode),
+				zap.Int("same_account_retry_count", s.SameAccountRetryCount[accountID]),
+			)
+			if !sleepWithContext(ctx, time.Second) {
+				return FailoverCanceled
+			}
+			return FailoverContinue
+		}
+		// 重试用尽，执行临时封禁后切换
+		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
+
+	default:
+		// 其他错误：原有逻辑，RetryableOnSameAccount 同账号重试
+		if failoverErr.RetryableOnSameAccount && s.SameAccountRetryCount[accountID] < maxSameAccountRetries {
+			s.SameAccountRetryCount[accountID]++
+			logger.FromContext(ctx).Warn("gateway.failover_same_account_retry",
+				zap.Int64("account_id", accountID),
+				zap.Int("upstream_status", statusCode),
+				zap.Int("same_account_retry_count", s.SameAccountRetryCount[accountID]),
+				zap.Int("same_account_retry_max", maxSameAccountRetries),
+			)
+			if !sleepWithContext(ctx, sameAccountRetryDelay) {
+				return FailoverCanceled
+			}
+			return FailoverContinue
+		}
+		// 同账号重试用尽，执行临时封禁
+		if failoverErr.RetryableOnSameAccount {
+			gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
+		}
 	}
 
 	// 加入失败列表
@@ -108,7 +153,7 @@ func (s *FailoverState) HandleFailoverError(
 	s.SwitchCount++
 	logger.FromContext(ctx).Warn("gateway.failover_switch_account",
 		zap.Int64("account_id", accountID),
-		zap.Int("upstream_status", failoverErr.StatusCode),
+		zap.Int("upstream_status", statusCode),
 		zap.Int("switch_count", s.SwitchCount),
 		zap.Int("max_switches", s.MaxSwitches),
 	)

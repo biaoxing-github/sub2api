@@ -290,6 +290,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		accounts.GET("/action-items", h.Admin.Account.GetActionItems)
 		accounts.GET("/usage-summary", h.Admin.Account.GetUsageSummary)
 		accounts.GET("/scheduling-pool", h.Admin.Account.ListSchedulingPool)
+		accounts.POST("/scheduling-pool/:id/test", h.Admin.Account.Test)
 		accounts.POST("/refresh-upstream-balances", h.Admin.Account.RefreshUpstreamBalances)
 		accounts.POST("/batch-test-non-apikey", h.Admin.Account.BatchTestNonAPIKey)
 		accounts.GET("/batch-test-runs", h.Admin.Account.ListBatchTestRuns)
