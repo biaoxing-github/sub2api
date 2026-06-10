@@ -348,6 +348,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
 					return
 				}
+				// Gemini 不支持无限调度配置，使用默认 false
 				action := fs.HandleSelectionExhausted(c.Request.Context(), false)
 				switch action {
 				case FailoverContinue:

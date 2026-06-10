@@ -189,7 +189,14 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error())
 				return
 			}
-			action := fs.HandleSelectionExhausted(c.Request.Context(), false)
+			// 根据平台读取对应的无限等待配置
+			infiniteWait := false
+			if groupPlatform == service.PlatformOpenAI {
+				infiniteWait = h.cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled
+			} else if groupPlatform == service.PlatformAnthropic {
+				infiniteWait = h.cfg.Gateway.AnthropicSchedulerInfiniteWaitEnabled
+			}
+			action := fs.HandleSelectionExhausted(c.Request.Context(), infiniteWait)
 			switch action {
 			case FailoverContinue:
 				continue

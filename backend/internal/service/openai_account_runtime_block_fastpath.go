@@ -81,6 +81,12 @@ func (s *OpenAIGatewayService) handleOpenAIModelNotFoundCooldown(ctx context.Con
 		}
 	}
 	updateAccountModelRateLimitExtra(account, modelKey, resetAt)
+	// 更新 Redis 快照，确保调度器立刻感知限流状态
+	if s.schedulerSnapshot != nil {
+		if err := s.schedulerSnapshot.UpdateAccountInCache(ctx, account); err != nil {
+			slog.Warn("openai_update_snapshot_failed", "account_id", account.ID, "model", modelKey, "error", err)
+		}
+	}
 	slog.Info("openai_model_not_found_cooldown", "account_id", account.ID, "model", modelKey, "reset_at", resetAt)
 	return true
 }
