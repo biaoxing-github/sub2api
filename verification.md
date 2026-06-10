@@ -2861,3 +2861,19 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 日志验证：切流后 `sub2api-blue` 与 `sub2api-proxy` 关键错误过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 命中 0。
 - 当前状态：active=`sub2api-blue/sub2api:v0.1.134.24`；rollback=`sub2api-green/sub2api:v0.1.134.20`。
 - 已知限制：`D:\sub2api-deploy\.env` 的 `ADMIN_PASSWORD` 为空，无法登录管理端验证 `/api/v1/admin/system/version`；版本由 Docker label 和容器内 `/app/sub2api --version` 验证。
+
+## 2026-06-10 16:01 +08:00 - Claude Code 上游格式错误 failover 与 v0.1.134.25 发布
+
+- 执行者：Devil
+- 根因：Claude Code 经 `/v1/messages` 进入 OpenAI 兼容转发时，部分远端返回 HTTP 400，正文为 `There was an issue with the format or content of your request` 并携带多个 `request id`。旧逻辑把它当普通 upstream 400 写给客户端，客户端直接失败，无法继续尝试其他远端。
+- 修复：`isOpenAITransientProcessingError` 增加窄口径匹配，只有 HTTP 400、固定格式或内容错误文案、且包含 `request id` 时才归入临时处理错误；既有 `shouldFailoverOpenAIUpstreamResponse` 会在写客户端前返回 `UpstreamFailoverError`，让外层调度继续 failover。
+- 验证：`go test -tags unit ./internal/service -run "TestIsOpenAITransientProcessingError|TestOpenAIGatewayService_ForwardAsAnthropic_FormatContentIssueTriggersFailover" -count=1` 通过。
+- 验证：`go test -tags unit ./internal/service -run "TestOpenAIGatewayService_Forward_(TransientProcessingErrorTriggersFailover|ModelCapacityErrorTriggersFailoverAndSameAccountRetry|LogsInstructionsRequiredDetails)|TestForwardAsAnthropic_(NormalizesRoutingAndEffortForGpt54XHigh|ReplaysWithoutContinuationWhenPreviousResponseMissing|DisablesAPIKeyContinuationWhenUpstreamRequiresWebSocketV2)|TestOpenAIUpstreamErrorPolicySeparatesPhasesAndActions" -count=1` 通过。
+- 验证：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- 验证：`git diff --check -- backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_codex_cli_only_test.go` 通过。
+- 构建：从提交 `20bfc6a74c88` 构建 `sub2api:v0.1.134.25`，镜像 ID `sha256:628d79048a9c2fc4ccf075a134e0b01ed2caf8aa3cdb2c8910de914e2ee0ff54`，label `version=v0.1.134.25`、`revision=20bfc6a74c88`。
+- 候选验证：idle `sub2api-green` 候选端口 `18082` health/root/admin/settings 200，静态资源 6/6 200，未登录 admin accounts 与 `/responses` 401，60 秒 Health `healthy`。
+- 切流验证：`active.conf` 从 `sub2api-blue:8080` 切到 `sub2api-green:8080`，`nginx -t` 与 reload 成功；入口 `8080` health/root/admin/settings 200，未登录 admin accounts 与 `/responses` 401。
+- 现时复核：`active.conf` 指向 `sub2api-green:8080`；`sub2api-green` 为 `sub2api:v0.1.134.25` 且 Health `healthy`；`sub2api-blue/sub2api:v0.1.134.24` 保持 running/healthy 作为回滚。
+- 日志观察：近 2 小时 `sub2api-green` 有 1 条 request snapshot 清理 `pq: canceling statement due to user request`；`sub2api-proxy` 关键错误过滤命中 0。该观察项与本轮 Claude Code failover 改动无关，继续留意即可。
+- 已知无关阻塞：`go test -tags unit ./internal/service -run "^TestForwardAsAnthropic_DoneSentinelWithoutTerminalReturnsError$" -count=1` 失败在既有 done-sentinel 期望与 failover 错误文本差异，本轮未修改该链路。
