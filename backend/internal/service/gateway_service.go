@@ -587,19 +587,54 @@ func (e *UpstreamFailoverError) Error() string {
 	return fmt.Sprintf("upstream error: %d (failover)", e.StatusCode)
 }
 
-// TempUnscheduleRetryableError 对 RetryableOnSameAccount 类型的 failover 错误触发临时封禁。
+// TempUnscheduleRetryableError 对 failover 错误触发临时封禁（统一熔断入口）。
 // 由 handler 层在同账号重试全部用尽、切换账号时调用。
 func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accountID int64, failoverErr *UpstreamFailoverError) {
-	if failoverErr == nil || !failoverErr.RetryableOnSameAccount {
+	if failoverErr == nil {
 		return
 	}
-	// 根据状态码选择封禁策略
+	// 统一熔断策略：429/503 直接写 Redis temp_unschedulable
 	switch failoverErr.StatusCode {
+	case http.StatusTooManyRequests: // 429 限流
+		until := time.Now().Add(5 * time.Minute)
+		reason := "429: rate limit (auto temp-unschedule 5m)"
+		if err := s.accountRepo.SetTempUnschedulable(ctx, accountID, until, reason); err != nil {
+			slog.Warn("temp_unschedule_429_failed", "account_id", accountID, "error", err)
+		} else {
+			slog.Info("temp_unschedule_429", "account_id", accountID, "until", until.Format("15:04:05"), "reason", reason)
+		}
+	case http.StatusServiceUnavailable: // 503 容量不足
+		until := time.Now().Add(10 * time.Second)
+		reason := "503: capacity exhausted (auto temp-unschedule 10s)"
+		if err := s.accountRepo.SetTempUnschedulable(ctx, accountID, until, reason); err != nil {
+			slog.Warn("temp_unschedule_503_failed", "account_id", accountID, "error", err)
+		} else {
+			slog.Info("temp_unschedule_503", "account_id", accountID, "until", until.Format("15:04:05"), "reason", reason)
+		}
 	case http.StatusBadRequest:
-		tempUnscheduleGoogleConfigError(ctx, s.accountRepo, accountID, "[handler]")
+		if failoverErr.RetryableOnSameAccount {
+			tempUnscheduleGoogleConfigError(ctx, s.accountRepo, accountID, "[handler]")
+		}
 	case http.StatusBadGateway:
-		tempUnscheduleEmptyResponse(ctx, s.accountRepo, accountID, "[handler]")
+		if failoverErr.RetryableOnSameAccount {
+			tempUnscheduleEmptyResponse(ctx, s.accountRepo, accountID, "[handler]")
+		}
 	}
+}
+
+// IsAccountBlocked 检查账号是否在熔断期（用于 HandleSelectionExhausted 避免空转）
+func (s *GatewayService) IsAccountBlocked(accountID int64) bool {
+	if s == nil || s.accountRepo == nil {
+		return false
+	}
+	// 查询 Redis temp_unschedulable 状态
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil || account == nil {
+		return false
+	}
+	return account.TempUnschedulableUntil != nil && time.Now().Before(*account.TempUnschedulableUntil)
 }
 
 // GatewayService handles API gateway operations

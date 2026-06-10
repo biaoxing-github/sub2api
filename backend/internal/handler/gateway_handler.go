@@ -342,6 +342,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			c.Request = c.Request.WithContext(ctx)
 		}
 
+		// 注入 GatewayService 到 context，供 HandleSelectionExhausted 检查账号封禁状态
+		ctx := context.WithValue(c.Request.Context(), gatewayServiceKey{}, h.gatewayService)
+		c.Request = c.Request.WithContext(ctx)
+
 		for {
 			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0)) // Gemini 不使用会话限制
 			if err != nil {
@@ -587,6 +591,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		ctx := service.WithSingleAccountRetry(c.Request.Context(), true, h.metadataBridgeEnabled())
 		c.Request = c.Request.WithContext(ctx)
 	}
+
+	// 注入 GatewayService 到 context，供 HandleSelectionExhausted 检查账号封禁状态
+	ctx := context.WithValue(c.Request.Context(), gatewayServiceKey{}, h.gatewayService)
+	c.Request = c.Request.WithContext(ctx)
 
 	for {
 		fs := NewFailoverStateWithBackoff(h.maxAccountSwitches, hasBoundSession, h.anthropicSingleAccountBackoffSeconds())

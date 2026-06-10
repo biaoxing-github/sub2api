@@ -16,6 +16,9 @@ type TempUnscheduler interface {
 	TempUnscheduleRetryableError(ctx context.Context, accountID int64, failoverErr *service.UpstreamFailoverError)
 }
 
+// gatewayServiceKey 用于在 context 中传递 GatewayService，供 HandleSelectionExhausted 检查账号封禁状态
+type gatewayServiceKey struct{}
+
 // FailoverAction 表示 failover 错误处理后的下一步动作
 type FailoverAction int
 
@@ -114,11 +117,12 @@ func (s *FailoverState) HandleFailoverError(
 		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
 
 	case http.StatusServiceUnavailable: // 503 容量不足
-		// 503 容量不足：立即切换下一账号，不冷却当前账号
+		// 503 容量不足：立即切换下一账号，短暂冷却避免循环选中
 		logger.FromContext(ctx).Warn("gateway.failover_503_immediate_switch",
 			zap.Int64("account_id", accountID),
 		)
-		// 不执行 TempUnscheduleRetryableError，直接加入失败列表
+		// 执行短时临时封禁，避免 HandleSelectionExhausted 清空失败列表后再次选中
+		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
 
 	case http.StatusBadGateway, http.StatusGatewayTimeout: // 502/504 网关错误
 		// 502/504 网关错误：同账号重试 1 次，等待 1s
@@ -194,6 +198,22 @@ func (s *FailoverState) HandleFailoverError(
 // 返回 FailoverExhausted 时，调用方应返回错误响应。
 // 返回 FailoverCanceled 时，调用方应直接 return。
 func (s *FailoverState) HandleSelectionExhausted(ctx context.Context, infiniteWait bool) FailoverAction {
+	// 修复：退避前检查唯一候选账号是否仍在熔断期，避免空转
+	if !infiniteWait && len(s.FailedAccountIDs) == 1 {
+		for accountID := range s.FailedAccountIDs {
+			// 如果唯一账号仍在封禁期（429/503），立即失败，不空转
+			if gatewayService, ok := ctx.Value(gatewayServiceKey{}).(interface {
+				IsAccountBlocked(int64) bool
+			}); ok && gatewayService.IsAccountBlocked(accountID) {
+				logger.FromContext(ctx).Warn("gateway.failover_blocked_account_skip",
+					zap.Int64("account_id", accountID),
+					zap.String("reason", "account still in cooldown"),
+				)
+				return FailoverExhausted
+			}
+		}
+	}
+
 	if infiniteWait || (s.LastFailoverErr != nil &&
 		s.LastFailoverErr.StatusCode == http.StatusServiceUnavailable &&
 		s.SwitchCount < s.MaxSwitches) {
