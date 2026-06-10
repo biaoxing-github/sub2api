@@ -2846,3 +2846,18 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 验证：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
 - 验证：`git diff --check` 通过。
 - 已知无关阻塞：`go test -tags unit ./internal/handler -run "TestNewFailoverState|TestNewFailoverStateWithBackoff|TestHandleSelectionExhausted" -count=1` 整包编译失败在既有 `userHandlerRepoStub` 缺少 `GetByIDIncludeDeleted`，本轮未修改该 auth/user handler 测试桩链路。
+
+## 2026-06-10 12:43 +08:00 - v0.1.134.24 蓝绿构建、部署、验证
+
+- 执行者：Devil
+- 提交：`5b3f22d50b06`（`feat(gateway): 接通 Anthropic 单账号退避配置`）。
+- 构建：从已提交 `HEAD` 通过 `git archive HEAD | docker build ...` 构建不可变镜像 `sub2api:v0.1.134.24`，镜像 ID `sha256:9a1177b4b4588cb3bd2ae746250d35338d908b2f6a90284595fb0ecf2e66b5f9`。
+- 镜像标签验证：`docker image inspect sub2api:v0.1.134.24` 返回 `Version=v0.1.134.24`、`Revision=5b3f22d50b06`。
+- 候选部署：发布前 active 为 `sub2api-green/sub2api:v0.1.134.20`；只重建 idle `sub2api-blue` 到 `sub2api:v0.1.134.24`，未重启 PostgreSQL/Redis。
+- 候选验证：`18083` health/root/admin/settings 均 200，静态资源 6/6 返回 200，未登录 admin accounts 与 `/responses` 均 401，`sub2api-blue` 60 秒后仍 `Health=healthy`。
+- 候选日志：启动窗口有 1 条 `[OpenAI] cleanup expired request snapshots failed err=pq: canceling statement due to user request`；切流前近 5 分钟复查关键错误过滤命中 0，判定为非重复启动清理观察项。
+- 切流：`D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 成功。
+- 切流后验证：`8080` health/root/admin/settings 均 200，静态资源 6/6 返回 200，未登录 admin accounts 与 `/responses` 均 401，`sub2api-blue` Health `healthy`，`sub2api-green` 继续 running/healthy 作为回滚。
+- 日志验证：切流后 `sub2api-blue` 与 `sub2api-proxy` 关键错误过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 命中 0。
+- 当前状态：active=`sub2api-blue/sub2api:v0.1.134.24`；rollback=`sub2api-green/sub2api:v0.1.134.20`。
+- 已知限制：`D:\sub2api-deploy\.env` 的 `ADMIN_PASSWORD` 为空，无法登录管理端验证 `/api/v1/admin/system/version`；版本由 Docker label 和容器内 `/app/sub2api --version` 验证。
