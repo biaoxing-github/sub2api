@@ -4931,6 +4931,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if errText := strings.TrimSpace(err.Error()); errText != "" {
 				msg += ": " + errText
 			}
+			// 在触发 failover 前刷新心跳，确保客户端连接存活
+			// 如果客户端已断开，避免无意义的账号切换和后续 SSE error event 写入失败
+			if !writePendingLines() {
+				clientDisconnected = true
+				return resultWithUsage(), fmt.Errorf("stream usage incomplete before failover heartbeat")
+			}
 			return resultWithUsage(),
 				s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, nil, msg)
 		}
@@ -4968,6 +4974,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		).Info("OpenAI passthrough 上游流在未收到 [DONE] 时结束，疑似断流")
 		s.recordOpenAIPathHealthStreamIncomplete(account, "")
 		if !upstreamOutputStarted {
+			// 在触发 failover 前刷新心跳，确保客户端连接存活
+			if !writePendingLines() {
+				clientDisconnected = true
+				return resultWithUsage(), errors.New("stream usage incomplete before terminal event failover heartbeat")
+			}
 			return resultWithUsage(),
 				s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, nil, "OpenAI stream ended before a terminal event")
 		}
