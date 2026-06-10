@@ -2,6 +2,18 @@ package domain
 
 import "testing"
 
+func TestDefaultModelMappingsIncludeClaudeFable5(t *testing.T) {
+	t.Parallel()
+
+	if got := DefaultAntigravityModelMapping["claude-fable-5"]; got != "claude-fable-5" {
+		t.Fatalf("unexpected Antigravity mapping for claude-fable-5: got %q", got)
+	}
+
+	if got := DefaultBedrockModelMapping["claude-fable-5"]; got != "us.anthropic.claude-fable-5-v1" {
+		t.Fatalf("unexpected Bedrock mapping for claude-fable-5: got %q", got)
+	}
+}
+
 func TestDefaultAntigravityModelMapping_ImageCompatibilityAliases(t *testing.T) {
 	t.Parallel()
 

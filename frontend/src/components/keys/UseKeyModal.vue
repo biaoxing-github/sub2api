@@ -983,6 +983,23 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
         }
       }
     },
+    'claude-fable-5': {
+      name: 'Claude Fable 5',
+      limit: {
+        context: 200000,
+        output: 64000
+      },
+      modalities: {
+        input: ['text', 'image', 'pdf'],
+        output: ['text']
+      },
+      options: {
+        thinking: {
+          budgetTokens: 24576,
+          type: 'enabled'
+        }
+      }
+    },
     'claude-sonnet-4-6': {
       name: 'Claude 4.6 Sonnet',
       limit: {

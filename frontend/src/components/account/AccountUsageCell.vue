@@ -663,6 +663,7 @@ const antigravity3ImageUsageFromAPI = computed(() =>
 const antigravityClaudeUsageFromAPI = computed(() =>
   getAntigravityUsageFromAPI([
     'claude-sonnet-4-5', 'claude-opus-4-5-thinking',
+    'claude-fable-5', 'claude-opus-4-7',
     'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-6-thinking',
   ])
 )

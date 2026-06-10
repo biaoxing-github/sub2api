@@ -9547,6 +9547,7 @@ const betaPresets: Record<
 // 常用模型模式（具体 ID + 通配符示例）
 const commonModelPatterns = [
   "claude-opus-4-6",
+  "claude-fable-5",
   "claude-sonnet-4-6",
   "claude-opus-*",
   "claude-sonnet-*",

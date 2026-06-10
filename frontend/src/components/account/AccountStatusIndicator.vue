@@ -251,6 +251,7 @@ const formatScopeName = (scope: string): string => {
     // Claude 系列
     'claude-opus-4-6': 'COpus46',
     'claude-opus-4-6-thinking': 'COpus46T',
+    'claude-fable-5': 'CFable5',
     'claude-sonnet-4-6': 'CSon46',
     'claude-sonnet-4-5': 'CSon45',
     'claude-sonnet-4-5-thinking': 'CSon45T',
