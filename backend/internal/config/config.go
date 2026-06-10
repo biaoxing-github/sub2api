@@ -822,6 +822,12 @@ type GatewayConfig struct {
 	// AnthropicSchedulerInfiniteWaitEnabled: Anthropic Messages 调度耗尽时是否无限等待重试。
 	// 关闭时达到 maxAccountSwitches 上限后返回 502；开启后持续等待直到请求上下文取消或账号恢复。
 	AnthropicSchedulerInfiniteWaitEnabled bool `mapstructure:"anthropic_scheduler_infinite_wait_enabled"`
+	// AnthropicSingleAccountBackoffSeconds: Anthropic 单账号分组退避时间（秒），默认 2。
+	AnthropicSingleAccountBackoffSeconds int `mapstructure:"anthropic_single_account_backoff_seconds"`
+	// OpenAISchedulerCooldownMultiplier: OpenAI 账号冷却时间倍数，默认 1.0。
+	OpenAISchedulerCooldownMultiplier float64 `mapstructure:"openai_scheduler_cooldown_multiplier"`
+	// AnthropicSchedulerCooldownMultiplier: Anthropic 账号冷却时间倍数，默认 1.0。
+	AnthropicSchedulerCooldownMultiplier float64 `mapstructure:"anthropic_scheduler_cooldown_multiplier"`
 	// OpenAISchedulerProbeNotifyEnabled: 无限探测等待超过阈值时是否发送外部通知。
 	OpenAISchedulerProbeNotifyEnabled bool `mapstructure:"openai_scheduler_exhaustion_probe_notify_enabled"`
 	// OpenAISchedulerProbeNotifyChannel: 通知通道，feishu_webhook=自定义机器人，feishu_app=企业自建应用机器人。
@@ -2017,6 +2023,10 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_fast_lane.min_samples", 3)
 	viper.SetDefault("gateway.openai_fast_lane.explore_ratio", 0.1)
 	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_infinite_wait_enabled", false)
+	viper.SetDefault("gateway.anthropic_scheduler_infinite_wait_enabled", false)
+	viper.SetDefault("gateway.anthropic_single_account_backoff_seconds", 2)
+	viper.SetDefault("gateway.openai_scheduler_cooldown_multiplier", 1.0)
+	viper.SetDefault("gateway.anthropic_scheduler_cooldown_multiplier", 1.0)
 	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_enabled", false)
 	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_channel", "")
 	viper.SetDefault("gateway.openai_scheduler_exhaustion_probe_notify_after_seconds", DefaultOpenAISchedulerProbeNotifyAfterSeconds)
@@ -2761,6 +2771,15 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAISchedulerProbeNotifyRepeatSeconds < 0 {
 		return fmt.Errorf("gateway.openai_scheduler_exhaustion_probe_notify_repeat_seconds must be non-negative")
+	}
+	if c.Gateway.AnthropicSingleAccountBackoffSeconds < 0 {
+		return fmt.Errorf("gateway.anthropic_single_account_backoff_seconds must be non-negative")
+	}
+	if c.Gateway.OpenAISchedulerCooldownMultiplier <= 0 {
+		return fmt.Errorf("gateway.openai_scheduler_cooldown_multiplier must be positive")
+	}
+	if c.Gateway.AnthropicSchedulerCooldownMultiplier <= 0 {
+		return fmt.Errorf("gateway.anthropic_scheduler_cooldown_multiplier must be positive")
 	}
 	notifyChannel := strings.ToLower(strings.TrimSpace(c.Gateway.OpenAISchedulerProbeNotifyChannel))
 	switch notifyChannel {

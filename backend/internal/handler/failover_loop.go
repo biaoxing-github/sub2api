@@ -33,30 +33,47 @@ const (
 	maxSameAccountRetries = 3
 	// sameAccountRetryDelay 同账号重试间隔
 	sameAccountRetryDelay = 500 * time.Millisecond
-	// singleAccountBackoffDelay 单账号分组 503 退避重试固定延时。
+	// defaultSingleAccountBackoffDelay 单账号分组 503 退避重试默认延时。
 	// Service 层在 SingleAccountRetry 模式下已做充分原地重试（最多 3 次、总等待 30s），
 	// Handler 层只需短暂间隔后重新进入 Service 层即可。
-	singleAccountBackoffDelay = 2 * time.Second
+	defaultSingleAccountBackoffDelay = 2 * time.Second
 )
 
 // FailoverState 跨循环迭代共享的 failover 状态
 type FailoverState struct {
-	SwitchCount           int
-	MaxSwitches           int
-	FailedAccountIDs      map[int64]struct{}
-	SameAccountRetryCount map[int64]int
-	LastFailoverErr       *service.UpstreamFailoverError
-	ForceCacheBilling     bool
-	hasBoundSession       bool
+	SwitchCount              int
+	MaxSwitches              int
+	FailedAccountIDs         map[int64]struct{}
+	SameAccountRetryCount    map[int64]int
+	LastFailoverErr          *service.UpstreamFailoverError
+	ForceCacheBilling        bool
+	hasBoundSession          bool
+	singleAccountBackoffTime time.Duration // 单账号分组退避时间
 }
 
 // NewFailoverState 创建 failover 状态
 func NewFailoverState(maxSwitches int, hasBoundSession bool) *FailoverState {
 	return &FailoverState{
-		MaxSwitches:           maxSwitches,
-		FailedAccountIDs:      make(map[int64]struct{}),
-		SameAccountRetryCount: make(map[int64]int),
-		hasBoundSession:       hasBoundSession,
+		MaxSwitches:              maxSwitches,
+		FailedAccountIDs:         make(map[int64]struct{}),
+		SameAccountRetryCount:    make(map[int64]int),
+		hasBoundSession:          hasBoundSession,
+		singleAccountBackoffTime: defaultSingleAccountBackoffDelay,
+	}
+}
+
+// NewFailoverStateWithBackoff 创建带自定义退避时间的 failover 状态
+func NewFailoverStateWithBackoff(maxSwitches int, hasBoundSession bool, backoffSeconds int) *FailoverState {
+	backoffTime := defaultSingleAccountBackoffDelay
+	if backoffSeconds > 0 {
+		backoffTime = time.Duration(backoffSeconds) * time.Second
+	}
+	return &FailoverState{
+		MaxSwitches:              maxSwitches,
+		FailedAccountIDs:         make(map[int64]struct{}),
+		SameAccountRetryCount:    make(map[int64]int),
+		hasBoundSession:          hasBoundSession,
+		singleAccountBackoffTime: backoffTime,
 	}
 }
 
@@ -182,12 +199,12 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context, infiniteWa
 		s.SwitchCount < s.MaxSwitches) {
 
 		logger.FromContext(ctx).Warn("gateway.failover_single_account_backoff",
-			zap.Duration("backoff_delay", singleAccountBackoffDelay),
+			zap.Duration("backoff_delay", s.singleAccountBackoffTime),
 			zap.Int("switch_count", s.SwitchCount),
 			zap.Int("max_switches", s.MaxSwitches),
 			zap.Bool("infinite_wait", infiniteWait),
 		)
-		if !sleepWithContext(ctx, singleAccountBackoffDelay) {
+		if !sleepWithContext(ctx, s.singleAccountBackoffTime) {
 			return FailoverCanceled
 		}
 		logger.FromContext(ctx).Warn("gateway.failover_single_account_retry",

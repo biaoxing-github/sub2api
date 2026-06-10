@@ -93,6 +93,35 @@ func TestLoadDefaultOpenAIRequestHeaderTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultSchedulerRetryConfig(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	require.False(t, cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled)
+	require.False(t, cfg.Gateway.AnthropicSchedulerInfiniteWaitEnabled)
+	require.Equal(t, 2, cfg.Gateway.AnthropicSingleAccountBackoffSeconds)
+	require.Equal(t, 1.0, cfg.Gateway.OpenAISchedulerCooldownMultiplier)
+	require.Equal(t, 1.0, cfg.Gateway.AnthropicSchedulerCooldownMultiplier)
+}
+
+func TestLoadSchedulerRetryConfigFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_ANTHROPIC_SCHEDULER_INFINITE_WAIT_ENABLED", "true")
+	t.Setenv("GATEWAY_ANTHROPIC_SINGLE_ACCOUNT_BACKOFF_SECONDS", "5")
+	t.Setenv("GATEWAY_OPENAI_SCHEDULER_COOLDOWN_MULTIPLIER", "0.5")
+	t.Setenv("GATEWAY_ANTHROPIC_SCHEDULER_COOLDOWN_MULTIPLIER", "2.5")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	require.True(t, cfg.Gateway.AnthropicSchedulerInfiniteWaitEnabled)
+	require.Equal(t, 5, cfg.Gateway.AnthropicSingleAccountBackoffSeconds)
+	require.Equal(t, 0.5, cfg.Gateway.OpenAISchedulerCooldownMultiplier)
+	require.Equal(t, 2.5, cfg.Gateway.AnthropicSchedulerCooldownMultiplier)
+}
+
 func TestLoadDefaultOpenAIHTTP2Config(t *testing.T) {
 	resetViperWithJWTSecret(t)
 
@@ -1678,6 +1707,21 @@ func TestValidateConfig_OpenAIWSRules(t *testing.T) {
 			name:    "fallback_cooldown_seconds 不能为负数",
 			mutate:  func(c *Config) { c.Gateway.OpenAIWS.FallbackCooldownSeconds = -1 },
 			wantErr: "gateway.openai_ws.fallback_cooldown_seconds",
+		},
+		{
+			name:    "anthropic_single_account_backoff_seconds 不能为负数",
+			mutate:  func(c *Config) { c.Gateway.AnthropicSingleAccountBackoffSeconds = -1 },
+			wantErr: "gateway.anthropic_single_account_backoff_seconds",
+		},
+		{
+			name:    "openai_scheduler_cooldown_multiplier 必须为正数",
+			mutate:  func(c *Config) { c.Gateway.OpenAISchedulerCooldownMultiplier = 0 },
+			wantErr: "gateway.openai_scheduler_cooldown_multiplier",
+		},
+		{
+			name:    "anthropic_scheduler_cooldown_multiplier 必须为正数",
+			mutate:  func(c *Config) { c.Gateway.AnthropicSchedulerCooldownMultiplier = -0.1 },
+			wantErr: "gateway.anthropic_scheduler_cooldown_multiplier",
 		},
 		{
 			name:    "store_disabled_conn_mode 必须为 strict|adaptive|off",

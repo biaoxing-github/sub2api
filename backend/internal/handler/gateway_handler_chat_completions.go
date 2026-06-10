@@ -179,6 +179,8 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	fs := NewFailoverState(h.maxAccountSwitches, false)
 	if groupPlatform == service.PlatformGemini {
 		fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
+	} else if groupPlatform == service.PlatformAnthropic {
+		fs = NewFailoverStateWithBackoff(h.maxAccountSwitches, false, h.anthropicSingleAccountBackoffSeconds())
 	}
 
 	for {

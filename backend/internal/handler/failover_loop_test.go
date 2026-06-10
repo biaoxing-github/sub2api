@@ -56,6 +56,7 @@ func TestNewFailoverState(t *testing.T) {
 		require.Nil(t, fs.LastFailoverErr)
 		require.False(t, fs.ForceCacheBilling)
 		require.True(t, fs.hasBoundSession)
+		require.Equal(t, defaultSingleAccountBackoffDelay, fs.singleAccountBackoffTime)
 	})
 
 	t.Run("无绑定会话", func(t *testing.T) {
@@ -67,6 +68,22 @@ func TestNewFailoverState(t *testing.T) {
 	t.Run("零最大切换次数", func(t *testing.T) {
 		fs := NewFailoverState(0, false)
 		require.Equal(t, 0, fs.MaxSwitches)
+	})
+}
+
+func TestNewFailoverStateWithBackoff(t *testing.T) {
+	t.Run("正数配置覆盖默认退避", func(t *testing.T) {
+		fs := NewFailoverStateWithBackoff(5, true, 7)
+
+		require.Equal(t, 5, fs.MaxSwitches)
+		require.True(t, fs.hasBoundSession)
+		require.Equal(t, 7*time.Second, fs.singleAccountBackoffTime)
+	})
+
+	t.Run("零值沿用默认退避", func(t *testing.T) {
+		fs := NewFailoverStateWithBackoff(3, false, 0)
+
+		require.Equal(t, defaultSingleAccountBackoffDelay, fs.singleAccountBackoffTime)
 	})
 }
 

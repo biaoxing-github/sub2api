@@ -122,6 +122,14 @@ func NewGatewayHandler(
 	}
 }
 
+// anthropicSingleAccountBackoffSeconds 返回 Anthropic 单账号分组耗尽后的退避秒数。
+func (h *GatewayHandler) anthropicSingleAccountBackoffSeconds() int {
+	if h == nil || h.cfg == nil {
+		return 0
+	}
+	return h.cfg.Gateway.AnthropicSingleAccountBackoffSeconds
+}
+
 // Messages handles Claude API compatible messages endpoint
 // POST /v1/messages
 func (h *GatewayHandler) Messages(c *gin.Context) {
@@ -581,7 +589,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 
 	for {
-		fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
+		fs := NewFailoverStateWithBackoff(h.maxAccountSwitches, hasBoundSession, h.anthropicSingleAccountBackoffSeconds())
 		retryWithFallback := false
 
 		for {

@@ -2835,3 +2835,14 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 切流：`active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 成功；`docker-compose.blue.yml` 默认镜像同步为 `sub2api:v0.1.134.19`。
 - 切流后验证：`8080` health/root/admin/settings 均 200，管理前端静态资源 6/6 返回 200；未登录 admin accounts 与 `/responses` 均 401；管理鉴权的 `system/version` 返回 `image_version=v0.1.134.19`；`groups/all` 选中 `2:自用`；OpenAI 调度池 `total=6`、`schedulable=6`、`degraded=0`、`blocked=0`，Anthropic 调度池 `total=0`；blue 和 proxy 关键错误日志命中 0。
 - 当前状态：active 已切到 `sub2api-blue/sub2api:v0.1.134.19`；回滚容器 `sub2api-green/sub2api:v0.1.134.18` 保持 running/healthy。
+
+## 2026-06-10 12:28 +08:00 - Anthropic 单账号调度退避配置接线
+
+- 执行者：Devil
+- 变更：新增的 `anthropic_single_account_backoff_seconds` 已从 `GatewayConfig` 默认值/环境变量加载接入到 `GatewayHandler.Messages` 与 `GatewayHandler.ChatCompletions` 的 Anthropic failover 状态；默认仍为 2 秒，正数配置可覆盖，0 走默认值。
+- 变更：`openai_scheduler_cooldown_multiplier` 与 `anthropic_scheduler_cooldown_multiplier` 补齐默认值和正数校验，避免配置为 0 或负数后进入运行时；本轮未把倍率强接到多条冷却路径，避免未经验证地改变既有冷却语义。
+- 验证：`go test -tags unit ./internal/config -run "TestLoadDefaultSchedulerRetryConfig|TestLoadSchedulerRetryConfigFromEnv|TestValidateConfig_OpenAIWSRules" -count=1` 通过。
+- 验证：`go test -tags unit ./internal/handler/failover_loop.go ./internal/handler/failover_loop_test.go -run "TestNewFailoverState|TestNewFailoverStateWithBackoff|TestHandleSelectionExhausted" -count=1` 通过。
+- 验证：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- 验证：`git diff --check` 通过。
+- 已知无关阻塞：`go test -tags unit ./internal/handler -run "TestNewFailoverState|TestNewFailoverStateWithBackoff|TestHandleSelectionExhausted" -count=1` 整包编译失败在既有 `userHandlerRepoStub` 缺少 `GetByIDIncludeDeleted`，本轮未修改该 auth/user handler 测试桩链路。
