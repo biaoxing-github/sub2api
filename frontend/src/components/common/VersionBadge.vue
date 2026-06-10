@@ -17,13 +17,6 @@
           v-else
           class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
         ></span>
-        <span
-          v-if="imageVersion"
-          class="max-w-28 truncate rounded bg-gray-200/80 px-1.5 py-0.5 text-[10px] leading-none text-gray-500 dark:bg-dark-700 dark:text-dark-300"
-          :title="t('version.imageVersion') + ': ' + imageVersion"
-        >
-          {{ imageVersion }}
-        </span>
         <!-- Update indicator -->
         <span v-if="hasUpdate" class="relative flex h-2 w-2">
           <span
