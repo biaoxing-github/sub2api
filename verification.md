@@ -2895,3 +2895,22 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 日志验证：切流后 5 分钟内 `sub2api-blue` 与 `sub2api-proxy` 关键错误过滤命中 0。
 - 当前状态：active=`sub2api-blue/sub2api:v0.1.134.26`；rollback=`sub2api-green/sub2api:v0.1.134.25`。
 - 已知观察：候选启动窗口有 1 条 request snapshot 清理 `pq: canceling statement due to user request`，最近 2 分钟与切流后窗口无重复；继续作为既有观察项留意。
+
+## 2026-06-10 20:40 +08:00 - v0.1.134.27 蓝绿构建、部署、验证
+
+- 执行者：Devil
+- 提交：`3efcbe745a5b`（`refactor(gateway): IsAccountBlocked 走调度快照并复用统一可调度判断`），包含上一线上版本后的 `a788ab5eb023` 与 `3efcbe745a5b`。
+- 变更：503/429 failover 错误统一写入临时熔断；单账号 selection exhausted 会检查账号阻断状态避免空转；`IsAccountBlocked` 改走调度快照并复用 `IsSchedulableAt`。
+- 代码验证：`go test -tags unit ./internal/service -run "TestAccountIsSchedulableAt|TestGatewayService.*Blocked|Test.*Selection|Test.*TempUnschedule" -count=1` 通过。
+- 代码验证：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- 代码验证：`git diff --check` 无 whitespace 错误，仅 JSONL LF/CRLF 提示。
+- 构建：从已提交 `HEAD` 通过 `git archive HEAD | docker build ...` 构建不可变镜像 `sub2api:v0.1.134.27`，镜像 ID `sha256:d6bf487cb2c46e6d4f773b46d9cdce22b13dbed166564585a0846797be307f91`。
+- 镜像标签验证：`docker image inspect sub2api:v0.1.134.27` 返回 `Version=v0.1.134.27`、`Revision=3efcbe745a5b`。
+- 候选部署：发布前 active 为 `sub2api-blue/sub2api:v0.1.134.26`；只重建 idle `sub2api-green` 到 `sub2api:v0.1.134.27`，未重启 PostgreSQL/Redis。
+- 候选验证：`18082` health/root/admin/settings 均 200，静态资源 6/6 返回 200，未登录 admin accounts 与 `/responses` 均 401，`sub2api-green` Health `healthy`。
+- 候选日志：启动窗口有 1 条 `[OpenAI] cleanup expired request snapshots failed err=pq: canceling statement due to user request`；切流前最近 1 分钟复查关键错误过滤命中 0，判定为非重复启动清理观察项。
+- 切流：`D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-blue:8080` 切到 `sub2api-green:8080`，`docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 成功。
+- 切流后验证：`8080` health/root/admin/settings 均 200，静态资源 6/6 返回 200，未登录 admin accounts 与 `/responses` 均 401，`sub2api-green` Health `healthy`，`sub2api-blue` 继续 running/healthy 作为回滚。
+- 日志验证：切流后 `sub2api-green` 与 `sub2api-proxy` 关键错误过滤命中 0。
+- 当前状态：active=`sub2api-green/sub2api:v0.1.134.27`；rollback=`sub2api-blue/sub2api:v0.1.134.26`。
+- 已知限制：`D:\sub2api-deploy\.env` 的 `ADMIN_PASSWORD` 为空，无法登录管理端验证 `/api/v1/admin/system/version`；版本由 Docker label 和容器内 `/app/sub2api --version` 验证。
