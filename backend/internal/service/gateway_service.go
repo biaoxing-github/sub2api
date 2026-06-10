@@ -627,14 +627,15 @@ func (s *GatewayService) IsAccountBlocked(accountID int64) bool {
 	if s == nil || s.accountRepo == nil {
 		return false
 	}
-	// 查询 Redis temp_unschedulable 状态
+	// 优先走调度快照（Redis），无快照才回落 DB，与选号热路径一致。
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	account, err := s.accountRepo.GetByID(ctx, accountID)
+	account, err := s.getSchedulableAccount(ctx, accountID)
 	if err != nil || account == nil {
 		return false
 	}
-	return account.TempUnschedulableUntil != nil && time.Now().Before(*account.TempUnschedulableUntil)
+	// 复用统一的可调度判断，覆盖 temp_unschedulable / overload / rate_limit 全部熔断条件。
+	return !account.IsSchedulableAt(time.Now())
 }
 
 // GatewayService handles API gateway operations
