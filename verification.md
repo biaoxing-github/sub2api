@@ -2877,3 +2877,21 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 现时复核：`active.conf` 指向 `sub2api-green:8080`；`sub2api-green` 为 `sub2api:v0.1.134.25` 且 Health `healthy`；`sub2api-blue/sub2api:v0.1.134.24` 保持 running/healthy 作为回滚。
 - 日志观察：近 2 小时 `sub2api-green` 有 1 条 request snapshot 清理 `pq: canceling statement due to user request`；`sub2api-proxy` 关键错误过滤命中 0。该观察项与本轮 Claude Code failover 改动无关，继续留意即可。
 - 已知无关阻塞：`go test -tags unit ./internal/service -run "^TestForwardAsAnthropic_DoneSentinelWithoutTerminalReturnsError$" -count=1` 失败在既有 done-sentinel 期望与 failover 错误文本差异，本轮未修改该链路。
+
+## 2026-06-10 17:20 +08:00 - Anthropic 原生 API Key 格式错误 failover 与 v0.1.134.26 发布
+
+- 执行者：Devil
+- 根因：现场日志确认请求 `202606100732187175600488268d9d6syj42KHv` 来自 `api_key_id=2`、`group_id=1`，选中 Anthropic 账号 `445(君公益)`，`platform=anthropic type=apikey`。旧逻辑在普通 Anthropic API Key `GatewayService.Forward` 中把该 400 当作 non-retryable 写给客户端，`fallback_error_response_written=true`。
+- 账号确认：DB 查询账号 `445` 为 active/schedulable，所属组 `1`，`extra.anthropic_passthrough` 为空，说明真实路径不是 OpenAI 兼容，也不是 API Key 透传分支。
+- 修复：新增 Anthropic 固定格式/内容 400 窄匹配，要求 HTTP 400、消息包含 `There was an issue with the format or content of your request` 且带 `request id`；命中后在写客户端前返回 `UpstreamFailoverError`，handler 继续切换账号。
+- 验证：`go test -tags unit ./internal/service -run "TestGatewayService_AnthropicAPIKey(Passthrough)?_FormatContentIssueTriggersFailover|TestGatewayService_AnthropicAPIKeyPassthrough_(Ordinary400KeepsDefaultError|ForwardStreamPreservesBodyAndAuthReplacement|ForwardCountTokensPreservesBody)|TestGatewayHandleErrorResponse_(NoRuleKeepsDefault|AppliesRuleFor422)|TestOpenAIHandleErrorResponse_NoRuleKeepsDefault" -count=1` 通过。
+- 验证：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- 验证：`git diff --check -- backend/internal/service/gateway_service.go backend/internal/service/gateway_anthropic_apikey_passthrough_test.go` 通过。
+- 构建：从提交 `d3932faa5653` 通过 `git archive HEAD | docker build ...` 构建 `sub2api:v0.1.134.26`；镜像 ID `sha256:fc330df3bacc0f54fe930e47859ab14f83001c0a3d25b9f96dc1db9fcd2bed28`，label `version=v0.1.134.26`、`revision=d3932faa5653`。
+- 候选部署：发布前 active 为 `sub2api-green/sub2api:v0.1.134.25`；只重建 idle `sub2api-blue` 到 `sub2api:v0.1.134.26`，未重启 PostgreSQL/Redis。
+- 候选验证：`18083` health/root/admin/settings 均 200，静态资源 6/6 返回 200，未登录 admin accounts 与 `/responses` 均 401，`sub2api-blue` 60 秒后仍 `Health=healthy`。
+- 切流：`active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`nginx -t` 与 reload 成功。
+- 切流后验证：`8080` health/root/admin/settings 均 200，静态资源 6/6 返回 200，未登录 admin accounts、`/responses`、`/v1/messages` 均 401；`sub2api-blue` Health `healthy`，`sub2api-green` 继续 running/healthy 作为回滚。
+- 日志验证：切流后 5 分钟内 `sub2api-blue` 与 `sub2api-proxy` 关键错误过滤命中 0。
+- 当前状态：active=`sub2api-blue/sub2api:v0.1.134.26`；rollback=`sub2api-green/sub2api:v0.1.134.25`。
+- 已知观察：候选启动窗口有 1 条 request snapshot 清理 `pq: canceling statement due to user request`，最近 2 分钟与切流后窗口无重复；继续作为既有观察项留意。
