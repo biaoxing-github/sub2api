@@ -95,6 +95,12 @@ func ClassifyUpstreamError(input UpstreamErrorInput) UpstreamErrorClass {
 	case strings.Contains(lower, "context deadline exceeded") ||
 		strings.Contains(lower, "timeout"):
 		return upstreamErrorClass(UpstreamErrorCategoryTimeout, "请求超时", OpenAIPathFailureHeaderTimeout, true, false, false, true)
+	case input.StatusCode == http.StatusBadGateway || strings.Contains(lower, "502") || strings.Contains(lower, "bad gateway"):
+		return upstreamErrorClass(UpstreamErrorCategoryUpstream5xx, "502 网关错误", OpenAIPathFailureOther, true, false, false, true)
+	case input.StatusCode == http.StatusServiceUnavailable || strings.Contains(lower, "503") || strings.Contains(lower, "service unavailable"):
+		return upstreamErrorClass(UpstreamErrorCategoryUpstream5xx, "503 服务不可用", OpenAIPathFailureOther, true, false, false, false)
+	case input.StatusCode == http.StatusGatewayTimeout || strings.Contains(lower, "504") || strings.Contains(lower, "gateway timeout"):
+		return upstreamErrorClass(UpstreamErrorCategoryTimeout, "504 网关超时", OpenAIPathFailureHeaderTimeout, true, false, false, true)
 	case input.StatusCode >= 500 || strings.Contains(lower, "upstream request failed"):
 		return upstreamErrorClass(UpstreamErrorCategoryUpstream5xx, "上游 5xx/网关错误", OpenAIPathFailureOther, true, false, false, true)
 	case strings.Contains(lower, "quota") ||
@@ -102,7 +108,7 @@ func ClassifyUpstreamError(input UpstreamErrorInput) UpstreamErrorClass {
 		strings.Contains(lower, "insufficient balance") ||
 		strings.Contains(lower, "insufficient account balance") ||
 		strings.Contains(lower, "usage_limit"):
-		return upstreamErrorClass(UpstreamErrorCategoryQuota, "额度不足", "", false, false, false, false)
+		return upstreamErrorClass(UpstreamErrorCategoryQuota, "额度不足", "", false, true, false, false)
 	case isUpstreamBusinessLimitMessage(lower):
 		return upstreamErrorClass(UpstreamErrorCategoryBusinessLimited, "业务限制/策略拒绝", "", false, false, false, false)
 	case strings.Contains(lower, "no access token") || strings.Contains(lower, "no refresh token") || strings.Contains(lower, "invalid_grant"):

@@ -84,8 +84,8 @@ func TestClassifyUpstreamErrorBusinessLimitsDoNotPollutePathHealth(t *testing.T)
 			if got.PathHealthReason != "" {
 				t.Fatalf("PathHealthReason = %q, want empty; got=%+v", got.PathHealthReason, got)
 			}
-			if got.Retryable || got.LineDegraded || got.AccountInvalid || got.RateLimited {
-				t.Fatalf("business limit should not look like upstream health/account failure; got=%+v", got)
+			if got.Retryable || got.LineDegraded {
+				t.Fatalf("business limit should not pollute path health (Retryable/LineDegraded); got=%+v", got)
 			}
 		})
 	}

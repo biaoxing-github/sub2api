@@ -69,9 +69,16 @@ func classifyOpenAIUpstreamErrorPolicy(phase openAIUpstreamErrorPolicyPhase, inp
 	case UpstreamErrorCategoryCloudflareWAF, UpstreamErrorCategoryUnexpectedEOF, UpstreamErrorCategoryHeaderTimeout, UpstreamErrorCategoryTimeout:
 		action = OpenAIStreamActionAvoidUpstreamBucketTTL
 	case UpstreamErrorCategoryUpstream5xx:
-		// 502/503/504 等上游 5xx 错误：触发账号级冷却
-		// 确保频繁 502 的账号被临时摘除，避免持续调度到不可用账号
-		action = OpenAIStreamActionAvoidAccountTTL
+		// 502/503/504 精细化冷却策略：
+		// 503 = 容量不足（瞬时），重试下一个不冷却
+		// 502/504/其他 5xx = 账号级冷却
+		if strings.Contains(classification.Label, "503") {
+			action = OpenAIStreamActionRetryNextAccount
+		} else if classification.LineDegraded {
+			action = OpenAIStreamActionAvoidAccountTTL
+		} else {
+			action = OpenAIStreamActionAvoidAccountTTL
+		}
 	case UpstreamErrorCategoryBusinessLimited, UpstreamErrorCategoryPreviousResponseNotFound, UpstreamErrorCategoryRequestTooLarge:
 		action = OpenAIStreamActionRetryNextAccount
 	case UpstreamErrorCategoryUpstreamError:

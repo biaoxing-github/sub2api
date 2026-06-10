@@ -450,6 +450,16 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						zap.Bool("infinite_wait", infiniteProbe),
 					)
 				}
+				// 无限探测模式：探测失败后继续循环，不终止
+				if infiniteProbe {
+					select {
+					case <-c.Request.Context().Done():
+						h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Request cancelled during scheduler exhaustion probe", streamStarted)
+						return
+					case <-time.After(2 * time.Second):
+					}
+					continue
+				}
 			}
 			if len(failedAccountIDs) == 0 {
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)

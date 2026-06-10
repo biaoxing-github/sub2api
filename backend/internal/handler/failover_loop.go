@@ -125,21 +125,22 @@ func (s *FailoverState) HandleFailoverError(
 }
 
 // HandleSelectionExhausted 处理选号失败（所有候选账号都在排除列表中）时的退避重试决策。
-// 针对 Antigravity 单账号分组的 503 (MODEL_CAPACITY_EXHAUSTED) 场景：
-// 仍有切换额度时清除排除列表、等待退避后重新选号。
+// 针对 Anthropic 单账号分组的 503 (MODEL_CAPACITY_EXHAUSTED) 场景：
+// infiniteWait=true 时无限等待重试，否则仍有切换额度时清除排除列表、等待退避后重新选号。
 //
 // 返回 FailoverContinue 时，调用方应设置 SingleAccountRetry context 并 continue。
 // 返回 FailoverExhausted 时，调用方应返回错误响应。
 // 返回 FailoverCanceled 时，调用方应直接 return。
-func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAction {
-	if s.LastFailoverErr != nil &&
+func (s *FailoverState) HandleSelectionExhausted(ctx context.Context, infiniteWait bool) FailoverAction {
+	if infiniteWait || (s.LastFailoverErr != nil &&
 		s.LastFailoverErr.StatusCode == http.StatusServiceUnavailable &&
-		s.SwitchCount < s.MaxSwitches {
+		s.SwitchCount < s.MaxSwitches) {
 
 		logger.FromContext(ctx).Warn("gateway.failover_single_account_backoff",
 			zap.Duration("backoff_delay", singleAccountBackoffDelay),
 			zap.Int("switch_count", s.SwitchCount),
 			zap.Int("max_switches", s.MaxSwitches),
+			zap.Bool("infinite_wait", infiniteWait),
 		)
 		if !sleepWithContext(ctx, singleAccountBackoffDelay) {
 			return FailoverCanceled
@@ -147,6 +148,7 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 		logger.FromContext(ctx).Warn("gateway.failover_single_account_retry",
 			zap.Int("switch_count", s.SwitchCount),
 			zap.Int("max_switches", s.MaxSwitches),
+			zap.Bool("infinite_wait", infiniteWait),
 		)
 		s.FailedAccountIDs = make(map[int64]struct{})
 		return FailoverContinue

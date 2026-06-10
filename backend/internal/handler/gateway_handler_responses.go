@@ -187,7 +187,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				h.responsesErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error())
 				return
 			}
-			action := fs.HandleSelectionExhausted(requestCtx)
+			action := fs.HandleSelectionExhausted(requestCtx, false)
 			switch action {
 			case FailoverContinue:
 				continue

@@ -662,7 +662,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		fs := NewFailoverState(3, false)
 		// LastFailoverErr 为 nil
 
-		action := fs.HandleSelectionExhausted(context.Background())
+		action := fs.HandleSelectionExhausted(context.Background(), false)
 		require.Equal(t, FailoverExhausted, action)
 	})
 
@@ -670,7 +670,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		fs := NewFailoverState(3, false)
 		fs.LastFailoverErr = newTestFailoverErr(500, false, false)
 
-		action := fs.HandleSelectionExhausted(context.Background())
+		action := fs.HandleSelectionExhausted(context.Background(), false)
 		require.Equal(t, FailoverExhausted, action)
 	})
 
@@ -681,7 +681,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		fs.SwitchCount = 1
 
 		start := time.Now()
-		action := fs.HandleSelectionExhausted(context.Background())
+		action := fs.HandleSelectionExhausted(context.Background(), false)
 		elapsed := time.Since(start)
 
 		require.Equal(t, FailoverContinue, action)
@@ -696,7 +696,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		fs.SwitchCount = 3 // > MaxSwitches(2)
 
 		start := time.Now()
-		action := fs.HandleSelectionExhausted(context.Background())
+		action := fs.HandleSelectionExhausted(context.Background(), false)
 		elapsed := time.Since(start)
 
 		require.Equal(t, FailoverExhausted, action)
@@ -711,7 +711,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		cancel()
 
 		start := time.Now()
-		action := fs.HandleSelectionExhausted(ctx)
+		action := fs.HandleSelectionExhausted(ctx, false)
 		elapsed := time.Since(start)
 
 		require.Equal(t, FailoverCanceled, action)
@@ -723,7 +723,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		fs.LastFailoverErr = newTestFailoverErr(503, false, false)
 		fs.SwitchCount = 2 // == MaxSwitches 时没有可切换额度，应结束本轮会话。
 
-		action := fs.HandleSelectionExhausted(context.Background())
+		action := fs.HandleSelectionExhausted(context.Background(), false)
 		require.Equal(t, FailoverExhausted, action)
 	})
 }

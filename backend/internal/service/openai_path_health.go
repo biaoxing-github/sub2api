@@ -276,13 +276,13 @@ func (t *OpenAIPathHealthTracker) RecordFailureWithAction(key OpenAIPathHealthKe
 	}
 	if record.State == OpenAIPathHealthStateHalfOpen {
 		record.State = OpenAIPathHealthStateOpenCircuit
-		cooldownUntil := now.Add(t.options.Cooldown)
+		cooldownUntil := now.Add(t.getCooldownDuration(reason))
 		record.CooldownUntil = &cooldownUntil
 		return
 	}
 	if record.WindowFailures >= t.options.OpenFailureThreshold {
 		record.State = OpenAIPathHealthStateOpenCircuit
-		cooldownUntil := now.Add(t.options.Cooldown)
+		cooldownUntil := now.Add(t.getCooldownDuration(reason))
 		record.CooldownUntil = &cooldownUntil
 		return
 	}
@@ -392,6 +392,21 @@ func openAIPathFailureCountsForCircuit(reason string) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+func (t *OpenAIPathHealthTracker) getCooldownDuration(reason string) time.Duration {
+	// 瞬时网络故障使用短冷却，快速恢复探测；但尊重更短的测试配置
+	baseCooldown := t.options.Cooldown
+	switch reason {
+	case OpenAIPathFailureEOF, OpenAIPathFailureHeaderTimeout:
+		shortCooldown := 30 * time.Second
+		if baseCooldown < shortCooldown {
+			return baseCooldown
+		}
+		return shortCooldown
+	default:
+		return baseCooldown
 	}
 }
 

@@ -819,6 +819,9 @@ type GatewayConfig struct {
 	// OpenAISchedulerProbeInfiniteWaitEnabled: OpenAI 调度耗尽时是否无限小请求探测等待。
 	// 关闭时每个候选账号探测 6 次后返回真实调度错误；开启后持续探测直到请求上下文取消或账号恢复。
 	OpenAISchedulerProbeInfiniteWaitEnabled bool `mapstructure:"openai_scheduler_exhaustion_probe_infinite_wait_enabled"`
+	// AnthropicSchedulerInfiniteWaitEnabled: Anthropic Messages 调度耗尽时是否无限等待重试。
+	// 关闭时达到 maxAccountSwitches 上限后返回 502；开启后持续等待直到请求上下文取消或账号恢复。
+	AnthropicSchedulerInfiniteWaitEnabled bool `mapstructure:"anthropic_scheduler_infinite_wait_enabled"`
 	// OpenAISchedulerProbeNotifyEnabled: 无限探测等待超过阈值时是否发送外部通知。
 	OpenAISchedulerProbeNotifyEnabled bool `mapstructure:"openai_scheduler_exhaustion_probe_notify_enabled"`
 	// OpenAISchedulerProbeNotifyChannel: 通知通道，feishu_webhook=自定义机器人，feishu_app=企业自建应用机器人。
