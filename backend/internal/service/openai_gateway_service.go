@@ -1258,6 +1258,11 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 		if strings.Contains(lower, "selected model is at capacity") {
 			return true
 		}
+		// 部分 OpenAI 兼容上游会把远端瞬时 400 包装成笼统格式错误，并附带 request id 链。
+		if strings.Contains(lower, "there was an issue with the format or content of your request") &&
+			strings.Contains(lower, "request id") {
+			return true
+		}
 		return strings.Contains(lower, "you can retry your request") &&
 			strings.Contains(lower, "help.openai.com") &&
 			strings.Contains(lower, "request id")

@@ -277,6 +277,12 @@ func TestIsOpenAITransientProcessingError(t *testing.T) {
 		[]byte(`{"error":{"message":"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_123 in your message."}}`),
 	))
 
+	require.True(t, isOpenAITransientProcessingError(
+		http.StatusBadRequest,
+		"There was an issue with the format or content of your request. (request id: 202606100732187175600488268d9d6syj42KHv)",
+		[]byte(`{"error":{"type":"<nil>","message":"There was an issue with the format or content of your request. (request id: 202606100732187175600488268d9d6syj42KHv) (request id: 202606100732185428879478268d9d65Q8VA5iy)"}}`),
+	))
+
 	require.False(t, isOpenAITransientProcessingError(
 		http.StatusBadRequest,
 		"Missing required parameter: 'instructions'",
@@ -384,6 +390,54 @@ func TestOpenAIGatewayService_Forward_TransientProcessingErrorTriggersFailover(t
 	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "An error occurred while processing your request")
 	require.False(t, c.Writer.Written(), "service 层应返回 failover 错误给上层换号，而不是直接向客户端写响应")
+}
+
+func TestOpenAIGatewayService_ForwardAsAnthropic_FormatContentIssueTriggersFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"claude-3-7-sonnet-20250219","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hello"}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", "claude-code/1.0.0")
+
+	upstream := &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"x-request-id": []string{"rid-format-content-400"},
+			},
+			Body: io.NopCloser(strings.NewReader(`{"error":{"type":"<nil>","message":"There was an issue with the format or content of your request. (request id: 202606100732187175600488268d9d6syj42KHv) (request id: 202606100732185428879478268d9d65Q8VA5iy)"}}`)),
+		},
+	}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          1001,
+		Name:        "claude-code-openai-compat",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key": "sk-test",
+		},
+		Status:         StatusActive,
+		Schedulable:    true,
+		RateMultiplier: f64p(1),
+	}
+
+	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "gpt-5.1")
+	require.Error(t, err)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "format or content")
+	require.False(t, c.Writer.Written(), "Claude Code 兼容路径应把该类上游 400 交给 handler 换远端，不能先写给客户端")
 }
 
 func TestOpenAIGatewayService_Forward_ModelCapacityErrorTriggersFailoverAndSameAccountRetry(t *testing.T) {
