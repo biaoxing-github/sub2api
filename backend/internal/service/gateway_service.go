@@ -5063,6 +5063,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		}
 	}
 	if resp.StatusCode >= 400 {
+		if failoverErr, ok := s.maybeFailoverAnthropicFormatContentIssue(ctx, resp, c, account, false, reqModel); ok {
+			return nil, failoverErr
+		}
 		// 可选：对部分 400 触发 failover（默认关闭以保持语义）
 		if resp.StatusCode == 400 && s.cfg != nil && s.cfg.Gateway.FailoverOn400 {
 			respBody, readErr := s.readUpstreamErrorBody(resp)
@@ -5387,6 +5390,9 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	}
 
 	if resp.StatusCode >= 400 {
+		if failoverErr, ok := s.maybeFailoverAnthropicFormatContentIssue(ctx, resp, c, account, true, input.RequestModel); ok {
+			return nil, failoverErr
+		}
 		return s.handleErrorResponse(ctx, resp, c, account, input.RequestModel)
 	}
 
@@ -7239,6 +7245,71 @@ func (s *GatewayService) shouldFailoverOn400(respBody []byte) bool {
 	}
 
 	return false
+}
+
+// shouldFailoverAnthropicFormatContentIssue 判断 Anthropic 上游固定格式/内容 400 是否可切换账号。
+func (s *GatewayService) shouldFailoverAnthropicFormatContentIssue(account *Account, statusCode int, respBody []byte) bool {
+	if account == nil || account.Platform != PlatformAnthropic || statusCode != http.StatusBadRequest {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+	if msg == "" {
+		msg = strings.ToLower(strings.TrimSpace(string(respBody)))
+	}
+	return strings.Contains(msg, "there was an issue with the format or content of your request") &&
+		strings.Contains(msg, "request id")
+}
+
+// maybeFailoverAnthropicFormatContentIssue 只接管 Anthropic 上游偶发的格式/内容 400。
+// 该错误带 request id，线上表现为单账号请求失败；返回 failover 后由 handler 继续换账号，普通参数 400 仍进入默认错误响应。
+func (s *GatewayService) maybeFailoverAnthropicFormatContentIssue(
+	ctx context.Context,
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	passthrough bool,
+	requestedModel ...string,
+) (*UpstreamFailoverError, bool) {
+	if resp == nil || resp.Body == nil || account == nil || resp.StatusCode != http.StatusBadRequest {
+		return nil, false
+	}
+
+	respBody, readErr := s.readUpstreamErrorBody(resp)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(respBody))
+	if readErr != nil || !s.shouldFailoverAnthropicFormatContentIssue(account, resp.StatusCode, respBody) {
+		return nil, false
+	}
+
+	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+	upstreamDetail := ""
+	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+		if maxBytes <= 0 {
+			maxBytes = 2048
+		}
+		upstreamDetail = truncateString(string(respBody), maxBytes)
+	}
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform:           account.Platform,
+		AccountID:          account.ID,
+		AccountName:        account.Name,
+		UpstreamStatusCode: resp.StatusCode,
+		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		Passthrough:        passthrough,
+		Kind:               "anthropic_format_content_failover",
+		Message:            upstreamMsg,
+		Detail:             upstreamDetail,
+	})
+
+	logger.LegacyPrintf("service.gateway", "Anthropic account %d: format/content 400, attempting failover", account.ID)
+	s.handleFailoverSideEffects(ctx, resp, account, requestedModel...)
+	return &UpstreamFailoverError{
+		StatusCode:             resp.StatusCode,
+		ResponseBody:           respBody,
+		RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+	}, true
 }
 
 // sanitizeStreamError 返回不含网络地址的客户端可见错误描述。
