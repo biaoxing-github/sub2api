@@ -114,7 +114,8 @@ func (s *OpenAIGatewayService) RecoverOpenAISchedulerExhaustion(ctx context.Cont
 		if !opts.Infinite {
 			break
 		}
-		if err := s.sleepOpenAISchedulerExhaustionProbe(ctx, openAISchedulerExhaustionProbeLoopDelay); err != nil {
+		delay := roundDelayFromFailureCounts(s.collectOpenAISchedulerExhaustionFailureCounts(accounts))
+		if err := s.sleepOpenAISchedulerExhaustionProbe(ctx, delay); err != nil {
 			return false, err
 		}
 	}
@@ -310,6 +311,36 @@ func (s *OpenAIGatewayService) sleepOpenAISchedulerExhaustionProbe(ctx context.C
 	}
 }
 
+// roundDelayFromFailureCounts 取候选账号里最大的连续失败次数，按分级阶梯算出
+// 本轮探测循环的等待时间。无候选时回退到基础轮询间隔。
+func roundDelayFromFailureCounts(counts []int64) time.Duration {
+	if len(counts) == 0 {
+		return openAISchedulerExhaustionProbeLoopDelay
+	}
+	maxCount := int64(0)
+	for _, c := range counts {
+		if c > maxCount {
+			maxCount = c
+		}
+	}
+	return probeIntervalFromErrorCount(int(maxCount))
+}
+
+// collectOpenAISchedulerExhaustionFailureCounts 从候选账号的 path health 里收集
+// ConsecutiveFailures 计数，供分级 sleep 使用。nil-safe。
+func (s *OpenAIGatewayService) collectOpenAISchedulerExhaustionFailureCounts(accounts []Account) []int64 {
+	if s == nil || s.openaiPathHealth == nil || len(accounts) == 0 {
+		return nil
+	}
+	counts := make([]int64, 0, len(accounts))
+	for i := range accounts {
+		key := OpenAIPathHealthKeyForAccount(&accounts[i], string(OpenAIUpstreamTransportHTTPSSE))
+		snapshot := s.openaiPathHealth.Snapshot(key)
+		counts = append(counts, snapshot.ConsecutiveFailures)
+	}
+	return counts
+}
+
 func probeIntervalFromErrorCount(errorCount int) time.Duration {
 	switch {
 	case errorCount <= 1:
@@ -322,7 +353,11 @@ func probeIntervalFromErrorCount(errorCount int) time.Duration {
 		return 30 * time.Second
 	case errorCount == 5:
 		return 1 * time.Minute
-	default: // >= 6
+	case errorCount == 6:
 		return 5 * time.Minute
+	case errorCount == 7:
+		return 30 * time.Minute
+	default: // >= 8
+		return 60 * time.Minute
 	}
 }

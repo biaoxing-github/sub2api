@@ -351,7 +351,9 @@ func TestProbeIntervalFromErrorCount(t *testing.T) {
 		{4, 30 * time.Second},
 		{5, 1 * time.Minute},
 		{6, 5 * time.Minute},
-		{10, 5 * time.Minute},
+		{7, 30 * time.Minute},
+		{8, 60 * time.Minute},
+		{10, 60 * time.Minute},
 	}
 
 	for _, tt := range tests {
@@ -359,6 +361,29 @@ func TestProbeIntervalFromErrorCount(t *testing.T) {
 			got := probeIntervalFromErrorCount(tt.errorCount)
 			if got != tt.want {
 				t.Errorf("probeIntervalFromErrorCount(%d) = %v, want %v", tt.errorCount, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRoundDelayFromFailureCounts(t *testing.T) {
+	tests := []struct {
+		name   string
+		counts []int64
+		want   time.Duration
+	}{
+		{"empty falls back to base", nil, openAISchedulerExhaustionProbeLoopDelay},
+		{"single low count", []int64{0}, 1 * time.Second},
+		{"single mid count", []int64{3}, 10 * time.Second},
+		{"max wins", []int64{1, 5, 2}, 1 * time.Minute},
+		{"high count caps", []int64{8, 1}, 60 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := roundDelayFromFailureCounts(tt.counts)
+			if got != tt.want {
+				t.Errorf("roundDelayFromFailureCounts(%v) = %v, want %v", tt.counts, got, tt.want)
 			}
 		})
 	}
