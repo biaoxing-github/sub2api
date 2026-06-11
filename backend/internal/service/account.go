@@ -86,6 +86,7 @@ type Account struct {
 	modelMappingCacheRawSig         uint64
 
 	lastSelectedAPIKey string
+	nowForTest         *time.Time // 测试用时间覆盖，生产环境为 nil
 }
 
 // isAccountInRequestedGroup 判定账号是否允许服务当前请求分组。
@@ -455,7 +456,85 @@ func (a *Account) disabledAPIKeyFingerprints() map[string]struct{} {
 	if a == nil || a.Credentials == nil {
 		return nil
 	}
-	return normalizeDisabledAPIKeyFingerprints(a.Credentials[CredentialAPIKeysDisabled])
+	now := time.Now()
+	if a.nowForTest != nil {
+		now = *a.nowForTest
+	}
+	return normalizeDisabledAPIKeyFingerprintsWithRecovery(a.Credentials, now)
+}
+
+// normalizeDisabledAPIKeyFingerprintsWithRecovery 提取仍处于禁用状态的 key 指纹，
+// 懒恢复已过 disabled_until 的 key，并回填旧记录的 disabled_until + disabled_count。
+func normalizeDisabledAPIKeyFingerprintsWithRecovery(credentials map[string]any, now time.Time) map[string]struct{} {
+	if credentials == nil {
+		return nil
+	}
+	raw := credentials[CredentialAPIKeysDisabled]
+	if raw == nil {
+		return nil
+	}
+	disabledMap, ok := raw.(map[string]any)
+	if !ok {
+		return normalizeDisabledAPIKeyFingerprints(raw)
+	}
+
+	out := make(map[string]struct{})
+	backfilled := false
+
+	for fp, recordRaw := range disabledMap {
+		fp = strings.TrimSpace(fp)
+		if fp == "" {
+			continue
+		}
+		record, ok := recordRaw.(map[string]any)
+		if !ok {
+			out[fp] = struct{}{}
+			continue
+		}
+
+		untilStr, hasUntil := record["disabled_until"].(string)
+		if !hasUntil {
+			reason, _ := record["reason"].(string)
+			if reason == "" {
+				reason = "disabled"
+			}
+			count := 1
+			if c, ok := record["disabled_count"].(int); ok && c > 0 {
+				count = c
+			}
+			interval := disabledAPIKeyRecoveryInterval(reason, count)
+			disabledAt := now.Add(-time.Hour)
+			if atStr, ok := record["disabled_at"].(string); ok {
+				if parsed, err := time.Parse(time.RFC3339, atStr); err == nil {
+					disabledAt = parsed
+				}
+			}
+			until := disabledAt.Add(interval)
+			record["disabled_until"] = until.UTC().Format(time.RFC3339)
+			record["disabled_count"] = count
+			disabledMap[fp] = record
+			backfilled = true
+			untilStr = record["disabled_until"].(string)
+		}
+
+		until, err := time.Parse(time.RFC3339, untilStr)
+		if err != nil {
+			out[fp] = struct{}{}
+			continue
+		}
+		if now.Before(until) {
+			out[fp] = struct{}{}
+		}
+	}
+
+	if backfilled {
+		credentials[CredentialAPIKeysDisabled] = disabledMap
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func filterDisabledAPIKeys(keys []string, disabled map[string]struct{}) []string {
@@ -538,19 +617,47 @@ func (a *Account) DisableAPIKey(apiKey, reason string, now time.Time) bool {
 	if disabled == nil {
 		disabled = make(map[string]any)
 	}
-	if _, exists := disabled[fingerprint]; exists {
-		return false
+
+	existingRecord, _ := disabled[fingerprint].(map[string]any)
+	existingCount := 0
+	if existingRecord != nil {
+		if c, ok := existingRecord["disabled_count"].(int); ok {
+			existingCount = c
+		}
 	}
+
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "disabled"
 	}
+
+	newCount := existingCount + 1
+	interval := disabledAPIKeyRecoveryInterval(reason, newCount)
+
 	disabled[fingerprint] = map[string]any{
-		"reason":      reason,
-		"disabled_at": now.UTC().Format(time.RFC3339),
+		"reason":         reason,
+		"disabled_at":    now.UTC().Format(time.RFC3339),
+		"disabled_until": now.Add(interval).UTC().Format(time.RFC3339),
+		"disabled_count": newCount,
 	}
 	a.Credentials[CredentialAPIKeysDisabled] = disabled
 	return true
+}
+
+// disabledAPIKeyRecoveryInterval 按禁用原因和累计次数计算自动恢复间隔。
+// rate_limited 走分级阶梯，其他严重错误走 30min→60min。
+func disabledAPIKeyRecoveryInterval(reason string, count int) time.Duration {
+	switch reason {
+	case "rate_limited":
+		return probeIntervalFromErrorCount(count)
+	case "invalid_api_key", "payment_required", "insufficient_balance":
+		if count <= 1 {
+			return 30 * time.Minute
+		}
+		return 60 * time.Minute
+	default:
+		return probeIntervalFromErrorCount(count)
+	}
 }
 
 // RemoveAPIKeyByFingerprint 按非敏感指纹删除账号保存的 API Key，并同步清理停用元数据。

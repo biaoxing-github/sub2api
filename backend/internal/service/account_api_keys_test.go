@@ -161,3 +161,116 @@ func TestAccountRestoreAPIKeyByFingerprintRejectsUnknownFingerprint(t *testing.T
 func testNow() time.Time {
 	return time.Unix(1700000000, 0).UTC()
 }
+
+func TestAccountDisableAPIKeyWritesDisabledUntilAndCount(t *testing.T) {
+	tests := []struct {
+		name          string
+		reason        string
+		existingCount int
+		wantInterval  time.Duration
+	}{
+		{"rate_limited first", "rate_limited", 0, 1 * time.Second},
+		{"rate_limited third", "rate_limited", 2, 10 * time.Second},
+		{"rate_limited ninth", "rate_limited", 8, 60 * time.Minute},
+		{"invalid_api_key first", "invalid_api_key", 0, 30 * time.Minute},
+		{"invalid_api_key second", "invalid_api_key", 1, 60 * time.Minute},
+		{"payment_required first", "payment_required", 0, 30 * time.Minute},
+		{"insufficient_balance third", "insufficient_balance", 2, 60 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &Account{
+				ID:          50,
+				Type:        AccountTypeAPIKey,
+				Credentials: map[string]any{"api_keys": []any{"test-key"}},
+			}
+			if tt.existingCount > 0 {
+				fp := FingerprintAPIKey("test-key")
+				account.Credentials[CredentialAPIKeysDisabled] = map[string]any{
+					fp: map[string]any{
+						"reason":         tt.reason,
+						"disabled_at":    testNow().Add(-time.Hour).UTC().Format(time.RFC3339),
+						"disabled_until": testNow().Add(-time.Minute).UTC().Format(time.RFC3339),
+						"disabled_count": tt.existingCount,
+					},
+				}
+			}
+
+			now := testNow()
+			changed := account.DisableAPIKey("test-key", tt.reason, now)
+
+			require.True(t, changed)
+			disabled, _ := account.Credentials[CredentialAPIKeysDisabled].(map[string]any)
+			fp := FingerprintAPIKey("test-key")
+			record, _ := disabled[fp].(map[string]any)
+			require.NotNil(t, record)
+			require.Equal(t, tt.reason, record["reason"])
+			require.Contains(t, record, "disabled_until")
+			require.Contains(t, record, "disabled_count")
+
+			until, _ := time.Parse(time.RFC3339, record["disabled_until"].(string))
+			expectedUntil := now.Add(tt.wantInterval)
+			require.WithinDuration(t, expectedUntil, until, time.Second)
+
+			count, _ := record["disabled_count"].(int)
+			require.Equal(t, tt.existingCount+1, count)
+		})
+	}
+}
+
+func TestAccountGetAPIKeysLazilyRecoverExpiredDisabledKeys(t *testing.T) {
+	now := testNow()
+	account := &Account{
+		ID:   60,
+		Type: AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-a", "key-b", "key-c"},
+			CredentialAPIKeysDisabled: map[string]any{
+				FingerprintAPIKey("key-a"): map[string]any{
+					"reason":         "rate_limited",
+					"disabled_at":    now.Add(-time.Hour).UTC().Format(time.RFC3339),
+					"disabled_until": now.Add(-10 * time.Minute).UTC().Format(time.RFC3339),
+					"disabled_count": 2,
+				},
+				FingerprintAPIKey("key-b"): map[string]any{
+					"reason":         "rate_limited",
+					"disabled_at":    now.Add(-time.Minute).UTC().Format(time.RFC3339),
+					"disabled_until": now.Add(10 * time.Minute).UTC().Format(time.RFC3339),
+					"disabled_count": 1,
+				},
+			},
+		},
+		nowForTest: &now,
+	}
+
+	keys := account.GetAPIKeys()
+
+	require.ElementsMatch(t, []string{"key-a", "key-c"}, keys, "key-a expired and should be recovered, key-b still disabled, key-c never disabled")
+}
+
+func TestAccountGetAPIKeysBackfillsLegacyDisabledRecordsWithoutUntil(t *testing.T) {
+	now := testNow()
+	account := &Account{
+		ID:   61,
+		Type: AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-old", "key-new"},
+			CredentialAPIKeysDisabled: map[string]any{
+				FingerprintAPIKey("key-old"): map[string]any{
+					"reason":      "rate_limited",
+					"disabled_at": now.Add(-time.Hour).UTC().Format(time.RFC3339),
+				},
+			},
+		},
+		nowForTest: &now,
+	}
+
+	keys := account.GetAPIKeys()
+
+	require.ElementsMatch(t, []string{"key-old", "key-new"}, keys, "legacy record without disabled_until should be backfilled and recovered immediately")
+	disabled, _ := account.Credentials[CredentialAPIKeysDisabled].(map[string]any)
+	record, _ := disabled[FingerprintAPIKey("key-old")].(map[string]any)
+	require.Contains(t, record, "disabled_until", "backfill should add disabled_until")
+	require.Contains(t, record, "disabled_count", "backfill should add disabled_count")
+}
