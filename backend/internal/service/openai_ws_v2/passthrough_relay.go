@@ -25,6 +25,7 @@ type Usage struct {
 	OutputTokens             int
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
+	ImageOutputTokens        int
 }
 
 type RelayResult struct {
@@ -716,27 +717,49 @@ func parseUsageAndAccumulate(
 	inputResult := gjson.GetBytes(message, "response.usage.input_tokens")
 	outputResult := gjson.GetBytes(message, "response.usage.output_tokens")
 	cachedResult := gjson.GetBytes(message, "response.usage.input_tokens_details.cached_tokens")
+	cacheCreationResult := gjson.GetBytes(message, "response.usage.cache_creation_input_tokens")
+	imageOutputResult := gjson.GetBytes(message, "response.usage.output_tokens_details.image_tokens")
+
+	// 同时支持 OpenAI 的 prompt_tokens/completion_tokens 别名
+	if !inputResult.Exists() {
+		inputResult = gjson.GetBytes(message, "response.usage.prompt_tokens")
+	}
+	if !outputResult.Exists() {
+		outputResult = gjson.GetBytes(message, "response.usage.completion_tokens")
+	}
+	if !cachedResult.Exists() {
+		cachedResult = gjson.GetBytes(message, "response.usage.prompt_tokens_details.cached_tokens")
+	}
+	if !imageOutputResult.Exists() {
+		imageOutputResult = gjson.GetBytes(message, "response.usage.completion_tokens_details.image_tokens")
+	}
 
 	inputTokens, inputOK := parseUsageIntField(inputResult, true)
 	outputTokens, outputOK := parseUsageIntField(outputResult, true)
 	cachedTokens, cachedOK := parseUsageIntField(cachedResult, false)
-	if !inputOK || !outputOK || !cachedOK {
+	cacheCreationTokens, cacheCreationOK := parseUsageIntField(cacheCreationResult, false)
+	imageOutputTokens, imageOutputOK := parseUsageIntField(imageOutputResult, false)
+	if !inputOK || !outputOK || !cachedOK || !cacheCreationOK || !imageOutputOK {
 		recordUsageParseFailure()
 		if onParseFailure != nil {
 			onParseFailure(eventType, usageRaw)
 		}
-		// 解析失败时不做部分字段累加，避免计费 usage 出现“半有效”状态。
+		// 解析失败时不做部分字段累加，避免计费 usage 出现"半有效"状态。
 		return Usage{}
 	}
 	parsedUsage := Usage{
-		InputTokens:          inputTokens,
-		OutputTokens:         outputTokens,
-		CacheReadInputTokens: cachedTokens,
+		InputTokens:              inputTokens,
+		OutputTokens:             outputTokens,
+		CacheReadInputTokens:     cachedTokens,
+		CacheCreationInputTokens: cacheCreationTokens,
+		ImageOutputTokens:        imageOutputTokens,
 	}
 
 	state.usage.InputTokens += parsedUsage.InputTokens
 	state.usage.OutputTokens += parsedUsage.OutputTokens
 	state.usage.CacheReadInputTokens += parsedUsage.CacheReadInputTokens
+	state.usage.CacheCreationInputTokens += parsedUsage.CacheCreationInputTokens
+	state.usage.ImageOutputTokens += parsedUsage.ImageOutputTokens
 	return parsedUsage
 }
 
@@ -797,12 +820,7 @@ func isTerminalEvent(eventType string) bool {
 }
 
 func shouldParseUsage(eventType string) bool {
-	switch eventType {
-	case "response.completed", "response.done", "response.failed":
-		return true
-	default:
-		return false
-	}
+	return isTerminalEvent(eventType)
 }
 
 func isTokenEvent(eventType string) bool {
