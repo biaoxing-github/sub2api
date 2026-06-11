@@ -338,3 +338,28 @@ func TestOpenAISchedulerExhaustionProbeFeishuAppNotificationUsesTenantTokenAndCh
 	require.Contains(t, content["text"], "OpenAI /responses")
 	require.Contains(t, content["text"], "75s")
 }
+
+func TestProbeIntervalFromErrorCount(t *testing.T) {
+	tests := []struct {
+		errorCount int
+		want       time.Duration
+	}{
+		{0, 1 * time.Second},
+		{1, 1 * time.Second},
+		{2, 3 * time.Second},
+		{3, 10 * time.Second},
+		{4, 30 * time.Second},
+		{5, 1 * time.Minute},
+		{6, 5 * time.Minute},
+		{10, 5 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("error_count_%d", tt.errorCount), func(t *testing.T) {
+			got := probeIntervalFromErrorCount(tt.errorCount)
+			if got != tt.want {
+				t.Errorf("probeIntervalFromErrorCount(%d) = %v, want %v", tt.errorCount, got, tt.want)
+			}
+		})
+	}
+}
