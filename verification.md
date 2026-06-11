@@ -2915,6 +2915,29 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 当前状态：active=`sub2api-green/sub2api:v0.1.134.27`；rollback=`sub2api-blue/sub2api:v0.1.134.26`。
 - 已知限制：`D:\sub2api-deploy\.env` 的 `ADMIN_PASSWORD` 为空，无法登录管理端验证 `/api/v1/admin/system/version`；版本由 Docker label 和容器内 `/app/sub2api --version` 验证。
 
+## 2026-06-11 16:26 +08:00 - v0.1.134.28 蓝绿构建、部署、验证
+
+- 执行者：Devil
+- 提交：`fc0c8cdd0da8`（`test(account): 固定 API Key 禁用恢复测试时间`），包含 `e8b2b676e..fc0c8cdd0da8` 范围内 v0.1.136 网关吸收、账号池用量、Anthropic 余额配置、调度探测、API Key 分级恢复和测试时间源修复。
+- 前馈：Obsidian Local REST 本轮 2 秒超时；继续以项目源码、git diff、CodeGraph 和 live runtime 为准。
+- 代码验证：`go test -tags unit ./internal/service -run "TestAccountGetAPIKey|TestAccountDisableAPIKey|TestAccountGetAPIKeys|TestAccountRemoveAPIKey|TestAccountRestoreAPIKey|TestBuildAccountUsageSummary|TestUpstreamBalanceService|TestOpenAISchedulerExhaustionProbe|TestRecoverAccountAfterManualProbe|TestIdempotency|TestOpenAIPathHealth" -count=1` 通过。
+- 代码验证：`go test -tags unit ./internal/handler/admin -run "TestAccountHandler(GetUsageSummary|DashboardSummary|ActionItems|RefreshUpstreamBalance|ManualProbe)" -count=1` 通过。
+- 代码验证：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- 前端验证：账号 API、编辑弹窗、账号池用量卡片、调度池页面和 model whitelist 共 5 个文件 54 项 Vitest 通过。
+- 前端验证：`AccountsView.bulkEdit.spec.ts` 的 `passes total account cost sorting to the server and displays usage totals` 单用例通过。
+- 前端验证：`npm run typecheck` 通过。
+- 构建：从已提交 `HEAD` 通过 `git archive HEAD | docker build ...` 构建不可变镜像 `sub2api:v0.1.134.28`，镜像 ID `sha256:11bd45565c2688a2d4d6d04883b7e6565a315564484563b8b42b97f298e94204`。
+- 镜像标签验证：`docker image inspect sub2api:v0.1.134.28` 返回 `Version=v0.1.134.28`、`Revision=fc0c8cdd0da8`。
+- 候选部署：发布前 active 为 `sub2api-green/sub2api:v0.1.134.27`；只重建 idle `sub2api-blue` 到 `sub2api:v0.1.134.28`，未重启 PostgreSQL/Redis。
+- 候选验证：`18083` health/root/admin/settings 均 200，静态资源 6/6 返回 200，未登录 admin accounts、`/responses`、`/v1/messages` 均 401，`sub2api-blue` Health `healthy`。
+- 候选日志：启动窗口有 1 条 `[OpenAI] cleanup expired request snapshots failed err=pq: canceling statement due to user request`；切流前最近 1 分钟复查关键错误过滤命中 0，判定为非重复启动清理观察项。
+- 切流：`D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 成功。
+- 切流后验证：`8080` health/root/admin/settings 均 200，静态资源 6/6 返回 200，未登录 admin accounts、`/responses`、`/v1/messages` 均 401，`sub2api-blue` Health `healthy`，`sub2api-green` 继续 running/healthy 作为回滚。
+- 日志验证：切流后 `sub2api-blue` 与 `sub2api-proxy` 关键错误过滤命中 0。
+- 当前状态：active=`sub2api-blue/sub2api:v0.1.134.28`；rollback=`sub2api-green/sub2api:v0.1.134.27`。
+- 已知限制：`D:\sub2api-deploy\.env` 的 `ADMIN_PASSWORD` 为空，无法登录管理端验证 `/api/v1/admin/system/version`；版本由 Docker label 和容器内 `/app/sub2api --version` 验证。
+- 已知非阻断：`go test -tags unit ./internal/service ./internal/handler/admin -count=1` 宽包运行中 `internal/handler/admin` 通过，但 `internal/service` 命中 OpenAI 旧链路测试期望差异和 test stub nil panic；本轮按账号、调度、管理端和构建/上线冒烟作为发布挡板，后续单独整理宽包测试。
+
 ## 2026-06-11 14:50 +08:00 - 账号池用量与 Anthropic 上游余额配置
 
 - 执行者：Devil
