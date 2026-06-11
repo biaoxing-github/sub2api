@@ -3034,3 +3034,22 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
   - `npm run typecheck`
 - 结果：全部通过。
 - 风险：本轮未构建镜像、未部署；变更停留在前端源码和测试层。
+
+## 2026-06-11 23:56 +08:00 - v0.1.134.32 调度池人工探测失败提示修复发布
+
+- 执行者：Devil
+- 变更范围：`frontend/src/api/admin/accounts.ts`、`frontend/src/views/admin/AccountSchedulingPoolView.vue`、`frontend/src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts`
+- 根因：后端 `ManualProbeResponse.result` 是 `omitempty`，线上失败响应可能缺少 `result`；前端失败分支直接读取 `result.message`，触发 `Cannot read properties of undefined (reading 'message')`。
+- 验证命令：
+  - RED：`npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts -t "omits result"` 修复前复现 TypeError。
+  - GREEN：`npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts -t "omits result"` 修复后通过。
+  - GREEN：`npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts` 7 项通过。
+  - GREEN：`npm run typecheck` 通过。
+  - GREEN：`git diff --check` 通过。
+- 构建与发布：
+  - 镜像：`sub2api:v0.1.134.32`
+  - 提交：`29ae82de1755`
+  - active：`sub2api-blue` / `sub2api:v0.1.134.32`
+  - rollback：`sub2api-green` / `sub2api:v0.1.134.31`
+- 候选和入口验证：`18083` 与 `8080` 的 health/root/admin/settings、6 个静态资源、未登录 admin accounts 401、`/responses` 401、`/v1/messages` 401 均通过；切流后 `sub2api-blue` 与 `sub2api-proxy` 关键错误日志命中 0。
+- 风险：`D:\sub2api-deploy\.env` 中 `ADMIN_PASSWORD` 为空，无法执行登录态点击复测；已通过回归测试覆盖缺失 `result` 的返回体，并用入口静态资源验证新前端已上线。
