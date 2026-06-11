@@ -490,37 +490,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				}
 				// 无限探测模式：探测失败后继续循环，不终止
 				if infiniteProbe {
-					probeDelay := h.gatewayService.ProbeIntervalFromErrorCount(probeFailureCount)
-					heartbeatInterval := 1 * time.Second
-					if probeDelay >= 60*time.Second {
-						heartbeatInterval = 10 * time.Second
-					} else if probeDelay >= 10*time.Second {
-						heartbeatInterval = 5 * time.Second
-					}
-					reqLog.Warn("openai.scheduler_exhaustion_probe_backoff",
-						zap.Duration("probe_delay", probeDelay),
-						zap.Duration("heartbeat_interval", heartbeatInterval),
-						zap.Int("probe_failure_count", probeFailureCount),
-					)
-					ticker := time.NewTicker(heartbeatInterval)
-					timer := time.NewTimer(probeDelay)
-					heartbeatActive := true
-					for heartbeatActive {
-						select {
-						case <-c.Request.Context().Done():
-							ticker.Stop()
-							timer.Stop()
-							h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Request cancelled during scheduler exhaustion probe", streamStarted)
-							return
-						case <-ticker.C:
-							if streamStarted {
-								c.Writer.WriteString(": keepalive\n\n")
-								c.Writer.Flush()
-							}
-						case <-timer.C:
-							ticker.Stop()
-							heartbeatActive = false
-						}
+					if !h.sleepWithProbeKeepalive(c, reqLog, probeFailureCount, &streamStarted) {
+						return
 					}
 					continue
 				}
@@ -648,6 +619,31 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
+						isRetryable := failoverErr.StatusCode == 502 || failoverErr.StatusCode == 503 || failoverErr.StatusCode == 429
+						if isRetryable && len(failedAccountIDs) > 0 {
+							reqLog.Warn("openai.failover_exhausted_entering_probe_loop",
+								zap.Int("switch_count", switchCount),
+								zap.Int("failed_account_count", len(failedAccountIDs)),
+								zap.Int("upstream_status", failoverErr.StatusCode),
+							)
+							if !streamStarted {
+								c.Header("Content-Type", "text/event-stream")
+								c.Header("Cache-Control", "no-cache")
+								c.Header("Connection", "keep-alive")
+								c.Status(http.StatusOK)
+								c.Writer.WriteString("data: {\"type\":\"failover_exhausted_probe_pending\"}\n\n")
+								c.Writer.Flush()
+								streamStarted = true
+							}
+							if !h.sleepWithProbeKeepalive(c, reqLog, probeFailureCount, &streamStarted) {
+								return
+							}
+							probeFailureCount++
+							failedAccountIDs = make(map[int64]struct{})
+							sameAccountRetryCount = make(map[int64]int)
+							switchCount = 0
+							continue
+						}
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
