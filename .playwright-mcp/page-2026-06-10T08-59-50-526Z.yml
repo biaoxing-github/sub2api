@@ -1,0 +1,75 @@
+- generic [active] [ref=e1]:
+  - main [ref=e3]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: APIshare 公益
+      - heading "公益 API 使用公告" [level=2] [ref=e7]
+      - paragraph [ref=e8]: 公益API不保证可用性 baseURL不是公益官网网址 看清楚baseURL是什么
+      - button "我知道了" [ref=e9] [cursor=pointer]
+    - generic [ref=e11]:
+      - generic [ref=e12]: Public AI Gateway
+      - heading "APIshare公益" [level=1] [ref=e13]
+      - paragraph [ref=e14]: 永久免费公益API
+    - generic [ref=e15]:
+      - article [ref=e16]:
+        - heading "快速使用" [level=2] [ref=e18]
+        - generic [ref=e19]:
+          - generic [ref=e20]:
+            - generic [ref=e21]: Base URL
+            - generic [ref=e22]:
+              - code [ref=e23]: https://gateway.l-kx.cn/v1
+              - button "复制Base URL" [ref=e24] [cursor=pointer]:
+                - img [ref=e25]
+          - generic [ref=e28]:
+            - generic [ref=e29]: API Key
+            - generic [ref=e30]:
+              - code [ref=e31]: sk_live_z8j0fgBcaNr0UZb5oa2yPXIKV3dnrRerexjuJ4DKgrA
+              - button "复制API Key" [ref=e32] [cursor=pointer]:
+                - img [ref=e33]
+      - article [ref=e36]:
+        - heading "服务状态" [level=2] [ref=e38]
+        - strong [ref=e41]: 可用
+    - generic [ref=e42]:
+      - article [ref=e43]:
+        - heading "可用模型" [level=2] [ref=e45]
+        - generic [ref=e47]: gpt-5.5
+      - article [ref=e48]:
+        - heading "使用规则" [level=2] [ref=e50]
+        - list [ref=e51]:
+          - listitem [ref=e52]: 永久免费公益使用，不承诺商业 SLA。
+          - listitem [ref=e53]: 禁止批量滥用、倒卖、攻击和违法用途。
+          - listitem [ref=e54]: 公益 Key 会不定期轮换，旧 Key 会失效。
+          - listitem [ref=e55]: 服务可能按负载进行限流，请合理调用。
+    - generic [ref=e56]:
+      - article [ref=e57]:
+        - heading "总统计" [level=2] [ref=e59]
+        - generic [ref=e60]:
+          - generic [ref=e61]:
+            - generic [ref=e62]: 总请求
+            - strong [ref=e63]: 20,416
+          - generic [ref=e64]:
+            - generic [ref=e65]: 总 Token
+            - strong [ref=e66]: 1.7B
+          - generic [ref=e67]:
+            - generic [ref=e68]: 总费用
+            - strong [ref=e69]: $2442.33
+      - article [ref=e70]:
+        - heading "每日统计" [level=2] [ref=e72]
+        - generic [ref=e73]:
+          - generic [ref=e74]:
+            - generic [ref=e75]: 今日请求
+            - strong [ref=e76]: "585"
+          - generic [ref=e77]:
+            - generic [ref=e78]: 今日 Token
+            - strong [ref=e79]: 23.7M
+          - generic [ref=e80]:
+            - generic [ref=e81]: 今日费用
+            - strong [ref=e82]: $60.27
+    - generic [ref=e83]:
+      - generic [ref=e85]:
+        - heading "请求 / Token 趋势" [level=2] [ref=e86]
+        - paragraph [ref=e87]: 最近 30 天按日聚合
+      - img [ref=e88]
+      - generic [ref=e151]:
+        - generic [ref=e152]: 请求
+        - generic [ref=e153]: Token
+  - alert [ref=e154]

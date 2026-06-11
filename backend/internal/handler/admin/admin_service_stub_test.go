@@ -37,6 +37,7 @@ type stubAdminService struct {
 	updateAccountErr      error
 	bulkUpdateAccountErr  error
 	checkMixedErr         error
+	recoverError          error
 	lastMixedCheck        struct {
 		accountID int64
 		platform  string
@@ -717,6 +718,18 @@ func (s *stubAdminService) ForceAntigravityPrivacy(ctx context.Context, account 
 
 func (s *stubAdminService) ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (*service.ReplaceUserGroupResult, error) {
 	return &service.ReplaceUserGroupResult{MigratedKeys: 0}, nil
+}
+
+func (s *stubAdminService) RecoverAccountAfterManualProbe(ctx context.Context, accountID int64, platform string) (*service.Account, error) {
+	if s.recoverError != nil {
+		return nil, s.recoverError
+	}
+	for i := range s.accounts {
+		if s.accounts[i].ID == accountID {
+			return &s.accounts[i], nil
+		}
+	}
+	return nil, nil
 }
 
 // Ensure stub implements interface.

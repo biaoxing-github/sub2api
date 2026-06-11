@@ -1302,6 +1302,67 @@ func (h *AccountHandler) sendAccountTestTransitionEvent(c *gin.Context, transiti
 	})
 }
 
+type ManualProbeRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+	Mode   string `json:"mode"`
+}
+
+type ManualProbeResponse struct {
+	Success bool                                 `json:"success"`
+	Result  *service.AccountTestConnectionResult `json:"result,omitempty"`
+	Account *service.Account                     `json:"account,omitempty"`
+}
+
+// ManualProbe handles manual probe requests from frontend
+// POST /api/v1/admin/accounts/:id/manual-probe
+func (h *AccountHandler) ManualProbe(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+
+	var req ManualProbeRequest
+	_ = c.ShouldBindJSON(&req)
+
+	if req.Model == "" {
+		req.Model = "claude-opus-4-8"
+	}
+	if req.Prompt == "" {
+		req.Prompt = "hi"
+	}
+
+	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.InternalError(c, "Failed to get account")
+		return
+	}
+
+	result, testErr := h.accountTestService.TestAccountConnectionWithResult(c, accountID, req.Model, req.Prompt, req.Mode)
+	if testErr != nil {
+		response.InternalError(c, "Failed to test account")
+		return
+	}
+
+	var updatedAccount *service.Account
+	if result.Success {
+		updatedAccount, err = h.adminService.RecoverAccountAfterManualProbe(c.Request.Context(), accountID, account.Platform)
+		if err != nil {
+			response.InternalError(c, "Failed to recover account state")
+			return
+		}
+	}
+
+	resp := ManualProbeResponse{
+		Success: result.Success,
+		Result:  result,
+		Account: updatedAccount,
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
 // BatchTestNonAPIKey tests all non-api-key accounts matching optional filters.
 // POST /api/v1/admin/accounts/batch-test-non-apikey
 func (h *AccountHandler) BatchTestNonAPIKey(c *gin.Context) {

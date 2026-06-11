@@ -1,0 +1,105 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - heading "中转站品质检测" [level=1] [ref=e4]
+    - generic "支援Opus4.8檢測" [ref=e5]: 📢 支援Opus4.8檢測
+    - paragraph [ref=e6]: 检测 OpenAI 中转站 / 反向代理 API — 自动执行 76 项测试，识别偷换模型、Token 注水、System Prompt 渗漏、依赖劫持（AC-1.a）、签名篡改（AC-5）等供应链攻击风险。
+  - generic [ref=e7]:
+    - generic [ref=e8]:
+      - generic [ref=e9]:
+        - button "檢測" [ref=e10] [cursor=pointer]
+        - button "端点状态监控" [ref=e11] [cursor=pointer]
+        - button "比价" [ref=e12] [cursor=pointer]
+        - button "报告" [ref=e13] [cursor=pointer]
+        - button "🚨 诈骗中转站" [ref=e14] [cursor=pointer]
+        - button "API / Skill" [ref=e15] [cursor=pointer]
+        - button "失败原因" [ref=e16] [cursor=pointer]
+        - link "GitHub" [ref=e17] [cursor=pointer]:
+          - /url: https://github.com/Bazaarlinkorg/LLMprobe-engine
+          - img [ref=e18]
+      - generic [ref=e21]:
+        - img [ref=e22]
+        - button "Select language" [ref=e26] [cursor=pointer]:
+          - generic [ref=e27]: 🇨🇳
+          - generic [ref=e28]: 简体中文
+          - img [ref=e29]
+    - generic [ref=e31]: Loading…
+  - generic [ref=e33]:
+    - heading "本工具侦测的攻击类型" [level=2] [ref=e34]
+    - paragraph [ref=e35]: 本工具实作了论文 arXiv 2604.08407 所列 3 类关键的中转站攻击侦测 — 涵盖依赖劫持、条件式 system prompt 注入、与金钥外泄。每次测试会自动跑 50 项以上的 probe 来侦测这些攻击面。
+    - generic [ref=e36]:
+      - article [ref=e37]:
+        - generic [ref=e38]:
+          - generic [ref=e39]: AC-1.a
+          - heading "回应窜改" [level=3] [ref=e40]
+        - paragraph [ref=e41]: 中转站在「解析回应」阶段主动修改 tool-call 或文字内容，让 agent 执行攻击者指定的操作。常见手法包含：窜改 npm/pip/go/cargo 安装指令、注入 typosquatting 套件、改写 shell command 参数。检测方式为比对中转站回应与直连模型的 tool-call payload，找出 silent rewrite。
+      - article [ref=e42]:
+        - generic [ref=e43]:
+          - generic [ref=e44]: AC-1.b
+          - heading "条件注入" [level=3] [ref=e45]
+        - paragraph [ref=e46]: 中转站根据 prompt 内容条件式注入 system message — 对含「银行」「密码」「转账」等敏感词的请求注入恶意指令，对普通请求则保持沉默。统计上呈现异常分布差异。检测方式为 Proxy Monitor 比对 baseline 与待测中转站的 system prompt 偏移量。
+      - article [ref=e47]:
+        - generic [ref=e48]:
+          - generic [ref=e49]: AC-2
+          - heading "秘密扫描" [level=3] [ref=e50]
+        - paragraph [ref=e51]: 中转站在请求 (request) 与回应 (response) 两端静默扫描 API key、access token、个资、商业机密等敏感资讯，因为不修改内容因此一般 diff 工具侦测不到。检测方式为注入 honeypot token 并验证该 token 是否在中转站日志、Telegram bot、或外部 endpoint 出现。
+  - generic [ref=e53]:
+    - heading "常見問題" [level=2] [ref=e54]
+    - generic [ref=e55]:
+      - group [ref=e56]:
+        - generic "什麼是 AI API 中轉站檢測？ +" [ref=e57] [cursor=pointer]:
+          - text: 什麼是 AI API 中轉站檢測？
+          - generic [ref=e58]: +
+      - group [ref=e59]:
+        - generic "怎麼判斷中轉站有沒有偷換模型？ +" [ref=e60] [cursor=pointer]:
+          - text: 怎麼判斷中轉站有沒有偷換模型？
+          - generic [ref=e61]: +
+      - group [ref=e62]:
+        - generic "token 灌水是什麼？ +" [ref=e63] [cursor=pointer]:
+          - text: token 灌水是什麼？
+          - generic [ref=e64]: +
+      - group [ref=e65]:
+        - generic "API 延遲多少算正常？ +" [ref=e66] [cursor=pointer]:
+          - text: API 延遲多少算正常？
+          - generic [ref=e67]: +
+      - group [ref=e68]:
+        - generic "BazaarLink Probe 和一般 ping 測試差在哪？ +" [ref=e69] [cursor=pointer]:
+          - text: BazaarLink Probe 和一般 ping 測試差在哪？
+          - generic [ref=e70]: +
+      - group [ref=e71]:
+        - generic "檢測結果可以怎麼用來選供應商？ +" [ref=e72] [cursor=pointer]:
+          - text: 檢測結果可以怎麼用來選供應商？
+          - generic [ref=e73]: +
+    - link "← 回到 BazaarLink 首頁" [ref=e75] [cursor=pointer]:
+      - /url: https://bazaarlink.ai/
+  - generic [ref=e76]:
+    - heading "LLM 中轉站 / 反向代理 API 品質檢測" [level=3] [ref=e77]
+    - paragraph [ref=e78]:
+      - text: 輸入任何 OpenAI 相容的中轉站 / 反向代理 API 端點，自動執行 50 項測試，偵測偷換模型、模型注水（Token 膨脹）、模型滲水（System Prompt 條件注入，AC-1.b）、依賴劫持（AC-1.a：npm / pip / go / cargo / uv / brew）、金鑰竊取（AC-2）、簽名篡改（AC-5）等 LLM 供應鏈攻擊（malicious intermediary attack），輸出 0–100 評分。基於
+      - link "arxiv 2604.08407" [ref=e79] [cursor=pointer]:
+        - /url: https://arxiv.org/abs/2604.08407
+      - text: 攻擊分類體系。
+    - generic [ref=e80]:
+      - generic [ref=e81]: 中文推理品質
+      - generic [ref=e83]: 程式碼生成
+      - generic [ref=e85]: 偷換模型偵測
+      - generic [ref=e87]: Token 注水偵測
+      - generic [ref=e89]: System Prompt 滲水
+      - generic [ref=e91]: SSE 串流驗證
+      - generic [ref=e93]: 提示注入測試
+      - generic [ref=e95]: 模型指紋識別
+    - generic [ref=e97]:
+      - strong [ref=e98]: 致謝 / Acknowledgements
+      - text: 本工具參考並感謝以下開源專案的啟發與貢獻：
+      - link "LLMmap" [ref=e99] [cursor=pointer]:
+        - /url: https://github.com/pasquini-dario/LLMmap
+      - text: （MIT，LLM 模型指紋識別）、
+      - link "api-relay-audit" [ref=e100] [cursor=pointer]:
+        - /url: https://github.com/toby-bridges/api-relay-audit
+      - text: （MIT，中轉站安全稽核）、
+      - link "relayAPI" [ref=e101] [cursor=pointer]:
+        - /url: https://github.com/zzsting88/relayAPI
+      - text: （中轉站整理資訊）
+      - strong [ref=e103]: 感謝測試名單
+      - generic [ref=e104]: 今書
+  - link "← 回到 BazaarLink 首頁｜主流 AI 模型・台幣計費・統一發票" [ref=e106] [cursor=pointer]:
+    - /url: /

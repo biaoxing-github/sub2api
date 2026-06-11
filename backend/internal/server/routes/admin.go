@@ -306,6 +306,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		accounts.POST("/:id/api-keys/:fingerprint/restore-state", h.Admin.Account.RestoreAPIKeyState)
 		accounts.DELETE("/:id", h.Admin.Account.Delete)
 		accounts.POST("/:id/test", h.Admin.Account.Test)
+		accounts.POST("/:id/manual-probe", h.Admin.Account.ManualProbe)
 		accounts.POST("/:id/probe-runs", h.Admin.Account.CreateProbeRun)
 		accounts.GET("/:id/probe-runs", h.Admin.Account.ListProbeRuns)
 		accounts.GET("/:id/probe-runs/:run_id", h.Admin.Account.GetProbeRun)
