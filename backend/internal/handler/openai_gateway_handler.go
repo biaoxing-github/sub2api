@@ -446,6 +446,15 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			)
 			shouldProbe, infiniteProbe := h.openAISchedulerExhaustionProbeMode(len(failedAccountIDs))
 			if shouldProbe {
+				if !streamStarted {
+					c.Header("Content-Type", "text/event-stream")
+					c.Header("Cache-Control", "no-cache")
+					c.Header("Connection", "keep-alive")
+					c.Status(http.StatusOK)
+					c.Writer.WriteString("data: {\"type\":\"scheduler_probe_pending\"}\n\n")
+					c.Writer.Flush()
+					streamStarted = true
+				}
 				recovered, probeErr := h.gatewayService.RecoverOpenAISchedulerExhaustion(
 					c.Request.Context(),
 					service.OpenAISchedulerExhaustionProbeOptions{
@@ -477,11 +486,26 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				}
 				// 无限探测模式：探测失败后继续循环，不终止
 				if infiniteProbe {
-					select {
-					case <-c.Request.Context().Done():
-						h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Request cancelled during scheduler exhaustion probe", streamStarted)
-						return
-					case <-time.After(2 * time.Second):
+					probeDelay := 2 * time.Second
+					ticker := time.NewTicker(1 * time.Second)
+					timer := time.NewTimer(probeDelay)
+					heartbeatActive := true
+					for heartbeatActive {
+						select {
+						case <-c.Request.Context().Done():
+							ticker.Stop()
+							timer.Stop()
+							h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Request cancelled during scheduler exhaustion probe", streamStarted)
+							return
+						case <-ticker.C:
+							if streamStarted {
+								c.Writer.WriteString(": keepalive\n\n")
+								c.Writer.Flush()
+							}
+						case <-timer.C:
+							ticker.Stop()
+							heartbeatActive = false
+						}
 					}
 					continue
 				}
