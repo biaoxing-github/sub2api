@@ -1081,6 +1081,36 @@ export async function setPrivacy(id: number): Promise<Account> {
   return data
 }
 
+/**
+ * Manually probe an account and recover its state on success
+ * @param id - Account ID
+ * @param payload - Optional probe parameters (model, prompt, mode)
+ * @returns Probe result and updated account if successful
+ */
+export async function manualProbeAccount(
+  id: number,
+  payload?: {
+    model?: string
+    prompt?: string
+    mode?: string
+  }
+): Promise<{
+  success: boolean
+  result: {
+    success: boolean
+    message: string
+    latency_ms?: number
+    first_token_ms?: number
+    http_status?: number
+    reason?: string
+    error?: string
+  }
+  account?: Account
+}> {
+  const { data } = await apiClient.post(`/admin/accounts/${id}/manual-probe`, payload ?? {})
+  return data
+}
+
 export const accountsAPI = {
   list,
   listWithEtag,
