@@ -424,6 +424,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
+	probeFailureCount := 0
 
 	for {
 		// Select account supporting the requested model
@@ -474,20 +475,34 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					sameAccountRetryCount = make(map[int64]int)
 					switchCount = 0
 					lastFailoverErr = nil
+					probeFailureCount = 0
 					continue
 				}
+				probeFailureCount++
 				if probeErr != nil {
 					reqLog.Warn("openai.scheduler_exhaustion_probe_failed",
 						zap.Error(probeErr),
 						zap.String("model", reqModel),
 						zap.Bool("require_compact", requireCompact),
 						zap.Bool("infinite_wait", infiniteProbe),
+						zap.Int("probe_failure_count", probeFailureCount),
 					)
 				}
 				// 无限探测模式：探测失败后继续循环，不终止
 				if infiniteProbe {
-					probeDelay := 2 * time.Second
-					ticker := time.NewTicker(1 * time.Second)
+					probeDelay := h.gatewayService.ProbeIntervalFromErrorCount(probeFailureCount)
+					heartbeatInterval := 1 * time.Second
+					if probeDelay >= 60*time.Second {
+						heartbeatInterval = 10 * time.Second
+					} else if probeDelay >= 10*time.Second {
+						heartbeatInterval = 5 * time.Second
+					}
+					reqLog.Warn("openai.scheduler_exhaustion_probe_backoff",
+						zap.Duration("probe_delay", probeDelay),
+						zap.Duration("heartbeat_interval", heartbeatInterval),
+						zap.Int("probe_failure_count", probeFailureCount),
+					)
+					ticker := time.NewTicker(heartbeatInterval)
 					timer := time.NewTimer(probeDelay)
 					heartbeatActive := true
 					for heartbeatActive {

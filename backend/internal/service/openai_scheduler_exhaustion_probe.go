@@ -361,3 +361,8 @@ func probeIntervalFromErrorCount(errorCount int) time.Duration {
 		return 60 * time.Minute
 	}
 }
+
+// ProbeIntervalFromErrorCount 按探测失败次数返回分级退避间隔，供 handler 层使用。
+func (s *OpenAIGatewayService) ProbeIntervalFromErrorCount(errorCount int) time.Duration {
+	return probeIntervalFromErrorCount(errorCount)
+}
