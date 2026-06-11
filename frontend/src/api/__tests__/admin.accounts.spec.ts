@@ -28,7 +28,6 @@ import {
   createAccountModelProbeRun,
   getActionItems,
   getDashboardSummary,
-  getStatusSummary,
   getUsageSummary,
   list,
   listBatchTestNonAPIKeyRuns,
@@ -98,60 +97,25 @@ describe('admin accounts api usage summary', () => {
     expect(result).toEqual(response)
   })
 
-  it('loads status summary totals without carrying the active status filter', async () => {
-    get.mockResolvedValueOnce({ data: { total: 12 } })
-    get.mockResolvedValueOnce({ data: { total: 8 } })
-    get.mockResolvedValueOnce({ data: { total: 2 } })
-    get.mockResolvedValueOnce({ data: { total: 3 } })
-    get.mockResolvedValueOnce({ data: { total: 1 } })
-    get.mockResolvedValueOnce({ data: { total: 4 } })
-    get.mockResolvedValueOnce({ data: { total: 5 } })
+  it('loads account-pool usage summary without forcing an OpenAI platform filter', async () => {
+    const response = {
+      generated_at: '2026-06-11T10:00:00Z',
+      total_accounts: 3,
+      openai_upstream_balance: { available: 10 },
+      anthropic_upstream_balance: { available: 20 },
+      plans: [],
+    }
+    get.mockResolvedValue({ data: response })
 
-    const result = await getStatusSummary({
-      platform: 'openai',
-      type: 'oauth',
-      status: 'rate_limited',
-      group: '12',
-      search: 'free',
-      plan_type: 'plus',
-      privacy_mode: 'training_off',
-      sort_by: 'name',
-      sort_order: 'asc',
-    })
+    const result = await getUsageSummary({ status: 'active' })
 
-    expect(get).toHaveBeenCalledTimes(7)
-    expect(get).toHaveBeenNthCalledWith(1, '/admin/accounts', expect.objectContaining({
-      params: expect.objectContaining({
-        page: 1,
-        page_size: 1,
-        platform: 'openai',
-        type: 'oauth',
-        group: '12',
-        search: 'free',
-        plan_type: 'plus',
-        privacy_mode: 'training_off',
-        lite: '1',
-      })
-    }))
-    expect(get.mock.calls[0][1]?.params?.status).toBeUndefined()
-    expect(get.mock.calls.map((call) => call[1]?.params?.status)).toEqual([
-      undefined,
-      'active',
-      'rate_limited',
-      'error',
-      'inactive',
-      'temp_unschedulable',
-      'unschedulable',
-    ])
-    expect(result).toEqual({
-      total: 12,
-      active: 8,
-      rate_limited: 2,
-      error: 3,
-      inactive: 1,
-      temp_unschedulable: 4,
-      unschedulable: 5,
+    expect(get).toHaveBeenCalledWith('/admin/accounts/usage-summary', {
+      params: {
+        status: 'active',
+      },
+      signal: undefined,
     })
+    expect(result).toEqual(response)
   })
 
   it('uses an extended timeout for upstream balance refresh requests', async () => {

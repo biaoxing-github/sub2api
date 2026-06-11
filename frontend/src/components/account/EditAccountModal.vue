@@ -165,7 +165,7 @@
             :placeholder="t('admin.accounts.apiKeysPlaceholderKeep')"
           ></textarea>
         </div>
-        <div v-if="account.platform === 'openai'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div v-if="supportsAPIKeyUpstreamBalanceConfig" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label class="input-label">{{ t('admin.accounts.upstream.authUsername') }}</label>
             <input
@@ -2558,6 +2558,10 @@ const upstreamBalanceEndpointPathsText = ref(DEFAULT_UPSTREAM_BALANCE_ENDPOINT_P
 const hasUpstreamAuthPassword = computed(() =>
   Boolean(props.account?.credentials_status?.has_upstream_auth_password)
 )
+const supportsAPIKeyUpstreamBalanceConfig = computed(() =>
+  props.account?.type === 'apikey' &&
+  (props.account.platform === 'openai' || props.account.platform === 'anthropic')
+)
 // Bedrock credentials
 const editBedrockAccessKeyId = ref('')
 const editBedrockSecretAccessKey = ref('')
@@ -3015,6 +3019,15 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     } else {
       webSearchEmulationMode.value = 'default'
     }
+  }
+  if ((newAccount.platform === 'openai' || newAccount.platform === 'anthropic') && newAccount.type === 'apikey') {
+    const credentials = newAccount.credentials as Record<string, unknown> | undefined
+    upstreamAuthUsername.value = (credentials?.upstream_auth_username as string) || ''
+    upstreamCommonRateMultiplier.value = upstreamManualRateMultiplierFrom(credentials, extra)
+    upstreamCommonRateGroupName.value = upstreamManualRateGroupNameFrom(credentials, extra)
+    upstreamBalanceEndpointPathsText.value = endpointPathsToText(
+      credentials?.upstream_balance_endpoint_paths ?? extra?.upstream_balance_endpoint_paths
+    )
   }
 
   // Load quota limit for apikey/bedrock accounts (bedrock quota is also loaded in its own branch above)
@@ -3721,6 +3734,8 @@ const handleSubmit = async () => {
         } else {
           delete newCredentials.compact_model_mapping
         }
+      }
+      if (props.account.platform === 'openai' || props.account.platform === 'anthropic') {
         applyUpstreamAuthCredentials(newCredentials)
       }
 

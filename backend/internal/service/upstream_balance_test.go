@@ -258,6 +258,33 @@ func TestUpstreamBalanceServiceRefreshOneRefreshesOnlyRequestedAccount(t *testin
 	}
 }
 
+func TestUpstreamBalanceServiceRefreshOneSupportsAnthropicAPIKeyAccount(t *testing.T) {
+	repo := &upstreamBalanceRefreshOneRepo{
+		account: &Account{
+			ID:          43,
+			Platform:    PlatformAnthropic,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "sk-ant-test", "base_url": "https://api.anthropic.com"},
+		},
+	}
+	httpUpstream := &upstreamBalanceRefreshOneHTTP{}
+	svc := NewUpstreamBalanceService(repo, httpUpstream, time.Minute)
+
+	snapshot, err := svc.RefreshOne(context.Background(), 43)
+	if err != nil {
+		t.Fatalf("RefreshOne() error = %v", err)
+	}
+	if repo.updateExtraID != 43 {
+		t.Fatalf("updated account id = %d, want 43", repo.updateExtraID)
+	}
+	if snapshot.Available != 12.5 || snapshot.Used != 7.5 || snapshot.Total != 20 {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	if len(httpUpstream.requests) == 0 || !strings.HasSuffix(httpUpstream.requests[0].URL.String(), "/v1/usage") {
+		t.Fatalf("requests = %+v", httpUpstream.requests)
+	}
+}
+
 func TestUpstreamBalanceBaseURLUsesDedicatedBalanceBaseURL(t *testing.T) {
 	account := &Account{
 		ID:       42,

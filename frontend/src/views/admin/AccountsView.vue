@@ -230,42 +230,6 @@
             </button>
           </div>
         </div>
-        <div class="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
-          <div class="flex flex-col gap-2 px-4 py-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                {{ t('admin.accounts.statusSummary.title') }}
-              </div>
-              <div class="text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.statusSummary.scope', { total: formatNumber(statusSummaryTotal) }) }}
-              </div>
-            </div>
-            <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-              <span v-if="statusSummaryLoading" class="inline-flex items-center gap-1">
-                <Icon name="refresh" size="xs" class="animate-spin" />
-                {{ t('common.loading') }}
-              </span>
-              <span v-else-if="statusSummaryError" class="text-rose-600 dark:text-rose-300">
-                {{ statusSummaryError }}
-              </span>
-            </div>
-          </div>
-          <div class="grid grid-cols-2 border-t border-gray-100 dark:border-gray-700 sm:grid-cols-3 lg:grid-cols-6">
-            <div
-              v-for="item in accountStatusSummaryItems"
-              :key="item.key"
-              class="flex items-center justify-between gap-3 border-b border-r border-gray-100 px-4 py-3 last:border-r-0 dark:border-gray-700 sm:last:border-r lg:border-b-0"
-            >
-              <div class="flex min-w-0 items-center gap-2">
-                <span :class="['h-2 w-2 shrink-0 rounded-full', item.dotClass]" />
-                <span class="truncate text-xs font-medium text-gray-500 dark:text-gray-400">{{ item.label }}</span>
-              </div>
-              <span :class="['text-lg font-semibold tabular-nums', item.valueClass]">
-                {{ formatNumber(item.value) }}
-              </span>
-            </div>
-          </div>
-        </div>
       </template>
       <template #table>
         <AccountBulkActionsBar
@@ -943,8 +907,7 @@ import type {
   AdminGroup,
   WindowStats,
   ClaudeModel,
-  AccountPoolUsageSummary,
-  AccountStatusSummary
+  AccountPoolUsageSummary
 } from '@/types'
 
 const { t } = useI18n()
@@ -1169,84 +1132,14 @@ const usageSummary = ref<AccountPoolUsageSummary | null>(null)
 const usageSummaryLoading = ref(false)
 const usageSummaryError = ref<string | null>(null)
 let usageSummaryAbortController: AbortController | null = null
-const statusSummary = ref<AccountStatusSummary | null>(null)
-const statusSummaryLoading = ref(false)
-const statusSummaryError = ref<string | null>(null)
 const actionItems = ref<AccountActionItem[]>([])
 const actionItemsLoading = ref(false)
 const actionItemsError = ref<string | null>(null)
-const dashboardSummaryLoading = ref(false)
-let dashboardSummaryAbortController: AbortController | null = null
 let actionItemsAbortController: AbortController | null = null
 const upstreamBalanceRefreshing = ref(false)
 const refreshingUpstreamBalanceIds = reactive<Set<number>>(new Set())
-let statusSummaryAbortController: AbortController | null = null
 
 const buildUsageSummaryFilters = () => {
-  const rawParams = toRaw(params) as Record<string, unknown>
-  const filters: {
-    platform: string
-    type?: string
-    status?: string
-    group?: string
-    search?: string
-    privacy_mode?: string
-    plan_type?: string
-    sort_by?: string
-    sort_order?: AccountSortOrder
-  } = {
-    platform: 'openai'
-  }
-  const currentPlatform = typeof rawParams.platform === 'string' ? rawParams.platform : ''
-  const shouldUseOpenAIOnlyFilters = currentPlatform === '' || currentPlatform === 'openai'
-  const stringFields = ['status', 'group', 'search', 'sort_by'] as const
-  for (const field of stringFields) {
-    const value = rawParams[field]
-    if (typeof value === 'string' && value.trim() !== '') {
-      filters[field] = value
-    }
-  }
-  if (shouldUseOpenAIOnlyFilters) {
-    const typeValue = rawParams.type
-    if (typeof typeValue === 'string' && typeValue.trim() !== '') {
-      filters.type = typeValue
-    }
-    const privacyValue = rawParams.privacy_mode
-    if (typeof privacyValue === 'string' && privacyValue.trim() !== '') {
-      filters.privacy_mode = privacyValue
-    }
-    const planTypeValue = rawParams.plan_type
-    if (typeof planTypeValue === 'string' && planTypeValue.trim() !== '') {
-      filters.plan_type = planTypeValue
-    }
-  }
-  if (rawParams.sort_order === 'asc' || rawParams.sort_order === 'desc') {
-    filters.sort_order = rawParams.sort_order
-  }
-  return filters
-}
-
-const buildStatusSummaryFilters = () => {
-  const rawParams = toRaw(params) as Record<string, unknown>
-  const filters: {
-    platform?: string
-    type?: string
-    group?: string
-    search?: string
-    privacy_mode?: string
-    plan_type?: string
-  } = {}
-  const stringFields = ['platform', 'type', 'group', 'search', 'privacy_mode', 'plan_type'] as const
-  for (const field of stringFields) {
-    const value = rawParams[field]
-    if (typeof value === 'string' && value.trim() !== '') {
-      filters[field] = value
-    }
-  }
-  return filters
-}
-
-const buildDashboardSummaryFilters = () => {
   const rawParams = toRaw(params) as Record<string, unknown>
   const filters: {
     platform?: string
@@ -1273,7 +1166,7 @@ const buildDashboardSummaryFilters = () => {
 }
 
 const buildActionItemsFilters = () => {
-  const { sort_by: _sortBy, sort_order: _sortOrder, ...filters } = buildDashboardSummaryFilters()
+  const { sort_by: _sortBy, sort_order: _sortOrder, ...filters } = buildUsageSummaryFilters()
   return filters
 }
 
@@ -1301,67 +1194,8 @@ const loadUsageSummary = async () => {
   }
 }
 
-const loadStatusSummary = async () => {
-  statusSummaryAbortController?.abort()
-  const controller = new AbortController()
-  statusSummaryAbortController = controller
-  statusSummaryLoading.value = true
-  statusSummaryError.value = null
-  try {
-    statusSummary.value = await adminAPI.accounts.getStatusSummary(buildStatusSummaryFilters(), {
-      signal: controller.signal
-    })
-  } catch (error: any) {
-    if (error?.name === 'AbortError' || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
-      return
-    }
-    console.error('Failed to load account status summary:', error)
-    statusSummaryError.value = error?.response?.data?.message || error?.message || t('admin.accounts.statusSummary.loadFailed')
-  } finally {
-    if (statusSummaryAbortController === controller) {
-      statusSummaryLoading.value = false
-      statusSummaryAbortController = null
-    }
-  }
-}
-
 const isCanceledError = (error: any) => {
   return error?.name === 'AbortError' || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError'
-}
-
-const loadDashboardSummary = async () => {
-  dashboardSummaryAbortController?.abort()
-  const controller = new AbortController()
-  dashboardSummaryAbortController = controller
-  dashboardSummaryLoading.value = true
-  usageSummaryLoading.value = true
-  statusSummaryLoading.value = true
-  usageSummaryError.value = null
-  statusSummaryError.value = null
-  try {
-    const summary = await adminAPI.accounts.getDashboardSummary(buildDashboardSummaryFilters(), {
-      signal: controller.signal
-    })
-    statusSummary.value = summary.status_summary
-    usageSummary.value = summary.usage_summary ?? null
-    usageSummaryError.value = summary.usage_summary_error || null
-  } catch (error: any) {
-    if (isCanceledError(error)) {
-      return
-    }
-    console.error('Failed to load account dashboard summary:', error)
-    const fallbackError = error?.response?.data?.message || error?.message || t('admin.accounts.dashboardSummary.loadFailed')
-    statusSummaryError.value = fallbackError
-    usageSummaryError.value = fallbackError
-    await Promise.all([loadUsageSummary(), loadStatusSummary()])
-  } finally {
-    if (dashboardSummaryAbortController === controller) {
-      dashboardSummaryLoading.value = false
-      usageSummaryLoading.value = false
-      statusSummaryLoading.value = false
-      dashboardSummaryAbortController = null
-    }
-  }
 }
 
 const loadActionItems = async () => {
@@ -1392,73 +1226,8 @@ const loadActionItems = async () => {
 }
 
 const loadAccountFirstScreenSummary = async () => {
-  await Promise.all([loadDashboardSummary(), loadActionItems()])
+  await Promise.all([loadUsageSummary(), loadActionItems()])
 }
-
-type AccountStatusSummaryKey = keyof AccountStatusSummary
-
-const accountStatusSummaryItems = computed(() => {
-  const current = statusSummary.value
-  const items: Array<{
-    key: AccountStatusSummaryKey
-    label: string
-    value: number
-    dotClass: string
-    valueClass: string
-  }> = [
-    {
-      key: 'active',
-      label: t('admin.accounts.statusSummary.active'),
-      value: current?.active ?? 0,
-      dotClass: 'bg-emerald-500',
-      valueClass: 'text-emerald-700 dark:text-emerald-300',
-    },
-    {
-      key: 'rate_limited',
-      label: t('admin.accounts.statusSummary.rateLimited'),
-      value: current?.rate_limited ?? 0,
-      dotClass: 'bg-amber-500',
-      valueClass: 'text-amber-700 dark:text-amber-300',
-    },
-    {
-      key: 'error',
-      label: t('admin.accounts.statusSummary.error'),
-      value: current?.error ?? 0,
-      dotClass: 'bg-rose-500',
-      valueClass: 'text-rose-700 dark:text-rose-300',
-    },
-    {
-      key: 'inactive',
-      label: t('admin.accounts.statusSummary.inactive'),
-      value: current?.inactive ?? 0,
-      dotClass: 'bg-gray-400',
-      valueClass: 'text-gray-700 dark:text-gray-200',
-    },
-    {
-      key: 'temp_unschedulable',
-      label: t('admin.accounts.statusSummary.tempUnschedulable'),
-      value: current?.temp_unschedulable ?? 0,
-      dotClass: 'bg-orange-500',
-      valueClass: 'text-orange-700 dark:text-orange-300',
-    },
-    {
-      key: 'unschedulable',
-      label: t('admin.accounts.statusSummary.unschedulable'),
-      value: current?.unschedulable ?? 0,
-      dotClass: 'bg-slate-500',
-      valueClass: 'text-slate-700 dark:text-slate-300',
-    },
-  ]
-  return items
-})
-
-const statusSummaryTotal = computed(() => {
-  const total = statusSummary.value?.total
-  if (typeof total === 'number') {
-    return total
-  }
-  return accountStatusSummaryItems.value.reduce((sum, item) => sum + item.value, 0)
-})
 
 const actionItemCounts = computed<AccountActionItemCounts>(() => {
   return actionItems.value.reduce<AccountActionItemCounts>((counts, item) => {
@@ -1953,7 +1722,7 @@ const handleRefreshUpstreamBalances = async () => {
 }
 
 const canRefreshUpstreamBalance = (account: Account) => {
-  return account.platform === 'openai' && account.type === 'apikey'
+  return (account.platform === 'openai' || account.platform === 'anthropic') && account.type === 'apikey'
 }
 
 const handleRefreshUpstreamBalance = async (account: Account) => {
@@ -2905,8 +2674,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   usageSummaryAbortController?.abort()
-  statusSummaryAbortController?.abort()
-  dashboardSummaryAbortController?.abort()
   actionItemsAbortController?.abort()
   window.removeEventListener('scroll', handleScroll, true)
   document.removeEventListener('click', handleClickOutside)

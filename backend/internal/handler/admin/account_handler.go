@@ -663,7 +663,7 @@ func accountSchedulingPoolItemFromService(item service.OpenAIAccountSchedulingPo
 	}
 }
 
-// GetUsageSummary handles aggregated OpenAI account usage by ChatGPT plan and account type.
+// GetUsageSummary handles aggregated account-pool usage for the current filters.
 // GET /api/v1/admin/accounts/usage-summary
 func (h *AccountHandler) GetUsageSummary(c *gin.Context) {
 	if h.accountUsageService == nil {
@@ -671,7 +671,7 @@ func (h *AccountHandler) GetUsageSummary(c *gin.Context) {
 		return
 	}
 
-	platform := c.DefaultQuery("platform", service.PlatformOpenAI)
+	platform := strings.TrimSpace(c.Query("platform"))
 	accountType := c.Query("type")
 	status := c.Query("status")
 	search := strings.TrimSpace(c.Query("search"))

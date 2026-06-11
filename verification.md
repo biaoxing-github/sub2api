@@ -2914,3 +2914,15 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 日志验证：切流后 `sub2api-green` 与 `sub2api-proxy` 关键错误过滤命中 0。
 - 当前状态：active=`sub2api-green/sub2api:v0.1.134.27`；rollback=`sub2api-blue/sub2api:v0.1.134.26`。
 - 已知限制：`D:\sub2api-deploy\.env` 的 `ADMIN_PASSWORD` 为空，无法登录管理端验证 `/api/v1/admin/system/version`；版本由 Docker label 和容器内 `/app/sub2api --version` 验证。
+
+## 2026-06-11 14:50 +08:00 - 账号池用量与 Anthropic 上游余额配置
+
+- 执行者：Devil
+- 变更：账号页“ChatGPT 账号池用量”改为“账号池用量”，后端账号池汇总不再读取或计算 5 小时/7 天额度窗口，不再返回按 ChatGPT plan 展示的数据；账号数改为当前筛选下的全系统账号数。
+- 变更：账号页移除账号状态汇总卡片与对应首屏 dashboard/status summary 请求；账号池用量卡片分离展示 OpenAI 额度/真实额度与 Anthropic 额度/真实额度。
+- 变更：Anthropic APIKey 账号纳入上游余额刷新，默认余额 base URL 使用 `https://api.anthropic.com`；编辑弹窗为 Anthropic APIKey 开放上游账号、密码、倍率、倍率分组、余额端点和手动余额字段，保存使用与 OpenAI 一致的 `upstream_manual_*` 字段。
+- 验证：`go test -tags unit ./internal/service -run "TestBuildAccountUsageSummary|TestUpstreamBalanceService" -count=1` 通过。
+- 验证：`go test -tags unit ./internal/handler/admin -run "TestAccountHandler(GetUsageSummary|DashboardSummary|ActionItems|RefreshUpstreamBalance)" -count=1` 通过。
+- 验证：`npm run test:run -- src/components/admin/account/__tests__/AccountUsageSummaryPanel.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/api/__tests__/admin.accounts.spec.ts src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts` 通过，48 tests passed。
+- 验证：`npm run typecheck` 通过；`go test ./cmd/server -run TestNoSuchTest -count=1` 通过；`git diff --check` 通过。
+- 已知观察：Vitest 输出仍有既有 `common.time.never` i18n 缺失警告和 Browserslist 数据提示，本轮未修改该无关链路。

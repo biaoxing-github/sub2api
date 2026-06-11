@@ -9,11 +9,10 @@ vi.mock('vue-i18n', () => ({
     t: (key: string, params?: Record<string, unknown>) => {
       const labels: Record<string, string> = {
         'admin.accounts.usageSummary.accounts': '账号',
-        'admin.accounts.usageSummary.fiveHourRemaining': '5 小时剩余',
-        'admin.accounts.usageSummary.sevenDayRemaining': '7 天剩余',
+        'admin.accounts.usageSummary.openaiBalance': 'OpenAI 额度 / 真实额度',
+        'admin.accounts.usageSummary.anthropicBalance': 'Anthropic 额度 / 真实额度',
         'admin.accounts.usageSummary.upstreamActualBalance': '真实余额',
         'admin.accounts.usageSummary.upstreamUsableBalance': '可用余额',
-        'admin.accounts.usageSummary.missingCodexSnapshots': '缺 Codex 快照',
         'admin.accounts.usageSummary.missingUpstreamBalanceSnapshots': '缺余额快照',
         'admin.accounts.usageSummary.generatedAt': `更新于 ${params?.time ?? ''}`,
         'admin.accounts.usageSummary.expand': '展开',
@@ -47,12 +46,32 @@ function makeSummary(overrides: Partial<AccountPoolUsageSummary> = {}): AccountP
     five_hour: { ...zeroWindow },
     seven_day: { ...zeroWindow },
     upstream_balance: {
-      available: 12,
+      available: 22,
       used: 0,
-      total: 12,
+      total: 22,
+      account_count: 4,
+      key_count: 3,
+      ok_key_count: 3,
+      failed_key_count: 0,
+      missing_accounts: 3,
+    },
+    openai_upstream_balance: {
+      available: 12,
+      used: 2,
+      total: 14,
       account_count: 2,
       key_count: 1,
       ok_key_count: 1,
+      failed_key_count: 0,
+      missing_accounts: 1,
+    },
+    anthropic_upstream_balance: {
+      available: 10,
+      used: 1,
+      total: 11,
+      account_count: 2,
+      key_count: 2,
+      ok_key_count: 2,
       failed_key_count: 0,
       missing_accounts: 2,
     },
@@ -62,7 +81,7 @@ function makeSummary(overrides: Partial<AccountPoolUsageSummary> = {}): AccountP
 }
 
 describe('AccountUsageSummaryPanel', () => {
-  it('拆开显示 Codex 快照缺失和上游余额快照缺失', () => {
+  it('只显示账号池余额并按 OpenAI 与 Anthropic 分开展示', () => {
     const wrapper = mount(AccountUsageSummaryPanel, {
       props: {
         summary: makeSummary(),
@@ -74,9 +93,11 @@ describe('AccountUsageSummaryPanel', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('缺 Codex 快照')
+    expect(wrapper.text()).toContain('OpenAI 额度 / 真实额度')
+    expect(wrapper.text()).toContain('Anthropic 额度 / 真实额度')
     expect(wrapper.text()).toContain('缺余额快照')
-    expect(wrapper.text()).toContain('1')
-    expect(wrapper.text()).toContain('2')
+    expect(wrapper.text()).not.toContain('5 小时')
+    expect(wrapper.text()).not.toContain('7 天')
+    expect(wrapper.text()).not.toContain('缺 Codex 快照')
   })
 })

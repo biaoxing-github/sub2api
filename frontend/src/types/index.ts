@@ -1538,6 +1538,8 @@ export interface AccountPoolUsageSummary {
   five_hour: AccountPoolUsageSummaryWindow
   seven_day: AccountPoolUsageSummaryWindow
   upstream_balance: UpstreamBalanceSummary
+  openai_upstream_balance: UpstreamBalanceSummary
+  anthropic_upstream_balance: UpstreamBalanceSummary
   plans: AccountPoolUsageSummaryGroup[]
 }
 

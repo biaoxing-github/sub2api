@@ -241,10 +241,11 @@ func (s *UpstreamBalanceService) RefreshAll(ctx context.Context) (*UpstreamBalan
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 
-	accounts, _, err := s.accountRepo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 1000, SortBy: "id", SortOrder: "asc"}, PlatformOpenAI, AccountTypeAPIKey, "", "", 0, "", "")
+	accounts, _, err := s.accountRepo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 1000, SortBy: "id", SortOrder: "asc"}, "", AccountTypeAPIKey, "", "", 0, "", "")
 	if err != nil {
 		return nil, err
 	}
+	accounts = filterUpstreamBalanceRefreshAccounts(accounts)
 	matchedAccounts := len(accounts)
 	if s.activeAccountLimit > 0 && len(accounts) > s.activeAccountLimit {
 		accounts = accounts[:s.activeAccountLimit]
@@ -292,8 +293,8 @@ func (s *UpstreamBalanceService) RefreshAccount(ctx context.Context, account *Ac
 	if s == nil || s.accountRepo == nil || s.httpUpstream == nil {
 		return nil, errors.New("upstream balance service is not configured")
 	}
-	if account == nil || account.Type != AccountTypeAPIKey || !account.IsOpenAI() {
-		return nil, errors.New("account is not an OpenAI API-key account")
+	if account == nil || account.Type != AccountTypeAPIKey || !(account.IsOpenAI() || account.IsAnthropic()) {
+		return nil, errors.New("account is not an OpenAI or Anthropic API-key account")
 	}
 	if account.Extra == nil {
 		account.Extra = make(map[string]any)
@@ -411,6 +412,21 @@ func (s *UpstreamBalanceService) RefreshAccount(ctx context.Context, account *Ac
 		account.Concurrency = *authCtx.concurrency
 	}
 	return snapshot, nil
+}
+
+// filterUpstreamBalanceRefreshAccounts 保证批量余额刷新只覆盖支持上游余额探测的 API Key 账号。
+func filterUpstreamBalanceRefreshAccounts(accounts []Account) []Account {
+	out := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.Type != AccountTypeAPIKey {
+			continue
+		}
+		if !account.IsOpenAI() && !account.IsAnthropic() {
+			continue
+		}
+		out = append(out, account)
+	}
+	return out
 }
 
 func (s *UpstreamBalanceService) fetchKeyBalance(ctx context.Context, account *Account, apiKey string, authCtx *upstreamAuthContext) UpstreamBalanceKeySnapshot {
@@ -1460,7 +1476,11 @@ func upstreamBalanceBaseURL(account *Account) string {
 		baseURL = strings.TrimSpace(account.GetCredential("base_url"))
 	}
 	if baseURL == "" {
-		baseURL = "https://api.openai.com"
+		if account != nil && account.IsAnthropic() {
+			baseURL = "https://api.anthropic.com"
+		} else {
+			baseURL = "https://api.openai.com"
+		}
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	baseURL = strings.TrimSuffix(baseURL, "/v1")

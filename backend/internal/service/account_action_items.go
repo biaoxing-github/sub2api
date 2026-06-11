@@ -182,7 +182,7 @@ func BuildAccountDashboardSummary(accounts []Account, usageSummary *AccountUsage
 }
 
 func AccountUpstreamBalanceState(account *Account) string {
-	if account == nil || !account.IsOpenAI() || account.Type != AccountTypeAPIKey {
+	if account == nil || account.Type != AccountTypeAPIKey || (!account.IsOpenAI() && !account.IsAnthropic()) {
 		return ""
 	}
 	snapshot := UpstreamBalanceSnapshotFromExtra(account.Extra)

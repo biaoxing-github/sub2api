@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -51,6 +50,8 @@ type AccountUsageSummary struct {
 	FiveHour                     AccountUsageSummaryWindow  `json:"five_hour"`
 	SevenDay                     AccountUsageSummaryWindow  `json:"seven_day"`
 	UpstreamBalance              UpstreamBalanceSummary     `json:"upstream_balance"`
+	OpenAIUpstreamBalance        UpstreamBalanceSummary     `json:"openai_upstream_balance"`
+	AnthropicUpstreamBalance     UpstreamBalanceSummary     `json:"anthropic_upstream_balance"`
 	Plans                        []AccountUsageSummaryGroup `json:"plans"`
 }
 
@@ -76,43 +77,13 @@ func BuildAccountUsageSummary(ctx context.Context, accounts []Account, statsRead
 		now = time.Now()
 	}
 
-	openAIAccounts := make([]Account, 0, len(accounts))
-	accountIDs := make([]int64, 0, len(accounts))
-	for _, account := range accounts {
-		if !account.IsOpenAI() {
-			continue
-		}
-		openAIAccounts = append(openAIAccounts, account)
-		if account.ID > 0 {
-			accountIDs = append(accountIDs, account.ID)
-		}
-	}
-
-	stats5h, err := readAccountSummaryWindowStats(ctx, statsReader, accountIDs, now.Add(-5*time.Hour))
-	if err != nil {
-		return nil, err
-	}
-	stats7d, err := readAccountSummaryWindowStats(ctx, statsReader, accountIDs, now.Add(-7*24*time.Hour))
-	if err != nil {
-		return nil, err
-	}
-
 	summary := &AccountUsageSummary{
 		GeneratedAt: now.UTC(),
 		Plans:       make([]AccountUsageSummaryGroup, 0),
 	}
-	byPlan := make(map[string]*accountUsageSummaryAccumulator)
 
-	for i := range openAIAccounts {
-		account := &openAIAccounts[i]
-		planType := normalizeAccountSummaryPlanTypeForAccount(account)
-		accountType := normalizeAccountSummaryAccountType(account.Type)
-		planAcc := getAccountUsageSummaryAccumulator(byPlan, planType, "", true)
-		typeAcc := getAccountUsageSummaryAccumulator(planAcc.childByType, planType, accountType, false)
-
-		applyAccountToSummaryAccumulator(planAcc, account, planType, stats5h[account.ID], stats7d[account.ID], now)
-		applyAccountToSummaryAccumulator(typeAcc, account, planType, stats5h[account.ID], stats7d[account.ID], now)
-
+	for i := range accounts {
+		account := &accounts[i]
 		summary.TotalAccounts++
 		if account.IsSchedulable() {
 			summary.SchedulableAccounts++
@@ -126,41 +97,24 @@ func BuildAccountUsageSummary(ctx context.Context, accounts []Account, statsRead
 		}
 		if balance := UpstreamBalanceSnapshotFromExtra(account.Extra); balance != nil {
 			applySnapshotToSummary(&summary.UpstreamBalance, balance)
+			switch {
+			case account.IsOpenAI():
+				applySnapshotToSummary(&summary.OpenAIUpstreamBalance, balance)
+			case account.IsAnthropic():
+				applySnapshotToSummary(&summary.AnthropicUpstreamBalance, balance)
+			}
 		} else if account.Type == AccountTypeAPIKey {
 			summary.UpstreamBalance.AccountCount++
 			summary.UpstreamBalance.MissingAccounts++
+			switch {
+			case account.IsOpenAI():
+				summary.OpenAIUpstreamBalance.AccountCount++
+				summary.OpenAIUpstreamBalance.MissingAccounts++
+			case account.IsAnthropic():
+				summary.AnthropicUpstreamBalance.AccountCount++
+				summary.AnthropicUpstreamBalance.MissingAccounts++
+			}
 		}
-		applyAccountWindowToSummary(&summary.FiveHour, account, planType, "5h", stats5h[account.ID], now)
-		applyAccountWindowToSummary(&summary.SevenDay, account, planType, "7d", stats7d[account.ID], now)
-	}
-
-	planKeys := make([]string, 0, len(byPlan))
-	for key := range byPlan {
-		planKeys = append(planKeys, key)
-	}
-	sort.Slice(planKeys, func(i, j int) bool {
-		return comparePlanTypes(planKeys[i], planKeys[j]) < 0
-	})
-
-	for _, planKey := range planKeys {
-		planGroup := byPlan[planKey].group
-		typeKeys := make([]string, 0, len(byPlan[planKey].childByType))
-		for key := range byPlan[planKey].childByType {
-			typeKeys = append(typeKeys, key)
-		}
-		sort.Slice(typeKeys, func(i, j int) bool {
-			return compareAccountTypes(typeKeys[i], typeKeys[j]) < 0
-		})
-		for _, typeKey := range typeKeys {
-			planGroup.Types = append(planGroup.Types, byPlan[planKey].childByType[typeKey].group)
-		}
-		summary.Plans = append(summary.Plans, planGroup)
-	}
-
-	finalizeAccountUsageSummaryWindow(&summary.FiveHour)
-	finalizeAccountUsageSummaryWindow(&summary.SevenDay)
-	for i := range summary.Plans {
-		finalizeAccountUsageSummaryGroup(&summary.Plans[i])
 	}
 
 	return summary, nil

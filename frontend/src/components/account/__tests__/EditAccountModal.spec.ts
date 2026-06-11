@@ -586,6 +586,50 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_responses_supported).toBe(false)
   })
 
+  it('shows and saves upstream balance fields for Anthropic API key accounts', async () => {
+    const account = {
+      ...buildAccount(),
+      platform: 'anthropic',
+      type: 'apikey',
+      credentials: {
+        api_key: 'sk-ant-existing',
+        base_url: 'https://api.anthropic.com',
+        upstream_auth_username: 'alice@example.com',
+        upstream_auth_password_set: true,
+        upstream_common_rate_multiplier: 0.42,
+        upstream_common_rate_group_name: 'claude',
+        upstream_balance_endpoint_paths: ['/v1/usage']
+      },
+      extra: {}
+    } as any
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.text()).toContain('admin.accounts.upstream.authUsername')
+    expect(wrapper.text()).toContain('admin.accounts.upstream.commonRateMultiplier')
+    expect(wrapper.text()).toContain('admin.accounts.upstream.balanceEndpointPaths')
+
+    const inputs = wrapper.findAll('input')
+    const username = inputs.find(input => input.attributes('autocomplete') === 'username')
+    expect(username).toBeTruthy()
+    await username!.setValue('bob@example.com')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials?.upstream_auth_username).toBe('bob@example.com')
+    expect(credentials?.upstream_manual_rate_multiplier).toBe(0.42)
+    expect(credentials?.upstream_manual_rate_group_name).toBe('claude')
+    expect(credentials?.upstream_common_rate_multiplier).toBeUndefined()
+    expect(credentials?.upstream_common_rate_group_name).toBeUndefined()
+    expect(credentials?.upstream_balance_endpoint_paths).toEqual(['/v1/usage'])
+  })
+
   it('loads and saves account availability schedule extra', async () => {
     const account = buildAccount()
     account.extra = {

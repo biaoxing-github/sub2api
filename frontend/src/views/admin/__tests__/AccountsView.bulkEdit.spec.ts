@@ -12,8 +12,6 @@ const {
   listBatchTestNonAPIKeyRuns,
   getBatchTestNonAPIKeyRun,
   getUsageSummary,
-  getStatusSummary,
-  getDashboardSummary,
   getActionItems,
   getAllProxies,
   getAllGroups
@@ -26,8 +24,6 @@ const {
   listBatchTestNonAPIKeyRuns: vi.fn(),
   getBatchTestNonAPIKeyRun: vi.fn(),
   getUsageSummary: vi.fn(),
-  getStatusSummary: vi.fn(),
-  getDashboardSummary: vi.fn(),
   getActionItems: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn()
@@ -46,8 +42,6 @@ vi.mock('@/api/admin', () => ({
       listBatchTestNonAPIKeyRuns,
       getBatchTestNonAPIKeyRun,
       getUsageSummary,
-      getStatusSummary,
-      getDashboardSummary,
       getActionItems,
       toggleSchedulable: vi.fn()
     },
@@ -136,8 +130,6 @@ describe('admin AccountsView bulk edit scope', () => {
     listBatchTestNonAPIKeyRuns.mockReset()
     getBatchTestNonAPIKeyRun.mockReset()
     getUsageSummary.mockReset()
-    getStatusSummary.mockReset()
-    getDashboardSummary.mockReset()
     getActionItems.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
@@ -160,12 +152,6 @@ describe('admin AccountsView bulk edit scope', () => {
     listBatchTestNonAPIKeyRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
     getBatchTestNonAPIKeyRun.mockResolvedValue({ id: 1, status: 'running', model_id: 'gpt-5.4', concurrency: 2, limit: 500, total: 0, success_count: 0, failed_count: 0, unauthorized_count: 0, created_at: '2026-05-26T10:00:00Z', items: [] })
     getUsageSummary.mockResolvedValue(null)
-    getStatusSummary.mockResolvedValue({})
-    getDashboardSummary.mockResolvedValue({
-      status_summary: {},
-      usage_summary: null,
-      action_item_counts: { critical: 0, warning: 0, info: 0 },
-    })
     getActionItems.mockResolvedValue({ items: [] })
     getAllProxies.mockResolvedValue([])
     getAllGroups.mockResolvedValue([])
