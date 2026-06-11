@@ -2959,6 +2959,27 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 已知限制：`D:\sub2api-deploy\.env` 的 `ADMIN_PASSWORD` 为空，无法登录管理端验证 `/api/v1/admin/system/version`；版本由 Docker label 和容器内 `/app/sub2api --version` 验证。
 - 已知观察：request snapshot 清理任务在候选启动窗口出现 1 条 `pq: canceling statement due to user request`，切流前最近 1 分钟与切流后窗口无重复；继续作为既有观察项留意。
 
+## 2026-06-11 22:45 +08:00 - v0.1.134.30 蓝绿构建、部署、验证
+
+- 执行者：Devil
+- 提交：`e94e0b8778ab`（`feat(handler): failover 耗尽回退探测保活循环，502/503/429 单账号不终止`），包含 `2f35bad37ae5..e94e0b8778ab` 范围内 failover 耗尽回退探测保活循环和 `sleepWithProbeKeepalive` helper。
+- 前馈：Obsidian Local REST 本轮 2 秒超时；继续以项目源码、git diff、CodeGraph 和 live runtime 为准。
+- 代码验证：`go test -tags unit ./internal/service -run "TestOpenAISchedulerExhaustionProbe|TestProbeIntervalFromErrorCount|TestOpenAIGatewayServiceStreamFailover|TestOpenAIGatewayService_Forward_ModelCapacityErrorTriggersFailover" -count=1` 通过。
+- 代码验证：`go test -tags unit ./internal/handler -run TestNoSuchTest -count=1` 通过。
+- 代码验证：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- 代码验证：`git diff --check` 通过。
+- 构建：从已提交 `HEAD` 通过 `git archive HEAD | docker build ...` 构建不可变镜像 `sub2api:v0.1.134.30`，镜像 ID `sha256:169a9357b377bfc83bfcaafd52a56f6c3c6ef14be035a6267a82a2d9a624d40a`。
+- 镜像标签验证：`docker image inspect sub2api:v0.1.134.30` 返回 `Version=v0.1.134.30`、`Revision=e94e0b8778ab`。
+- 候选部署：发布前 active 为 `sub2api-green/sub2api:v0.1.134.29`；只重建 idle `sub2api-blue` 到 `sub2api:v0.1.134.30`，未重启 PostgreSQL/Redis。
+- 候选验证：`sub2api-blue` Health `healthy` 持续超过 60 秒；`18083` health/root/admin/settings 均 200，静态资源 6/6 返回 200，未登录 admin accounts、`/responses`、`/v1/messages` 均 401。
+- 候选日志：启动窗口有 1 条 `[OpenAI] cleanup expired request snapshots failed err=pq: canceling statement due to user request`；切流前最近 1 分钟复查关键错误过滤命中 0，判定为非重复启动清理观察项。
+- 切流：`D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload` 成功。
+- 切流后验证：`8080` health/root/admin/settings 均 200，静态资源 6/6 返回 200，未登录 admin accounts、`/responses`、`/v1/messages` 均 401，`sub2api-blue` Health `healthy`，`sub2api-green` 继续 running/healthy 作为回滚。
+- 日志验证：切流后 `sub2api-blue` 与 `sub2api-proxy` 关键错误过滤命中 0。
+- 当前状态：active=`sub2api-blue/sub2api:v0.1.134.30`；rollback=`sub2api-green/sub2api:v0.1.134.29`。
+- 已知限制：`D:\sub2api-deploy\.env` 的 `ADMIN_PASSWORD` 为空，无法登录管理端验证 `/api/v1/admin/system/version`；版本由 Docker label 和容器内 `/app/sub2api --version` 验证。
+- 已知观察：request snapshot 清理任务在候选启动窗口出现 1 条 `pq: canceling statement due to user request`，切流前最近 1 分钟与切流后窗口无重复；继续作为既有观察项留意。
+
 ## 2026-06-11 14:50 +08:00 - 账号池用量与 Anthropic 上游余额配置
 
 - 执行者：Devil
