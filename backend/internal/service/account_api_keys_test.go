@@ -37,29 +37,33 @@ func TestAccountGetAPIKeyFallsBackToLegacyAPIKey(t *testing.T) {
 }
 
 func TestAccountGetAPIKeysFallsBackToLegacyAPIKeyAndDisabledMetadata(t *testing.T) {
+	now := testNow()
 	account := &Account{
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
 			"api_key": "legacy-key",
 		},
+		nowForTest: &now,
 	}
 
 	require.Equal(t, []string{"legacy-key"}, account.GetAPIKeys())
-	require.True(t, account.DisableAPIKey("legacy-key", "invalid_api_key", testNow()))
+	require.True(t, account.DisableAPIKey("legacy-key", "invalid_api_key", now))
 	require.Empty(t, account.GetAPIKeys())
 	require.Empty(t, account.GetAPIKey())
 }
 
 func TestAccountGetAPIKeySkipsDisabledAPIKeys(t *testing.T) {
+	now := testNow()
 	account := &Account{
 		ID:   42,
 		Type: AccountTypeAPIKey,
 		Credentials: map[string]any{
 			"api_keys": []any{"key-a", "key-b"},
 		},
+		nowForTest: &now,
 	}
-	require.True(t, account.DisableAPIKey("key-a", "insufficient_balance", testNow()))
+	require.True(t, account.DisableAPIKey("key-a", "insufficient_balance", now))
 
 	require.Equal(t, "key-b", account.GetAPIKey())
 	require.Equal(t, "key-b", account.LastSelectedAPIKey())
