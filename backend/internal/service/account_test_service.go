@@ -344,7 +344,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	// Determine the model to use
 	testModelID := modelID
 	if testModelID == "" {
-		testModelID = claude.DefaultTestModel
+		testModelID = "claude-opus-4-8"
 	}
 
 	// API Key 账号测试连接时也需要应用通配符模型映射。
