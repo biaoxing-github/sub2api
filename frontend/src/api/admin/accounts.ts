@@ -1096,7 +1096,7 @@ export async function manualProbeAccount(
   }
 ): Promise<{
   success: boolean
-  result: {
+  result?: {
     success: boolean
     message: string
     latency_ms?: number

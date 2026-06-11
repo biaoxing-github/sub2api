@@ -299,6 +299,29 @@ describe('AccountSchedulingPoolView', () => {
     expect(listSchedulingPool).toHaveBeenCalledTimes(2)
   })
 
+  it('shows probe failure message when manual probe response omits result', async () => {
+    manualProbeAccount.mockResolvedValue({
+      success: false,
+    })
+
+    const wrapper = mount(AccountSchedulingPoolView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="manual-probe"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accountSchedulingPool.probeFailed')
+  })
+
   it('shows manual probe button for anthropic accounts and reuses account page sonnet default', async () => {
     listSchedulingPool.mockResolvedValue({
       items: [
