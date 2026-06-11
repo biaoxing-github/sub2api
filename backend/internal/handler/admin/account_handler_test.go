@@ -10,10 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func intPtr(v int) *int {
-	return &v
-}
-
 func TestAccountHandler_ManualProbe(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

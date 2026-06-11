@@ -3020,6 +3020,37 @@ func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, 
 	return updated, nil
 }
 
+// RecoverAccountAfterManualProbe 手动探测成功后恢复账号为可调度状态
+func (s *adminServiceImpl) RecoverAccountAfterManualProbe(ctx context.Context, accountID int64, platform string) (*Account, error) {
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("get account: %w", err)
+	}
+
+	if account.Platform != platform {
+		return nil, fmt.Errorf("platform mismatch: expected %s, got %s", platform, account.Platform)
+	}
+
+	account.Schedulable = true
+	if account.Status == "error" || account.Status == "inactive" {
+		account.Status = StatusActive
+	}
+
+	if err := s.accountRepo.ClearTempUnschedulable(ctx, accountID); err != nil {
+		return nil, fmt.Errorf("clear temp unschedulable: %w", err)
+	}
+
+	if err := s.accountRepo.ClearRateLimit(ctx, accountID); err != nil {
+		return nil, fmt.Errorf("clear rate limit: %w", err)
+	}
+
+	if err := s.accountRepo.Update(ctx, account); err != nil {
+		return nil, fmt.Errorf("update account: %w", err)
+	}
+
+	return account, nil
+}
+
 // Proxy management implementations
 func (s *adminServiceImpl) ListProxies(ctx context.Context, page, pageSize int, protocol, status, search string, sortBy, sortOrder string) ([]Proxy, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
