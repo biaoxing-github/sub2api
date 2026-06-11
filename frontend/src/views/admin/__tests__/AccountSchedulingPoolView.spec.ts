@@ -3,9 +3,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountSchedulingPoolView from '../AccountSchedulingPoolView.vue'
 
-const { listSchedulingPool, setSchedulable } = vi.hoisted(() => ({
+const { listSchedulingPool, setSchedulable, manualProbeAccount } = vi.hoisted(() => ({
   listSchedulingPool: vi.fn(),
   setSchedulable: vi.fn(),
+  manualProbeAccount: vi.fn(),
 }))
 
 const { getAllGroups } = vi.hoisted(() => ({
@@ -16,9 +17,11 @@ vi.mock('@/api/admin/accounts', () => ({
   default: {
     listSchedulingPool,
     setSchedulable,
+    manualProbeAccount,
   },
   listSchedulingPool,
   setSchedulable,
+  manualProbeAccount,
 }))
 
 vi.mock('@/api/admin/groups', () => ({
@@ -62,6 +65,7 @@ describe('AccountSchedulingPoolView', () => {
   beforeEach(() => {
     listSchedulingPool.mockReset()
     setSchedulable.mockReset()
+    manualProbeAccount.mockReset()
     getAllGroups.mockReset()
     getAllGroups.mockResolvedValue([
       { id: 2, name: '自用', platform: 'openai', status: 'active' },
@@ -230,5 +234,63 @@ describe('AccountSchedulingPoolView', () => {
     await flushPromises()
 
     expect(listSchedulingPool).toHaveBeenLastCalledWith(expect.objectContaining({ group: '2', platform: 'anthropic' }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+  })
+
+  it('shows manual probe button for anthropic accounts and calls probe API', async () => {
+    listSchedulingPool.mockResolvedValue({
+      items: [
+        {
+          account: {
+            id: 201,
+            name: 'anthropic-account',
+            platform: 'anthropic',
+            type: 'apikey',
+            status: 'active',
+            schedulable: true,
+            priority: 20,
+            concurrency: 5,
+            load_factor: 3,
+          },
+          pool_status: 'schedulable',
+          pool_reasons: [],
+          derived_health: { state: 'normal', label: '正常' },
+          effective_load_factor: 3,
+        },
+      ],
+      total: 1,
+      schedulable_count: 1,
+      degraded_count: 0,
+      blocked_count: 0,
+      filtered_count: 0,
+      generated_at: '2026-06-11T10:00:00Z',
+    })
+    manualProbeAccount.mockResolvedValue({
+      success: true,
+      result: {
+        success: true,
+        message: 'Probe succeeded',
+        latency_ms: 125,
+      },
+    })
+
+    const wrapper = mount(AccountSchedulingPoolView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-probe"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="manual-probe"]').trigger('click')
+    await flushPromises()
+
+    expect(manualProbeAccount).toHaveBeenCalledWith(201, { model: 'claude-opus-4-8' })
+    expect(listSchedulingPool).toHaveBeenCalledTimes(2)
   })
 })

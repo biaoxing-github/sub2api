@@ -155,6 +155,18 @@
                     <Icon name="ban" size="sm" :class="isDisabling(item.account.id) ? 'animate-pulse' : ''" />
                     <span class="ml-1">{{ t('admin.accountSchedulingPool.disableScheduling') }}</span>
                   </button>
+                  <button
+                    v-if="shouldShowManualProbe(item.account)"
+                    type="button"
+                    data-test="manual-probe"
+                    class="btn btn-primary px-2 py-1 text-sm ml-2"
+                    :disabled="isProbing(item.account.id)"
+                    :title="t('admin.accountSchedulingPool.manualProbe')"
+                    @click="manualProbe(item)"
+                  >
+                    <Icon name="refresh" size="sm" :class="isProbing(item.account.id) ? 'animate-spin' : ''" />
+                    <span class="ml-1">{{ t('admin.accountSchedulingPool.manualProbe') }}</span>
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -173,7 +185,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AccountAvailabilityRadarBadge from '@/components/account/AccountAvailabilityRadarBadge.vue'
-import { listSchedulingPool, setSchedulable } from '@/api/admin/accounts'
+import { listSchedulingPool, setSchedulable, manualProbeAccount } from '@/api/admin/accounts'
 import groupsAPI from '@/api/admin/groups'
 import type {
   Account,
@@ -202,6 +214,7 @@ const loading = ref(false)
 const error = ref('')
 const message = ref('')
 const disablingIds = ref<Set<number>>(new Set())
+const probingIds = ref<Set<number>>(new Set())
 
 let listAbortController: AbortController | null = null
 let searchTimer: number | null = null
@@ -354,6 +367,45 @@ function setDisabling(accountId: number, value: boolean) {
     next.delete(accountId)
   }
   disablingIds.value = next
+}
+
+function isProbing(accountId: number): boolean {
+  return probingIds.value.has(accountId)
+}
+
+function shouldShowManualProbe(account: Account): boolean {
+  if (account.platform === 'anthropic') return true
+  if (account.platform === 'antigravity') {
+    return !!(account as any).mixed_scheduling_enabled
+  }
+  return false
+}
+
+async function manualProbe(item: OpenAIAccountSchedulingPoolItem) {
+  const accountId = item.account.id
+  probingIds.value.add(accountId)
+  error.value = ''
+  message.value = ''
+
+  try {
+    const result = await manualProbeAccount(accountId, {
+      model: 'claude-opus-4-8'
+    })
+
+    if (result.success && result.result.success) {
+      message.value = t('admin.accountSchedulingPool.probeSuccess', {
+        name: item.account.name,
+        latency: result.result.latency_ms
+      })
+      await loadPool()
+    } else {
+      error.value = result.result.message || t('admin.accountSchedulingPool.probeFailed')
+    }
+  } catch (err: any) {
+    error.value = err.message || t('common.error')
+  } finally {
+    probingIds.value.delete(accountId)
+  }
 }
 
 function formatPoolStatus(status: string): string {
