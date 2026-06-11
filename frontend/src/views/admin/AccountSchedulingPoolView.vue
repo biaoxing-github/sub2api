@@ -19,22 +19,8 @@
           <div class="w-full sm:w-56">
             <Select data-test="group-filter" v-model="filters.group" :options="groupOptions" @change="applyFilters" />
           </div>
-          <input
-            v-model="filters.model"
-            type="text"
-            class="input w-full sm:w-40"
-            :placeholder="t('admin.accountSchedulingPool.model')"
-            @change="applyFilters"
-            @keyup.enter="applyFilters"
-          />
-          <div v-if="isOpenAIPlatform" class="w-full sm:w-44">
-            <Select v-model="filters.endpoint" :options="endpointOptions" @change="applyFilters" />
-          </div>
           <div v-if="isOpenAIPlatform" class="w-full sm:w-52">
             <Select v-model="filters.transport" :options="transportOptions" @change="applyFilters" />
-          </div>
-          <div v-if="isOpenAIPlatform" class="w-full sm:w-44">
-            <Select v-model="filters.image_capability" :options="imageCapabilityOptions" @change="applyFilters" />
           </div>
           <button type="button" class="btn btn-secondary px-3" :disabled="loading" @click="loadPool">
             <Icon name="refresh" size="sm" :class="loading ? 'animate-spin' : ''" />
@@ -185,11 +171,12 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AccountAvailabilityRadarBadge from '@/components/account/AccountAvailabilityRadarBadge.vue'
-import { listSchedulingPool, setSchedulable, manualProbeAccount } from '@/api/admin/accounts'
+import { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels } from '@/api/admin/accounts'
 import groupsAPI from '@/api/admin/groups'
 import type {
   Account,
   AdminGroup,
+  ClaudeModel,
   OpenAIAccountSchedulingPoolFilters,
   OpenAIAccountSchedulingPoolItem,
   OpenAIAccountSchedulingPoolResponse,
@@ -201,10 +188,7 @@ const { t } = useI18n()
 const filters = reactive<OpenAIAccountSchedulingPoolFilters>({
   group: '',
   platform: 'openai',
-  model: '',
-  endpoint: '',
   transport: 'http_sse',
-  image_capability: '',
   search: '',
 })
 
@@ -242,13 +226,6 @@ const groupOptions = computed<SelectOption[]>(() => [
   })),
 ])
 
-const endpointOptions = computed<SelectOption[]>(() => [
-  { value: '', label: t('admin.accountSchedulingPool.endpoints.all') },
-  { value: 'responses', label: t('admin.accountSchedulingPool.endpoints.responses') },
-  { value: 'chat_completions', label: t('admin.accountSchedulingPool.endpoints.chatCompletions') },
-  { value: 'embeddings', label: t('admin.accountSchedulingPool.endpoints.embeddings') },
-])
-
 const transportOptions = computed<SelectOption[]>(() => [
   { value: 'http_sse', label: t('admin.accountSchedulingPool.transports.httpSse') },
   { value: '', label: t('admin.accountSchedulingPool.transports.any') },
@@ -256,23 +233,14 @@ const transportOptions = computed<SelectOption[]>(() => [
   { value: 'responses_websockets_v2', label: t('admin.accountSchedulingPool.transports.responsesWebsocketV2') },
 ])
 
-const imageCapabilityOptions = computed<SelectOption[]>(() => [
-  { value: '', label: t('admin.accountSchedulingPool.imageCapabilities.all') },
-  { value: 'images-basic', label: t('admin.accountSchedulingPool.imageCapabilities.basic') },
-  { value: 'images-native', label: t('admin.accountSchedulingPool.imageCapabilities.native') },
-])
-
 function buildFilters(): OpenAIAccountSchedulingPoolFilters {
   const built: OpenAIAccountSchedulingPoolFilters = {
     group: filters.group?.trim() || undefined,
     platform: filters.platform || 'openai',
-    model: filters.model?.trim() || undefined,
     search: filters.search?.trim() || undefined,
   }
   if (filters.platform === 'openai') {
-    built.endpoint = filters.endpoint || undefined
     built.transport = filters.transport || undefined
-    built.image_capability = filters.image_capability || undefined
   }
   return built
 }
@@ -329,10 +297,7 @@ function resetFilters() {
   Object.assign(filters, {
     group: defaultGroupValue(),
     platform: 'openai',
-    model: '',
-    endpoint: '',
     transport: 'http_sse',
-    image_capability: '',
     search: '',
   })
   applyFilters()
@@ -374,6 +339,7 @@ function isProbing(accountId: number): boolean {
 }
 
 function shouldShowManualProbe(account: Account): boolean {
+  if (account.platform === 'openai') return true
   if (account.platform === 'anthropic') return true
   if (account.platform === 'antigravity') {
     return !!(account as any).mixed_scheduling_enabled
@@ -388,9 +354,7 @@ async function manualProbe(item: OpenAIAccountSchedulingPoolItem) {
   message.value = ''
 
   try {
-    const result = await manualProbeAccount(accountId, {
-      model: 'claude-opus-4-8'
-    })
+    const result = await manualProbeAccount(accountId, await buildManualProbePayload(item.account))
 
     if (result.success && result.result.success) {
       message.value = t('admin.accountSchedulingPool.probeSuccess', {
@@ -406,6 +370,46 @@ async function manualProbe(item: OpenAIAccountSchedulingPoolItem) {
   } finally {
     probingIds.value.delete(accountId)
   }
+}
+
+async function buildManualProbePayload(account: Account): Promise<{ model?: string }> {
+  const models = await getAvailableModels(account.id)
+  const model = selectAccountTestModel(account, models)
+  return model ? { model } : {}
+}
+
+function selectAccountTestModel(account: Account, models: ClaudeModel[]): string {
+  // 与账号测试弹窗保持一致：按平台选中实际会提交给 /test 的默认模型。
+  const availableModels = account.platform === 'antigravity' ? sortAccountTestModels(models) : models
+  if (availableModels.length === 0) return ''
+  if (account.platform === 'openai') {
+    return availableModels.find(model => model.id === 'gpt-5.5')?.id || availableModels[0]?.id || ''
+  }
+  if (account.platform === 'gemini') {
+    return sortAccountTestModels(availableModels)[0]?.id || ''
+  }
+  const sonnetModel = availableModels.find(model => model.id.includes('sonnet'))
+  return sonnetModel?.id || availableModels[0]?.id || ''
+}
+
+function sortAccountTestModels(models: ClaudeModel[]): ClaudeModel[] {
+  const prioritizedGeminiModels = [
+    'gemini-3.1-flash-image',
+    'gemini-2.5-flash-image',
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+    'gemini-3-flash-preview',
+    'gemini-3-pro-preview',
+    'gemini-2.0-flash',
+  ]
+  const priorityMap = new Map(prioritizedGeminiModels.map((id, index) => [id, index]))
+  return [...models].sort((a, b) => {
+    const aPriority = priorityMap.get(a.id) ?? Number.MAX_SAFE_INTEGER
+    const bPriority = priorityMap.get(b.id) ?? Number.MAX_SAFE_INTEGER
+    if (aPriority !== bPriority) return aPriority - bPriority
+    return 0
+  })
 }
 
 function formatPoolStatus(status: string): string {

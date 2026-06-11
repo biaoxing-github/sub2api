@@ -3,10 +3,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountSchedulingPoolView from '../AccountSchedulingPoolView.vue'
 
-const { listSchedulingPool, setSchedulable, manualProbeAccount } = vi.hoisted(() => ({
+const { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels } = vi.hoisted(() => ({
   listSchedulingPool: vi.fn(),
   setSchedulable: vi.fn(),
   manualProbeAccount: vi.fn(),
+  getAvailableModels: vi.fn(),
 }))
 
 const { getAllGroups } = vi.hoisted(() => ({
@@ -18,10 +19,12 @@ vi.mock('@/api/admin/accounts', () => ({
     listSchedulingPool,
     setSchedulable,
     manualProbeAccount,
+    getAvailableModels,
   },
   listSchedulingPool,
   setSchedulable,
   manualProbeAccount,
+  getAvailableModels,
 }))
 
 vi.mock('@/api/admin/groups', () => ({
@@ -66,7 +69,12 @@ describe('AccountSchedulingPoolView', () => {
     listSchedulingPool.mockReset()
     setSchedulable.mockReset()
     manualProbeAccount.mockReset()
+    getAvailableModels.mockReset()
     getAllGroups.mockReset()
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' },
+      { id: 'gpt-5.5', display_name: 'GPT-5.5' },
+    ])
     getAllGroups.mockResolvedValue([
       { id: 2, name: '自用', platform: 'openai', status: 'active' },
       { id: 3, name: '备用', platform: 'anthropic', status: 'active' },
@@ -183,7 +191,12 @@ describe('AccountSchedulingPoolView', () => {
     await flushPromises()
 
     expect(getAllGroups).toHaveBeenCalled()
-    expect(listSchedulingPool).toHaveBeenCalledWith(expect.objectContaining({ group: '2', platform: 'openai', transport: 'http_sse' }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(listSchedulingPool).toHaveBeenCalledWith({
+      group: '2',
+      platform: 'openai',
+      transport: 'http_sse',
+      search: undefined,
+    }, expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('ready-pool')
     expect(wrapper.text()).toContain('线路降级')
     expect(wrapper.text()).toContain('path_health:degraded:unexpected_eof')
@@ -236,7 +249,57 @@ describe('AccountSchedulingPoolView', () => {
     expect(listSchedulingPool).toHaveBeenLastCalledWith(expect.objectContaining({ group: '2', platform: 'anthropic' }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
-  it('shows manual probe button for anthropic accounts and calls probe API', async () => {
+  it('does not render removed OpenAI capability filters', async () => {
+    const wrapper = mount(AccountSchedulingPoolView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('admin.accountSchedulingPool.model')
+    expect(wrapper.text()).not.toContain('admin.accountSchedulingPool.endpoints.')
+    expect(wrapper.text()).not.toContain('admin.accountSchedulingPool.imageCapabilities.')
+  })
+
+  it('shows manual probe button for OpenAI accounts and reuses account page default model', async () => {
+    manualProbeAccount.mockResolvedValue({
+      success: true,
+      result: {
+        success: true,
+        message: 'Probe succeeded',
+        latency_ms: 88,
+      },
+    })
+
+    const wrapper = mount(AccountSchedulingPoolView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-probe"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="manual-probe"]').trigger('click')
+    await flushPromises()
+
+    expect(getAvailableModels).toHaveBeenCalledWith(101)
+    expect(manualProbeAccount).toHaveBeenCalledWith(101, { model: 'gpt-5.5' })
+    expect(listSchedulingPool).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows manual probe button for anthropic accounts and reuses account page sonnet default', async () => {
     listSchedulingPool.mockResolvedValue({
       items: [
         {
@@ -272,6 +335,10 @@ describe('AccountSchedulingPoolView', () => {
         latency_ms: 125,
       },
     })
+    getAvailableModels.mockResolvedValueOnce([
+      { id: 'claude-opus-4-8', display_name: 'Claude Opus 4.8' },
+      { id: 'claude-sonnet-4-5', display_name: 'Claude Sonnet 4.5' },
+    ])
 
     const wrapper = mount(AccountSchedulingPoolView, {
       global: {
@@ -290,7 +357,8 @@ describe('AccountSchedulingPoolView', () => {
     await wrapper.find('[data-test="manual-probe"]').trigger('click')
     await flushPromises()
 
-    expect(manualProbeAccount).toHaveBeenCalledWith(201, { model: 'claude-opus-4-8' })
+    expect(getAvailableModels).toHaveBeenCalledWith(201)
+    expect(manualProbeAccount).toHaveBeenCalledWith(201, { model: 'claude-sonnet-4-5' })
     expect(listSchedulingPool).toHaveBeenCalledTimes(2)
   })
 })

@@ -2991,3 +2991,25 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 验证：`npm run test:run -- src/components/admin/account/__tests__/AccountUsageSummaryPanel.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/api/__tests__/admin.accounts.spec.ts src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts` 通过，48 tests passed。
 - 验证：`npm run typecheck` 通过；`go test ./cmd/server -run TestNoSuchTest -count=1` 通过；`git diff --check` 通过。
 - 已知观察：Vitest 输出仍有既有 `common.time.never` i18n 缺失警告和 Browserslist 数据提示，本轮未修改该无关链路。
+
+## 2026-06-11 22:57 +08:00 - OpenAI 调度池筛选与人工探测
+
+- 执行者：Devil
+- 变更范围：`frontend/src/views/admin/AccountSchedulingPoolView.vue`、`frontend/src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts`
+- 验证命令：
+  - `npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts`
+  - `npm run typecheck`
+  - `git diff --check -- frontend/src/views/admin/AccountSchedulingPoolView.vue frontend/src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts`
+- 结果：全部通过。
+- 风险：本轮未构建镜像、未部署；变更停留在前端源码和测试层。
+
+## 2026-06-11 23:12 +08:00 - 调度池人工探测模型选择纠偏
+
+- 执行者：Devil
+- 变更范围：`frontend/src/views/admin/AccountSchedulingPoolView.vue`、`frontend/src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts`
+- 根因：账号测试弹窗先通过 `getAvailableModels` 选择默认模型，Anthropic 优先选择 `sonnet`，调度池先前固定传入 `claude-opus-4-8` 与账号页不一致。
+- 验证命令：
+  - `npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts`
+  - `npm run typecheck`
+- 结果：全部通过。
+- 风险：本轮未构建镜像、未部署；变更停留在前端源码和测试层。
