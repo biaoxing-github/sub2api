@@ -65,7 +65,7 @@ func (r *rateLimitAccountRepoStub) UpdateExtra(ctx context.Context, id int64, up
 	return nil
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyLastKey429RecordsAccountBlock(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey429UsesAccountScheduling(t *testing.T) {
 	account := &Account{
 		ID:          62001,
 		Platform:    PlatformOpenAI,
@@ -83,15 +83,12 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyLastKey429RecordsAccou
 	shouldDisable := service.HandleUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, []byte(`{"error":{"code":"rate_limited","message":"too many requests"}}`))
 
 	require.True(t, shouldDisable)
-	require.Empty(t, account.GetAPIKeys())
-	require.Equal(t, 1, repo.updateCredentialsCalls)
-	require.Equal(t, 1, repo.rateLimitedCalls)
-	require.Equal(t, 1, repo.updateExtraCalls)
-	health, ok := repo.lastExtraUpdates[AccountProbeHealthExtraKey].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, AccountProbeHealthRateLimited, health["level"])
-	require.Equal(t, "gateway", health["last_probe_source"])
-	require.Equal(t, "rate_limited", health["reason"])
+	require.Equal(t, []string{"last-key"}, account.GetAPIKeys())
+	require.Equal(t, 0, repo.updateCredentialsCalls)
+	require.Equal(t, 0, repo.rateLimitedCalls)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, 0, repo.updateExtraCalls)
+	require.Contains(t, repo.lastTempReason, "rate_limited")
 }
 
 func TestRateLimitService_RecordAccountProbeOutcomeManualFailureWritesHealth(t *testing.T) {

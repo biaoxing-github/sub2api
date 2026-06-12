@@ -1,17 +1,13 @@
 package service
 
 import (
-	"context"
 	"net/http"
 	"strings"
-	"time"
-
-	"log/slog"
 
 	"github.com/tidwall/gjson"
 )
 
-func shouldDisableCurrentAPIKey(statusCode int, responseBody []byte) bool {
+func shouldUseAPIKeyAccountSchedulingCooldown(statusCode int, responseBody []byte) bool {
 	switch statusCode {
 	case http.StatusBadRequest:
 		return isInsufficientBalanceBody(responseBody)
@@ -26,7 +22,7 @@ func shouldDisableCurrentAPIKey(statusCode int, responseBody []byte) bool {
 	}
 }
 
-func disableAPIKeyReason(statusCode int, responseBody []byte) string {
+func apiKeyAccountSchedulingReason(statusCode int, responseBody []byte) string {
 	if isInsufficientBalanceBody(responseBody) {
 		return "insufficient_balance"
 	}
@@ -83,23 +79,4 @@ func isInvalidAPIKeyBody(responseBody []byte) bool {
 		strings.Contains(lower, "api key disabled") ||
 		strings.Contains(lower, "api key revoked") ||
 		strings.Contains(lower, "key revoked")
-}
-
-func disableAccountAPIKey(ctx context.Context, repo AccountRepository, account *Account, apiKey, reason string) bool {
-	if repo == nil || account == nil || strings.TrimSpace(apiKey) == "" {
-		return false
-	}
-	if len(account.GetAPIKeys()) == 0 {
-		return false
-	}
-	changed := account.DisableAPIKey(apiKey, reason, time.Now())
-	if !changed {
-		return false
-	}
-	if err := persistAccountCredentials(ctx, repo, account, account.Credentials); err != nil {
-		slog.Warn("account_api_key_disable_failed", "account_id", account.ID, "reason", reason, "error", err)
-		return false
-	}
-	slog.Warn("account_api_key_disabled", "account_id", account.ID, "reason", reason, "remaining_keys", len(account.GetAPIKeys()))
-	return true
 }

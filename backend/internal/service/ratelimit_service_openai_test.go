@@ -336,7 +336,7 @@ func TestRateLimitService_HandleUpstreamError_403FallsBackToRawBody(t *testing.T
 	require.NotContains(t, repo.lastErrorMsg, "account may be suspended or lack permissions")
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyPaymentRequiredSetsRateLimit(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyPaymentRequiredUsesSchedulingCooldown(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	account := &Account{
@@ -354,14 +354,17 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyPaymentRequiredSetsRat
 		[]byte(`{"error":{"code":"insufficient_quota","message":"insufficient balance"}}`),
 	)
 
-	require.False(t, shouldDisable)
-	require.Equal(t, 1, repo.rateLimitedCalls)
-	require.NotNil(t, repo.lastRateLimitedUntil)
+	require.True(t, shouldDisable)
+	require.Equal(t, 0, repo.rateLimitedCalls)
+	require.Nil(t, repo.lastRateLimitedUntil)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Contains(t, repo.lastTempReason, "insufficient_balance")
 	require.Equal(t, 0, repo.setErrorCalls)
 	require.Equal(t, 0, repo.updateCredentialsCalls)
+	require.Equal(t, []string{"sk-huanmin"}, account.GetAPIKeys())
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyInsufficientBalance403SetsRateLimit(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyInsufficientBalance403UsesSchedulingCooldown(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	account := &Account{
@@ -379,14 +382,17 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyInsufficientBalance403
 		[]byte(`{"error":{"code":"insufficient_balance","message":"Insufficient account balance"}}`),
 	)
 
-	require.False(t, shouldDisable)
-	require.Equal(t, 1, repo.rateLimitedCalls)
-	require.NotNil(t, repo.lastRateLimitedUntil)
+	require.True(t, shouldDisable)
+	require.Equal(t, 0, repo.rateLimitedCalls)
+	require.Nil(t, repo.lastRateLimitedUntil)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Contains(t, repo.lastTempReason, "insufficient_balance")
 	require.Equal(t, 0, repo.setErrorCalls)
 	require.Equal(t, 0, repo.updateCredentialsCalls)
+	require.Equal(t, []string{"sk-huanmin"}, account.GetAPIKeys())
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyBadRequestQuotaDisablesSelectedKey(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyBadRequestQuotaUsesSchedulingCooldown(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	account := &Account{
@@ -407,17 +413,16 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyBadRequestQuotaDisable
 		[]byte(`{"error":{"code":"insufficient_quota","message":"insufficient balance"}}`),
 	)
 
-	require.False(t, shouldDisable)
+	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.rateLimitedCalls)
 	require.Equal(t, 0, repo.setErrorCalls)
-	require.Equal(t, 1, repo.updateCredentialsCalls)
-	disabled, ok := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
-	require.True(t, ok)
-	require.Contains(t, disabled, FingerprintAPIKey("key-bad-quota"))
-	require.Equal(t, []string{"key-ok"}, account.GetAPIKeys())
+	require.Equal(t, 0, repo.updateCredentialsCalls)
+	require.Equal(t, 1, repo.tempCalls)
+	require.Contains(t, repo.lastTempReason, "insufficient_balance")
+	require.Equal(t, []string{"key-bad-quota", "key-ok"}, account.GetAPIKeys())
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyForbiddenInvalidKeyDisablesSelectedKey(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyForbiddenInvalidKeyUsesSchedulingCooldown(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	counter := &openAI403CounterCacheStub{counts: []int64{1}}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -440,14 +445,12 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyForbiddenInvalidKeyDis
 		[]byte(`{"error":{"message":"This API key has been disabled"}}`),
 	)
 
-	require.False(t, shouldDisable)
-	require.Equal(t, 0, repo.tempCalls)
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.tempCalls)
 	require.Equal(t, 0, repo.setErrorCalls)
-	require.Equal(t, 1, repo.updateCredentialsCalls)
-	disabled, ok := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
-	require.True(t, ok)
-	require.Contains(t, disabled, FingerprintAPIKey("key-revoked"))
-	require.Equal(t, []string{"key-ok"}, account.GetAPIKeys())
+	require.Equal(t, 0, repo.updateCredentialsCalls)
+	require.Contains(t, repo.lastTempReason, "invalid_api_key")
+	require.Equal(t, []string{"key-revoked", "key-ok"}, account.GetAPIKeys())
 	require.Equal(t, []int64{1}, counter.counts)
 }
 
@@ -497,8 +500,8 @@ func TestRateLimitService_HandleUpstreamError_OpenAILineAndLocalErrorsDoNotMutat
 	}
 }
 
-func TestShouldDisableCurrentAPIKeySkipsForbiddenPolicy(t *testing.T) {
-	require.False(t, shouldDisableCurrentAPIKey(
+func TestShouldUseAPIKeyAccountSchedulingCooldownSkipsForbiddenPolicy(t *testing.T) {
+	require.False(t, shouldUseAPIKeyAccountSchedulingCooldown(
 		http.StatusForbidden,
 		[]byte(`{"error":{"message":"workspace forbidden by policy","type":"invalid_request_error"}}`),
 	))

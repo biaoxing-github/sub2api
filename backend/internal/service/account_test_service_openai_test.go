@@ -77,6 +77,9 @@ type openAIAccountTestRepo struct {
 	bulkUpdatedPayload AccountBulkUpdate
 	rateLimitedID      int64
 	rateLimitedAt      *time.Time
+	tempUnschedID      int64
+	tempUnschedAt      *time.Time
+	tempUnschedReason  string
 	clearedErrorID     int64
 	setErrorID         int64
 	setErrorMsg        string
@@ -101,6 +104,13 @@ func (r *openAIAccountTestRepo) BulkUpdate(_ context.Context, ids []int64, updat
 func (r *openAIAccountTestRepo) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
 	r.rateLimitedID = id
 	r.rateLimitedAt = &resetAt
+	return nil
+}
+
+func (r *openAIAccountTestRepo) SetTempUnschedulable(_ context.Context, id int64, until time.Time, reason string) error {
+	r.tempUnschedID = id
+	r.tempUnschedAt = &until
+	r.tempUnschedReason = reason
 	return nil
 }
 
@@ -493,17 +503,13 @@ func TestAccountTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	require.Nil(t, account.RateLimitResetAt)
 }
 
-func TestAccountTestService_OpenAIAPIKeyInsufficientBalanceDisablesCurrentKeyAndRetriesNext(t *testing.T) {
+func TestAccountTestService_OpenAIAPIKeyInsufficientBalanceSchedulesAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 
 	resp1 := newJSONResponse(http.StatusForbidden, `{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}`)
-	resp2 := newJSONResponse(http.StatusOK, "")
-	resp2.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.completed"}
-
-`))
 	repo := &openAIAccountTestRepo{}
-	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp1, resp2}}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{resp1}}
 	svc := &AccountTestService{
 		accountRepo:  repo,
 		httpUpstream: upstream,
@@ -526,15 +532,16 @@ func TestAccountTestService_OpenAIAPIKeyInsufficientBalanceDisablesCurrentKeyAnd
 	}
 
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
-	require.NoError(t, err)
-	require.NotContains(t, recorder.Body.String(), "API returned 403")
-	require.NotNil(t, repo.updatedCredentials)
-	require.NotContains(t, repo.updatedCredentials, "key-empty")
-	require.Equal(t, []string{"key-ok"}, account.GetAPIKeys())
+	require.Error(t, err)
+	require.Contains(t, recorder.Body.String(), "API returned 403")
+	require.Nil(t, repo.updatedCredentials)
+	require.Equal(t, account.ID, repo.tempUnschedID)
+	require.NotNil(t, repo.tempUnschedAt)
+	require.Contains(t, repo.tempUnschedReason, "insufficient_balance")
+	require.Equal(t, []string{"key-empty", "key-ok"}, account.GetAPIKeys())
 	require.Zero(t, repo.setErrorID)
-	require.Len(t, upstream.requests, 2)
+	require.Len(t, upstream.requests, 1)
 	require.Equal(t, "Bearer key-empty", upstream.requests[0].Header.Get("Authorization"))
-	require.Equal(t, "Bearer key-ok", upstream.requests[1].Header.Get("Authorization"))
 }
 
 func TestAccountTestService_OpenAIAPIKeyTriesNextRequestBaseURLOnTransientError(t *testing.T) {
@@ -782,7 +789,7 @@ func TestAccountTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *tes
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
-func TestAccountTestService_OpenAIChatCompletionsPathDisablesCurrentAPIKey(t *testing.T) {
+func TestAccountTestService_OpenAIChatCompletionsPathSchedulesAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 
@@ -810,14 +817,14 @@ func TestAccountTestService_OpenAIChatCompletionsPathDisablesCurrentAPIKey(t *te
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
 	require.Error(t, err)
 	require.Zero(t, repo.setErrorID)
-	require.NotNil(t, repo.updatedCredentials)
-	disabled, ok := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
-	require.True(t, ok)
-	require.Contains(t, disabled, FingerprintAPIKey("key-chat-bad"))
-	require.Equal(t, []string{"key-chat-ok"}, account.GetAPIKeys())
+	require.Nil(t, repo.updatedCredentials)
+	require.Equal(t, account.ID, repo.tempUnschedID)
+	require.NotNil(t, repo.tempUnschedAt)
+	require.Contains(t, repo.tempUnschedReason, "invalid_api_key")
+	require.Equal(t, []string{"key-chat-bad", "key-chat-ok"}, account.GetAPIKeys())
 }
 
-func TestAccountTestService_OpenAICompactPathDisablesCurrentAPIKey(t *testing.T) {
+func TestAccountTestService_OpenAICompactPathSchedulesAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 
@@ -845,14 +852,14 @@ func TestAccountTestService_OpenAICompactPathDisablesCurrentAPIKey(t *testing.T)
 	require.Error(t, err)
 	require.Zero(t, repo.rateLimitedID)
 	require.Zero(t, repo.setErrorID)
-	require.NotNil(t, repo.updatedCredentials)
-	disabled, ok := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
-	require.True(t, ok)
-	require.Contains(t, disabled, FingerprintAPIKey("key-compact-bad"))
-	require.Equal(t, []string{"key-compact-ok"}, account.GetAPIKeys())
+	require.Nil(t, repo.updatedCredentials)
+	require.Equal(t, account.ID, repo.tempUnschedID)
+	require.NotNil(t, repo.tempUnschedAt)
+	require.Contains(t, repo.tempUnschedReason, "rate_limited")
+	require.Equal(t, []string{"key-compact-bad", "key-compact-ok"}, account.GetAPIKeys())
 }
 
-func TestAccountTestService_OpenAIImagePathDisablesCurrentAPIKey(t *testing.T) {
+func TestAccountTestService_OpenAIImagePathSchedulesAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 
@@ -879,9 +886,9 @@ func TestAccountTestService_OpenAIImagePathDisablesCurrentAPIKey(t *testing.T) {
 	err := svc.testOpenAIImageAPIKey(ctx, context.Background(), account, "gpt-image-1", "test image")
 	require.Error(t, err)
 	require.Zero(t, repo.setErrorID)
-	require.NotNil(t, repo.updatedCredentials)
-	disabled, ok := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
-	require.True(t, ok)
-	require.Contains(t, disabled, FingerprintAPIKey("key-image-bad"))
-	require.Equal(t, []string{"key-image-ok"}, account.GetAPIKeys())
+	require.Nil(t, repo.updatedCredentials)
+	require.Equal(t, account.ID, repo.tempUnschedID)
+	require.NotNil(t, repo.tempUnschedAt)
+	require.Contains(t, repo.tempUnschedReason, "insufficient_balance")
+	require.Equal(t, []string{"key-image-bad", "key-image-ok"}, account.GetAPIKeys())
 }

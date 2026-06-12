@@ -206,20 +206,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		return false
 	}
 
-	// API Key 列表账号的单 Key 错误必须先写入 key 状态，避免通用临时不可调度规则误伤整个账号。
-	apiKeyDisabled := false
-	if account.Type == AccountTypeAPIKey && shouldDisableCurrentAPIKey(statusCode, responseBody) {
-		apiKeyDisableReason := disableAPIKeyReason(statusCode, responseBody)
-		apiKeyDisabled = disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), apiKeyDisableReason)
-		if apiKeyDisabled && len(account.GetAPIKeys()) == 0 {
-			return s.recordLastAPIKeyDisabledOutcome(ctx, account, statusCode, headers, responseBody, upstreamMsg, apiKeyDisableReason)
-		}
-		if apiKeyDisabled && statusCode != 401 {
-			return false
-		}
-		if apiKeyDisabled && len(account.GetAPIKeys()) > 0 {
-			return false
-		}
+	// API Key 列表账号不再停用单个 Key；命中可归因到 Key 的上游错误时，
+	// 复用账号级临时不可调度，让调度器按阶梯时间重新探测整个账号。
+	if s.tryAPIKeyAccountSchedulingCooldown(ctx, account, statusCode, responseBody) {
+		return true
 	}
 
 	// 先尝试临时不可调度规则（401除外）
@@ -250,13 +240,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		}
 		// 其他 400 错误（如参数问题）不处理，不禁用账号
 	case 401:
-		if !apiKeyDisabled && account.Type == AccountTypeAPIKey && disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody)) {
-			shouldDisable = len(account.GetAPIKeys()) == 0
-			if !shouldDisable {
-				break
-			}
-			return s.recordLastAPIKeyDisabledOutcome(ctx, account, statusCode, headers, responseBody, upstreamMsg, disableAPIKeyReason(statusCode, responseBody))
-		}
 		// OpenAI: token_invalidated / token_revoked 表示 token 被永久作废（非过期），直接标记 error
 		openai401Code := extractUpstreamErrorCode(responseBody)
 		if account.Platform == PlatformOpenAI && (openai401Code == "token_invalidated" || openai401Code == "token_revoked") {
@@ -369,15 +352,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		)
 		shouldDisable = s.handle403(ctx, account, upstreamMsg, responseBody)
 	case 429:
-		if !apiKeyDisabled && account.Type == AccountTypeAPIKey {
-			if disableAccountAPIKey(ctx, s.accountRepo, account, account.LastSelectedAPIKey(), disableAPIKeyReason(statusCode, responseBody)) {
-				if len(account.GetAPIKeys()) == 0 {
-					return s.recordLastAPIKeyDisabledOutcome(ctx, account, statusCode, headers, responseBody, upstreamMsg, disableAPIKeyReason(statusCode, responseBody))
-				}
-				shouldDisable = false
-				break
-			}
-		}
 		s.handle429(ctx, account, headers, responseBody)
 		shouldDisable = false
 	case 529:
@@ -1922,6 +1896,89 @@ func buildUnifiedErrorHandlingReason(rule AccountErrorHandlingRule, statusCode i
 
 const tempUnschedBodyMaxBytes = 64 << 10
 const tempUnschedMessageMaxBytes = 2048
+const apiKeyAccountSchedulingRuleIndex = -1
+
+func (s *RateLimitService) tryAPIKeyAccountSchedulingCooldown(ctx context.Context, account *Account, statusCode int, responseBody []byte) bool {
+	if account == nil || account.Type != AccountTypeAPIKey || !shouldUseAPIKeyAccountSchedulingCooldown(statusCode, responseBody) {
+		return false
+	}
+	if s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
+		return true
+	}
+	return applyAPIKeyAccountSchedulingCooldown(ctx, s.accountRepo, s.tempUnschedCache, s.notifyAccountSchedulingBlocked, account, statusCode, responseBody)
+}
+
+func applyAPIKeyAccountSchedulingCooldown(
+	ctx context.Context,
+	repo AccountRepository,
+	cache TempUnschedCache,
+	notify func(*Account, time.Time, string),
+	account *Account,
+	statusCode int,
+	responseBody []byte,
+) bool {
+	if repo == nil || account == nil {
+		return false
+	}
+
+	reasonLabel := apiKeyAccountSchedulingReason(statusCode, responseBody)
+	previousReason := account.TempUnschedulableReason
+	if strings.TrimSpace(previousReason) == "" {
+		if dbAccount, err := repo.GetByID(ctx, account.ID); err == nil && dbAccount != nil {
+			previousReason = dbAccount.TempUnschedulableReason
+		}
+	}
+	errorCount := nextAPIKeyAccountSchedulingErrorCount(previousReason, statusCode, reasonLabel)
+
+	now := time.Now()
+	until := now.Add(probeIntervalFromErrorCount(errorCount))
+	state := &TempUnschedState{
+		UntilUnix:       until.Unix(),
+		TriggeredAtUnix: now.Unix(),
+		StatusCode:      statusCode,
+		MatchedKeyword:  reasonLabel,
+		RuleIndex:       apiKeyAccountSchedulingRuleIndex,
+		ErrorCount:      errorCount,
+		ErrorMessage:    truncateTempUnschedMessage(responseBody, tempUnschedMessageMaxBytes),
+	}
+
+	reason := reasonLabel
+	if raw, err := json.Marshal(state); err == nil {
+		reason = string(raw)
+	}
+
+	account.TempUnschedulableUntil = &until
+	account.TempUnschedulableReason = reason
+	if notify != nil {
+		notify(account, until, "api_key_account_scheduling_cooldown")
+	}
+	if err := repo.SetTempUnschedulable(ctx, account.ID, until, reason); err != nil {
+		slog.Warn("api_key_account_scheduling_cooldown_failed", "account_id", account.ID, "status_code", statusCode, "reason", reasonLabel, "error", err)
+		return false
+	}
+	if cache != nil {
+		if err := cache.SetTempUnsched(ctx, account.ID, state); err != nil {
+			slog.Warn("temp_unsched_cache_set_failed", "account_id", account.ID, "error", err)
+		}
+	}
+
+	slog.Info("api_key_account_scheduling_cooldown", "account_id", account.ID, "status_code", statusCode, "reason", reasonLabel, "error_count", errorCount, "until", until)
+	return true
+}
+
+func nextAPIKeyAccountSchedulingErrorCount(previousReason string, statusCode int, reasonLabel string) int {
+	var state TempUnschedState
+	if err := json.Unmarshal([]byte(strings.TrimSpace(previousReason)), &state); err != nil {
+		return 1
+	}
+	if state.RuleIndex != apiKeyAccountSchedulingRuleIndex || state.StatusCode != statusCode || !strings.EqualFold(state.MatchedKeyword, reasonLabel) {
+		return 1
+	}
+	if state.ErrorCount <= 0 {
+		return 2
+	}
+	return state.ErrorCount + 1
+}
 
 func (s *RateLimitService) tryTempUnschedulable(ctx context.Context, account *Account, statusCode int, responseBody []byte) bool {
 	if account == nil {
