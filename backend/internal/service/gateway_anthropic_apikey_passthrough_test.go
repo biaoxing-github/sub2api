@@ -24,10 +24,14 @@ import (
 )
 
 type anthropicHTTPUpstreamRecorder struct {
-	lastReq  *http.Request
-	lastBody []byte
-	resp     *http.Response
-	err      error
+	lastReq   *http.Request
+	lastBody  []byte
+	requests  []*http.Request
+	bodies    [][]byte
+	resp      *http.Response
+	err       error
+	responses []*http.Response
+	errs      []error
 }
 
 func newAnthropicAPIKeyAccountForTest() *Account {
@@ -56,6 +60,15 @@ func (u *anthropicHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, a
 		u.lastBody = b
 		_ = req.Body.Close()
 		req.Body = io.NopCloser(bytes.NewReader(b))
+	}
+	u.requests = append(u.requests, req)
+	u.bodies = append(u.bodies, append([]byte(nil), u.lastBody...))
+	callIndex := len(u.requests) - 1
+	if callIndex < len(u.errs) && u.errs[callIndex] != nil {
+		return nil, u.errs[callIndex]
+	}
+	if callIndex < len(u.responses) && u.responses[callIndex] != nil {
+		return u.responses[callIndex], nil
 	}
 	if u.err != nil {
 		return nil, u.err
@@ -263,6 +276,111 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBo
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.JSONEq(t, upstreamRespBody, rec.Body.String())
 	require.Empty(t, rec.Header().Get("Set-Cookie"))
+}
+
+func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardSwitchesRequestBaseURLOn5xx(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	body := []byte(`{"model":"claude-sonnet-4-20250514","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	parsed := &ParsedRequest{
+		Body:   NewRequestBodyRef(body),
+		Model:  "claude-sonnet-4-20250514",
+		Stream: false,
+	}
+
+	upstreamJSON := `{"id":"msg_1","type":"message","usage":{"input_tokens":5,"output_tokens":3}}`
+	upstream := &anthropicHTTPUpstreamRecorder{
+		responses: []*http.Response{
+			{
+				StatusCode: http.StatusBadGateway,
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-primary"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"primary unavailable"},"type":"error"}`)),
+			},
+			{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-backup"}},
+				Body:       io.NopCloser(strings.NewReader(upstreamJSON)),
+			},
+		},
+	}
+
+	svc := &GatewayService{
+		cfg:              &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
+		httpUpstream:     upstream,
+		rateLimitService: &RateLimitService{},
+	}
+	account := newAnthropicAPIKeyAccountForTest()
+	account.Credentials["base_url"] = "https://primary-anthropic.example.com"
+	account.Credentials["request_base_urls"] = []any{
+		"https://primary-anthropic.example.com",
+		"https://backup-anthropic.example.com/",
+	}
+
+	result, err := svc.Forward(context.Background(), c, account, parsed)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://primary-anthropic.example.com/v1/messages?beta=true", upstream.requests[0].URL.String())
+	require.Equal(t, "https://backup-anthropic.example.com/v1/messages?beta=true", upstream.requests[1].URL.String())
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.JSONEq(t, upstreamJSON, rec.Body.String())
+	require.Equal(t, "rid-backup", result.RequestID)
+}
+
+func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensSwitchesRequestBaseURLOn5xx(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", nil)
+
+	body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	parsed := &ParsedRequest{
+		Body:  NewRequestBodyRef(body),
+		Model: "claude-sonnet-4-20250514",
+	}
+
+	upstreamJSON := `{"input_tokens":42}`
+	upstream := &anthropicHTTPUpstreamRecorder{
+		responses: []*http.Response{
+			{
+				StatusCode: http.StatusBadGateway,
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-count-primary"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"primary unavailable"},"type":"error"}`)),
+			},
+			{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-count-backup"}},
+				Body:       io.NopCloser(strings.NewReader(upstreamJSON)),
+			},
+		},
+	}
+
+	svc := &GatewayService{
+		cfg:              &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
+		httpUpstream:     upstream,
+		rateLimitService: &RateLimitService{},
+	}
+	account := newAnthropicAPIKeyAccountForTest()
+	account.Credentials["base_url"] = "https://primary-anthropic.example.com"
+	account.Credentials["request_base_urls"] = []any{
+		"https://primary-anthropic.example.com",
+		"https://backup-anthropic.example.com/",
+	}
+
+	err := svc.ForwardCountTokens(context.Background(), c, account, parsed)
+
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://primary-anthropic.example.com/v1/messages/count_tokens?beta=true", upstream.requests[0].URL.String())
+	require.Equal(t, "https://backup-anthropic.example.com/v1/messages/count_tokens?beta=true", upstream.requests[1].URL.String())
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.JSONEq(t, upstreamJSON, rec.Body.String())
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_FormatContentIssueTriggersFailover(t *testing.T) {
@@ -784,7 +902,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_BuildRequestRejectsInvalidBas
 		},
 	}
 
-	_, _, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(context.Background(), c, account, []byte(`{}`), "k")
+	_, _, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(context.Background(), c, account, []byte(`{}`), "k", account.GetAnthropicPrimaryRequestBaseURL())
 	require.Error(t, err)
 }
 

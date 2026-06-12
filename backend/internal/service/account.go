@@ -1875,6 +1875,32 @@ func (a *Account) GetOpenAIRequestBaseURLs() []string {
 	return urls
 }
 
+func (a *Account) GetAnthropicPrimaryRequestBaseURL() string {
+	urls := a.GetAnthropicRequestBaseURLs()
+	if len(urls) == 0 {
+		return ""
+	}
+	return urls[0]
+}
+
+func (a *Account) GetAnthropicRequestBaseURLs() []string {
+	if a == nil || !a.IsAnthropic() || a.Type != AccountTypeAPIKey {
+		return nil
+	}
+	raw := make([]string, 0, 4)
+	if baseURL := a.GetCredential("base_url"); baseURL != "" {
+		raw = append(raw, baseURL)
+	}
+	if a.Credentials != nil {
+		raw = append(raw, parseAccountStringList(a.Credentials["request_base_urls"])...)
+	}
+	urls := normalizeAccountBaseURLs(raw)
+	if len(urls) == 0 {
+		return []string{"https://api.anthropic.com"}
+	}
+	return urls
+}
+
 func (a *Account) GetOpenAIBalanceBaseURL() string {
 	if a == nil || !a.IsOpenAI() {
 		return ""

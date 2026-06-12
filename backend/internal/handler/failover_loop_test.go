@@ -707,6 +707,47 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		require.Less(t, elapsed, 5*time.Second)
 	})
 
+	t.Run("502断流且未耗尽_等待后返回Continue并清除失败列表", func(t *testing.T) {
+		fs := NewFailoverState(3, false)
+		fs.LastFailoverErr = newTestFailoverErr(502, false, false)
+		fs.FailedAccountIDs[100] = struct{}{}
+		fs.SwitchCount = 1
+
+		start := time.Now()
+		action := fs.HandleSelectionExhausted(context.Background(), false)
+		elapsed := time.Since(start)
+
+		require.Equal(t, FailoverContinue, action, "502 应与 503 同样进入退避重试")
+		require.Empty(t, fs.FailedAccountIDs, "应清除失败账号列表")
+		require.GreaterOrEqual(t, elapsed, 1500*time.Millisecond, "应等待约 2s")
+		require.Less(t, elapsed, 5*time.Second)
+	})
+
+	t.Run("504网关超时且未耗尽_等待后返回Continue并清除失败列表", func(t *testing.T) {
+		fs := NewFailoverState(3, false)
+		fs.LastFailoverErr = newTestFailoverErr(504, false, false)
+		fs.FailedAccountIDs[100] = struct{}{}
+		fs.SwitchCount = 1
+
+		start := time.Now()
+		action := fs.HandleSelectionExhausted(context.Background(), false)
+		elapsed := time.Since(start)
+
+		require.Equal(t, FailoverContinue, action, "504 应与 503 同样进入退避重试")
+		require.Empty(t, fs.FailedAccountIDs, "应清除失败账号列表")
+		require.GreaterOrEqual(t, elapsed, 1500*time.Millisecond, "应等待约 2s")
+		require.Less(t, elapsed, 5*time.Second)
+	})
+
+	t.Run("502但SwitchCount等于MaxSwitches_返回Exhausted", func(t *testing.T) {
+		fs := NewFailoverState(2, false)
+		fs.LastFailoverErr = newTestFailoverErr(502, false, false)
+		fs.SwitchCount = 2 // == MaxSwitches，无切换额度
+
+		action := fs.HandleSelectionExhausted(context.Background(), false)
+		require.Equal(t, FailoverExhausted, action)
+	})
+
 	t.Run("503但SwitchCount已超过MaxSwitches_返回Exhausted", func(t *testing.T) {
 		fs := NewFailoverState(2, false)
 		fs.LastFailoverErr = newTestFailoverErr(503, false, false)

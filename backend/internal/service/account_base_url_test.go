@@ -214,6 +214,59 @@ func TestOpenAIRequestBaseURLs(t *testing.T) {
 	}
 }
 
+func TestAnthropicRequestBaseURLs(t *testing.T) {
+	tests := []struct {
+		name     string
+		account  Account
+		expected []string
+	}{
+		{
+			name: "apikey without base_url returns default anthropic request URL",
+			account: Account{
+				Type:        AccountTypeAPIKey,
+				Platform:    PlatformAnthropic,
+				Credentials: map[string]any{},
+			},
+			expected: []string{"https://api.anthropic.com"},
+		},
+		{
+			name: "request_base_urls are normalized and deduped with base_url first",
+			account: Account{
+				Type:     AccountTypeAPIKey,
+				Platform: PlatformAnthropic,
+				Credentials: map[string]any{
+					"base_url":          "https://primary-anthropic.example.com/",
+					"request_base_urls": []any{" https://primary-anthropic.example.com ", "https://backup-anthropic.example.com/", "", "https://backup-anthropic.example.com"},
+				},
+			},
+			expected: []string{"https://primary-anthropic.example.com", "https://backup-anthropic.example.com"},
+		},
+		{
+			name: "non anthropic account has no anthropic request URLs",
+			account: Account{
+				Type:        AccountTypeAPIKey,
+				Platform:    PlatformOpenAI,
+				Credentials: map[string]any{"base_url": "https://openai.example.com"},
+			},
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.account.GetAnthropicRequestBaseURLs()
+			if len(got) != len(tt.expected) {
+				t.Fatalf("GetAnthropicRequestBaseURLs() = %#v, want %#v", got, tt.expected)
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Fatalf("GetAnthropicRequestBaseURLs()[%d] = %q, want %q", i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
 func TestOpenAIBalanceBaseURL(t *testing.T) {
 	tests := []struct {
 		name     string

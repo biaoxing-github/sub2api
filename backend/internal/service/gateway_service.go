@@ -5267,68 +5267,62 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		}
 	}
 
+	requestBaseURLs := account.GetAnthropicRequestBaseURLs()
+	if len(requestBaseURLs) <= 1 {
+		// 单 base URL / 默认：沿用既有解析，行为不变
+		requestBaseURLs = []string{account.GetBaseURL()}
+	}
 	var resp *http.Response
 	retryStart := time.Now()
-	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
-		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, input.RequestStream)
-		upstreamReq, wireBody, err := s.buildUpstreamRequestAnthropicAPIKeyPassthrough(upstreamCtx, c, account, input.Body, token)
-		releaseUpstreamCtx()
-		if err != nil {
-			return nil, err
-		}
-		if input.Parsed != nil && !bytes.Equal(wireBody, input.Body) {
-			// build 阶段会按 beta 能力清理 body，发送前同步到 ParsedRequest 当前视图。
-			if err := input.Parsed.ReplaceBody(wireBody); err != nil {
+baseURLLoop:
+	for urlIdx := 0; urlIdx < len(requestBaseURLs); urlIdx++ {
+		currentBaseURL := requestBaseURLs[urlIdx]
+		hasNextBaseURL := urlIdx+1 < len(requestBaseURLs)
+		for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
+			upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, input.RequestStream)
+			upstreamReq, wireBody, err := s.buildUpstreamRequestAnthropicAPIKeyPassthrough(upstreamCtx, c, account, input.Body, token, currentBaseURL)
+			releaseUpstreamCtx()
+			if err != nil {
 				return nil, err
 			}
-			input.Body = input.Parsed.Body.Bytes()
-		}
-
-		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
-		if err != nil {
-			if resp != nil && resp.Body != nil {
-				_ = resp.Body.Close()
+			if input.Parsed != nil && !bytes.Equal(wireBody, input.Body) {
+				// build 阶段会按 beta 能力清理 body，发送前同步到 ParsedRequest 当前视图。
+				if err := input.Parsed.ReplaceBody(wireBody); err != nil {
+					return nil, err
+				}
+				input.Body = input.Parsed.Body.Bytes()
 			}
-			safeErr := sanitizeUpstreamErrorMessage(err.Error())
-			setOpsUpstreamError(c, 0, safeErr, "")
-			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-				Platform:           account.Platform,
-				AccountID:          account.ID,
-				AccountName:        account.Name,
-				UpstreamStatusCode: 0,
-				UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
-				Passthrough:        true,
-				Kind:               "request_error",
-				Message:            safeErr,
-			})
-			c.JSON(http.StatusBadGateway, gin.H{
-				"type": "error",
-				"error": gin.H{
-					"type":    "upstream_error",
-					"message": "Upstream request failed",
-				},
-			})
-			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
-		}
 
-		// 透传分支禁止 400 请求体降级重试（该重试会改写请求体）
-		if resp.StatusCode >= 400 && resp.StatusCode != 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
-			if attempt < maxRetryAttempts {
-				elapsed := time.Since(retryStart)
-				if elapsed >= maxRetryElapsed {
-					break
+			resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+			if err != nil {
+				if resp != nil && resp.Body != nil {
+					_ = resp.Body.Close()
 				}
+				safeErr := sanitizeUpstreamErrorMessage(err.Error())
+				setOpsUpstreamError(c, 0, safeErr, "")
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: 0,
+					UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
+					Passthrough:        true,
+					Kind:               "request_error",
+					Message:            safeErr,
+				})
+				c.JSON(http.StatusBadGateway, gin.H{
+					"type": "error",
+					"error": gin.H{
+						"type":    "upstream_error",
+						"message": "Upstream request failed",
+					},
+				})
+				return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+			}
 
-				delay := retryBackoffDelay(attempt)
-				remaining := maxRetryElapsed - elapsed
-				if delay > remaining {
-					delay = remaining
-				}
-				if delay <= 0 {
-					break
-				}
-
-				respBody, _ := s.readUpstreamErrorBody(resp)
+			// 多 base URL 调度：服务器 5xx 且仍有候选 base URL 时立即切换，优先于同 URL 重试。
+			if hasNextBaseURL && resp.StatusCode >= 500 {
+				switchBody, _ := s.readUpstreamErrorBody(resp)
 				_ = resp.Body.Close()
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 					Platform:           account.Platform,
@@ -5338,26 +5332,61 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 					UpstreamRequestID:  resp.Header.Get("x-request-id"),
 					UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 					Passthrough:        true,
-					Kind:               "retry",
-					Message:            extractUpstreamErrorMessage(respBody),
-					Detail: func() string {
-						if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
-							return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
-						}
-						return ""
-					}(),
+					Kind:               "base_url_switch",
+					Message:            extractUpstreamErrorMessage(switchBody),
 				})
-				logger.LegacyPrintf("service.gateway", "Anthropic passthrough account %d: upstream error %d, retry %d/%d after %v (elapsed=%v/%v)",
-					account.ID, resp.StatusCode, attempt, maxRetryAttempts, delay, elapsed, maxRetryElapsed)
-				if err := sleepWithContext(ctx, delay); err != nil {
-					return nil, err
-				}
-				continue
+				continue baseURLLoop
 			}
+
+			// 透传分支禁止 400 请求体降级重试（该重试会改写请求体）
+			if resp.StatusCode >= 400 && resp.StatusCode != 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
+				if attempt < maxRetryAttempts {
+					elapsed := time.Since(retryStart)
+					if elapsed >= maxRetryElapsed {
+						break
+					}
+
+					delay := retryBackoffDelay(attempt)
+					remaining := maxRetryElapsed - elapsed
+					if delay > remaining {
+						delay = remaining
+					}
+					if delay <= 0 {
+						break
+					}
+
+					respBody, _ := s.readUpstreamErrorBody(resp)
+					_ = resp.Body.Close()
+					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						Platform:           account.Platform,
+						AccountID:          account.ID,
+						AccountName:        account.Name,
+						UpstreamStatusCode: resp.StatusCode,
+						UpstreamRequestID:  resp.Header.Get("x-request-id"),
+						UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
+						Passthrough:        true,
+						Kind:               "retry",
+						Message:            extractUpstreamErrorMessage(respBody),
+						Detail: func() string {
+							if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+								return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+							}
+							return ""
+						}(),
+					})
+					logger.LegacyPrintf("service.gateway", "Anthropic passthrough account %d: upstream error %d, retry %d/%d after %v (elapsed=%v/%v)",
+						account.ID, resp.StatusCode, attempt, maxRetryAttempts, delay, elapsed, maxRetryElapsed)
+					if err := sleepWithContext(ctx, delay); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				break
+			}
+
 			break
 		}
-
-		break
+		break baseURLLoop
 	}
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("upstream request failed: empty response")
@@ -5460,7 +5489,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	}
 
 	return &ForwardResult{
-		RequestID:        resp.Header.Get("x-request-id"),
+		RequestID:        getHeaderRaw(resp.Header, "x-request-id"),
 		Usage:            *usage,
 		Model:            input.OriginalModel,
 		UpstreamModel:    input.RequestModel,
@@ -5477,9 +5506,9 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	account *Account,
 	body []byte,
 	token string,
+	baseURL string,
 ) (*http.Request, []byte, error) {
 	targetURL := claudeAPIURL
-	baseURL := account.GetBaseURL()
 	if baseURL != "" {
 		validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
@@ -9758,44 +9787,77 @@ func (s *GatewayService) forwardCountTokensAnthropicAPIKeyPassthrough(ctx contex
 		return fmt.Errorf("anthropic api key passthrough requires apikey token, got: %s", tokenType)
 	}
 
-	upstreamReq, err := s.buildCountTokensRequestAnthropicAPIKeyPassthrough(ctx, c, account, body, token)
-	if err != nil {
-		s.countTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
-		return err
-	}
-
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
 
-	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
-	if err != nil {
-		setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(err.Error()), "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
-			Passthrough:        true,
-			Kind:               "request_error",
-			Message:            sanitizeUpstreamErrorMessage(err.Error()),
-		})
-		s.countTokensError(c, http.StatusBadGateway, "upstream_error", "Request failed")
-		return fmt.Errorf("upstream request failed: %w", err)
-	}
-
 	countTokensTooLarge := func(c *gin.Context) {
 		s.countTokensError(c, http.StatusBadGateway, "upstream_error", "Upstream response too large")
 	}
-	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, countTokensTooLarge)
-	_ = resp.Body.Close()
-	if err != nil {
-		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
-			s.countTokensError(c, http.StatusBadGateway, "upstream_error", "Failed to read response")
+
+	requestBaseURLs := account.GetAnthropicRequestBaseURLs()
+	if len(requestBaseURLs) <= 1 {
+		// 单 base URL / 默认：沿用既有解析，行为不变
+		requestBaseURLs = []string{account.GetBaseURL()}
+	}
+
+	var resp *http.Response
+	var respBody []byte
+	var upstreamReq *http.Request
+	for urlIdx := 0; urlIdx < len(requestBaseURLs); urlIdx++ {
+		hasNextBaseURL := urlIdx+1 < len(requestBaseURLs)
+		var buildErr error
+		upstreamReq, buildErr = s.buildCountTokensRequestAnthropicAPIKeyPassthrough(ctx, c, account, body, token, requestBaseURLs[urlIdx])
+		if buildErr != nil {
+			s.countTokensError(c, http.StatusInternalServerError, "api_error", "Failed to build request")
+			return buildErr
 		}
-		return err
+
+		var doErr error
+		resp, doErr = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+		if doErr != nil {
+			setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(doErr.Error()), "")
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: 0,
+				UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
+				Passthrough:        true,
+				Kind:               "request_error",
+				Message:            sanitizeUpstreamErrorMessage(doErr.Error()),
+			})
+			s.countTokensError(c, http.StatusBadGateway, "upstream_error", "Request failed")
+			return fmt.Errorf("upstream request failed: %w", doErr)
+		}
+
+		var readErr error
+		respBody, readErr = ReadUpstreamResponseBody(resp.Body, s.cfg, c, countTokensTooLarge)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			if !errors.Is(readErr, ErrUpstreamResponseBodyTooLarge) {
+				s.countTokensError(c, http.StatusBadGateway, "upstream_error", "Failed to read response")
+			}
+			return readErr
+		}
+
+		// 多 base URL 调度：服务器 5xx 且仍有候选 base URL 时切换。
+		if hasNextBaseURL && resp.StatusCode >= 500 {
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
+				Passthrough:        true,
+				Kind:               "base_url_switch",
+				Message:            extractUpstreamErrorMessage(respBody),
+			})
+			continue
+		}
+		break
 	}
 
 	if resp.StatusCode >= 400 {
@@ -9868,9 +9930,9 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 	account *Account,
 	body []byte,
 	token string,
+	baseURL string,
 ) (*http.Request, error) {
 	targetURL := claudeAPICountTokensURL
-	baseURL := account.GetBaseURL()
 	if baseURL != "" {
 		validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
