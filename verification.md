@@ -3094,3 +3094,18 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 切流验证：代理从 green 切到 blue，`nginx -t` 与 reload 成功；入口 `8080` health/root/6 个静态资源 200，未登录边界均 401；切流后 blue/proxy 关键错误日志命中 0。
 - 当前状态：active=`sub2api-blue/sub2api:v0.1.134.34`；rollback=`sub2api-green/sub2api:v0.1.134.33`。
 - 限制：`D:\sub2api-deploy\.env` 中 `ADMIN_PASSWORD` 为空，无法执行登录态点击复测。
+
+## 2026-06-12 12:21 +08:00 - v0.1.134.35 用户反馈复核
+
+- 执行者：Devil
+- 反馈范围：调度池人工探测 HTTP 200 仍显示探测失败；真实余额换算异常。
+- 当前线上状态：`D:\sub2api-deploy\proxy\upstreams\active.conf` 指向 `sub2api-green:8080`；`sub2api-green` 使用 `sub2api:v0.1.134.35`，Health `healthy`；`sub2api-blue` 使用 `sub2api:v0.1.134.34`，Health `healthy`，作为回滚目标。
+- GREEN：`docker exec sub2api-green /app/sub2api --version` 输出 `Sub2API 0.1.134 (image: v0.1.134.35, commit: 59b93fa4585f, built: 2026-06-12T03:51:52Z)`。
+- GREEN：`go test ./internal/handler/admin -run 'TestManualProbe|TestAccountSchedulingPool' -count=1` 通过，验证人工探测 JSON 响应契约和调度池 handler 切片。
+- GREEN：干净 HEAD 归档中运行 `go test -tags unit ./internal/service -run '^(TestAccountTestService_OpenAIResponseTextErrorInterceptsProbe|TestParseUpstreamBalanceResponse_NewAPIQuotaUnits|TestParseUpstreamBalanceResponse_NewAPIQuotaUnitsNestedUser)$' -count=1` 通过，验证 OpenAI 200 错误文本识别和 NewAPI quota 单位换算。
+- GREEN：`npm run typecheck` 通过。
+- GREEN：`npm run test:run -- AccountSchedulingPoolView` 通过，1 个测试文件 7 项测试通过；`npm run test -- AccountSchedulingPoolView` 为 Vitest watch 模式，124 秒超时，不代表用例失败。
+- GREEN：`GET http://127.0.0.1:8080/health` 返回 200；`GET http://127.0.0.1:18082/health` 返回 200；候选根页面返回 200 且加载静态资源 `index-BhTF4Mvu.js`。
+- GREEN：最近 10 分钟 `sub2api-green` 关键错误过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 命中 0。
+- 已知验证阻塞：当前工作树里已有未提交测试改动导致直接运行 `go test ./internal/service ...` 失败，失败点是 `account_test_service_anthropic_test.go` 引用只在 `//go:build unit` 文件中定义的 `anthropicHTTPUpstreamRecorder`，以及 `account_base_url_test.go` 引用不存在的 `GetAnthropicRequestBaseURLs`；因此本轮用 `git archive HEAD` 的干净归档验证已提交修复。
+- 限制：当前 Playwright 会话未登录管理端，访问 `/admin/accounts/scheduling-pool` 被重定向到 `/login`，且部署 `.env` 的 `ADMIN_PASSWORD` 为空，未执行真实点击复测。
