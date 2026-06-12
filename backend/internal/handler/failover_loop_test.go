@@ -203,7 +203,7 @@ func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 		require.Equal(t, 1, fs.SwitchCount)
 
 		// 第二次切换：1→2
-		err2 := newTestFailoverErr(502, false, false)
+		err2 := newTestFailoverErr(400, false, false)
 		action = fs.HandleFailoverError(context.Background(), mock, 200, "openai", err2)
 		require.Equal(t, FailoverContinue, action)
 		require.Equal(t, 2, fs.SwitchCount)
@@ -398,7 +398,7 @@ func TestHandleFailoverError_TempUnschedule(t *testing.T) {
 	t.Run("重试错误耗尽后调用TempUnschedule_传入正确参数", func(t *testing.T) {
 		mock := &mockTempUnscheduler{}
 		fs := NewFailoverState(3, false)
-		err := newTestFailoverErr(502, true, false)
+		err := newTestFailoverErr(500, true, false)
 
 		for i := 0; i < maxSameAccountRetries; i++ {
 			fs.HandleFailoverError(context.Background(), mock, 42, "openai", err)
@@ -408,7 +408,7 @@ func TestHandleFailoverError_TempUnschedule(t *testing.T) {
 
 		require.Len(t, mock.calls, 1)
 		require.Equal(t, int64(42), mock.calls[0].accountID)
-		require.Equal(t, 502, mock.calls[0].failoverErr.StatusCode)
+		require.Equal(t, 500, mock.calls[0].failoverErr.StatusCode)
 		require.True(t, mock.calls[0].failoverErr.RetryableOnSameAccount)
 	})
 }
@@ -466,7 +466,7 @@ func TestHandleFailoverError_FailedAccountIDs(t *testing.T) {
 		fs.HandleFailoverError(context.Background(), mock, 100, "openai", newTestFailoverErr(500, false, false))
 		require.Contains(t, fs.FailedAccountIDs, int64(100))
 
-		fs.HandleFailoverError(context.Background(), mock, 200, "openai", newTestFailoverErr(502, false, false))
+		fs.HandleFailoverError(context.Background(), mock, 200, "openai", newTestFailoverErr(400, false, false))
 		require.Contains(t, fs.FailedAccountIDs, int64(200))
 		require.Len(t, fs.FailedAccountIDs, 2)
 	})
