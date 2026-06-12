@@ -3064,3 +3064,33 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`npm run typecheck` 通过，`vue-tsc --noEmit` 无类型错误。
 - GREEN：`git diff --check` 通过；仅提示既有 `.codegraph/daemon.pid` LF/CRLF 工作树告警，本轮前端 diff 无空白错误。
 - 风险：本轮未构建镜像、未部署；变更停留在前端源码和测试层。
+
+## 2026-06-12 08:35 +08:00 - v0.1.134.33 人工探测结果契约发布
+
+- 执行者：Devil
+- 根因：后端 `ManualProbeResponse.result` 直接返回 `AccountTestConnectionResult`，Go JSON 默认输出 `Success`、`LatencyMs`、`ErrorMessage`；调度池前端读取 `result.success`、`result.latency_ms`、`result.message`，成功结果会被当作失败。
+- 变更：新增 `ManualProbeResultResponse` DTO，把结果转换为 `success`、`message`、`error`、`latency_ms`、`first_token_ms`、`http_status`、`reason`。
+- RED：`go test -tags unit ./internal/handler/admin -run "TestManualProbeResultResponseFromService" -count=1` 修复前失败，缺少 DTO 转换函数。
+- GREEN：`go test -tags unit ./internal/handler/admin -run "TestAccountHandler_ManualProbe|TestManualProbeResultResponseFromService" -count=1` 通过。
+- GREEN：`npm run test:run -- src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts` 7 项通过。
+- GREEN：`npm run typecheck` 通过。
+- GREEN：`git diff --check` 通过，仅提示既有 `.codegraph/daemon.pid` 换行告警。
+- 构建：从提交 `529d33b3b371` 构建 `sub2api:v0.1.134.33`，镜像 ID `sha256:9710887ced132acd59636b6abc1f0c0247206fe1dc9ccfca92479302df1e3366`，`/app/sub2api --version` 显示 `image: v0.1.134.33`。
+- 候选验证：idle `sub2api-green` / `18082` health/root/6 个静态资源 200；未登录 system version/admin accounts/responses/v1 messages 均 401；Health healthy 持续超过 60 秒。
+- 切流验证：代理从 blue 切到 green，`nginx -t` 与 reload 成功；入口 `8080` health/root/6 个静态资源 200，未登录边界均 401；切流后 green/proxy 关键错误日志命中 0。
+- 状态：该版本随后被 `sub2api:v0.1.134.34` supersede，保留为 green 回滚目标。
+
+## 2026-06-12 08:35 +08:00 - v0.1.134.34 最终发布验证
+
+- 执行者：Devil
+- 变更范围：`v0.1.134.33` 人工探测结果契约修复 + Anthropic 默认测试模型调整。
+- GREEN：`npm run test:run -- src/components/admin/account/__tests__/AccountTestModal.spec.ts src/components/account/__tests__/AccountTestModal.spec.ts src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts` 通过，3 个测试文件 19 项测试通过。
+- GREEN：`go test -tags unit ./internal/handler/admin -run "TestAccountHandler_ManualProbe|TestManualProbeResultResponseFromService" -count=1` 通过。
+- GREEN：`npm run typecheck` 通过。
+- GREEN：`git diff --check` 通过，仅提示既有 `.codegraph/daemon.pid` 换行告警。
+- 构建：从提交 `c7b059f169c5` 构建 `sub2api:v0.1.134.34`，镜像 ID `sha256:3b3bd45128d53726781d729ddf9e45e763b96d39ad6e9d78d58a8a341a0504e7`，`/app/sub2api --version` 显示 `image: v0.1.134.34`。
+- 候选验证：idle `sub2api-blue` / `18083` health/root/6 个静态资源 200；未登录 system version/admin accounts/responses/v1 messages 均 401；Health healthy 持续超过 60 秒。
+- 候选日志：启动窗口有 1 条 request snapshot 清理 `pq: canceling statement due to user request`，后续 45 秒关键错误过滤无重复。
+- 切流验证：代理从 green 切到 blue，`nginx -t` 与 reload 成功；入口 `8080` health/root/6 个静态资源 200，未登录边界均 401；切流后 blue/proxy 关键错误日志命中 0。
+- 当前状态：active=`sub2api-blue/sub2api:v0.1.134.34`；rollback=`sub2api-green/sub2api:v0.1.134.33`。
+- 限制：`D:\sub2api-deploy\.env` 中 `ADMIN_PASSWORD` 为空，无法执行登录态点击复测。
