@@ -1310,10 +1310,40 @@ type ManualProbeRequest struct {
 	Mode   string `json:"mode"`
 }
 
+// ManualProbeResultResponse 是调度池人工探测给前端消费的稳定 JSON 契约。
+type ManualProbeResultResponse struct {
+	Success      bool   `json:"success"`
+	Message      string `json:"message,omitempty"`
+	Error        string `json:"error,omitempty"`
+	LatencyMS    *int   `json:"latency_ms,omitempty"`
+	FirstTokenMS *int   `json:"first_token_ms,omitempty"`
+	HTTPStatus   int    `json:"http_status,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+}
+
 type ManualProbeResponse struct {
-	Success bool                                 `json:"success"`
-	Result  *service.AccountTestConnectionResult `json:"result,omitempty"`
-	Account *service.Account                     `json:"account,omitempty"`
+	Success bool                       `json:"success"`
+	Result  *ManualProbeResultResponse `json:"result,omitempty"`
+	Account *service.Account           `json:"account,omitempty"`
+}
+
+// manualProbeResultResponseFromService 把账号测试内部结构转换为前端读取的小写字段。
+func manualProbeResultResponseFromService(result *service.AccountTestConnectionResult) *ManualProbeResultResponse {
+	if result == nil {
+		return nil
+	}
+	resp := &ManualProbeResultResponse{
+		Success:      result.Success,
+		LatencyMS:    result.LatencyMs,
+		FirstTokenMS: result.FirstTokenMs,
+		HTTPStatus:   result.HTTPStatus,
+		Reason:       result.Reason,
+	}
+	if result.ErrorMessage != "" {
+		resp.Message = result.ErrorMessage
+		resp.Error = result.ErrorMessage
+	}
+	return resp
 }
 
 // ManualProbe handles manual probe requests from frontend
@@ -1358,7 +1388,7 @@ func (h *AccountHandler) ManualProbe(c *gin.Context) {
 
 	resp := ManualProbeResponse{
 		Success: result.Success,
-		Result:  result,
+		Result:  manualProbeResultResponseFromService(result),
 		Account: updatedAccount,
 	}
 

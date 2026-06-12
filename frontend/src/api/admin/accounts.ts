@@ -1098,7 +1098,7 @@ export async function manualProbeAccount(
   success: boolean
   result?: {
     success: boolean
-    message: string
+    message?: string
     latency_ms?: number
     first_token_ms?: number
     http_status?: number
