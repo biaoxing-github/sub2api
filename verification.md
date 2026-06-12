@@ -154,6 +154,36 @@ funnyapi、encore、okcodex 的余额刷新 total-only 问题已定位并修复�
 
 ---
 
+日期：2026-06-12
+执行者：Devil
+
+## 结果
+
+已完成 `sub2api:v0.1.134.37` 构建、idle blue 部署、候选验证、代理切流和公网入口验证。当前 active 为 `sub2api-blue:8080` / `sub2api:v0.1.134.37`，rollback 为 `sub2api-green` / `sub2api:v0.1.134.35`。
+
+## 校验方式
+
+- `go test -tags unit ./internal/handler -run "TestHandleFailoverError" -count=1`
+- `go test -tags unit ./internal/service -run "TestAnthropicRequestBaseURLs|TestGatewayService_AnthropicAPIKeyPassthrough_ForwardSwitchesRequestBaseURLOn5xx|TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensSwitchesRequestBaseURLOn5xx|TestHandleUpstreamError429_OpenAIAPIKey|TestRateLimitService_HandleUpstreamError_OpenAIAPIKey" -count=1`
+- `npm run typecheck`
+- `git diff --cached --check`
+- `git archive --format=tar HEAD | docker build --pull=false -t sub2api:v0.1.134.37 ...`
+- `docker run --rm --entrypoint /app/sub2api sub2api:v0.1.134.37 --version`
+- `SUB2API_BLUE_IMAGE=sub2api:v0.1.134.37 docker compose -f D:\sub2api-deploy\docker-compose.blue.yml up -d`
+- 候选 `18083` 与公网 `8080` 的 `/health`、`/`、6 个静态资源、未登录 `system/version`、`/responses`、`/v1/messages` 冒烟。
+- `docker exec sub2api-proxy nginx -t` 与 `docker exec sub2api-proxy nginx -s reload`
+- `docker logs --since 3m sub2api-blue` 与 `sub2api-proxy` 关键错误过滤。
+
+## 校验结果
+
+以上本地聚焦测试、TypeScript 类型检查、Docker 构建、候选端口冒烟、代理切流和 8080 冒烟均通过。`sub2api:v0.1.134.36` 因构建时未传 `IMAGE_VERSION` 被拦下，未进入候选验证；最终上线的 `v0.1.134.37` 二进制版本显示 `image: v0.1.134.37, commit: 4cc6624a4b63`。候选启动阶段出现 1 条 `openai_request_snapshot` 清理 `pq: canceling statement due to user request`，稳定窗口后与切流后 3 分钟内关键错误过滤命中 0。
+
+## 风险
+
+当前无管理端登录态，未登录访问 `/api/v1/admin/system/version` 返回 401；本轮通过二进制版本、镜像标签和路由代码确认 `image_version` 已写入运行镜像。`sub2api:v0.1.134.36` 为未部署本地构建产物，不应作为发布入口。旧单容器 `sub2api:v0134-absorption-check` 仍在重启中，但固定入口代理已经指向 blue/green 链路，不承载当前 8080 流量。
+
+---
+
 日期：2026-05-29
 执行者：Devil
 
