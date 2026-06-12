@@ -1099,7 +1099,7 @@
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
-        <div v-if="form.platform === 'openai'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div v-if="form.platform === 'openai' || form.platform === 'anthropic'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label class="input-label">{{ t('admin.accounts.openai.requestBaseUrls') }}</label>
             <textarea
@@ -1110,7 +1110,7 @@
             ></textarea>
             <p class="input-hint">{{ t('admin.accounts.openai.requestBaseUrlsHint') }}</p>
           </div>
-          <div>
+          <div v-if="form.platform === 'openai'">
             <label class="input-label">{{ t('admin.accounts.openai.balanceBaseUrl') }}</label>
             <input
               v-model="balanceBaseUrl"
@@ -4864,15 +4864,17 @@ const handleSubmit = async () => {
         : 'https://api.anthropic.com'
 
   // Build credentials with optional model mapping
-  const requestBaseUrls = form.platform === 'openai'
+  const requestBaseUrls = form.platform === 'openai' || form.platform === 'anthropic'
     ? parseBaseURLsText([apiKeyBaseUrl.value, requestBaseUrlsText.value].filter(Boolean).join('\n'))
     : []
   const primaryBaseUrl = requestBaseUrls[0] || apiKeyBaseUrl.value.trim() || defaultBaseUrl
   const credentials: Record<string, unknown> = {
     base_url: primaryBaseUrl
   }
-  if (form.platform === 'openai') {
+  if (form.platform === 'openai' || form.platform === 'anthropic') {
     credentials.request_base_urls = requestBaseUrls.length > 0 ? requestBaseUrls : [primaryBaseUrl]
+  }
+  if (form.platform === 'openai') {
     const normalizedBalanceBaseURL = parseBaseURLsText(balanceBaseUrl.value)[0]
     if (normalizedBalanceBaseURL) {
       credentials.balance_base_url = normalizedBalanceBaseURL

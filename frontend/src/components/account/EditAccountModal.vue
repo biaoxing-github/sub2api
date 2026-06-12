@@ -46,7 +46,7 @@
           />
           <p class="input-hint">{{ baseUrlHint }}</p>
         </div>
-        <div v-if="account.platform === 'openai'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div v-if="account.platform === 'openai' || (account.platform === 'anthropic' && account.type === 'apikey')" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label class="input-label">{{ t('admin.accounts.openai.requestBaseUrls') }}</label>
             <textarea
@@ -57,7 +57,7 @@
             ></textarea>
             <p class="input-hint">{{ t('admin.accounts.openai.requestBaseUrlsHint') }}</p>
           </div>
-          <div>
+          <div v-if="account.platform === 'openai'">
             <label class="input-label">{{ t('admin.accounts.openai.balanceBaseUrl') }}</label>
             <input
               v-model="editBalanceBaseUrl"
@@ -3671,7 +3671,7 @@ const handleSubmit = async () => {
     // For apikey type, handle credentials update
     if (props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
-      const requestBaseUrls = props.account.platform === 'openai'
+      const requestBaseUrls = props.account.platform === 'openai' || props.account.platform === 'anthropic'
         ? parseBaseURLsText([editBaseUrl.value, editRequestBaseUrlsText.value].filter(Boolean).join('\n'))
         : []
       const newBaseUrl = requestBaseUrls[0] || editBaseUrl.value.trim() || defaultBaseUrl.value
@@ -3682,8 +3682,10 @@ const handleSubmit = async () => {
         ...currentCredentials,
         base_url: newBaseUrl
       }
-      if (props.account.platform === 'openai') {
+      if (props.account.platform === 'openai' || props.account.platform === 'anthropic') {
         newCredentials.request_base_urls = requestBaseUrls.length > 0 ? requestBaseUrls : [newBaseUrl]
+      }
+      if (props.account.platform === 'openai') {
         const normalizedBalanceBaseURL = parseBaseURLsText(editBalanceBaseUrl.value)[0]
         if (normalizedBalanceBaseURL) {
           newCredentials.balance_base_url = normalizedBalanceBaseURL
