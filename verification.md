@@ -3053,3 +3053,14 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
   - rollback：`sub2api-green` / `sub2api:v0.1.134.31`
 - 候选和入口验证：`18083` 与 `8080` 的 health/root/admin/settings、6 个静态资源、未登录 admin accounts 401、`/responses` 401、`/v1/messages` 401 均通过；切流后 `sub2api-blue` 与 `sub2api-proxy` 关键错误日志命中 0。
 - 风险：`D:\sub2api-deploy\.env` 中 `ADMIN_PASSWORD` 为空，无法执行登录态点击复测；已通过回归测试覆盖缺失 `result` 的返回体，并用入口静态资源验证新前端已上线。
+
+## 2026-06-12 08:21 +08:00 - 账号页 Anthropic 默认测试模型调整
+
+- 执行者：Devil
+- 变更范围：`frontend/src/components/admin/account/AccountTestModal.vue`、`frontend/src/components/account/AccountTestModal.vue`、`frontend/src/views/admin/AccountSchedulingPoolView.vue` 及对应 Vitest。
+- 根因：账号测试弹窗和调度池人工探测仍沿用 Anthropic 优先 `sonnet` 的默认模型规则；用户要求账号页面 Anthropic 默认测试模型改为 `claude-opus-4-8`。
+- RED：`npm run test:run -- src/components/admin/account/__tests__/AccountTestModal.spec.ts src/components/account/__tests__/AccountTestModal.spec.ts src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts` 修复前失败 3 项，均显示实际选择/提交 `claude-sonnet-4-5`。
+- GREEN：同一 Vitest 命令修复后通过，3 个测试文件 19 项测试通过。
+- GREEN：`npm run typecheck` 通过，`vue-tsc --noEmit` 无类型错误。
+- GREEN：`git diff --check` 通过；仅提示既有 `.codegraph/daemon.pid` LF/CRLF 工作树告警，本轮前端 diff 无空白错误。
+- 风险：本轮未构建镜像、未部署；变更停留在前端源码和测试层。

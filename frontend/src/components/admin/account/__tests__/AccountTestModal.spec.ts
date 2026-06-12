@@ -324,4 +324,38 @@ describe('AccountTestModal', () => {
 
     expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.5')
   })
+
+  it('Anthropic accounts default to claude-opus-4-8 when testing', async () => {
+    getAvailableModels.mockResolvedValueOnce([
+      { id: 'claude-sonnet-4-5', display_name: 'Claude Sonnet 4.5' },
+      { id: 'claude-opus-4-8', display_name: 'Claude Opus 4.8' }
+    ])
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: {
+          id: 131,
+          name: 'anthropic-key',
+          platform: 'anthropic',
+          type: 'apikey',
+          status: 'active'
+        }
+      } as any,
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Select: { template: '<div class="select-stub"></div>' },
+          TextArea: true,
+          Icon: true,
+          AccountProbeDialog: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).selectedModelId).toBe('claude-opus-4-8')
+  })
 })

@@ -365,9 +365,9 @@ const loadAvailableModels = async () => {
       } else if (props.account.platform === 'openai') {
         selectedModelId.value = selectOpenAITestModel(availableModels.value)
       } else {
-        // Try to select Sonnet as default, otherwise use first model
-        const sonnetModel = availableModels.value.find((m) => m.id.includes('sonnet'))
-        selectedModelId.value = sonnetModel?.id || availableModels.value[0].id
+        // Anthropic 默认人工测试指定 Opus 4.8，缺失时保持可用模型列表兜底。
+        const opusModel = availableModels.value.find((m) => m.id === 'claude-opus-4-8')
+        selectedModelId.value = opusModel?.id || availableModels.value[0].id
       }
     }
   } catch (error) {

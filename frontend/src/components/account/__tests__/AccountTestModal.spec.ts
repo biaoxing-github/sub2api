@@ -294,4 +294,34 @@ describe('AccountTestModal', () => {
 
     expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.5')
   })
+
+  it('defaults Anthropic accounts to claude-opus-4-8', async () => {
+    getAvailableModelsMock.mockResolvedValueOnce([
+      { id: 'claude-sonnet-4-5', display_name: 'Claude Sonnet 4.5' },
+      { id: 'claude-opus-4-8', display_name: 'Claude Opus 4.8' }
+    ])
+    const account = buildAccount()
+    account.platform = 'anthropic'
+    account.type = 'apikey'
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          Select: SelectStub,
+          TextArea: TextAreaStub,
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).selectedModelId).toBe('claude-opus-4-8')
+  })
 })

@@ -322,7 +322,7 @@ describe('AccountSchedulingPoolView', () => {
     expect(wrapper.text()).toContain('admin.accountSchedulingPool.probeFailed')
   })
 
-  it('shows manual probe button for anthropic accounts and reuses account page sonnet default', async () => {
+  it('shows manual probe button for anthropic accounts and reuses account page opus default', async () => {
     listSchedulingPool.mockResolvedValue({
       items: [
         {
@@ -381,7 +381,7 @@ describe('AccountSchedulingPoolView', () => {
     await flushPromises()
 
     expect(getAvailableModels).toHaveBeenCalledWith(201)
-    expect(manualProbeAccount).toHaveBeenCalledWith(201, { model: 'claude-sonnet-4-5' })
+    expect(manualProbeAccount).toHaveBeenCalledWith(201, { model: 'claude-opus-4-8' })
     expect(listSchedulingPool).toHaveBeenCalledTimes(2)
   })
 })

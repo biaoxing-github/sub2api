@@ -389,8 +389,9 @@ function selectAccountTestModel(account: Account, models: ClaudeModel[]): string
   if (account.platform === 'gemini') {
     return sortAccountTestModels(availableModels)[0]?.id || ''
   }
-  const sonnetModel = availableModels.find(model => model.id.includes('sonnet'))
-  return sonnetModel?.id || availableModels[0]?.id || ''
+  // Anthropic 默认人工测试指定 Opus 4.8，缺失时保持可用模型列表兜底。
+  const opusModel = availableModels.find(model => model.id === 'claude-opus-4-8')
+  return opusModel?.id || availableModels[0]?.id || ''
 }
 
 function sortAccountTestModels(models: ClaudeModel[]): ClaudeModel[] {
