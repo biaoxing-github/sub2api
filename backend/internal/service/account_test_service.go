@@ -337,6 +337,14 @@ func (s *AccountTestService) TestAccountConnectionWithResult(c *gin.Context, acc
 	return result, err
 }
 
+// TestAccountConnectionWithResultBackground 在内存响应流中执行账号测试，供 JSON 接口复用 SSE 测试逻辑。
+func (s *AccountTestService) TestAccountConnectionWithResultBackground(ctx context.Context, accountID int64, modelID string, prompt string, mode string) (*AccountTestConnectionResult, error) {
+	w := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(w)
+	ginCtx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/background-test", nil).WithContext(ctx)
+	return s.TestAccountConnectionWithResult(ginCtx, accountID, modelID, prompt, mode)
+}
+
 // testClaudeAccountConnection tests an Anthropic Claude account's connection
 func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account *Account, modelID string) error {
 	ctx := c.Request.Context()
@@ -791,8 +799,8 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 				return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 			}
 
-			// Process SSE stream
-			return s.processOpenAIStreamWithStart(c, resp.Body, requestStartedAt)
+			// 探测链路也复用 OpenAI 正文异常检测，避免 200 错误文本被误判为成功。
+			return s.processOpenAIStreamWithStart(c, resp.Body, requestStartedAt, newOpenAIResponseTextErrorDetector(account))
 		}
 	}
 
@@ -857,7 +865,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Chat Completions API (/v1/chat/completions) returned %d: %s", resp.StatusCode, string(body)))
 	}
 
-	return s.processOpenAIChatCompletionsStreamWithStart(c, resp.Body, requestStartedAt)
+	return s.processOpenAIChatCompletionsStreamWithStart(c, resp.Body, requestStartedAt, newOpenAIResponseTextErrorDetector(account))
 }
 
 // testOpenAICompactConnection probes /responses/compact and persists the
@@ -1519,11 +1527,27 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 	return s.processOpenAIChatCompletionsStreamWithStart(c, body, time.Now())
 }
 
-func (s *AccountTestService) processOpenAIChatCompletionsStreamWithStart(c *gin.Context, body io.Reader, startedAt time.Time) error {
+func firstOpenAIResponseTextErrorDetector(detectors []*openAIResponseTextErrorDetector) *openAIResponseTextErrorDetector {
+	if len(detectors) == 0 {
+		return nil
+	}
+	return detectors[0]
+}
+
+func openAIResponseTextProbeErrorMessage(matchedKeyword string) string {
+	matchedKeyword = strings.TrimSpace(matchedKeyword)
+	if matchedKeyword == "" {
+		return "OpenAI response matched configured error text"
+	}
+	return fmt.Sprintf("OpenAI response matched configured error text: %s", matchedKeyword)
+}
+
+func (s *AccountTestService) processOpenAIChatCompletionsStreamWithStart(c *gin.Context, body io.Reader, startedAt time.Time, detectors ...*openAIResponseTextErrorDetector) error {
 	reader := bufio.NewReader(body)
 	seenJSON := false
 	seenFinish := false
 	var firstTokenMs *int
+	detector := firstOpenAIResponseTextErrorDetector(detectors)
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -1552,6 +1576,9 @@ func (s *AccountTestService) processOpenAIChatCompletionsStreamWithStart(c *gin.
 			s.sendEvent(c, TestEvent{Type: "status", Text: "已通过 /v1/chat/completions 验证"})
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
+		}
+		if keyword, ok := detector.ObserveSSEPayload([]byte(jsonStr)); ok {
+			return s.sendErrorAndEnd(c, openAIResponseTextProbeErrorMessage(keyword))
 		}
 
 		var data map[string]any
@@ -1599,10 +1626,11 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 	return s.processOpenAIStreamWithStart(c, body, time.Now())
 }
 
-func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body io.Reader, startedAt time.Time) error {
+func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body io.Reader, startedAt time.Time, detectors ...*openAIResponseTextErrorDetector) error {
 	reader := bufio.NewReader(body)
 	seenCompleted := false
 	var firstTokenMs *int
+	detector := firstOpenAIResponseTextErrorDetector(detectors)
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -1629,6 +1657,9 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 				return nil
 			}
 			return s.sendErrorAndEnd(c, "Stream ended before response.completed")
+		}
+		if keyword, ok := detector.ObserveSSEPayload([]byte(jsonStr)); ok {
+			return s.sendErrorAndEnd(c, openAIResponseTextProbeErrorMessage(keyword))
 		}
 
 		var data map[string]any

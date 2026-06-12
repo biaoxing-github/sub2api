@@ -964,6 +964,26 @@ func TestParseUpstreamBalanceResponse_NewAPIUserSelf(t *testing.T) {
 	assertFloatPtr(t, got.Available, 65)
 }
 
+func TestParseUpstreamBalanceResponse_NewAPIQuotaUnits(t *testing.T) {
+	got, err := ParseUpstreamBalanceResponse([]byte(`{"success":true,"data":{"quota":4750000,"used_quota":250000}}`))
+	if err != nil {
+		t.Fatalf("ParseUpstreamBalanceResponse() error = %v", err)
+	}
+	assertFloatPtr(t, got.Available, 9.5)
+	assertFloatPtr(t, got.Used, 0.5)
+	assertFloatPtr(t, got.Total, 10)
+}
+
+func TestParseUpstreamBalanceResponse_NewAPIQuotaUnitsNestedUser(t *testing.T) {
+	got, err := ParseUpstreamBalanceResponse([]byte(`{"code":0,"data":{"user":{"id":99,"quota":4750000,"used_quota":250000},"run_mode":"shared"}}`))
+	if err != nil {
+		t.Fatalf("ParseUpstreamBalanceResponse() error = %v", err)
+	}
+	assertFloatPtr(t, got.Available, 9.5)
+	assertFloatPtr(t, got.Used, 0.5)
+	assertFloatPtr(t, got.Total, 10)
+}
+
 func TestParseUpstreamBalanceResponse_Sub2APIUsage(t *testing.T) {
 	got, err := ParseUpstreamBalanceResponse([]byte(`{"balance":48.95752932,"isValid":true,"mode":"unrestricted"}`))
 	if err != nil {

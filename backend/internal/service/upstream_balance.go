@@ -1007,6 +1007,9 @@ func ParseUpstreamBalanceResponse(body []byte) (*parsedUpstreamBalance, error) {
 		balance.Groups = parseUsageItemGroups(obj)
 		return balance, nil
 	}
+	if balance, err := parseNewAPIQuotaUnitResponse(obj); err == nil {
+		return balance, nil
+	}
 	if strings.EqualFold(strings.TrimSpace(fmt.Sprint(obj["object"])), "billing_subscription") {
 		return parseBillingSubscriptionResponse(obj)
 	}
@@ -1040,6 +1043,56 @@ func ParseUpstreamBalanceResponse(body []byte) (*parsedUpstreamBalance, error) {
 		return nil, errors.New("no balance fields found")
 	}
 	return out, nil
+}
+
+// parseNewAPIQuotaUnitResponse 解析 NewAPI quota 单位字段，避免把 quota 余额当作美元直出。
+func parseNewAPIQuotaUnitResponse(obj map[string]any) (*parsedUpstreamBalance, error) {
+	candidates := []map[string]any{obj}
+	if data, ok := obj["data"].(map[string]any); ok {
+		candidates = append([]map[string]any{data}, candidates...)
+		if user, ok := data["user"].(map[string]any); ok {
+			candidates = append([]map[string]any{user}, candidates...)
+		}
+	}
+	if user, ok := obj["user"].(map[string]any); ok {
+		candidates = append([]map[string]any{user}, candidates...)
+	}
+
+	for _, candidate := range candidates {
+		usedUnits := firstFloatPtr(candidate, "used_quota")
+		availableUnits := firstFloatPtr(candidate, "remain_quota")
+		if availableUnits == nil && usedUnits != nil {
+			availableUnits = firstFloatPtr(candidate, "quota")
+		}
+		totalUnits := firstFloatPtr(candidate, "total_quota")
+		if availableUnits == nil && usedUnits == nil && totalUnits == nil {
+			continue
+		}
+
+		out := &parsedUpstreamBalance{}
+		if availableUnits != nil {
+			available := *availableUnits / newAPIQuotaPerUSD
+			out.Available = &available
+		}
+		if usedUnits != nil {
+			used := *usedUnits / newAPIQuotaPerUSD
+			out.Used = &used
+		}
+		if totalUnits != nil {
+			total := *totalUnits / newAPIQuotaPerUSD
+			out.Total = &total
+		}
+		if out.Total == nil && out.Available != nil && out.Used != nil {
+			total := *out.Available + *out.Used
+			out.Total = &total
+		}
+		if out.Available == nil && out.Total != nil && out.Used != nil {
+			available := *out.Total - *out.Used
+			out.Available = &available
+		}
+		return out, nil
+	}
+	return nil, errors.New("no NewAPI quota unit fields found")
 }
 
 func parseNewAPIUserSelfResponse(body []byte) (*parsedUpstreamBalance, error) {
@@ -1128,6 +1181,9 @@ func parseNewAPIUsageResponse(body []byte) (*parsedUpstreamBalance, error) {
 	user := firstObjectAtPath(obj, []string{"data", "user"}, []string{"user"})
 	if user == nil {
 		return nil, errors.New("no usage user object found")
+	}
+	if balance, err := parseNewAPIQuotaUnitResponse(obj); err == nil {
+		return balance, nil
 	}
 	out := &parsedUpstreamBalance{}
 	if v := firstFloatPtr(user, "balance", "available_balance", "available", "remain", "remaining"); v != nil {

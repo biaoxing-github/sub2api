@@ -1358,9 +1358,6 @@ func (h *AccountHandler) ManualProbe(c *gin.Context) {
 	var req ManualProbeRequest
 	_ = c.ShouldBindJSON(&req)
 
-	if req.Model == "" {
-		req.Model = "claude-opus-4-8"
-	}
 	if req.Prompt == "" {
 		req.Prompt = "hi"
 	}
@@ -1371,7 +1368,7 @@ func (h *AccountHandler) ManualProbe(c *gin.Context) {
 		return
 	}
 
-	result, testErr := h.accountTestService.TestAccountConnectionWithResult(c, accountID, req.Model, req.Prompt, req.Mode)
+	result, testErr := h.accountTestService.TestAccountConnectionWithResultBackground(c.Request.Context(), accountID, req.Model, req.Prompt, req.Mode)
 	if testErr != nil {
 		response.InternalError(c, "Failed to test account")
 		return

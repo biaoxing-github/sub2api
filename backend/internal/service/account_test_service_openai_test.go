@@ -277,6 +277,46 @@ data: [DONE]
 	require.Contains(t, recorder.Body.String(), `"first_token_ms"`)
 }
 
+func TestAccountTestService_OpenAIResponseTextErrorInterceptsProbe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"openai_response_text_error_enabled":  true,
+			"openai_response_text_error_keywords": []any{"join the new community"},
+		},
+	}
+
+	t.Run("ChatCompletions命中关键词转失败", func(t *testing.T) {
+		ctx, recorder := newTestContext()
+		svc := &AccountTestService{}
+		stream := strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"Welcome to join the new community!\"}}]}\n\ndata: [DONE]\n\n")
+		err := svc.processOpenAIChatCompletionsStreamWithStart(ctx, stream, time.Now(), newOpenAIResponseTextErrorDetector(account))
+		require.Error(t, err)
+		require.NotContains(t, recorder.Body.String(), `"success":true`)
+	})
+
+	t.Run("Responses命中关键词转失败", func(t *testing.T) {
+		ctx, recorder := newTestContext()
+		svc := &AccountTestService{}
+		stream := strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"join the new community now\"}\n\ndata: {\"type\":\"response.completed\"}\n\n")
+		err := svc.processOpenAIStreamWithStart(ctx, stream, time.Now(), newOpenAIResponseTextErrorDetector(account))
+		require.Error(t, err)
+		require.NotContains(t, recorder.Body.String(), `"success":true`)
+	})
+
+	t.Run("未配置关键词不误杀", func(t *testing.T) {
+		ctx, recorder := newTestContext()
+		svc := &AccountTestService{}
+		plain := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+		stream := strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"join the new community\"}}]}\n\ndata: [DONE]\n\n")
+		err := svc.processOpenAIChatCompletionsStreamWithStart(ctx, stream, time.Now(), newOpenAIResponseTextErrorDetector(plain))
+		require.NoError(t, err)
+		require.Contains(t, recorder.Body.String(), `"success":true`)
+	})
+}
+
 func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
