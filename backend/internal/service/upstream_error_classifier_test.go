@@ -112,3 +112,29 @@ func TestClassifyUpstreamErrorDoesNotMaskRealUpstreamFailuresAsBusinessLimit(t *
 		})
 	}
 }
+
+func TestRetryableSchedulerExhaustionStatusUsesSharedClassifier(t *testing.T) {
+	cases := []struct {
+		name       string
+		statusCode int
+		want       bool
+	}{
+		{name: "429", statusCode: http.StatusTooManyRequests, want: true},
+		{name: "502", statusCode: http.StatusBadGateway, want: true},
+		{name: "503", statusCode: http.StatusServiceUnavailable, want: true},
+		{name: "504", statusCode: http.StatusGatewayTimeout, want: true},
+		{name: "500", statusCode: http.StatusInternalServerError, want: false},
+		{name: "401", statusCode: http.StatusUnauthorized, want: false},
+		{name: "400", statusCode: http.StatusBadRequest, want: false},
+		{name: "empty", statusCode: 0, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := IsRetryableSchedulerExhaustionStatus(tc.statusCode)
+			if got != tc.want {
+				t.Fatalf("IsRetryableSchedulerExhaustionStatus(%d) = %v, want %v", tc.statusCode, got, tc.want)
+			}
+		})
+	}
+}

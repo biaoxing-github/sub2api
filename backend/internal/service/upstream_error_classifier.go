@@ -118,6 +118,24 @@ func ClassifyUpstreamError(input UpstreamErrorInput) UpstreamErrorClass {
 	}
 }
 
+// IsRetryableSchedulerExhaustionStatus 判断调度候选耗尽后是否允许进入退避/探测重试。
+// 这里复用统一上游错误分类，再保留调度层的窄口径白名单，避免 500 或未知错误被误判为可等待恢复。
+func IsRetryableSchedulerExhaustionStatus(statusCode int) bool {
+	if statusCode == 0 {
+		return false
+	}
+	classification := ClassifyUpstreamError(UpstreamErrorInput{StatusCode: statusCode})
+	if !classification.Retryable {
+		return false
+	}
+	switch statusCode {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
 func isUpstreamBusinessLimitMessage(lower string) bool {
 	lower = strings.TrimSpace(lower)
 	if lower == "" {

@@ -619,8 +619,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
-						isRetryable := failoverErr.StatusCode == 502 || failoverErr.StatusCode == 503 || failoverErr.StatusCode == 429
-						if isRetryable && len(failedAccountIDs) > 0 {
+						if service.IsRetryableSchedulerExhaustionStatus(failoverErr.StatusCode) && len(failedAccountIDs) > 0 {
 							reqLog.Warn("openai.failover_exhausted_entering_probe_loop",
 								zap.Int("switch_count", switchCount),
 								zap.Int("failed_account_count", len(failedAccountIDs)),

@@ -215,7 +215,7 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context, infiniteWa
 	}
 
 	if infiniteWait || (s.LastFailoverErr != nil &&
-		isRetryableExhaustionStatus(s.LastFailoverErr.StatusCode) &&
+		service.IsRetryableSchedulerExhaustionStatus(s.LastFailoverErr.StatusCode) &&
 		s.SwitchCount < s.MaxSwitches) {
 
 		logger.FromContext(ctx).Warn("gateway.failover_single_account_backoff",
@@ -236,18 +236,6 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context, infiniteWa
 		return FailoverContinue
 	}
 	return FailoverExhausted
-}
-
-// isRetryableExhaustionStatus 判断选号耗尽后是否应退避后重试。
-// 503/502/504 均为瞬时网关错误（容量不足、上游断流、网关超时），单账号场景下
-// 应在有界窗口内退避重试，而非立即终态。500 等非网关错误仍按终态处理。
-func isRetryableExhaustionStatus(statusCode int) bool {
-	switch statusCode {
-	case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout:
-		return true
-	default:
-		return false
-	}
 }
 
 // needForceCacheBilling 判断 failover 时是否需要强制缓存计费。
