@@ -3159,3 +3159,14 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
 - GREEN：`git diff --check -- backend/internal/handler/openai_gateway_handler.go backend/internal/handler/openai_gateway_handler_test.go` 通过。
 - 风险：本轮仅改变 `/responses` failover retry window 的等待时序；30 秒总窗口、候选排除与探测状态机不变。未构建镜像、未部署、未推送。
+
+## 2026-06-13 11:13 +08:00 - 单账号选号耗尽指数退避
+
+- 执行者：Devil
+- 变更范围：`backend/internal/config/config.go`、`backend/internal/handler/failover_loop.go`、`backend/internal/handler/failover_loop_test.go`
+- RED：`go test -tags unit ./internal/handler -run "TestSingleAccountExhaustionBackoffDelay" -count=1` 修复前失败，缺少退避计算 helper 和上限常量。
+- GREEN：`go test -tags unit ./internal/config -run "TestLoadDefaultSchedulerRetryConfig|TestLoadSchedulerRetryConfigFromEnv|TestValidateConfig_OpenAIWSRules" -count=1` 通过。
+- GREEN：`go test -tags unit ./internal/handler -run "TestNewFailoverState|TestSingleAccountExhaustionBackoffDelay|TestHandleSelectionExhausted|TestOpenAIFailoverRetryWindow" -count=1` 通过。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- GREEN：`git diff --check -- backend/internal/config/config.go backend/internal/handler/failover_loop.go backend/internal/handler/failover_loop_test.go` 通过。
+- 风险：本轮只改变单请求内选号耗尽等待节奏，不新增跨请求冷却；未构建镜像、未部署、未推送。

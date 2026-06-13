@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -40,18 +41,21 @@ const (
 	// Service 层在 SingleAccountRetry 模式下已做充分原地重试（最多 3 次、总等待 30s），
 	// Handler 层只需短暂间隔后重新进入 Service 层即可。
 	defaultSingleAccountBackoffDelay = 2 * time.Second
+	// maxSingleAccountExhaustionBackoffDelay 限制默认退避增长上界，避免单个请求长时间静默。
+	maxSingleAccountExhaustionBackoffDelay = 8 * time.Second
 )
 
 // FailoverState 跨循环迭代共享的 failover 状态
 type FailoverState struct {
-	SwitchCount              int
-	MaxSwitches              int
-	FailedAccountIDs         map[int64]struct{}
-	SameAccountRetryCount    map[int64]int
-	LastFailoverErr          *service.UpstreamFailoverError
-	ForceCacheBilling        bool
-	hasBoundSession          bool
-	singleAccountBackoffTime time.Duration // 单账号分组退避时间
+	SwitchCount                 int
+	MaxSwitches                 int
+	FailedAccountIDs            map[int64]struct{}
+	SameAccountRetryCount       map[int64]int
+	LastFailoverErr             *service.UpstreamFailoverError
+	ForceCacheBilling           bool
+	hasBoundSession             bool
+	singleAccountBackoffTime    time.Duration // 单账号分组初始退避时间
+	singleAccountBackoffAttempt int           // 当前请求内选号耗尽后已执行的退避次数
 }
 
 // NewFailoverState 创建 failover 状态
@@ -65,7 +69,7 @@ func NewFailoverState(maxSwitches int, hasBoundSession bool) *FailoverState {
 	}
 }
 
-// NewFailoverStateWithBackoff 创建带自定义退避时间的 failover 状态
+// NewFailoverStateWithBackoff 创建带自定义初始退避时间的 failover 状态
 func NewFailoverStateWithBackoff(maxSwitches int, hasBoundSession bool, backoffSeconds int) *FailoverState {
 	backoffTime := defaultSingleAccountBackoffDelay
 	if backoffSeconds > 0 {
@@ -218,16 +222,20 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context, infiniteWa
 		service.IsRetryableSchedulerExhaustionStatus(s.LastFailoverErr.StatusCode) &&
 		s.SwitchCount < s.MaxSwitches) {
 
+		backoffDelay := singleAccountExhaustionBackoffDelay(s.singleAccountBackoffTime, s.singleAccountBackoffAttempt)
 		logger.FromContext(ctx).Warn("gateway.failover_single_account_backoff",
-			zap.Duration("backoff_delay", s.singleAccountBackoffTime),
+			zap.Duration("backoff_delay", backoffDelay),
+			zap.Int("single_account_backoff_attempt", s.singleAccountBackoffAttempt),
 			zap.Int("switch_count", s.SwitchCount),
 			zap.Int("max_switches", s.MaxSwitches),
 			zap.Bool("infinite_wait", infiniteWait),
 		)
-		if !sleepWithContext(ctx, s.singleAccountBackoffTime) {
+		if !sleepWithContext(ctx, backoffDelay) {
 			return FailoverCanceled
 		}
+		s.singleAccountBackoffAttempt++
 		logger.FromContext(ctx).Warn("gateway.failover_single_account_retry",
+			zap.Int("single_account_backoff_attempt", s.singleAccountBackoffAttempt),
 			zap.Int("switch_count", s.SwitchCount),
 			zap.Int("max_switches", s.MaxSwitches),
 			zap.Bool("infinite_wait", infiniteWait),
@@ -236,6 +244,33 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context, infiniteWa
 		return FailoverContinue
 	}
 	return FailoverExhausted
+}
+
+// singleAccountExhaustionBackoffDelay 计算选号耗尽后的指数退避延迟。
+// 配置值作为初始退避，默认最多增长到 8 秒；若配置值本身高于 8 秒，则尊重配置值不再额外放大。
+func singleAccountExhaustionBackoffDelay(base time.Duration, retryCount int) time.Duration {
+	if base <= 0 {
+		base = defaultSingleAccountBackoffDelay
+	}
+	maxDelay := maxSingleAccountExhaustionBackoffDelay
+	if base > maxDelay {
+		maxDelay = base
+	}
+	delay := base
+	for i := 0; i < retryCount && delay < maxDelay; i++ {
+		delay *= 2
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+	}
+	jitterMax := delay * 3 / 10
+	if jitterMax > 0 && delay < maxDelay {
+		delay += time.Duration(rand.Int64N(int64(jitterMax) + 1))
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+	}
+	return delay
 }
 
 // needForceCacheBilling 判断 failover 时是否需要强制缓存计费。

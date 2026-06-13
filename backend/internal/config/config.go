@@ -822,7 +822,7 @@ type GatewayConfig struct {
 	// AnthropicSchedulerInfiniteWaitEnabled: Anthropic Messages 调度耗尽时是否无限等待重试。
 	// 关闭时达到 maxAccountSwitches 上限后返回 502；开启后持续等待直到请求上下文取消或账号恢复。
 	AnthropicSchedulerInfiniteWaitEnabled bool `mapstructure:"anthropic_scheduler_infinite_wait_enabled"`
-	// AnthropicSingleAccountBackoffSeconds: Anthropic 单账号分组退避时间（秒），默认 2。
+	// AnthropicSingleAccountBackoffSeconds: Anthropic 单账号分组初始退避时间（秒），默认 2。
 	AnthropicSingleAccountBackoffSeconds int `mapstructure:"anthropic_single_account_backoff_seconds"`
 	// OpenAISchedulerCooldownMultiplier: OpenAI 账号冷却时间倍数，默认 1.0。
 	OpenAISchedulerCooldownMultiplier float64 `mapstructure:"openai_scheduler_cooldown_multiplier"`

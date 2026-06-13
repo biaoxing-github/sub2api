@@ -57,6 +57,7 @@ func TestNewFailoverState(t *testing.T) {
 		require.False(t, fs.ForceCacheBilling)
 		require.True(t, fs.hasBoundSession)
 		require.Equal(t, defaultSingleAccountBackoffDelay, fs.singleAccountBackoffTime)
+		require.Zero(t, fs.singleAccountBackoffAttempt)
 	})
 
 	t.Run("无绑定会话", func(t *testing.T) {
@@ -72,12 +73,13 @@ func TestNewFailoverState(t *testing.T) {
 }
 
 func TestNewFailoverStateWithBackoff(t *testing.T) {
-	t.Run("正数配置覆盖默认退避", func(t *testing.T) {
+	t.Run("正数配置覆盖默认初始退避", func(t *testing.T) {
 		fs := NewFailoverStateWithBackoff(5, true, 7)
 
 		require.Equal(t, 5, fs.MaxSwitches)
 		require.True(t, fs.hasBoundSession)
 		require.Equal(t, 7*time.Second, fs.singleAccountBackoffTime)
+		require.Zero(t, fs.singleAccountBackoffAttempt)
 	})
 
 	t.Run("零值沿用默认退避", func(t *testing.T) {
@@ -85,6 +87,42 @@ func TestNewFailoverStateWithBackoff(t *testing.T) {
 
 		require.Equal(t, defaultSingleAccountBackoffDelay, fs.singleAccountBackoffTime)
 	})
+}
+
+func TestSingleAccountExhaustionBackoffDelay(t *testing.T) {
+	t.Run("默认退避随重试次数增长并封顶", func(t *testing.T) {
+		first := singleAccountExhaustionBackoffDelay(2*time.Second, 0)
+		second := singleAccountExhaustionBackoffDelay(2*time.Second, 1)
+		third := singleAccountExhaustionBackoffDelay(2*time.Second, 2)
+		fourth := singleAccountExhaustionBackoffDelay(2*time.Second, 3)
+
+		requireSingleAccountBackoffInRange(t, first, 2*time.Second)
+		requireSingleAccountBackoffInRange(t, second, 4*time.Second)
+		requireSingleAccountBackoffInRange(t, third, maxSingleAccountExhaustionBackoffDelay)
+		requireSingleAccountBackoffInRange(t, fourth, maxSingleAccountExhaustionBackoffDelay)
+		require.Greater(t, second, first)
+		require.Greater(t, third, second)
+		require.LessOrEqual(t, fourth, maxSingleAccountExhaustionBackoffDelay)
+	})
+
+	t.Run("高于默认封顶的配置不被压低", func(t *testing.T) {
+		configured := 12 * time.Second
+		got := singleAccountExhaustionBackoffDelay(configured, 1)
+
+		require.GreaterOrEqual(t, got, configured)
+		require.LessOrEqual(t, got, configured)
+	})
+}
+
+func requireSingleAccountBackoffInRange(t *testing.T, got time.Duration, base time.Duration) {
+	t.Helper()
+
+	maxDelay := base + base*3/10
+	if maxDelay > maxSingleAccountExhaustionBackoffDelay {
+		maxDelay = maxSingleAccountExhaustionBackoffDelay
+	}
+	require.GreaterOrEqual(t, got, base)
+	require.LessOrEqual(t, got, maxDelay)
 }
 
 // ---------------------------------------------------------------------------
