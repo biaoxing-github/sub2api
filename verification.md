@@ -3218,3 +3218,14 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
 - GREEN：`git diff --check` 退出码 0；仅提示既有 `.codegraph/daemon.pid` 换行警告。
 - 风险：本轮只落地 P0，结构化规则、observe/dry-run、三级策略源和 `drop_event` 未实现；未构建镜像、未部署、未推送。
+
+## 2026-06-13 17:23 +08:00 - OpenAI response text 过滤 P1 结构化规则与 observe
+
+- 执行者：Devil
+- 变更范围：`backend/internal/service/openai_response_text_error.go`、`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/openai_response_text_error_test.go`、`backend/internal/service/openai_gateway_service_test.go`
+- RED：`go test -tags unit ./internal/service -run "TestOpenAIResponseTextErrorDetectorStructuredRules|TestOpenAIResponseTextErrorDetectorLegacyKeywordsMapToAvoidTTL|TestOpenAIStreamingStructuredResponseTextObserveDoesNotModifyFlow" -count=1` 修复前编译失败，缺少结构化 match API、动作枚举和 observe 网关分支。
+- GREEN：同一 P1 聚焦命令通过，覆盖 `textExcludes` 白名单、`textIncludes` 命中动作、`errorCodes` 命中动作、旧关键词映射为 `avoid_ttl`、observe 命中只记录 `stream_observe` 且不改流/不冷却账号。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*ResponseText|TestOpenAINonStreamingConfiguredResponseTextReturnsFailover|TestOpenAIGatewayServiceStreamFailoverAvoid|TestOpenAIStreaming.*ResponseFailed|TestOpenAIResponseTextErrorDetector|TestAccountTestService.*ResponseText" -count=1` 通过，旧关键词和 P0 response text/response.failed 相邻语义保持。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，server 编译切片无测试运行。
+- OBSERVED：不带 `-tags unit` 的 `./internal/service` 聚焦命令仍被既有 `anthropicHTTPUpstreamRecorder` 测试桩缺失阻塞；本轮沿用项目既有 service 单测标签执行。
+- 风险：本轮只做账号 credentials 结构化规则兼容读取和 observe/dry-run；未做管理端 UI、全局规则源、三级策略合并和 SSE `drop_event`。未构建镜像、未部署、未推送。

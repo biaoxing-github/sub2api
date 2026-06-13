@@ -284,6 +284,7 @@ const (
 	OpenAIStreamActionRetryNextAccount       OpenAIStreamActionLabel = "retry_next_account"
 	OpenAIStreamActionAvoidAccountTTL        OpenAIStreamActionLabel = "avoid_account_ttl"
 	OpenAIStreamActionAvoidUpstreamBucketTTL OpenAIStreamActionLabel = "avoid_upstream_bucket_ttl"
+	OpenAIStreamActionObserve                OpenAIStreamActionLabel = "observe"
 )
 
 type OpenAIWSRetryMetricsSnapshot struct {
@@ -4632,11 +4633,16 @@ func (s *OpenAIGatewayService) applyOpenAIStreamFailoverAccountState(ctx context
 	)
 }
 
-func (s *OpenAIGatewayService) newOpenAIResponseTextFailoverError(ctx context.Context, c *gin.Context, account *Account, passthrough bool, upstreamRequestID string, matchedKeyword string) *UpstreamFailoverError {
-	err := newOpenAIResponseTextFailoverError(c, account, upstreamRequestID, matchedKeyword)
-	err.ActionMetadata = s.openAIStreamActionMetadataForAccount(OpenAIStreamActionAvoidAccountTTL, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway)
-	err.ActionMetadata = mergeOpenAIStreamActionMetadata(err.ActionMetadata, openAIResponseTextActionMetadata(matchedKeyword))
-	s.applyOpenAIResponseTextAccountState(ctx, account, matchedKeyword)
+func (s *OpenAIGatewayService) newOpenAIResponseTextFailoverError(ctx context.Context, c *gin.Context, account *Account, passthrough bool, upstreamRequestID string, match openAIResponseTextErrorMatch) *UpstreamFailoverError {
+	match = match.normalized()
+	err := newOpenAIResponseTextFailoverError(c, account, upstreamRequestID, match.Keyword)
+	actionLabel := openAIResponseTextStreamActionLabel(match.Action)
+	err.ActionLabel = actionLabel
+	err.ActionMetadata = s.openAIStreamActionMetadataForAccount(actionLabel, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway)
+	err.ActionMetadata = mergeOpenAIStreamActionMetadata(err.ActionMetadata, openAIResponseTextActionMetadata(match))
+	if match.Action == openAIResponseTextRuleActionAvoidTTL {
+		s.applyOpenAIResponseTextAccountState(ctx, account, match.Keyword)
+	}
 	return err
 }
 
@@ -4645,22 +4651,40 @@ func (s *OpenAIGatewayService) applyOpenAIResponseTextAccountState(ctx context.C
 	s.applyOpenAIStreamFailoverAccountState(ctx, account, OpenAIStreamActionAvoidAccountTTL, message, openAIResponseTextErrorBody(matchedKeyword, message))
 }
 
-func openAIResponseTextActionMetadata(matchedKeyword string) map[string]string {
+func openAIResponseTextActionMetadata(match openAIResponseTextErrorMatch) map[string]string {
+	match = match.normalized()
+	actionLabel := openAIResponseTextStreamActionLabel(match.Action)
 	metadata := map[string]string{
-		"stream_rule_id":       openAIResponseTextErrorCode,
+		"stream_rule_id":       match.RuleID,
 		"stream_rule_priority": "0",
-		"stream_action":        string(OpenAIStreamActionAvoidAccountTTL),
-		"action_label":         string(OpenAIStreamActionAvoidAccountTTL),
-		"avoidance_scope":      openAIStreamActionAvoidanceScope(OpenAIStreamActionAvoidAccountTTL, string(openAIUpstreamErrorPolicyPhaseStream)),
+		"stream_action":        string(actionLabel),
+		"action_label":         string(actionLabel),
+		"avoidance_scope":      openAIStreamActionAvoidanceScope(actionLabel, string(openAIUpstreamErrorPolicyPhaseStream)),
 		"reason_scope":         string(openAIUpstreamErrorPolicyPhaseStream),
-		"match_field":          "response_text",
+		"match_field":          match.MatchField,
 		"description_key":      openAIResponseTextErrorCode,
 		"error_category":       UpstreamErrorCategoryUpstreamError,
+		"response_text_action": string(match.Action),
 	}
-	if strings.TrimSpace(matchedKeyword) != "" {
-		metadata["match_value"] = strings.TrimSpace(matchedKeyword)
+	if strings.TrimSpace(match.Keyword) != "" {
+		metadata["match_value"] = strings.TrimSpace(match.Keyword)
 	}
 	return metadata
+}
+
+func openAIResponseTextStreamActionLabel(action openAIResponseTextRuleAction) OpenAIStreamActionLabel {
+	switch action {
+	case openAIResponseTextRuleActionObserve:
+		return OpenAIStreamActionObserve
+	case openAIResponseTextRuleActionRetry:
+		return OpenAIStreamActionRetryNextAccount
+	case openAIResponseTextRuleActionFail, openAIResponseTextRuleActionDrop:
+		return OpenAIStreamActionRetryNoAvoidance
+	case openAIResponseTextRuleActionAvoidTTL:
+		return OpenAIStreamActionAvoidAccountTTL
+	default:
+		return OpenAIStreamActionAvoidAccountTTL
+	}
 }
 
 func mergeOpenAIStreamActionMetadata(base map[string]string, extra map[string]string) map[string]string {
@@ -4726,6 +4750,8 @@ func openAIStreamActionAvoidanceScope(actionLabel OpenAIStreamActionLabel, reaso
 	switch actionLabel {
 	case OpenAIStreamActionRetryNoAvoidance:
 		return "none"
+	case OpenAIStreamActionObserve:
+		return "none"
 	case OpenAIStreamActionRetryNextAccount:
 		if strings.TrimSpace(reasonScope) == "request_phase" {
 			return "request"
@@ -4738,6 +4764,48 @@ func openAIStreamActionAvoidanceScope(actionLabel OpenAIStreamActionLabel, reaso
 	default:
 		return "unknown"
 	}
+}
+
+func (s *OpenAIGatewayService) appendOpenAIResponseTextObserveEvent(
+	c *gin.Context,
+	account *Account,
+	upstreamRequestID string,
+	match openAIResponseTextErrorMatch,
+	passthrough bool,
+	reasonScope string,
+) {
+	if c == nil {
+		return
+	}
+	match = match.normalized()
+	message := openAIResponseTextErrorMessage(match.Keyword)
+	scope := strings.TrimSpace(reasonScope)
+	if scope == "" {
+		scope = string(openAIUpstreamErrorPolicyPhaseStream)
+	}
+	kind := "stream_observe"
+	if scope != string(openAIUpstreamErrorPolicyPhaseStream) {
+		kind = scope + "_observe"
+	}
+	actionMetadata := s.openAIStreamActionMetadataForAccount(OpenAIStreamActionObserve, scope, passthrough, account, upstreamRequestID, 0)
+	actionMetadata = mergeOpenAIStreamActionMetadata(actionMetadata, openAIResponseTextActionMetadata(match))
+	ev := OpsUpstreamErrorEvent{
+		Platform:           PlatformOpenAI,
+		UpstreamStatusCode: 0,
+		UpstreamRequestID:  strings.TrimSpace(upstreamRequestID),
+		Passthrough:        passthrough,
+		Kind:               kind,
+		Message:            message,
+		Detail:             strings.TrimSpace(match.Keyword),
+		ActionLabel:        string(OpenAIStreamActionObserve),
+		ActionMetadata:     actionMetadata,
+	}
+	if account != nil {
+		ev.Platform = account.Platform
+		ev.AccountID = account.ID
+		ev.AccountName = account.Name
+	}
+	appendOpsUpstreamError(c, ev)
 }
 
 func enrichOpenAIStreamActionMetadataWithPathHealth(metadata map[string]string, pathHealth OpenAIPathHealthRecord) {
@@ -4927,24 +4995,32 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					trimmedData = strings.TrimSpace(replacedData)
 				}
 			}
-			if matchedKeyword, matched := responseTextDetector.ObserveSSEPayload(dataBytes); matched {
-				message := openAIResponseTextErrorMessage(matchedKeyword)
-				if openAIStreamClientOutputStarted(c, clientOutputStarted) {
-					if !clientDisconnected {
-						s.appendOpenAIStreamAuditEvent(c, account, upstreamRequestID, message, matchedKeyword, OpenAIStreamActionAvoidAccountTTL, true, openAIResponseTextActionMetadata(matchedKeyword))
-						if err := writeOpenAIResponsesGatewayRetryableFailedSSE(w, func() error {
-							flusher.Flush()
-							return nil
-						}, responseID, originalModel); err != nil {
-							clientDisconnected = true
-							return resultWithUsage(), err
+			if match, matched := responseTextDetector.ObserveSSEPayloadMatch(dataBytes); matched {
+				match = match.normalized()
+				if match.Action == openAIResponseTextRuleActionObserve {
+					s.appendOpenAIResponseTextObserveEvent(c, account, upstreamRequestID, match, true, string(openAIUpstreamErrorPolicyPhaseStream))
+				} else {
+					message := openAIResponseTextErrorMessage(match.Keyword)
+					if openAIStreamClientOutputStarted(c, clientOutputStarted) {
+						if !clientDisconnected {
+							actionLabel := openAIResponseTextStreamActionLabel(match.Action)
+							s.appendOpenAIStreamAuditEvent(c, account, upstreamRequestID, message, match.Keyword, actionLabel, true, openAIResponseTextActionMetadata(match))
+							if err := writeOpenAIResponsesGatewayRetryableFailedSSE(w, func() error {
+								flusher.Flush()
+								return nil
+							}, responseID, originalModel); err != nil {
+								clientDisconnected = true
+								return resultWithUsage(), err
+							}
 						}
+						if match.Action == openAIResponseTextRuleActionAvoidTTL {
+							s.applyOpenAIResponseTextAccountState(ctx, account, match.Keyword)
+						}
+						return resultWithUsage(), fmt.Errorf("%s", message)
 					}
-					s.applyOpenAIResponseTextAccountState(ctx, account, matchedKeyword)
-					return resultWithUsage(), fmt.Errorf("%s", message)
+					return resultWithUsage(),
+						s.newOpenAIResponseTextFailoverError(ctx, c, account, true, upstreamRequestID, match)
 				}
-				return resultWithUsage(),
-					s.newOpenAIResponseTextFailoverError(ctx, c, account, true, upstreamRequestID, matchedKeyword)
 			}
 			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
 			if eventType == "response.failed" {
@@ -6107,29 +6183,37 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				line = "data: " + data
 				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			}
-			if matchedKeyword, matched := responseTextDetector.ObserveSSEPayload(dataBytes); matched {
-				message := openAIResponseTextErrorMessage(matchedKeyword)
-				if openAIStreamClientOutputStarted(c, clientOutputStarted) {
-					if !clientDisconnected {
-						s.appendOpenAIStreamAuditEvent(c, account, upstreamRequestID, message, matchedKeyword, OpenAIStreamActionAvoidAccountTTL, false, openAIResponseTextActionMetadata(matchedKeyword))
-						if err := writeOpenAIResponsesGatewayRetryableFailedSSE(bufferedWriter, flushBuffered, responseID, originalModel); err != nil {
-							clientDisconnected = true
-							streamFailoverErr = fmt.Errorf("stream usage incomplete while writing response text retryable failure: %w", err)
-							return
+			if match, matched := responseTextDetector.ObserveSSEPayloadMatch(dataBytes); matched {
+				match = match.normalized()
+				if match.Action == openAIResponseTextRuleActionObserve {
+					s.appendOpenAIResponseTextObserveEvent(c, account, upstreamRequestID, match, false, string(openAIUpstreamErrorPolicyPhaseStream))
+				} else {
+					message := openAIResponseTextErrorMessage(match.Keyword)
+					if openAIStreamClientOutputStarted(c, clientOutputStarted) {
+						if !clientDisconnected {
+							actionLabel := openAIResponseTextStreamActionLabel(match.Action)
+							s.appendOpenAIStreamAuditEvent(c, account, upstreamRequestID, message, match.Keyword, actionLabel, false, openAIResponseTextActionMetadata(match))
+							if err := writeOpenAIResponsesGatewayRetryableFailedSSE(bufferedWriter, flushBuffered, responseID, originalModel); err != nil {
+								clientDisconnected = true
+								streamFailoverErr = fmt.Errorf("stream usage incomplete while writing response text retryable failure: %w", err)
+								return
+							}
+							lastDownstreamWriteAt = time.Now()
 						}
-						lastDownstreamWriteAt = time.Now()
+						if match.Action == openAIResponseTextRuleActionAvoidTTL {
+							s.applyOpenAIResponseTextAccountState(ctx, account, match.Keyword)
+						}
+						streamFailoverErr = fmt.Errorf("%s", message)
+						return
 					}
-					s.applyOpenAIResponseTextAccountState(ctx, account, matchedKeyword)
-					streamFailoverErr = fmt.Errorf("%s", message)
+					if err := flushPreOutputHeartbeat(); err != nil {
+						clientDisconnected = true
+						streamFailoverErr = fmt.Errorf("stream usage incomplete before response text failover heartbeat")
+						return
+					}
+					streamFailoverErr = s.newOpenAIResponseTextFailoverError(ctx, c, account, false, upstreamRequestID, match)
 					return
 				}
-				if err := flushPreOutputHeartbeat(); err != nil {
-					clientDisconnected = true
-					streamFailoverErr = fmt.Errorf("stream usage incomplete before response text failover heartbeat")
-					return
-				}
-				streamFailoverErr = s.newOpenAIResponseTextFailoverError(ctx, c, account, false, upstreamRequestID, matchedKeyword)
-				return
 			}
 			// Replace model in response if needed.
 			// Fast path: most events do not contain model field values.
@@ -6512,8 +6596,14 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		return s.handleSSEToJSON(resp, c, body, originalModel, mappedModel)
 	}
 
-	if matchedKeyword, matched := newOpenAIResponseTextErrorDetector(account).ObserveJSONBytes(body); matched {
-		return nil, s.newOpenAIResponseTextFailoverError(ctx, c, account, false, strings.TrimSpace(resp.Header.Get("x-request-id")), matchedKeyword)
+	if match, matched := newOpenAIResponseTextErrorDetector(account).ObserveJSONBytesMatch(body); matched {
+		upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+		match = match.normalized()
+		if match.Action == openAIResponseTextRuleActionObserve {
+			s.appendOpenAIResponseTextObserveEvent(c, account, upstreamRequestID, match, false, "response")
+		} else {
+			return nil, s.newOpenAIResponseTextFailoverError(ctx, c, account, false, upstreamRequestID, match)
+		}
 	}
 
 	usageValue, usageOK := extractOpenAIUsageFromJSONBytes(body)

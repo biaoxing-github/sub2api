@@ -1768,6 +1768,78 @@ func TestOpenAIStreamingConfiguredResponseTextAfterOutputWritesGatewayRetryableF
 	require.Equal(t, "openai_response_text_error", gjson.Get(repo.lastTempReason, "matched_keyword").String())
 }
 
+func TestOpenAIStreamingStructuredResponseTextObserveDoesNotModifyFlow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	repo := &streamAccountStateRepoSpy{}
+	svc := &OpenAIGatewayService{cfg: cfg, accountRepo: repo}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"加入新家园即可继续使用"}`,
+			"",
+			"event: response.completed",
+			`data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":1,"output_tokens":1}}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-response-text-observe"}},
+	}
+	account := &Account{
+		ID:       9,
+		Name:     "free9",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"openai_response_text_error_enabled": true,
+			"openai_response_text_error_rules": []any{
+				map[string]any{
+					"id": "observe-community-ad",
+					"match": map[string]any{
+						"textIncludes": []any{"加入新家园"},
+					},
+					"action": "observe",
+				},
+			},
+		},
+	}
+
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	body := rec.Body.String()
+	require.Contains(t, body, "response.output_text.delta")
+	require.Contains(t, body, "加入新家园")
+	require.NotContains(t, body, "response.failed")
+	require.True(t, openAIStreamClientOutputStarted(c, false))
+	require.Zero(t, repo.tempCalls)
+	raw, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := raw.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	require.Equal(t, "stream_observe", events[0].Kind)
+	require.Equal(t, "observe", events[0].ActionLabel)
+	require.Equal(t, "observe-community-ad", events[0].ActionMetadata["stream_rule_id"])
+	require.Equal(t, "加入新家园", events[0].ActionMetadata["match_value"])
+	require.Equal(t, "observe", events[0].ActionMetadata["stream_action"])
+}
+
 func TestOpenAIStreamingResponseFailedBeforeOutputCapacityErrorReturnsFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{

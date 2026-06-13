@@ -14,6 +14,7 @@ const (
 	openAIResponseTextErrorCode          = "openai_response_text_error"
 	openAIResponseTextErrorClientMessage = "Upstream response matched configured error text; no fallback account was available"
 	openAIResponseTextErrorTailRunes     = 2048
+	openAIResponseTextErrorRulesKey      = "openai_response_text_error_rules"
 )
 
 // IsOpenAIResponseTextErrorEnabled 返回账号是否启用 OpenAI 响应正文异常关键词。
@@ -31,6 +32,17 @@ func (a *Account) GetOpenAIResponseTextErrorKeywords() []string {
 		return nil
 	}
 	return parseOpenAIResponseTextErrorKeywords(a.Credentials["openai_response_text_error_keywords"])
+}
+
+// GetOpenAIResponseTextErrorRules 返回账号配置的结构化响应正文规则；未配置时兼容旧关键词。
+func (a *Account) GetOpenAIResponseTextErrorRules() []openAIResponseTextRule {
+	if a == nil || a.Credentials == nil {
+		return nil
+	}
+	if rules := parseOpenAIResponseTextRules(a.Credentials[openAIResponseTextErrorRulesKey]); len(rules) > 0 {
+		return rules
+	}
+	return openAIResponseTextRulesFromLegacyKeywords(a.GetOpenAIResponseTextErrorKeywords())
 }
 
 func parseOpenAIResponseTextErrorKeywords(raw any) []string {
@@ -91,20 +103,168 @@ func dedupeOpenAIResponseTextErrorKeywords(values []string) []string {
 	return out
 }
 
+type openAIResponseTextRuleAction string
+
+const (
+	openAIResponseTextRuleActionObserve  openAIResponseTextRuleAction = "observe"
+	openAIResponseTextRuleActionDrop     openAIResponseTextRuleAction = "drop"
+	openAIResponseTextRuleActionFail     openAIResponseTextRuleAction = "fail"
+	openAIResponseTextRuleActionRetry    openAIResponseTextRuleAction = "retry"
+	openAIResponseTextRuleActionAvoidTTL openAIResponseTextRuleAction = "avoid_ttl"
+)
+
+type openAIResponseTextRuleMatch struct {
+	TextIncludes []string
+	TextExcludes []string
+	ErrorCodes   []string
+}
+
+type openAIResponseTextRule struct {
+	ID     string
+	Match  openAIResponseTextRuleMatch
+	Action openAIResponseTextRuleAction
+}
+
+type openAIResponseTextErrorMatch struct {
+	RuleID     string
+	Keyword    string
+	MatchField string
+	Action     openAIResponseTextRuleAction
+}
+
+func (m openAIResponseTextErrorMatch) normalized() openAIResponseTextErrorMatch {
+	if strings.TrimSpace(m.RuleID) == "" {
+		m.RuleID = openAIResponseTextErrorCode
+	}
+	if strings.TrimSpace(m.MatchField) == "" {
+		m.MatchField = "response_text"
+	}
+	if strings.TrimSpace(string(m.Action)) == "" {
+		m.Action = openAIResponseTextRuleActionAvoidTTL
+	}
+	return m
+}
+
+func (m openAIResponseTextErrorMatch) actionable() bool {
+	return m.normalized().Action != openAIResponseTextRuleActionObserve
+}
+
+func parseOpenAIResponseTextRules(raw any) []openAIResponseTextRule {
+	switch v := raw.(type) {
+	case []any:
+		return parseOpenAIResponseTextRuleItems(v)
+	case []map[string]any:
+		items := make([]any, 0, len(v))
+		for _, item := range v {
+			items = append(items, item)
+		}
+		return parseOpenAIResponseTextRuleItems(items)
+	case string:
+		var items []any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(v)), &items); err != nil {
+			return nil
+		}
+		return parseOpenAIResponseTextRuleItems(items)
+	default:
+		return nil
+	}
+}
+
+func parseOpenAIResponseTextRuleItems(items []any) []openAIResponseTextRule {
+	rules := make([]openAIResponseTextRule, 0, len(items))
+	for index, item := range items {
+		rawRule, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		matchRaw, _ := rawRule["match"].(map[string]any)
+		match := openAIResponseTextRuleMatch{
+			TextIncludes: parseOpenAIResponseTextRuleStrings(matchRaw, "textIncludes", "text_includes"),
+			TextExcludes: parseOpenAIResponseTextRuleStrings(matchRaw, "textExcludes", "text_excludes"),
+			ErrorCodes:   parseOpenAIResponseTextRuleStrings(matchRaw, "errorCodes", "error_codes"),
+		}
+		if len(match.TextIncludes) == 0 && len(match.ErrorCodes) == 0 {
+			continue
+		}
+		action, ok := parseOpenAIResponseTextRuleAction(rawRule["action"])
+		if !ok {
+			continue
+		}
+		ruleID := strings.TrimSpace(fmt.Sprint(rawRule["id"]))
+		if ruleID == "" || ruleID == "<nil>" {
+			ruleID = fmt.Sprintf("%s_%d", openAIResponseTextErrorCode, index+1)
+		}
+		rules = append(rules, openAIResponseTextRule{
+			ID:     ruleID,
+			Match:  match,
+			Action: action,
+		})
+	}
+	return rules
+}
+
+func parseOpenAIResponseTextRuleStrings(raw map[string]any, keys ...string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	for _, key := range keys {
+		if values := parseOpenAIResponseTextErrorKeywords(raw[key]); len(values) > 0 {
+			return values
+		}
+	}
+	return nil
+}
+
+func parseOpenAIResponseTextRuleAction(raw any) (openAIResponseTextRuleAction, bool) {
+	value := strings.ToLower(strings.TrimSpace(fmt.Sprint(raw)))
+	if value == "" || value == "<nil>" {
+		return openAIResponseTextRuleActionAvoidTTL, true
+	}
+	switch value {
+	case string(openAIResponseTextRuleActionObserve):
+		return openAIResponseTextRuleActionObserve, true
+	case string(openAIResponseTextRuleActionDrop):
+		return openAIResponseTextRuleActionDrop, true
+	case string(openAIResponseTextRuleActionFail):
+		return openAIResponseTextRuleActionFail, true
+	case string(openAIResponseTextRuleActionRetry):
+		return openAIResponseTextRuleActionRetry, true
+	case string(openAIResponseTextRuleActionAvoidTTL), "avoid_account_ttl":
+		return openAIResponseTextRuleActionAvoidTTL, true
+	default:
+		return "", false
+	}
+}
+
+func openAIResponseTextRulesFromLegacyKeywords(keywords []string) []openAIResponseTextRule {
+	if len(keywords) == 0 {
+		return nil
+	}
+	return []openAIResponseTextRule{{
+		ID: openAIResponseTextErrorCode,
+		Match: openAIResponseTextRuleMatch{
+			TextIncludes: keywords,
+		},
+		Action: openAIResponseTextRuleActionAvoidTTL,
+	}}
+}
+
 type openAIResponseTextErrorDetector struct {
-	enabled  bool
-	keywords []string
-	tail     string
+	enabled         bool
+	rules           []openAIResponseTextRule
+	observedRuleIDs map[string]struct{}
+	tail            string
 }
 
 func newOpenAIResponseTextErrorDetector(account *Account) *openAIResponseTextErrorDetector {
 	if account == nil || !account.IsOpenAIResponseTextErrorEnabled() {
 		return &openAIResponseTextErrorDetector{}
 	}
-	keywords := account.GetOpenAIResponseTextErrorKeywords()
+	rules := account.GetOpenAIResponseTextErrorRules()
 	return &openAIResponseTextErrorDetector{
-		enabled:  len(keywords) > 0,
-		keywords: keywords,
+		enabled:         len(rules) > 0,
+		rules:           rules,
+		observedRuleIDs: map[string]struct{}{},
 	}
 }
 
@@ -113,81 +273,175 @@ func (d *openAIResponseTextErrorDetector) Enabled() bool {
 }
 
 func (d *openAIResponseTextErrorDetector) ObserveJSONBytes(body []byte) (string, bool) {
-	if !d.Enabled() || len(body) == 0 || !gjson.ValidBytes(body) {
+	match, ok := d.ObserveJSONBytesMatch(body)
+	if !ok || !match.actionable() {
 		return "", false
 	}
-	matched := ""
-	forEachOpenAIResponseTextInJSON(gjson.ParseBytes(body), func(text string) bool {
-		if keyword, ok := d.ObserveText(text); ok {
-			matched = keyword
-			return false
-		}
-		return true
-	})
-	if matched != "" {
-		return matched, true
+	return match.Keyword, true
+}
+
+func (d *openAIResponseTextErrorDetector) ObserveJSONBytesMatch(body []byte) (openAIResponseTextErrorMatch, bool) {
+	if !d.Enabled() || len(body) == 0 || !gjson.ValidBytes(body) {
+		return openAIResponseTextErrorMatch{}, false
 	}
-	return "", false
+	return d.observeJSONResultMatch(gjson.ParseBytes(body))
 }
 
 func (d *openAIResponseTextErrorDetector) ObserveSSEPayload(payload []byte) (string, bool) {
-	if !d.Enabled() || len(payload) == 0 {
+	match, ok := d.ObserveSSEPayloadMatch(payload)
+	if !ok || !match.actionable() {
 		return "", false
+	}
+	return match.Keyword, true
+}
+
+func (d *openAIResponseTextErrorDetector) ObserveSSEPayloadMatch(payload []byte) (openAIResponseTextErrorMatch, bool) {
+	if !d.Enabled() || len(payload) == 0 {
+		return openAIResponseTextErrorMatch{}, false
 	}
 	trimmed := strings.TrimSpace(string(payload))
 	if trimmed == "" || trimmed == "[DONE]" || !gjson.Valid(trimmed) {
-		return "", false
+		return openAIResponseTextErrorMatch{}, false
 	}
-	root := gjson.Parse(trimmed)
-	matched := ""
+	return d.observeJSONResultMatch(gjson.Parse(trimmed))
+}
+
+func (d *openAIResponseTextErrorDetector) observeJSONResultMatch(root gjson.Result) (openAIResponseTextErrorMatch, bool) {
+	if !root.Exists() {
+		return openAIResponseTextErrorMatch{}, false
+	}
+	if match, ok := d.observeErrorCodeMatch(root); ok {
+		return match, true
+	}
+	var matched openAIResponseTextErrorMatch
 	forEachOpenAIResponseTextInJSON(root, func(text string) bool {
-		if keyword, ok := d.ObserveText(text); ok {
-			matched = keyword
+		if match, ok := d.ObserveTextMatch(text); ok {
+			matched = match
 			return false
 		}
 		return true
 	})
-	if matched != "" {
+	if matched.Keyword != "" {
 		return matched, true
 	}
-	return "", false
+	return openAIResponseTextErrorMatch{}, false
+}
+
+func (d *openAIResponseTextErrorDetector) observeErrorCodeMatch(root gjson.Result) (openAIResponseTextErrorMatch, bool) {
+	for _, path := range []string{"error.code", "response.error.code", "code"} {
+		code := strings.TrimSpace(root.Get(path).String())
+		if code == "" {
+			continue
+		}
+		if match, ok := d.matchErrorCode(code, path); ok {
+			return d.acceptMatch(match)
+		}
+	}
+	return openAIResponseTextErrorMatch{}, false
 }
 
 func (d *openAIResponseTextErrorDetector) ObserveSSEBody(body string) (string, bool) {
-	if !d.Enabled() || strings.TrimSpace(body) == "" {
+	match, ok := d.ObserveSSEBodyMatch(body)
+	if !ok || !match.actionable() {
 		return "", false
 	}
-	matched := ""
+	return match.Keyword, true
+}
+
+func (d *openAIResponseTextErrorDetector) ObserveSSEBodyMatch(body string) (openAIResponseTextErrorMatch, bool) {
+	if !d.Enabled() || strings.TrimSpace(body) == "" {
+		return openAIResponseTextErrorMatch{}, false
+	}
+	var matched openAIResponseTextErrorMatch
 	forEachOpenAISSEDataPayload(body, func(data []byte) {
-		if matched != "" {
+		if matched.Keyword != "" {
 			return
 		}
-		if keyword, ok := d.ObserveSSEPayload(data); ok {
-			matched = keyword
+		if match, ok := d.ObserveSSEPayloadMatch(data); ok {
+			matched = match
 		}
 	})
-	if matched != "" {
+	if matched.Keyword != "" {
 		return matched, true
 	}
-	return "", false
+	return openAIResponseTextErrorMatch{}, false
 }
 
 func (d *openAIResponseTextErrorDetector) ObserveText(text string) (string, bool) {
-	if !d.Enabled() {
+	match, ok := d.ObserveTextMatch(text)
+	if !ok || !match.actionable() {
 		return "", false
+	}
+	return match.Keyword, true
+}
+
+func (d *openAIResponseTextErrorDetector) ObserveTextMatch(text string) (openAIResponseTextErrorMatch, bool) {
+	if !d.Enabled() {
+		return openAIResponseTextErrorMatch{}, false
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return "", false
+		return openAIResponseTextErrorMatch{}, false
 	}
 	combined := d.tail + text
-	for _, keyword := range d.keywords {
-		if containsOpenAIResponseTextKeyword(combined, keyword) {
-			return keyword, true
+	for _, rule := range d.rules {
+		if match, ok := rule.matchText(combined); ok {
+			d.tail = trailingRunes(combined, openAIResponseTextErrorTailRunes)
+			return d.acceptMatch(match)
 		}
 	}
 	d.tail = trailingRunes(combined, openAIResponseTextErrorTailRunes)
-	return "", false
+	return openAIResponseTextErrorMatch{}, false
+}
+
+func (d *openAIResponseTextErrorDetector) acceptMatch(match openAIResponseTextErrorMatch) (openAIResponseTextErrorMatch, bool) {
+	match = match.normalized()
+	if match.Action != openAIResponseTextRuleActionObserve {
+		return match, true
+	}
+	if d.observedRuleIDs == nil {
+		d.observedRuleIDs = map[string]struct{}{}
+	}
+	if _, exists := d.observedRuleIDs[match.RuleID]; exists {
+		return openAIResponseTextErrorMatch{}, false
+	}
+	d.observedRuleIDs[match.RuleID] = struct{}{}
+	return match, true
+}
+
+func (d *openAIResponseTextErrorDetector) matchErrorCode(code string, path string) (openAIResponseTextErrorMatch, bool) {
+	for _, rule := range d.rules {
+		for _, want := range rule.Match.ErrorCodes {
+			if strings.EqualFold(strings.TrimSpace(code), strings.TrimSpace(want)) {
+				return openAIResponseTextErrorMatch{
+					RuleID:     rule.ID,
+					Keyword:    strings.TrimSpace(want),
+					MatchField: strings.TrimSpace(path),
+					Action:     rule.Action,
+				}, true
+			}
+		}
+	}
+	return openAIResponseTextErrorMatch{}, false
+}
+
+func (r openAIResponseTextRule) matchText(text string) (openAIResponseTextErrorMatch, bool) {
+	for _, exclude := range r.Match.TextExcludes {
+		if containsOpenAIResponseTextKeyword(text, exclude) {
+			return openAIResponseTextErrorMatch{}, false
+		}
+	}
+	for _, include := range r.Match.TextIncludes {
+		if containsOpenAIResponseTextKeyword(text, include) {
+			return openAIResponseTextErrorMatch{
+				RuleID:     r.ID,
+				Keyword:    strings.TrimSpace(include),
+				MatchField: "response_text",
+				Action:     r.Action,
+			}, true
+		}
+	}
+	return openAIResponseTextErrorMatch{}, false
 }
 
 func forEachOpenAIResponseTextInJSON(root gjson.Result, fn func(string) bool) {
