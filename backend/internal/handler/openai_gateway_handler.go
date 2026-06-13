@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -43,6 +44,7 @@ type OpenAIGatewayHandler struct {
 const (
 	openAIResponsesUpstreamRequestBodyMaxBytes = 32 * 1024 * 1024
 	openAIFailoverRetryDelay                   = 2 * time.Second
+	openAIFailoverRetryMaxDelay                = 8 * time.Second
 	openAIFailoverRetryMaxWait                 = 30 * time.Second
 )
 
@@ -80,7 +82,8 @@ type openAIFailoverRetryAction struct {
 
 // openAIFailoverRetryWindow 记录一次 failover 等待重试窗口的起点。
 type openAIFailoverRetryWindow struct {
-	StartedAt time.Time
+	StartedAt  time.Time
+	RetryCount int
 }
 
 // NextSingleCandidate 仅在账号池只有一个候选时允许短暂等待后重试。
@@ -110,12 +113,33 @@ func (w *openAIFailoverRetryWindow) nextWaitRetry(now time.Time, failoverErr *se
 	if !now.Before(w.StartedAt.Add(openAIFailoverRetryMaxWait)) {
 		return openAIFailoverRetryAction{Reason: "failover_retry_deadline_exceeded"}
 	}
+	delay := w.nextDelay()
+	w.RetryCount++
 	return openAIFailoverRetryAction{
 		Retry:       true,
-		Delay:       openAIFailoverRetryDelay,
+		Delay:       delay,
 		ExcludedIDs: map[int64]struct{}{},
 		Reason:      reason,
 	}
+}
+
+// nextDelay 用指数退避和小幅抖动打散同一上游恢复点上的同步重试。
+func (w *openAIFailoverRetryWindow) nextDelay() time.Duration {
+	delay := openAIFailoverRetryDelay
+	for i := 0; i < w.RetryCount && delay < openAIFailoverRetryMaxDelay; i++ {
+		delay *= 2
+		if delay > openAIFailoverRetryMaxDelay {
+			delay = openAIFailoverRetryMaxDelay
+		}
+	}
+	jitterMax := delay * 3 / 10
+	if jitterMax > 0 && delay < openAIFailoverRetryMaxDelay {
+		delay += time.Duration(rand.Int64N(int64(jitterMax) + 1))
+		if delay > openAIFailoverRetryMaxDelay {
+			delay = openAIFailoverRetryMaxDelay
+		}
+	}
+	return delay
 }
 
 // openAISchedulerExhaustionProbeMode 决定选号失败后是否进入调度耗尽探测。

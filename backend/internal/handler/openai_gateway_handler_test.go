@@ -493,17 +493,40 @@ func TestOpenAIFailoverRetryWindow_SingleCandidate(t *testing.T) {
 	action := state.NextSingleCandidate(start, failoverErr, 1)
 
 	require.True(t, action.Retry)
-	require.Equal(t, openAIFailoverRetryDelay, action.Delay)
+	requireOpenAIFailoverRetryDelayInRange(t, action.Delay, openAIFailoverRetryDelay)
 	require.Empty(t, action.ExcludedIDs)
 	require.Equal(t, start, state.StartedAt)
 
 	action = state.NextSingleCandidate(start.Add(openAIFailoverRetryMaxWait-time.Second), failoverErr, 1)
 	require.True(t, action.Retry)
-	require.Equal(t, openAIFailoverRetryDelay, action.Delay)
+	requireOpenAIFailoverRetryDelayInRange(t, action.Delay, 2*openAIFailoverRetryDelay)
 
 	action = state.NextSingleCandidate(start.Add(openAIFailoverRetryMaxWait), failoverErr, 1)
 	require.False(t, action.Retry)
 	require.Equal(t, "failover_retry_deadline_exceeded", action.Reason)
+}
+
+func TestOpenAIFailoverRetryWindow_BackoffGrowsWithJitterBounds(t *testing.T) {
+	start := time.Date(2026, 6, 2, 10, 1, 0, 0, time.UTC)
+	state := &openAIFailoverRetryWindow{}
+	failoverErr := &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}
+
+	first := state.NextSingleCandidate(start, failoverErr, 1)
+	second := state.NextSingleCandidate(start.Add(time.Second), failoverErr, 1)
+	third := state.NextSingleCandidate(start.Add(2*time.Second), failoverErr, 1)
+	fourth := state.NextSingleCandidate(start.Add(3*time.Second), failoverErr, 1)
+
+	require.True(t, first.Retry)
+	require.True(t, second.Retry)
+	require.True(t, third.Retry)
+	require.True(t, fourth.Retry)
+	requireOpenAIFailoverRetryDelayInRange(t, first.Delay, openAIFailoverRetryDelay)
+	requireOpenAIFailoverRetryDelayInRange(t, second.Delay, 2*openAIFailoverRetryDelay)
+	requireOpenAIFailoverRetryDelayInRange(t, third.Delay, openAIFailoverRetryMaxDelay)
+	requireOpenAIFailoverRetryDelayInRange(t, fourth.Delay, openAIFailoverRetryMaxDelay)
+	require.Greater(t, second.Delay, first.Delay)
+	require.Greater(t, third.Delay, second.Delay)
+	require.LessOrEqual(t, fourth.Delay, openAIFailoverRetryMaxDelay)
 }
 
 func TestOpenAIFailoverRetryWindow_DoesNotDelayBeforeTryingOtherCandidates(t *testing.T) {
@@ -522,7 +545,7 @@ func TestOpenAIFailoverRetryWindow_PoolExhaustedRetriesMultipleCandidates(t *tes
 	action := state.NextPoolExhausted(start, failoverErr, 3)
 
 	require.True(t, action.Retry)
-	require.Equal(t, openAIFailoverRetryDelay, action.Delay)
+	requireOpenAIFailoverRetryDelayInRange(t, action.Delay, openAIFailoverRetryDelay)
 	require.Empty(t, action.ExcludedIDs)
 	require.Equal(t, "pool_exhausted_wait_retry", action.Reason)
 	require.Equal(t, start, state.StartedAt)
@@ -530,6 +553,17 @@ func TestOpenAIFailoverRetryWindow_PoolExhaustedRetriesMultipleCandidates(t *tes
 	action = state.NextPoolExhausted(start.Add(openAIFailoverRetryMaxWait), failoverErr, 3)
 	require.False(t, action.Retry)
 	require.Equal(t, "failover_retry_deadline_exceeded", action.Reason)
+}
+
+func requireOpenAIFailoverRetryDelayInRange(t *testing.T, got time.Duration, base time.Duration) {
+	t.Helper()
+
+	maxDelay := base + base*3/10
+	if maxDelay > openAIFailoverRetryMaxDelay {
+		maxDelay = openAIFailoverRetryMaxDelay
+	}
+	require.GreaterOrEqual(t, got, base)
+	require.LessOrEqual(t, got, maxDelay)
 }
 
 func TestShouldLogOpenAIForwardFailureAsWarn(t *testing.T) {

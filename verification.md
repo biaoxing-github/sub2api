@@ -3149,3 +3149,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test -tags unit ./internal/service -run "TestAccountTest.*ResponseText|TestAccountTestOutcome|TestAccountTestService_TestAccountConnectionWithResultAppliesOpenAIResponseTextErrorKeywords" -count=1` 通过。
 - GREEN：`git diff --check -- backend/internal/service/account_test_service_openai_test.go docs/feature_list.jsonl docs/process_list.jsonl` 通过；仅有 docs JSONL 工作树 CRLF 提示。
 - 风险：新增测试首次运行即通过，说明生产代码已满足计划 P0-2；本轮提交只补完整路径回归覆盖和记录，未构建镜像、未部署、未推送。
+
+## 2026-06-13 11:05 +08:00 - OpenAI Responses failover 重试指数退避
+
+- 执行者：Devil
+- 变更范围：`backend/internal/handler/openai_gateway_handler.go`、`backend/internal/handler/openai_gateway_handler_test.go`
+- RED：`go test -tags unit ./internal/handler -run "TestOpenAIFailoverRetryWindow" -count=1` 修复前失败，缺少 `openAIFailoverRetryMaxDelay` 与增长逻辑。
+- GREEN：`go test -tags unit ./internal/handler -run "TestOpenAIFailoverRetryWindow|TestHandleSelectionExhausted" -count=1` 通过。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- GREEN：`git diff --check -- backend/internal/handler/openai_gateway_handler.go backend/internal/handler/openai_gateway_handler_test.go` 通过。
+- 风险：本轮仅改变 `/responses` failover retry window 的等待时序；30 秒总窗口、候选排除与探测状态机不变。未构建镜像、未部署、未推送。
