@@ -2195,6 +2195,13 @@ func (s *OpenAIGatewayService) withOpenAIQuotaAutoPauseContext(ctx context.Conte
 	return withOpenAIQuotaAutoPauseSettings(ctx, s.settingService.GetOpenAIQuotaAutoPauseSettings(ctx))
 }
 
+func (s *OpenAIGatewayService) getOpenAIResponseTextErrorRules(ctx context.Context) []openAIResponseTextRule {
+	if s == nil || s.settingService == nil {
+		return nil
+	}
+	return s.settingService.GetOpenAIResponseTextErrorRules(ctx)
+}
+
 // prioritizeOpenAICompactAccounts re-orders a slice so that accounts with known
 // compact support are tried first, followed by unknown, then explicitly unsupported.
 // The relative order within each tier is preserved.
@@ -4953,7 +4960,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
-	responseTextDetector := newOpenAIResponseTextErrorDetector(account)
+	responseTextDetector := newOpenAIResponseTextErrorDetector(account, s.getOpenAIResponseTextErrorRules(ctx))
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
 		return &openaiStreamingResultPassthrough{
 			usage:            usage,
@@ -5976,7 +5983,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	streamOutputAccumulator := apicompat.NewBufferedResponseAccumulator()
 	streamImageOutputs := make([]json.RawMessage, 0, 1)
 	streamSeenImages := make(map[string]struct{})
-	responseTextDetector := newOpenAIResponseTextErrorDetector(account)
+	responseTextDetector := newOpenAIResponseTextErrorDetector(account, s.getOpenAIResponseTextErrorRules(ctx))
 	resultWithUsage := func() *openaiStreamingResult {
 		return &openaiStreamingResult{
 			usage:            usage,
@@ -6596,7 +6603,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		return s.handleSSEToJSON(resp, c, body, originalModel, mappedModel)
 	}
 
-	if match, matched := newOpenAIResponseTextErrorDetector(account).ObserveJSONBytesMatch(body); matched {
+	if match, matched := newOpenAIResponseTextErrorDetector(account, s.getOpenAIResponseTextErrorRules(ctx)).ObserveJSONBytesMatch(body); matched {
 		upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 		match = match.normalized()
 		if match.Action == openAIResponseTextRuleActionObserve {

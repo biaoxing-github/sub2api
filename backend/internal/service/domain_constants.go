@@ -377,6 +377,8 @@ const (
 	// SettingKeyOpenAIPromptCacheSettings stores JSON config for injecting
 	// OpenAI prompt cache fields into matching request bodies.
 	SettingKeyOpenAIPromptCacheSettings = "openai_prompt_cache_settings"
+	// SettingKeyOpenAIResponseTextErrorRules 管理端全局 OpenAI 响应正文过滤规则，所有 OpenAI 账号共享。
+	SettingKeyOpenAIResponseTextErrorRules = "openai_response_text_error_rules"
 
 	// =========================
 	// Claude Code Version Check

@@ -13,6 +13,7 @@ import (
 const (
 	openAIResponseTextErrorCode           = "openai_response_text_error"
 	openAIResponseTextErrorClientMessage  = "Upstream response matched configured error text; no fallback account was available"
+	openAIResponseTextDefaultRuleID       = "openai_response_text_default_stream_error"
 	openAIResponseTextErrorTailRunes      = 2048
 	openAIResponseTextErrorRulesKey       = "openai_response_text_error_rules"
 	openAIResponseTextRuleMaxCount        = 64
@@ -46,6 +47,18 @@ func (a *Account) GetOpenAIResponseTextErrorRules() []openAIResponseTextRule {
 		return rules
 	}
 	return openAIResponseTextRulesFromLegacyKeywords(a.GetOpenAIResponseTextErrorKeywords())
+}
+
+func defaultOpenAIResponseTextErrorRules() []openAIResponseTextRule {
+	return []openAIResponseTextRule{
+		{
+			ID: openAIResponseTextDefaultRuleID,
+			Match: openAIResponseTextRuleMatch{
+				ErrorCodes: []string{"cyber_policy"},
+			},
+			Action: openAIResponseTextRuleActionRetry,
+		},
+	}
 }
 
 func parseOpenAIResponseTextErrorKeywords(raw any) []string {
@@ -279,16 +292,40 @@ type openAIResponseTextErrorDetector struct {
 	tail            string
 }
 
-func newOpenAIResponseTextErrorDetector(account *Account) *openAIResponseTextErrorDetector {
-	if account == nil || !account.IsOpenAIResponseTextErrorEnabled() {
+func newOpenAIResponseTextErrorDetector(account *Account, managementRules ...[]openAIResponseTextRule) *openAIResponseTextErrorDetector {
+	if account == nil || account.Platform != PlatformOpenAI {
 		return &openAIResponseTextErrorDetector{}
 	}
-	rules := account.GetOpenAIResponseTextErrorRules()
+	var rules []openAIResponseTextRule
+	if account.IsOpenAIResponseTextErrorEnabled() {
+		rules = appendOpenAIResponseTextRulesWithLimit(rules, account.GetOpenAIResponseTextErrorRules())
+	}
+	for _, group := range managementRules {
+		rules = appendOpenAIResponseTextRulesWithLimit(rules, group)
+	}
+	rules = appendOpenAIResponseTextRulesWithLimit(rules, defaultOpenAIResponseTextErrorRules())
 	return &openAIResponseTextErrorDetector{
 		enabled:         len(rules) > 0,
 		rules:           rules,
 		observedRuleIDs: map[string]struct{}{},
 	}
+}
+
+// appendOpenAIResponseTextRulesWithLimit 合并多级规则源，并保持账号优先、总量受控。
+func appendOpenAIResponseTextRulesWithLimit(dst []openAIResponseTextRule, src []openAIResponseTextRule) []openAIResponseTextRule {
+	if len(src) == 0 || len(dst) >= openAIResponseTextRuleMaxCount {
+		return dst
+	}
+	for _, rule := range src {
+		if len(dst) >= openAIResponseTextRuleMaxCount {
+			break
+		}
+		if len(rule.Match.TextIncludes) == 0 && len(rule.Match.ErrorCodes) == 0 {
+			continue
+		}
+		dst = append(dst, rule)
+	}
+	return dst
 }
 
 func (d *openAIResponseTextErrorDetector) Enabled() bool {

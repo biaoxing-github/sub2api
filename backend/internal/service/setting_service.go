@@ -5302,6 +5302,21 @@ func (s *SettingService) SetOpenAIPromptCacheSettings(ctx context.Context, setti
 	return s.settingRepo.Set(ctx, SettingKeyOpenAIPromptCacheSettings, string(data))
 }
 
+// GetOpenAIResponseTextErrorRules 返回管理端配置的 OpenAI 响应正文过滤规则。
+func (s *SettingService) GetOpenAIResponseTextErrorRules(ctx context.Context) []openAIResponseTextRule {
+	if s == nil || s.settingRepo == nil {
+		return nil
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIResponseTextErrorRules)
+	if err != nil {
+		if !errors.Is(err, ErrSettingNotFound) {
+			slog.Warn("failed to get openai response text error rules setting", "error", err)
+		}
+		return nil
+	}
+	return parseOpenAIResponseTextRules(value)
+}
+
 // GetOpenAIQuotaAutoPauseSettings 返回 OpenAI quota 自动暂停全局默认阈值。
 // 该方法位于请求调度热路径，只读内存缓存；缓存过期时异步刷新，不阻塞真实请求。
 func (s *SettingService) GetOpenAIQuotaAutoPauseSettings(ctx context.Context) OpsOpenAIAccountQuotaAutoPauseSettings {

@@ -1,10 +1,12 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,6 +106,97 @@ func TestOpenAIResponseTextErrorDetectorLegacyKeywordsMapToAvoidTTL(t *testing.T
 	require.Equal(t, openAIResponseTextRuleActionAvoidTTL, match.Action)
 }
 
+func TestOpenAIResponseTextErrorRulesFromSettingService(t *testing.T) {
+	settingService := NewSettingService(&settingRepoStub{
+		values: map[string]string{
+			SettingKeyOpenAIResponseTextErrorRules: `[
+				{
+					"id":"global-community-ad",
+					"match":{"textIncludes":["join the new community"]},
+					"action":"observe"
+				}
+			]`,
+		},
+	}, &config.Config{})
+
+	rules := settingService.GetOpenAIResponseTextErrorRules(context.Background())
+
+	require.Len(t, rules, 1)
+	require.Equal(t, "global-community-ad", rules[0].ID)
+	require.Equal(t, []string{"join the new community"}, rules[0].Match.TextIncludes)
+	require.Equal(t, openAIResponseTextRuleActionObserve, rules[0].Action)
+}
+
+func TestOpenAIResponseTextErrorDetectorThreeLevelRules(t *testing.T) {
+	t.Run("账号规则优先于管理端全局规则", func(t *testing.T) {
+		globalRules := []openAIResponseTextRule{
+			{
+				ID: "management-community-ad",
+				Match: openAIResponseTextRuleMatch{
+					TextIncludes: []string{"join the new community"},
+				},
+				Action: openAIResponseTextRuleActionObserve,
+			},
+		}
+		detector := newOpenAIResponseTextErrorDetector(&Account{
+			Platform: PlatformOpenAI,
+			Credentials: map[string]any{
+				"openai_response_text_error_enabled": true,
+				"openai_response_text_error_rules": []any{
+					map[string]any{
+						"id": "account-community-ad",
+						"match": map[string]any{
+							"textIncludes": []any{"join the new community"},
+						},
+						"action": "avoid_ttl",
+					},
+				},
+			},
+		}, globalRules)
+
+		match, matched := detector.ObserveTextMatch("please join the new community")
+
+		require.True(t, matched)
+		require.Equal(t, "account-community-ad", match.RuleID)
+		require.Equal(t, openAIResponseTextRuleActionAvoidTTL, match.Action)
+	})
+
+	t.Run("管理端全局规则对未配置账号规则的 OpenAI 账号生效", func(t *testing.T) {
+		detector := newOpenAIResponseTextErrorDetector(&Account{
+			Platform:    PlatformOpenAI,
+			Credentials: map[string]any{},
+		}, []openAIResponseTextRule{
+			{
+				ID: "management-community-ad",
+				Match: openAIResponseTextRuleMatch{
+					TextIncludes: []string{"join the new community"},
+				},
+				Action: openAIResponseTextRuleActionObserve,
+			},
+		})
+
+		match, matched := detector.ObserveTextMatch("please join the new community")
+
+		require.True(t, matched)
+		require.Equal(t, "management-community-ad", match.RuleID)
+		require.Equal(t, openAIResponseTextRuleActionObserve, match.Action)
+	})
+
+	t.Run("系统默认规则只处理安全的流内错误码", func(t *testing.T) {
+		detector := newOpenAIResponseTextErrorDetector(&Account{
+			Platform:    PlatformOpenAI,
+			Credentials: map[string]any{},
+		})
+
+		match, matched := detector.ObserveSSEPayloadMatch([]byte(`{"type":"response.failed","error":{"code":"cyber_policy","message":"blocked"}}`))
+
+		require.True(t, matched)
+		require.Equal(t, openAIResponseTextDefaultRuleID, match.RuleID)
+		require.Equal(t, "cyber_policy", match.Keyword)
+		require.Equal(t, openAIResponseTextRuleActionRetry, match.Action)
+	})
+}
+
 func TestOpenAIResponseTextErrorRulesSafetyLimits(t *testing.T) {
 	t.Run("规则数量超过上限时不解析后续规则", func(t *testing.T) {
 		rules := make([]any, 0, openAIResponseTextRuleMaxCount+1)
@@ -157,7 +250,6 @@ func TestOpenAIResponseTextErrorRulesSafetyLimits(t *testing.T) {
 
 		_, matched := detector.ObserveTextMatch(tooLongKeyword)
 
-		require.False(t, detector.Enabled())
 		require.False(t, matched)
 	})
 }

@@ -3239,3 +3239,14 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*ResponseText|TestOpenAINonStreamingConfiguredResponseTextReturnsFailover|TestOpenAIResponseTextErrorDetector|TestAccountTestService.*ResponseText" -count=1` 通过，P0/P1 response text 相邻路径保持。
 - GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，server 编译切片无测试运行。
 - 风险：本轮只做 P2-B detector 安全边界；TTL 上下限因当前结构化规则尚无 TTL 字段而暂不扩展配置面；未做 P2-A 三级策略源和 P2-C `drop_event`。未构建镜像、未部署、未推送。
+
+## 2026-06-13 18:08 +08:00 - OpenAI response text 过滤 P2-A 三级策略源
+
+- 执行者：Devil
+- 变更范围：`backend/internal/service/domain_constants.go`、`backend/internal/service/setting_service.go`、`backend/internal/service/openai_response_text_error.go`、`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/openai_response_text_error_test.go`
+- RED：`go test -tags unit ./internal/service -run "TestOpenAIResponseTextErrorRulesFromSettingService|TestOpenAIResponseTextErrorDetectorThreeLevelRules" -count=1` 修复前编译失败，缺少全局 setting key、SettingService 读取方法、detector 多源合并入口和默认规则 ID。
+- GREEN：同一 P2-A 聚焦命令通过，覆盖 settings 表全局规则解析、账号规则优先于管理端全局规则、管理端规则对未配置账号规则的 OpenAI 账号生效、系统默认 `cyber_policy` error code 规则生效。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIResponseTextErrorRulesFromSettingService|TestOpenAIResponseTextErrorDetectorThreeLevelRules|TestOpenAIResponseTextErrorDetectorStructuredRules|TestOpenAIResponseTextErrorDetectorLegacyKeywordsMapToAvoidTTL|TestOpenAIResponseTextErrorRulesSafetyLimits|TestOpenAIResponseTextErrorDetectorSkips" -count=1` 通过。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*ResponseText|TestOpenAINonStreamingConfiguredResponseTextReturnsFailover|TestOpenAIResponseTextErrorDetector|TestAccountTestService.*ResponseText|TestOpenAIFastPolicy|TestOpenAIPromptCache" -count=1` 通过，response text、账号测试、fast policy、prompt cache 相邻路径保持。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，server 编译切片无测试运行。
+- 风险：本轮只做后端 settings 全局规则源和内置安全默认 error-code 规则，不做管理端 UI/CRUD；P2-C `drop_event` 仍按计划保持未实现。未构建镜像、未部署、未推送。
