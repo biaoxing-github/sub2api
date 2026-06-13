@@ -3182,3 +3182,15 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
 - GREEN：`git diff --check -- backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_test.go` 通过。
 - 风险：本轮只补 passthrough 流式路径的上游静默超时；普通 `/responses` 流式路径已有独立 `intervalCh` 逻辑。未构建镜像、未部署、未推送。
+
+## 2026-06-13 11:42 +08:00 - FastLane TTFT path-health 调度验收覆盖
+
+- 执行者：Devil
+- 变更范围：`backend/internal/service/openai_account_scheduler_test.go`
+- CodeGraph：`codegraph_context`、`codegraph_status`、`codegraph_search` 连续 `Transport closed`；检查 `.codegraph/daemon.log` 发现 `write EPIPE` 与 daemon 重建记录后，按项目规则降级到 PowerShell 源码检索。
+- 说明：生产代码已具备 `OpenAIPathHealthTracker.RecordSuccess` 的 TTFT EWMA、`ScoreBoost` 和 FastLane `pathBoost` 接入；本轮只补可验收回归测试。
+- GREEN：`go test -tags unit ./internal/service -run "TestBuildOpenAIAccountLoadPlanFastLanePathHealthTTFTBoostPrefersLowerTTFT" -count=1` 通过。
+- GREEN：`go test -tags unit ./internal/service -run "TestBuildOpenAIAccountLoadPlan(ProfilesScoreSpeedVsStability|FastLanePathHealthTTFTBoostPrefersLowerTTFT|HalfOpenOnlyForProbe|SkipsOpenBucketAcrossAccounts)|TestOpenAIPathHealthScoreBoostUsesTTFT" -count=1` 通过。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- GREEN：`git diff --check -- backend/internal/service/openai_account_scheduler_test.go` 通过。
+- 风险：`selectionOrder` 保留既有加权随机机制，测试只锁定确定性的 `pathBoost` 和 `score` 契约。未构建镜像、未部署、未推送。

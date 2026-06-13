@@ -2318,6 +2318,51 @@ func TestBuildOpenAIAccountLoadPlanProfilesScoreSpeedVsStability(t *testing.T) {
 	require.Greater(t, stablePlanStableScore.score, stablePlanFastScore.score)
 }
 
+func TestBuildOpenAIAccountLoadPlanFastLanePathHealthTTFTBoostPrefersLowerTTFT(t *testing.T) {
+	groupID := int64(42)
+	accounts := []*Account{
+		{ID: 6211, Name: "path-fast", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+		{ID: 6212, Name: "path-slow", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.LBTopK = 2
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Queue = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT = 0
+	cfg.Gateway.OpenAIFastLane.Enabled = true
+	cfg.Gateway.OpenAIFastLane.TTFTWeight = 1
+	cfg.Gateway.OpenAIFastLane.HeaderWaitWeight = 0
+	cfg.Gateway.OpenAIFastLane.MinSamples = 1
+	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true, EWMAAlpha: 1})
+	fastTTFT := 150
+	slowTTFT := 9000
+	pathHealth.RecordSuccess(OpenAIPathHealthKeyForAccount(accounts[0], string(OpenAIUpstreamTransportHTTPSSE)), &fastTTFT, nil)
+	pathHealth.RecordSuccess(OpenAIPathHealthKeyForAccount(accounts[1], string(OpenAIUpstreamTransportHTTPSSE)), &slowTTFT, nil)
+	scheduler := &defaultOpenAIAccountScheduler{
+		service: &OpenAIGatewayService{
+			cfg:              cfg,
+			openaiPathHealth: pathHealth,
+		},
+		stats: newOpenAIAccountRuntimeStats(),
+	}
+	loadMap := map[int64]*AccountLoadInfo{
+		6211: {AccountID: 6211, LoadRate: 0},
+		6212: {AccountID: 6212, LoadRate: 0},
+	}
+
+	plan := scheduler.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{GroupID: &groupID, RequiredTransport: OpenAIUpstreamTransportHTTPSSE}, accounts, loadMap)
+
+	require.Len(t, plan.candidates, 2)
+	fastScore := findOpenAIAccountCandidateScore(t, plan.candidates, 6211)
+	slowScore := findOpenAIAccountCandidateScore(t, plan.candidates, 6212)
+	require.True(t, fastScore.hasPathSample)
+	require.True(t, slowScore.hasPathSample)
+	require.Greater(t, fastScore.pathBoost, slowScore.pathBoost)
+	require.Greater(t, fastScore.score, slowScore.score)
+}
+
 func findOpenAIAccountCandidateScore(t *testing.T, candidates []openAIAccountCandidateScore, accountID int64) openAIAccountCandidateScore {
 	t.Helper()
 	for _, candidate := range candidates {
