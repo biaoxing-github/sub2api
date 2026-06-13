@@ -3229,3 +3229,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，server 编译切片无测试运行。
 - OBSERVED：不带 `-tags unit` 的 `./internal/service` 聚焦命令仍被既有 `anthropicHTTPUpstreamRecorder` 测试桩缺失阻塞；本轮沿用项目既有 service 单测标签执行。
 - 风险：本轮只做账号 credentials 结构化规则兼容读取和 observe/dry-run；未做管理端 UI、全局规则源、三级策略合并和 SSE `drop_event`。未构建镜像、未部署、未推送。
+
+## 2026-06-13 17:45 +08:00 - OpenAI response text 过滤 P2-B 安全边界
+
+- 执行者：Devil
+- 变更范围：`backend/internal/service/openai_response_text_error.go`、`backend/internal/service/openai_response_text_error_test.go`
+- RED：`go test -tags unit ./internal/service -run "TestOpenAIResponseTextErrorRulesSafetyLimits|TestOpenAIResponseTextErrorDetectorSkips" -count=1` 修复前编译失败，缺少规则数量上限、匹配项长度上限和 SSE payload 大小上限常量。
+- GREEN：同一 P2-B 聚焦命令通过，覆盖超过上限的后续规则不生效、超长文本匹配项丢弃、超大 SSE payload 跳过、图片/base64 SSE 事件跳过且普通文本事件仍可命中。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*ResponseText|TestOpenAINonStreamingConfiguredResponseTextReturnsFailover|TestOpenAIResponseTextErrorDetector|TestAccountTestService.*ResponseText" -count=1` 通过，P0/P1 response text 相邻路径保持。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，server 编译切片无测试运行。
+- 风险：本轮只做 P2-B detector 安全边界；TTL 上下限因当前结构化规则尚无 TTL 字段而暂不扩展配置面；未做 P2-A 三级策略源和 P2-C `drop_event`。未构建镜像、未部署、未推送。

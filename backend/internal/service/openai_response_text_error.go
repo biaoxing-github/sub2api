@@ -11,10 +11,13 @@ import (
 )
 
 const (
-	openAIResponseTextErrorCode          = "openai_response_text_error"
-	openAIResponseTextErrorClientMessage = "Upstream response matched configured error text; no fallback account was available"
-	openAIResponseTextErrorTailRunes     = 2048
-	openAIResponseTextErrorRulesKey      = "openai_response_text_error_rules"
+	openAIResponseTextErrorCode           = "openai_response_text_error"
+	openAIResponseTextErrorClientMessage  = "Upstream response matched configured error text; no fallback account was available"
+	openAIResponseTextErrorTailRunes      = 2048
+	openAIResponseTextErrorRulesKey       = "openai_response_text_error_rules"
+	openAIResponseTextRuleMaxCount        = 64
+	openAIResponseTextRuleKeywordMaxRunes = 256
+	openAIResponseTextPayloadMaxBytes     = 64 * 1024
 )
 
 // IsOpenAIResponseTextErrorEnabled 返回账号是否启用 OpenAI 响应正文异常关键词。
@@ -173,6 +176,9 @@ func parseOpenAIResponseTextRules(raw any) []openAIResponseTextRule {
 func parseOpenAIResponseTextRuleItems(items []any) []openAIResponseTextRule {
 	rules := make([]openAIResponseTextRule, 0, len(items))
 	for index, item := range items {
+		if len(rules) >= openAIResponseTextRuleMaxCount {
+			break
+		}
 		rawRule, ok := item.(map[string]any)
 		if !ok {
 			continue
@@ -209,10 +215,26 @@ func parseOpenAIResponseTextRuleStrings(raw map[string]any, keys ...string) []st
 	}
 	for _, key := range keys {
 		if values := parseOpenAIResponseTextErrorKeywords(raw[key]); len(values) > 0 {
-			return values
+			return filterOpenAIResponseTextRuleStrings(values)
 		}
 	}
 	return nil
+}
+
+// filterOpenAIResponseTextRuleStrings 丢弃超长匹配项，避免误把大块正文或图片编码当作关键词扫描。
+func filterOpenAIResponseTextRuleStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || len([]rune(value)) > openAIResponseTextRuleKeywordMaxRunes {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 func parseOpenAIResponseTextRuleAction(raw any) (openAIResponseTextRuleAction, bool) {
@@ -237,6 +259,7 @@ func parseOpenAIResponseTextRuleAction(raw any) (openAIResponseTextRuleAction, b
 }
 
 func openAIResponseTextRulesFromLegacyKeywords(keywords []string) []openAIResponseTextRule {
+	keywords = filterOpenAIResponseTextRuleStrings(keywords)
 	if len(keywords) == 0 {
 		return nil
 	}
@@ -296,14 +319,66 @@ func (d *openAIResponseTextErrorDetector) ObserveSSEPayload(payload []byte) (str
 }
 
 func (d *openAIResponseTextErrorDetector) ObserveSSEPayloadMatch(payload []byte) (openAIResponseTextErrorMatch, bool) {
-	if !d.Enabled() || len(payload) == 0 {
+	if !d.Enabled() || len(payload) == 0 || len(payload) > openAIResponseTextPayloadMaxBytes {
 		return openAIResponseTextErrorMatch{}, false
 	}
 	trimmed := strings.TrimSpace(string(payload))
 	if trimmed == "" || trimmed == "[DONE]" || !gjson.Valid(trimmed) {
 		return openAIResponseTextErrorMatch{}, false
 	}
-	return d.observeJSONResultMatch(gjson.Parse(trimmed))
+	root := gjson.Parse(trimmed)
+	if openAIResponseTextPayloadShouldSkip(root) {
+		return openAIResponseTextErrorMatch{}, false
+	}
+	return d.observeJSONResultMatch(root)
+}
+
+// openAIResponseTextPayloadShouldSkip 跳过图片与 base64 事件，避免文本规则扫描大二进制载荷。
+func openAIResponseTextPayloadShouldSkip(root gjson.Result) bool {
+	if !root.Exists() {
+		return false
+	}
+	eventType := strings.ToLower(strings.TrimSpace(root.Get("type").String()))
+	if strings.Contains(eventType, "image_generation_call") ||
+		strings.Contains(eventType, "output_image") ||
+		strings.Contains(eventType, "input_image") {
+		return true
+	}
+	for _, path := range []string{"item.type", "content.type"} {
+		value := strings.ToLower(strings.TrimSpace(root.Get(path).String()))
+		if strings.Contains(value, "image_generation_call") ||
+			value == "output_image" ||
+			value == "input_image" ||
+			value == "image_url" {
+			return true
+		}
+	}
+	if root.Get("b64_json").Exists() {
+		return true
+	}
+	return openAIResponseTextJSONHasImageContent(root.Get("content")) ||
+		openAIResponseTextJSONHasImageContent(root.Get("item.content"))
+}
+
+// openAIResponseTextJSONHasImageContent 递归识别 content 数组里的图片内容块。
+func openAIResponseTextJSONHasImageContent(result gjson.Result) bool {
+	if !result.Exists() {
+		return false
+	}
+	if result.IsArray() {
+		for _, item := range result.Array() {
+			if openAIResponseTextJSONHasImageContent(item) {
+				return true
+			}
+		}
+		return false
+	}
+	contentType := strings.ToLower(strings.TrimSpace(result.Get("type").String()))
+	if contentType == "output_image" || contentType == "input_image" || contentType == "image_url" {
+		return true
+	}
+	imageURL := strings.TrimSpace(result.Get("image_url.url").String())
+	return strings.HasPrefix(strings.ToLower(imageURL), "data:image/")
 }
 
 func (d *openAIResponseTextErrorDetector) observeJSONResultMatch(root gjson.Result) (openAIResponseTextErrorMatch, bool) {
