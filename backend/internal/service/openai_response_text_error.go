@@ -269,11 +269,7 @@ func trailingRunes(text string, maxRunes int) string {
 }
 
 func newOpenAIResponseTextFailoverError(c *gin.Context, account *Account, upstreamRequestID string, matchedKeyword string) *UpstreamFailoverError {
-	matchedKeyword = strings.TrimSpace(matchedKeyword)
-	message := "OpenAI upstream response matched configured error text"
-	if matchedKeyword != "" {
-		message = fmt.Sprintf("%s: %s", message, matchedKeyword)
-	}
+	message := openAIResponseTextErrorMessage(matchedKeyword)
 
 	accountID := int64(0)
 	accountName := ""
@@ -303,7 +299,17 @@ func newOpenAIResponseTextFailoverError(c *gin.Context, account *Account, upstre
 		StatusCode:      http.StatusBadGateway,
 		ResponseBody:    openAIResponseTextErrorBody(matchedKeyword, message),
 		ResponseHeaders: headers,
+		ActionLabel:     OpenAIStreamActionAvoidAccountTTL,
 	}
+}
+
+func openAIResponseTextErrorMessage(matchedKeyword string) string {
+	matchedKeyword = strings.TrimSpace(matchedKeyword)
+	message := "OpenAI upstream response matched configured error text"
+	if matchedKeyword != "" {
+		message = fmt.Sprintf("%s: %s", message, matchedKeyword)
+	}
+	return message
 }
 
 func openAIResponseTextErrorBody(matchedKeyword string, message string) []byte {

@@ -1654,7 +1654,8 @@ func TestOpenAIStreamingConfiguredResponseTextReturnsFailoverBeforeOutput(t *tes
 			MaxLineSize:               defaultMaxLineSize,
 		},
 	}
-	svc := &OpenAIGatewayService{cfg: cfg}
+	repo := &streamAccountStateRepoSpy{}
+	svc := &OpenAIGatewayService{cfg: cfg, accountRepo: repo}
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1697,6 +1698,74 @@ func TestOpenAIStreamingConfiguredResponseTextReturnsFailoverBeforeOutput(t *tes
 	require.True(t, c.Writer.Written())
 	require.Equal(t, ":\n\n", rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
+	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, account.ID, repo.lastTempAccountID)
+	require.Equal(t, "openai_response_text_error", gjson.Get(repo.lastTempReason, "matched_keyword").String())
+	require.Contains(t, gjson.Get(repo.lastTempReason, "error_message").String(), "加入新家园")
+	snapshot, ok := svc.SnapshotOpenAIAccountRuntimeBlock(account, time.Now())
+	require.True(t, ok)
+	require.Equal(t, "stream_response_failed", snapshot.Reason)
+}
+
+func TestOpenAIStreamingConfiguredResponseTextAfterOutputWritesGatewayRetryableFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	repo := &streamAccountStateRepoSpy{}
+	svc := &OpenAIGatewayService{cfg: cfg, accountRepo: repo}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial"}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"加入新家园即可继续使用"}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-response-text-after-output"}},
+	}
+	account := &Account{
+		ID:       7,
+		Name:     "free7",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"openai_response_text_error_enabled": true,
+			"openai_response_text_error_keywords": []any{
+				"加入新家园",
+			},
+		},
+	}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.True(t, c.Writer.Written())
+	body := rec.Body.String()
+	require.Contains(t, body, "response.output_text.delta")
+	require.Contains(t, body, "partial")
+	require.Contains(t, body, "response.failed")
+	require.Contains(t, body, "upstream_retryable_error")
+	require.NotContains(t, body, "加入新家园")
+	require.True(t, openAIStreamClientOutputStarted(c, false))
+	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, account.ID, repo.lastTempAccountID)
+	require.Equal(t, "openai_response_text_error", gjson.Get(repo.lastTempReason, "matched_keyword").String())
 }
 
 func TestOpenAIStreamingResponseFailedBeforeOutputCapacityErrorReturnsFailover(t *testing.T) {
@@ -2249,6 +2318,65 @@ func TestOpenAIStreamingPassthroughQuotaFailedAfterOutputWritesGatewayRetryableF
 	require.Contains(t, body, "upstream_retryable_error")
 	require.NotContains(t, body, "current quota")
 	require.True(t, openAIStreamClientOutputStarted(c, false))
+}
+
+func TestOpenAIStreamingPassthroughConfiguredResponseTextAfterOutputWritesGatewayRetryableFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			MaxLineSize: defaultMaxLineSize,
+		},
+	}
+	repo := &streamAccountStateRepoSpy{}
+	svc := &OpenAIGatewayService{cfg: cfg, accountRepo: repo}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial"}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"加入新家园即可继续使用"}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-passthrough-response-text-after-output"}},
+	}
+	account := &Account{
+		ID:       8,
+		Name:     "free8",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"openai_response_text_error_enabled": true,
+			"openai_response_text_error_keywords": []any{
+				"加入新家园",
+			},
+		},
+	}
+
+	_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, account, time.Now(), "", "")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.True(t, c.Writer.Written())
+	body := rec.Body.String()
+	require.Contains(t, body, "response.output_text.delta")
+	require.Contains(t, body, "partial")
+	require.Contains(t, body, "response.failed")
+	require.Contains(t, body, "upstream_retryable_error")
+	require.NotContains(t, body, "加入新家园")
+	require.True(t, openAIStreamClientOutputStarted(c, false))
+	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, account.ID, repo.lastTempAccountID)
+	require.Equal(t, "openai_response_text_error", gjson.Get(repo.lastTempReason, "matched_keyword").String())
 }
 
 func TestOpenAIStreamingPassthroughResponseDoneWithoutDoneMarkerStillSucceeds(t *testing.T) {

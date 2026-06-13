@@ -3205,3 +3205,16 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
 - GREEN：`git diff --check -- backend/internal/config/config.go backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_test.go` 通过。
 - 风险：默认关闭弱 content fallback 会减少无显式会话信号请求的账号粘连；显式 `session_id`、`conversation_id`、`prompt_cache_key` 和 WS ingress fallbackSeed 语义不变。未构建镜像、未部署、未推送。
+
+## 2026-06-13 15:54 +08:00 - OpenAI response text 过滤 P0 阶段分流与冷却
+
+- 执行者：Devil
+- 变更范围：`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/openai_response_text_error.go`、`backend/internal/service/openai_gateway_service_test.go`
+- RED：`go test -tags unit ./internal/service -run "TestOpenAIStreamingConfiguredResponseText" -count=1` 修复前失败，写前命中未触发账号冷却，写后命中仍返回 `UpstreamFailoverError`。
+- RED：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*ConfiguredResponseText" -count=1` 修复前失败，passthrough 写后命中同样返回 `UpstreamFailoverError`。
+- OBSERVED：`go test -tags unit ./internal/service -run "TestOpenAINonStreamingConfiguredResponseTextReturnsFailover" -count=1` 修复前失败，JSON 非流式响应正文命中关键词未被拦截。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*ConfiguredResponseText|TestOpenAINonStreamingConfiguredResponseTextReturnsFailover" -count=1` 通过。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*ResponseText|TestOpenAINonStreamingConfiguredResponseTextReturnsFailover|TestOpenAIGatewayServiceStreamFailoverAvoid|TestOpenAIStreaming.*ResponseFailed" -count=1` 通过。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- GREEN：`git diff --check` 退出码 0；仅提示既有 `.codegraph/daemon.pid` 换行警告。
+- 风险：本轮只落地 P0，结构化规则、observe/dry-run、三级策略源和 `drop_event` 未实现；未构建镜像、未部署、未推送。

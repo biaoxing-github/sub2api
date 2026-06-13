@@ -4586,15 +4586,22 @@ func (s *OpenAIGatewayService) applyOpenAIStreamFailoverAccountState(ctx context
 	if msg == "" {
 		msg = "OpenAI stream response failed"
 	}
+	matchedKeyword := "response.failed"
+	if IsOpenAIResponseTextErrorBody(payload) {
+		matchedKeyword = openAIResponseTextErrorCode
+	}
 	state := &TempUnschedState{
 		UntilUnix:       until.Unix(),
 		TriggeredAtUnix: time.Now().Unix(),
 		StatusCode:      http.StatusBadGateway,
-		MatchedKeyword:  "response.failed",
+		MatchedKeyword:  matchedKeyword,
 		RuleIndex:       -1,
 		ErrorMessage:    truncateForLog([]byte(msg), tempUnschedMessageMaxBytes),
 	}
 	reason := "OpenAI stream response.failed: " + state.ErrorMessage
+	if matchedKeyword == openAIResponseTextErrorCode {
+		reason = "OpenAI stream response text error: " + state.ErrorMessage
+	}
 	if raw, err := json.Marshal(state); err == nil {
 		reason = string(raw)
 	}
@@ -4623,6 +4630,37 @@ func (s *OpenAIGatewayService) applyOpenAIStreamFailoverAccountState(ctx context
 		zap.Time("until", until),
 		zap.String("reason", reason),
 	)
+}
+
+func (s *OpenAIGatewayService) newOpenAIResponseTextFailoverError(ctx context.Context, c *gin.Context, account *Account, passthrough bool, upstreamRequestID string, matchedKeyword string) *UpstreamFailoverError {
+	err := newOpenAIResponseTextFailoverError(c, account, upstreamRequestID, matchedKeyword)
+	err.ActionMetadata = s.openAIStreamActionMetadataForAccount(OpenAIStreamActionAvoidAccountTTL, "stream", passthrough, account, upstreamRequestID, http.StatusBadGateway)
+	err.ActionMetadata = mergeOpenAIStreamActionMetadata(err.ActionMetadata, openAIResponseTextActionMetadata(matchedKeyword))
+	s.applyOpenAIResponseTextAccountState(ctx, account, matchedKeyword)
+	return err
+}
+
+func (s *OpenAIGatewayService) applyOpenAIResponseTextAccountState(ctx context.Context, account *Account, matchedKeyword string) {
+	message := openAIResponseTextErrorMessage(matchedKeyword)
+	s.applyOpenAIStreamFailoverAccountState(ctx, account, OpenAIStreamActionAvoidAccountTTL, message, openAIResponseTextErrorBody(matchedKeyword, message))
+}
+
+func openAIResponseTextActionMetadata(matchedKeyword string) map[string]string {
+	metadata := map[string]string{
+		"stream_rule_id":       openAIResponseTextErrorCode,
+		"stream_rule_priority": "0",
+		"stream_action":        string(OpenAIStreamActionAvoidAccountTTL),
+		"action_label":         string(OpenAIStreamActionAvoidAccountTTL),
+		"avoidance_scope":      openAIStreamActionAvoidanceScope(OpenAIStreamActionAvoidAccountTTL, string(openAIUpstreamErrorPolicyPhaseStream)),
+		"reason_scope":         string(openAIUpstreamErrorPolicyPhaseStream),
+		"match_field":          "response_text",
+		"description_key":      openAIResponseTextErrorCode,
+		"error_category":       UpstreamErrorCategoryUpstreamError,
+	}
+	if strings.TrimSpace(matchedKeyword) != "" {
+		metadata["match_value"] = strings.TrimSpace(matchedKeyword)
+	}
+	return metadata
 }
 
 func mergeOpenAIStreamActionMetadata(base map[string]string, extra map[string]string) map[string]string {
@@ -4890,8 +4928,23 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 			}
 			if matchedKeyword, matched := responseTextDetector.ObserveSSEPayload(dataBytes); matched {
+				message := openAIResponseTextErrorMessage(matchedKeyword)
+				if openAIStreamClientOutputStarted(c, clientOutputStarted) {
+					if !clientDisconnected {
+						s.appendOpenAIStreamAuditEvent(c, account, upstreamRequestID, message, matchedKeyword, OpenAIStreamActionAvoidAccountTTL, true, openAIResponseTextActionMetadata(matchedKeyword))
+						if err := writeOpenAIResponsesGatewayRetryableFailedSSE(w, func() error {
+							flusher.Flush()
+							return nil
+						}, responseID, originalModel); err != nil {
+							clientDisconnected = true
+							return resultWithUsage(), err
+						}
+					}
+					s.applyOpenAIResponseTextAccountState(ctx, account, matchedKeyword)
+					return resultWithUsage(), fmt.Errorf("%s", message)
+				}
 				return resultWithUsage(),
-					newOpenAIResponseTextFailoverError(c, account, upstreamRequestID, matchedKeyword)
+					s.newOpenAIResponseTextFailoverError(ctx, c, account, true, upstreamRequestID, matchedKeyword)
 			}
 			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
 			if eventType == "response.failed" {
@@ -6055,12 +6108,27 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			}
 			if matchedKeyword, matched := responseTextDetector.ObserveSSEPayload(dataBytes); matched {
+				message := openAIResponseTextErrorMessage(matchedKeyword)
+				if openAIStreamClientOutputStarted(c, clientOutputStarted) {
+					if !clientDisconnected {
+						s.appendOpenAIStreamAuditEvent(c, account, upstreamRequestID, message, matchedKeyword, OpenAIStreamActionAvoidAccountTTL, false, openAIResponseTextActionMetadata(matchedKeyword))
+						if err := writeOpenAIResponsesGatewayRetryableFailedSSE(bufferedWriter, flushBuffered, responseID, originalModel); err != nil {
+							clientDisconnected = true
+							streamFailoverErr = fmt.Errorf("stream usage incomplete while writing response text retryable failure: %w", err)
+							return
+						}
+						lastDownstreamWriteAt = time.Now()
+					}
+					s.applyOpenAIResponseTextAccountState(ctx, account, matchedKeyword)
+					streamFailoverErr = fmt.Errorf("%s", message)
+					return
+				}
 				if err := flushPreOutputHeartbeat(); err != nil {
 					clientDisconnected = true
 					streamFailoverErr = fmt.Errorf("stream usage incomplete before response text failover heartbeat")
 					return
 				}
-				streamFailoverErr = newOpenAIResponseTextFailoverError(c, account, upstreamRequestID, matchedKeyword)
+				streamFailoverErr = s.newOpenAIResponseTextFailoverError(ctx, c, account, false, upstreamRequestID, matchedKeyword)
 				return
 			}
 			// Replace model in response if needed.
@@ -6442,6 +6510,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	// "event:" in their text content.
 	if account.Type == AccountTypeOAuth && bodyLooksLikeSSE {
 		return s.handleSSEToJSON(resp, c, body, originalModel, mappedModel)
+	}
+
+	if matchedKeyword, matched := newOpenAIResponseTextErrorDetector(account).ObserveJSONBytes(body); matched {
+		return nil, s.newOpenAIResponseTextFailoverError(ctx, c, account, false, strings.TrimSpace(resp.Header.Get("x-request-id")), matchedKeyword)
 	}
 
 	usageValue, usageOK := extractOpenAIUsageFromJSONBytes(body)
