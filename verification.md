@@ -3250,3 +3250,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*ResponseText|TestOpenAINonStreamingConfiguredResponseTextReturnsFailover|TestOpenAIResponseTextErrorDetector|TestAccountTestService.*ResponseText|TestOpenAIFastPolicy|TestOpenAIPromptCache" -count=1` 通过，response text、账号测试、fast policy、prompt cache 相邻路径保持。
 - GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，server 编译切片无测试运行。
 - 风险：本轮只做后端 settings 全局规则源和内置安全默认 error-code 规则，不做管理端 UI/CRUD；P2-C `drop_event` 仍按计划保持未实现。未构建镜像、未部署、未推送。
+
+## 2026-06-13 19:13 +08:00 - OpenAI response text 过滤 P2-C drop_event
+
+- 执行者：Devil
+- 变更范围：`backend/internal/service/openai_response_text_error.go`、`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/openai_gateway_service_test.go`
+- RED：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*DropEvent" -count=1` 修复前失败，`drop` 仍被当作 `retry_no_avoidance` 触发错误终止。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*DropEvent|TestOpenAIStreaming.*ResponseText|TestOpenAINonStreamingConfiguredResponseTextReturnsFailover|TestOpenAIResponseTextErrorDetector|TestAccountTestService.*ResponseText" -count=1` 通过，覆盖普通 streaming、passthrough streaming 单帧丢弃和既有 response text 相邻路径。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*DropEvent|TestOpenAIResponseTextErrorDetector" -count=1` 通过。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，server 编译切片无测试运行。
+- 风险：本轮只做 SSE 单事件丢弃，不引入跨 chunk SSE buffer；非流式 JSON 的 `drop` 仍沿用错误/failover 语义。未构建镜像、未部署、未推送。

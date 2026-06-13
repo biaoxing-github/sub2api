@@ -506,6 +506,14 @@ func (d *openAIResponseTextErrorDetector) ObserveTextMatch(text string) (openAIR
 	return openAIResponseTextErrorMatch{}, false
 }
 
+// ResetTail 清空跨帧文本窗口，用于丢弃脏 SSE 帧后避免旧内容污染下一帧匹配。
+func (d *openAIResponseTextErrorDetector) ResetTail() {
+	if d == nil {
+		return
+	}
+	d.tail = ""
+}
+
 func (d *openAIResponseTextErrorDetector) acceptMatch(match openAIResponseTextErrorMatch) (openAIResponseTextErrorMatch, bool) {
 	match = match.normalized()
 	if match.Action != openAIResponseTextRuleActionObserve {

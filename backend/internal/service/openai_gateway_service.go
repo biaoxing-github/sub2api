@@ -285,6 +285,7 @@ const (
 	OpenAIStreamActionAvoidAccountTTL        OpenAIStreamActionLabel = "avoid_account_ttl"
 	OpenAIStreamActionAvoidUpstreamBucketTTL OpenAIStreamActionLabel = "avoid_upstream_bucket_ttl"
 	OpenAIStreamActionObserve                OpenAIStreamActionLabel = "observe"
+	OpenAIStreamActionDropEvent              OpenAIStreamActionLabel = "drop_event"
 )
 
 type OpenAIWSRetryMetricsSnapshot struct {
@@ -4685,7 +4686,9 @@ func openAIResponseTextStreamActionLabel(action openAIResponseTextRuleAction) Op
 		return OpenAIStreamActionObserve
 	case openAIResponseTextRuleActionRetry:
 		return OpenAIStreamActionRetryNextAccount
-	case openAIResponseTextRuleActionFail, openAIResponseTextRuleActionDrop:
+	case openAIResponseTextRuleActionDrop:
+		return OpenAIStreamActionDropEvent
+	case openAIResponseTextRuleActionFail:
 		return OpenAIStreamActionRetryNoAvoidance
 	case openAIResponseTextRuleActionAvoidTTL:
 		return OpenAIStreamActionAvoidAccountTTL
@@ -4757,7 +4760,7 @@ func openAIStreamActionAvoidanceScope(actionLabel OpenAIStreamActionLabel, reaso
 	switch actionLabel {
 	case OpenAIStreamActionRetryNoAvoidance:
 		return "none"
-	case OpenAIStreamActionObserve:
+	case OpenAIStreamActionObserve, OpenAIStreamActionDropEvent:
 		return "none"
 	case OpenAIStreamActionRetryNextAccount:
 		if strings.TrimSpace(reasonScope) == "request_phase" {
@@ -4805,6 +4808,49 @@ func (s *OpenAIGatewayService) appendOpenAIResponseTextObserveEvent(
 		Message:            message,
 		Detail:             strings.TrimSpace(match.Keyword),
 		ActionLabel:        string(OpenAIStreamActionObserve),
+		ActionMetadata:     actionMetadata,
+	}
+	if account != nil {
+		ev.Platform = account.Platform
+		ev.AccountID = account.ID
+		ev.AccountName = account.Name
+	}
+	appendOpsUpstreamError(c, ev)
+}
+
+// appendOpenAIResponseTextDropEvent 记录响应正文过滤丢弃单个 SSE 事件的审计信息。
+func (s *OpenAIGatewayService) appendOpenAIResponseTextDropEvent(
+	c *gin.Context,
+	account *Account,
+	upstreamRequestID string,
+	match openAIResponseTextErrorMatch,
+	passthrough bool,
+	reasonScope string,
+) {
+	if c == nil {
+		return
+	}
+	match = match.normalized()
+	message := openAIResponseTextErrorMessage(match.Keyword)
+	scope := strings.TrimSpace(reasonScope)
+	if scope == "" {
+		scope = string(openAIUpstreamErrorPolicyPhaseStream)
+	}
+	kind := "stream_drop_event"
+	if scope != string(openAIUpstreamErrorPolicyPhaseStream) {
+		kind = scope + "_drop_event"
+	}
+	actionMetadata := s.openAIStreamActionMetadataForAccount(OpenAIStreamActionDropEvent, scope, passthrough, account, upstreamRequestID, 0)
+	actionMetadata = mergeOpenAIStreamActionMetadata(actionMetadata, openAIResponseTextActionMetadata(match))
+	ev := OpsUpstreamErrorEvent{
+		Platform:           PlatformOpenAI,
+		UpstreamStatusCode: 0,
+		UpstreamRequestID:  strings.TrimSpace(upstreamRequestID),
+		Passthrough:        passthrough,
+		Kind:               kind,
+		Message:            message,
+		Detail:             strings.TrimSpace(match.Keyword),
+		ActionLabel:        string(OpenAIStreamActionDropEvent),
 		ActionMetadata:     actionMetadata,
 	}
 	if account != nil {
@@ -5006,6 +5052,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				match = match.normalized()
 				if match.Action == openAIResponseTextRuleActionObserve {
 					s.appendOpenAIResponseTextObserveEvent(c, account, upstreamRequestID, match, true, string(openAIUpstreamErrorPolicyPhaseStream))
+				} else if match.Action == openAIResponseTextRuleActionDrop {
+					s.appendOpenAIResponseTextDropEvent(c, account, upstreamRequestID, match, true, string(openAIUpstreamErrorPolicyPhaseStream))
+					responseTextDetector.ResetTail()
+					pendingLines = pendingLines[:0]
+					pendingLinesHaveOutput = false
+					continue
 				} else {
 					message := openAIResponseTextErrorMessage(match.Keyword)
 					if openAIStreamClientOutputStarted(c, clientOutputStarted) {
@@ -6194,6 +6246,12 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				match = match.normalized()
 				if match.Action == openAIResponseTextRuleActionObserve {
 					s.appendOpenAIResponseTextObserveEvent(c, account, upstreamRequestID, match, false, string(openAIUpstreamErrorPolicyPhaseStream))
+				} else if match.Action == openAIResponseTextRuleActionDrop {
+					s.appendOpenAIResponseTextDropEvent(c, account, upstreamRequestID, match, false, string(openAIUpstreamErrorPolicyPhaseStream))
+					responseTextDetector.ResetTail()
+					pendingClientLines = pendingClientLines[:0]
+					pendingClientLinesHaveOutput = false
+					return
 				} else {
 					message := openAIResponseTextErrorMessage(match.Keyword)
 					if openAIStreamClientOutputStarted(c, clientOutputStarted) {

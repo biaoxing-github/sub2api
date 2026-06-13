@@ -1840,6 +1840,93 @@ func TestOpenAIStreamingStructuredResponseTextObserveDoesNotModifyFlow(t *testin
 	require.Equal(t, "observe", events[0].ActionMetadata["stream_action"])
 }
 
+func TestOpenAIStreamingStructuredResponseTextDropEventSkipsDirtyDelta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	repo := &streamAccountStateRepoSpy{}
+	svc := &OpenAIGatewayService{cfg: cfg, accountRepo: repo}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"clean-before"}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"加入新家园即可继续使用"}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"clean-after"}`,
+			"",
+			"event: response.completed",
+			`data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":1,"output_tokens":3}}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-response-text-drop"}},
+	}
+	account := &Account{
+		ID:       10,
+		Name:     "free10",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"openai_response_text_error_enabled": true,
+			"openai_response_text_error_rules": []any{
+				map[string]any{
+					"id": "drop-community-ad",
+					"match": map[string]any{
+						"textIncludes": []any{"加入新家园"},
+					},
+					"action": "drop",
+				},
+			},
+		},
+	}
+
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	body := rec.Body.String()
+	require.Contains(t, body, "clean-before")
+	require.Contains(t, body, "clean-after")
+	require.NotContains(t, body, "加入新家园")
+	require.NotContains(t, body, "response.failed")
+	require.NotContains(t, body, "upstream_retryable_error")
+	require.True(t, openAIStreamClientOutputStarted(c, false))
+	require.Zero(t, repo.tempCalls)
+	raw, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := raw.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	var dropEvent *OpsUpstreamErrorEvent
+	for _, event := range events {
+		if event.Kind == "stream_drop_event" {
+			dropEvent = event
+			break
+		}
+	}
+	require.NotNil(t, dropEvent)
+	require.Equal(t, "drop_event", dropEvent.ActionLabel)
+	require.Equal(t, "drop-community-ad", dropEvent.ActionMetadata["stream_rule_id"])
+	require.Equal(t, "加入新家园", dropEvent.ActionMetadata["match_value"])
+	require.Equal(t, "drop_event", dropEvent.ActionMetadata["stream_action"])
+	require.Equal(t, "none", dropEvent.ActionMetadata["avoidance_scope"])
+}
+
 func TestOpenAIStreamingResponseFailedBeforeOutputCapacityErrorReturnsFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
@@ -2449,6 +2536,94 @@ func TestOpenAIStreamingPassthroughConfiguredResponseTextAfterOutputWritesGatewa
 	require.Equal(t, 1, repo.tempCalls)
 	require.Equal(t, account.ID, repo.lastTempAccountID)
 	require.Equal(t, "openai_response_text_error", gjson.Get(repo.lastTempReason, "matched_keyword").String())
+}
+
+func TestOpenAIStreamingPassthroughStructuredResponseTextDropEventSkipsDirtyDelta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			MaxLineSize:               defaultMaxLineSize,
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+		},
+	}
+	repo := &streamAccountStateRepoSpy{}
+	svc := &OpenAIGatewayService{cfg: cfg, accountRepo: repo}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"clean-before"}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"加入新家园即可继续使用"}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"clean-after"}`,
+			"",
+			"event: response.completed",
+			`data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":1,"output_tokens":3}}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-response-text-drop-passthrough"}},
+	}
+	account := &Account{
+		ID:       11,
+		Name:     "free11",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"openai_response_text_error_enabled": true,
+			"openai_response_text_error_rules": []any{
+				map[string]any{
+					"id": "drop-community-ad",
+					"match": map[string]any{
+						"textIncludes": []any{"加入新家园"},
+					},
+					"action": "drop",
+				},
+			},
+		},
+	}
+
+	result, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	body := rec.Body.String()
+	require.Contains(t, body, "clean-before")
+	require.Contains(t, body, "clean-after")
+	require.Contains(t, body, "response.completed")
+	require.NotContains(t, body, "加入新家园")
+	require.NotContains(t, body, "response.failed")
+	require.NotContains(t, body, "upstream_retryable_error")
+	require.True(t, openAIStreamClientOutputStarted(c, false))
+	require.Zero(t, repo.tempCalls)
+	raw, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := raw.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	var dropEvent *OpsUpstreamErrorEvent
+	for _, event := range events {
+		if event.Kind == "stream_drop_event" {
+			dropEvent = event
+			break
+		}
+	}
+	require.NotNil(t, dropEvent)
+	require.Equal(t, "drop_event", dropEvent.ActionLabel)
+	require.Equal(t, "drop-community-ad", dropEvent.ActionMetadata["stream_rule_id"])
+	require.Equal(t, "加入新家园", dropEvent.ActionMetadata["match_value"])
+	require.Equal(t, "drop_event", dropEvent.ActionMetadata["stream_action"])
+	require.Equal(t, "none", dropEvent.ActionMetadata["avoidance_scope"])
 }
 
 func TestOpenAIStreamingPassthroughResponseDoneWithoutDoneMarkerStillSucceeds(t *testing.T) {
