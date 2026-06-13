@@ -1751,14 +1751,14 @@ func (s *OpenAIGatewayService) GenerateExplicitSessionHash(c *gin.Context, body 
 //  1. Header: session_id
 //  2. Header: conversation_id
 //  3. Body:   prompt_cache_key (opencode)
-//  4. Body:   content-based fallback (model + system + tools + first user message)
+//  4. Body:   content-based fallback (opt-in; model + system + tools + first user message)
 func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) string {
 	if c == nil {
 		return ""
 	}
 
 	sessionID := explicitOpenAISessionID(c, body)
-	if sessionID == "" && len(body) > 0 {
+	if sessionID == "" && len(body) > 0 && s.openAIPromptCacheAffinityContentFallbackEnabled() {
 		sessionID = deriveOpenAIContentSessionSeed(body)
 	}
 	if sessionID == "" {
@@ -1768,6 +1768,10 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	currentHash, legacyHash := deriveOpenAISessionHashes(sessionID)
 	attachOpenAILegacySessionHashToGin(c, legacyHash)
 	return currentHash
+}
+
+func (s *OpenAIGatewayService) openAIPromptCacheAffinityContentFallbackEnabled() bool {
+	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.PromptCacheAffinityContentFallbackEnabled
 }
 
 // GenerateSessionHashWithFallback 先按常规信号生成会话哈希；

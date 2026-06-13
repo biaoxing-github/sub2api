@@ -445,40 +445,64 @@ func TestOpenAIGatewayService_GenerateSessionHashWithFallback(t *testing.T) {
 	require.Equal(t, "", empty)
 }
 
-func TestOpenAIGatewayService_GenerateSessionHash_ContentFallback(t *testing.T) {
+func TestOpenAIGatewayService_GenerateSessionHash_ContentFallbackRequiresPromptCacheAffinityOptIn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", nil)
-
-	svc := &OpenAIGatewayService{}
-
 	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Hello"}]}`)
 
-	hash := svc.GenerateSessionHash(c, body)
-	require.NotEmpty(t, hash, "content-based fallback should produce a hash")
+	t.Run("default skips weak content fallback", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", nil)
 
-	hash2 := svc.GenerateSessionHash(c, body)
-	require.Equal(t, hash, hash2, "same content should produce same hash")
+		svc := &OpenAIGatewayService{}
+		require.Empty(t, svc.GenerateSessionHash(c, body))
+		require.Empty(t, openAILegacySessionHashFromContext(c.Request.Context()))
+	})
 
-	bodyExtended := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi!"},{"role":"user","content":"How are you?"}]}`)
-	hashExtended := svc.GenerateSessionHash(c, bodyExtended)
-	require.Equal(t, hash, hashExtended, "hash should be stable across later turns")
+	t.Run("explicit prompt cache key remains sticky", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", nil)
 
-	bodyDifferent := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"Different question"}]}`)
-	hashDifferent := svc.GenerateSessionHash(c, bodyDifferent)
-	require.NotEqual(t, hash, hashDifferent, "different content should produce different hash")
+		svc := &OpenAIGatewayService{}
+		got := svc.GenerateSessionHash(c, []byte(`{"model":"gpt-5.4","prompt_cache_key":"cache-session"}`))
+		require.Equal(t, fmt.Sprintf("%016x", xxhash.Sum64String("cache-session")), got)
+		require.NotEmpty(t, openAILegacySessionHashFromContext(c.Request.Context()))
+	})
+
+	t.Run("opt in enables content fallback", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", nil)
+
+		svc := &OpenAIGatewayService{cfg: &config.Config{}}
+		svc.cfg.Gateway.OpenAIWS.PromptCacheAffinityContentFallbackEnabled = true
+		hash := svc.GenerateSessionHash(c, body)
+		require.NotEmpty(t, hash, "content-based fallback should produce a hash when opt-in is enabled")
+
+		hash2 := svc.GenerateSessionHash(c, body)
+		require.Equal(t, hash, hash2, "same content should produce same hash")
+
+		bodyExtended := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi!"},{"role":"user","content":"How are you?"}]}`)
+		hashExtended := svc.GenerateSessionHash(c, bodyExtended)
+		require.Equal(t, hash, hashExtended, "hash should be stable across later turns")
+
+		bodyDifferent := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"Different question"}]}`)
+		hashDifferent := svc.GenerateSessionHash(c, bodyDifferent)
+		require.NotEqual(t, hash, hashDifferent, "different content should produce different hash")
+	})
 }
 
-func TestOpenAIGatewayService_GenerateSessionHash_ExplicitSignalWinsOverContent(t *testing.T) {
+func TestOpenAIGatewayService_GenerateSessionHash_ExplicitSignalWinsOverContentFallbackOptIn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", nil)
 
-	svc := &OpenAIGatewayService{}
-	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"Hello"}]}`)
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	svc.cfg.Gateway.OpenAIWS.PromptCacheAffinityContentFallbackEnabled = true
 
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"Hello"}]}`)
 	contentHash := svc.GenerateSessionHash(c, body)
 	require.NotEmpty(t, contentHash)
 

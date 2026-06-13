@@ -3194,3 +3194,14 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
 - GREEN：`git diff --check -- backend/internal/service/openai_account_scheduler_test.go` 通过。
 - 风险：`selectionOrder` 保留既有加权随机机制，测试只锁定确定性的 `pathBoost` 和 `score` 契约。未构建镜像、未部署、未推送。
+
+## 2026-06-13 11:52 +08:00 - prompt-cache 内容推导亲和 opt-in
+
+- 执行者：Devil
+- 变更范围：`backend/internal/config/config.go`、`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/openai_gateway_service_test.go`
+- RED：`go test -tags unit ./internal/service -run "TestOpenAIGatewayService_GenerateSessionHash_(ContentFallbackRequiresPromptCacheAffinityOptIn|ExplicitSignalWinsOverContentFallbackOptIn)" -count=1` 修复前编译失败，缺少 `PromptCacheAffinityContentFallbackEnabled` 配置字段。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIGatewayService_GenerateSessionHash" -count=1` 通过。
+- GREEN：`go test -tags unit ./internal/config -run "TestLoadDefaultSchedulerRetryConfig|TestLoadSchedulerRetryConfigFromEnv|TestValidateConfig_OpenAIWSRules" -count=1` 通过。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- GREEN：`git diff --check -- backend/internal/config/config.go backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_test.go` 通过。
+- 风险：默认关闭弱 content fallback 会减少无显式会话信号请求的账号粘连；显式 `session_id`、`conversation_id`、`prompt_cache_key` 和 WS ingress fallbackSeed 语义不变。未构建镜像、未部署、未推送。
