@@ -3170,3 +3170,15 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
 - GREEN：`git diff --check -- backend/internal/config/config.go backend/internal/handler/failover_loop.go backend/internal/handler/failover_loop_test.go` 通过。
 - 风险：本轮只改变单请求内选号耗尽等待节奏，不新增跨请求冷却；未构建镜像、未部署、未推送。
+
+## 2026-06-13 11:30 +08:00 - OpenAI passthrough 流上游静默超时
+
+- 执行者：Devil
+- 变更范围：`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/openai_gateway_service_test.go`
+- RED：`go test -tags unit ./internal/service -run "TestOpenAIStreamingPassthroughTimeout" -count=1` 修复前失败，两个 passthrough 静默流用例均在 1.5 秒内未返回。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreamingPassthroughTimeout" -count=1` 通过。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreamingPassthrough(ResponseFailed|QuotaFailed|ResponseDone|ResponseIncomplete|MissingTerminal|Timeout)|TestOpenAIStreamingTimeout|TestOpenAIStreamingWaitGuardTimeoutBeforeOutputReturnsFailover" -count=1` 通过。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming(Passthrough|Timeout|WaitGuard|TooLong|ContextCanceled|RecordsPathHealth)|TestOpenAIPathHealth|TestOpenAIResponseText" -count=1` 通过。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- GREEN：`git diff --check -- backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_test.go` 通过。
+- 风险：本轮只补 passthrough 流式路径的上游静默超时；普通 `/responses` 流式路径已有独立 `intervalCh` 逻辑。未构建镜像、未部署、未推送。

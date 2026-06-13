@@ -2297,6 +2297,109 @@ func TestOpenAIStreamingPassthroughResponseIncompleteWithoutDoneMarkerStillSucce
 	require.Equal(t, 1, result.usage.CacheReadInputTokens)
 }
 
+func TestOpenAIStreamingPassthroughTimeoutBeforeOutputReturnsFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 1,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	markOpenAIStreamPreOutputTimeoutFailover(c)
+
+	pr, pw := io.Pipe()
+	t.Cleanup(func() {
+		_ = pw.Close()
+		_ = pr.Close()
+	})
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{"X-Request-Id": []string{"rid-passthrough-timeout-before-output"}},
+	}
+
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+		resultCh <- err
+	}()
+
+	select {
+	case err := <-resultCh:
+		require.Error(t, err)
+		var failoverErr *UpstreamFailoverError
+		require.ErrorAs(t, err, &failoverErr)
+		require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+		require.Contains(t, string(failoverErr.ResponseBody), "stream data interval timeout")
+		require.True(t, c.Writer.Written())
+		require.Equal(t, ":\n\n", rec.Body.String())
+		require.False(t, openAIStreamClientOutputStarted(c, false))
+	case <-time.After(1500 * time.Millisecond):
+		_ = pw.Close()
+		_ = pr.Close()
+		t.Fatal("expected passthrough stream timeout before upstream EOF")
+	}
+}
+
+func TestOpenAIStreamingPassthroughTimeoutAfterOutputWritesErrorEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 1,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	pr, pw := io.Pipe()
+	t.Cleanup(func() {
+		_ = pw.Close()
+		_ = pr.Close()
+	})
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{"X-Request-Id": []string{"rid-passthrough-timeout-after-output"}},
+	}
+
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+		resultCh <- err
+	}()
+
+	_, writeErr := pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"))
+	require.NoError(t, writeErr)
+
+	select {
+	case err := <-resultCh:
+		require.Error(t, err)
+		var failoverErr *UpstreamFailoverError
+		require.False(t, errors.As(err, &failoverErr))
+		require.Contains(t, err.Error(), "stream data interval timeout")
+		require.True(t, openAIStreamClientOutputStarted(c, false))
+		body := rec.Body.String()
+		require.Contains(t, body, "response.output_text.delta")
+		require.Contains(t, body, "partial")
+		require.Contains(t, body, "stream_timeout")
+	case <-time.After(1500 * time.Millisecond):
+		_ = pw.Close()
+		_ = pr.Close()
+		t.Fatal("expected passthrough stream timeout after upstream output")
+	}
+}
+
 func TestOpenAIStreamingTooLong(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{

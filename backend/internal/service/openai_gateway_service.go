@@ -4821,6 +4821,27 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 	defer putSSEScannerBuf64K(scanBuf)
 
+	streamInterval := time.Duration(0)
+	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	var streamTimedOut atomic.Bool
+	var streamTimeoutTimer *time.Timer
+	if streamInterval > 0 {
+		// passthrough 使用同步 scanner；watchdog 超时后关闭上游 body 以解除阻塞读取。
+		streamTimeoutTimer = time.AfterFunc(streamInterval, func() {
+			streamTimedOut.Store(true)
+			_ = resp.Body.Close()
+		})
+		defer streamTimeoutTimer.Stop()
+	}
+	resetStreamTimeout := func() {
+		if streamTimeoutTimer == nil || streamTimedOut.Load() {
+			return
+		}
+		streamTimeoutTimer.Reset(streamInterval)
+	}
+
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	responseTextDetector := newOpenAIResponseTextErrorDetector(account)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
@@ -4832,8 +4853,26 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			imageOutputSizes: imageCounter.Sizes(),
 		}
 	}
+	sendErrorEvent := func(reason string) {
+		if clientDisconnected {
+			return
+		}
+		payload := `{"type":"error","sequence_number":0,"error":{"type":"upstream_error","message":` + strconv.Quote(reason) + `,"code":` + strconv.Quote(reason) + `}}`
+		if _, err := fmt.Fprintln(w, "data: "+payload); err != nil {
+			clientDisconnected = true
+			return
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			clientDisconnected = true
+			return
+		}
+		flusher.Flush()
+		clientOutputStarted = true
+		markOpenAIRealClientOutputStarted(c)
+	}
 
 	for scanner.Scan() {
+		resetStreamTimeout()
 		line := scanner.Text()
 		lineStartsClientOutput := false
 		if data, ok := extractOpenAISSEDataLine(line); ok {
@@ -4907,6 +4946,31 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if streamTimedOut.Load() {
+			if sawTerminalEvent && !sawFailedEvent {
+				if !clientDisconnected && !writePendingLines() {
+					return resultWithUsage(), fmt.Errorf("stream usage incomplete after timeout: %w", err)
+				}
+				return resultWithUsage(), nil
+			}
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
+			if s.rateLimitService != nil {
+				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
+			}
+			if openAIStreamPreOutputTimeoutFailoverEnabled(c) && !upstreamOutputStarted && !isClientRequestCanceled(c) {
+				if !writePendingLines() {
+					clientDisconnected = true
+					return resultWithUsage(), fmt.Errorf("stream usage incomplete after pre-output timeout")
+				}
+				return resultWithUsage(),
+					s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, nil, "OpenAI stream timed out before real output: stream data interval timeout")
+			}
+			if !clientDisconnected {
+				_ = writePendingLines()
+			}
+			sendErrorEvent("stream_timeout")
+			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
+		}
 		if sawTerminalEvent && !sawFailedEvent {
 			if !clientDisconnected && !writePendingLines() {
 				return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect: %w", err)
