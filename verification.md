@@ -3139,3 +3139,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：最近 10 分钟 `sub2api-green` 关键错误过滤 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 命中 0。
 - 已知验证阻塞：当前工作树里已有未提交测试改动导致直接运行 `go test ./internal/service ...` 失败，失败点是 `account_test_service_anthropic_test.go` 引用只在 `//go:build unit` 文件中定义的 `anthropicHTTPUpstreamRecorder`，以及 `account_base_url_test.go` 引用不存在的 `GetAnthropicRequestBaseURLs`；因此本轮用 `git archive HEAD` 的干净归档验证已提交修复。
 - 限制：当前 Playwright 会话未登录管理端，访问 `/admin/accounts/scheduling-pool` 被重定向到 `/login`，且部署 `.env` 的 `ADMIN_PASSWORD` 为空，未执行真实点击复测。
+
+## 2026-06-13 10:53 +08:00 - P0-2 OpenAI 账号探测响应正文关键词拦截回归覆盖
+
+- 执行者：Devil
+- 变更范围：`backend/internal/service/account_test_service_openai_test.go`
+- 现状确认：`backend/internal/service/account_test_service.go` 已在 OpenAI responses 与 chat-completions 探测流中传入 `newOpenAIResponseTextErrorDetector(account)`，本轮未改生产代码。
+- GREEN：`go test -tags unit ./internal/service -run "TestAccountTestService_TestAccountConnectionWithResultAppliesOpenAIResponseTextErrorKeywords" -count=1` 通过。
+- GREEN：`go test -tags unit ./internal/service -run "TestAccountTest.*ResponseText|TestAccountTestOutcome|TestAccountTestService_TestAccountConnectionWithResultAppliesOpenAIResponseTextErrorKeywords" -count=1` 通过。
+- GREEN：`git diff --check -- backend/internal/service/account_test_service_openai_test.go docs/feature_list.jsonl docs/process_list.jsonl` 通过；仅有 docs JSONL 工作树 CRLF 提示。
+- 风险：新增测试首次运行即通过，说明生产代码已满足计划 P0-2；本轮提交只补完整路径回归覆盖和记录，未构建镜像、未部署、未推送。

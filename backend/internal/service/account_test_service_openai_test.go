@@ -327,6 +327,93 @@ func TestAccountTestService_OpenAIResponseTextErrorInterceptsProbe(t *testing.T)
 	})
 }
 
+func TestAccountTestService_TestAccountConnectionWithResultAppliesOpenAIResponseTextErrorKeywords(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	matchedBody := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"join the new community"}`,
+		"",
+		`data: {"type":"response.completed"}`,
+		"",
+	}, "\n")
+
+	t.Run("开启关键词时命中正文转为探测失败", func(t *testing.T) {
+		ctx, _ := newTestContext()
+		account := &Account{
+			ID:          1,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"api_key":                             "key-with-rule",
+				"base_url":                            "https://example.com",
+				"openai_response_text_error_enabled":  true,
+				"openai_response_text_error_keywords": []any{"join the new community"},
+			},
+			Extra: map[string]any{"openai_responses_supported": true},
+		}
+		repo := &openAIAccountTestRepo{
+			mockAccountRepoForGemini: mockAccountRepoForGemini{
+				accountsByID: map[int64]*Account{account.ID: account},
+			},
+		}
+		upstream := &queuedHTTPUpstream{responses: []*http.Response{newJSONResponse(http.StatusOK, matchedBody)}}
+		svc := &AccountTestService{
+			accountRepo:  repo,
+			httpUpstream: upstream,
+			cfg: &config.Config{
+				Security: config.SecurityConfig{
+					URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+				},
+			},
+		}
+
+		result, err := svc.TestAccountConnectionWithResult(ctx, account.ID, "gpt-5.4", "", "")
+
+		require.Error(t, err)
+		require.False(t, result.Success)
+		require.Equal(t, "upstream_abnormal", result.Reason)
+		require.NotEqual(t, "probe_success", result.Reason)
+		require.Contains(t, result.ErrorMessage, "join the new community")
+	})
+
+	t.Run("未开启关键词时同样正文仍然探测成功", func(t *testing.T) {
+		ctx, _ := newTestContext()
+		account := &Account{
+			ID:          2,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"api_key":  "key-without-rule",
+				"base_url": "https://example.com",
+			},
+			Extra: map[string]any{"openai_responses_supported": true},
+		}
+		repo := &openAIAccountTestRepo{
+			mockAccountRepoForGemini: mockAccountRepoForGemini{
+				accountsByID: map[int64]*Account{account.ID: account},
+			},
+		}
+		upstream := &queuedHTTPUpstream{responses: []*http.Response{newJSONResponse(http.StatusOK, matchedBody)}}
+		svc := &AccountTestService{
+			accountRepo:  repo,
+			httpUpstream: upstream,
+			cfg: &config.Config{
+				Security: config.SecurityConfig{
+					URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+				},
+			},
+		}
+
+		result, err := svc.TestAccountConnectionWithResult(ctx, account.ID, "gpt-5.4", "", "")
+
+		require.NoError(t, err)
+		require.True(t, result.Success)
+		require.Equal(t, "probe_success", result.Reason)
+	})
+}
+
 func TestAccountTestService_OpenAI429PersistsSnapshotAndRateLimitState(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
