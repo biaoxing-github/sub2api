@@ -380,6 +380,11 @@ func shouldSkipOpenAIAccountStateMutation(account *Account, statusCode int, upst
 	if account == nil || account.Platform != PlatformOpenAI || customErrorCodesEnabled {
 		return false
 	}
+	// 529 过载需要执行过载冷却状态变更（handle529 → SetOverloaded，受 OverloadCooldownSettings 控制），
+	// 不能被下面的通用 5xx 跳过逻辑吞掉，否则 OpenAI 账号收到 529 永远不会进入过载冷却。
+	if statusCode == 529 {
+		return false
+	}
 	classification := ClassifyUpstreamError(UpstreamErrorInput{
 		StatusCode: statusCode,
 		Message:    upstreamMsg,
