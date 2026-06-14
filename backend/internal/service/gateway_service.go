@@ -5606,6 +5606,10 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
+	// outputStarted: 客户端是否已经收到真实模型输出。写前缓冲前导帧（message_start/
+	// content_block_start 等），仅当出现真实内容增量或非零 output_tokens 时才 flush。
+	outputStarted := false
+	var pendingClientLines []string
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -5676,10 +5680,57 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	lastDataAt := time.Now()
 	inPartialEvent := false
 
+	writeAnthropicPassthroughLine := func(l string) {
+		if clientDisconnected {
+			return
+		}
+		restored := string(reverseToolNamesIfPresent(c, []byte(l)))
+		if _, err := io.WriteString(w, restored); err != nil {
+			clientDisconnected = true
+			logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+			return
+		}
+		if _, err := io.WriteString(w, "\n"); err != nil {
+			clientDisconnected = true
+			logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+			return
+		}
+		if l == "" {
+			// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
+			flusher.Flush()
+			lastDataAt = time.Now()
+			inPartialEvent = false
+		} else {
+			inPartialEvent = true
+		}
+	}
+	flushPendingClientLines := func() {
+		if len(pendingClientLines) == 0 {
+			return
+		}
+		for _, l := range pendingClientLines {
+			writeAnthropicPassthroughLine(l)
+		}
+		pendingClientLines = nil
+	}
+
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
+				// 写前阶段（客户端尚未收到任何真实输出）：按上游结束形态分类。
+				if !outputStarted && !clientDisconnected {
+					if !sawTerminalEvent {
+						// 无终止事件 → 流不完整，直接 failover 换号（丢弃缓冲，不污染客户端）。
+						return nil, newAnthropicStreamFailoverError(anthropicStreamFailoverBody(anthropicStreamIncompleteErrType, anthropicStreamIncompleteMessage), false)
+					}
+					if usage.InputTokens == 0 && usage.OutputTokens == 0 {
+						// 有终止事件但零 token、零内容 → 流无效，failover 换号（丢弃缓冲）。
+						return nil, newAnthropicStreamFailoverError(anthropicStreamFailoverBody(anthropicStreamInvalidErrType, anthropicStreamInvalidMessage), false)
+					}
+					// 有终止事件且有非零用量但无流式内容（如缓存/空补全）：视为有效响应，flush 前导帧。
+					flushPendingClientLines()
+				}
 				if !clientDisconnected {
 					// 兜底补刷，确保最后一个未以空行结尾的事件也能及时送达客户端。
 					flusher.Flush()
@@ -5691,11 +5742,20 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 							return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
 						}
 					}
+					// 写后阶段缺终止事件：客户端已收到部分输出、无法换号，补发 error 事件告知截断。
+					if outputStarted && !clientDisconnected {
+						_, _ = io.WriteString(w, anthropicStreamClientErrorEvent(anthropicStreamIncompleteErrType, anthropicStreamIncompleteMessage))
+						flusher.Flush()
+					}
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 			}
 			if ev.err != nil {
+				// 写前阶段遇读错误：先 flush 缓冲前导帧（同时借写失败探测客户端是否已断开）。
+				if !outputStarted && !clientDisconnected {
+					flushPendingClientLines()
+				}
 				if sawTerminalEvent {
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 				}
@@ -5715,6 +5775,12 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			line := ev.line
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				trimmed := strings.TrimSpace(data)
+				if !outputStarted {
+					if payload, isErr := anthropicStreamDataErrorPayload(trimmed); isErr {
+						// 写前阶段收到上游 error 事件：不写客户端，直接 failover 换号（透传上游错误体）。
+						return nil, newAnthropicStreamFailoverError(payload, false)
+					}
+				}
 				if anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
 				}
@@ -5723,6 +5789,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					firstTokenMs = &ms
 				}
 				s.parseSSEUsagePassthrough(data, usage)
+				if !outputStarted && (usage.OutputTokens > 0 || anthropicStreamLineStartsRealOutput(trimmed)) {
+					outputStarted = true
+				}
 			} else {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
@@ -5731,20 +5800,17 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			}
 
 			if !clientDisconnected {
-				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
-				if _, err := io.WriteString(w, restored); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
-				} else if _, err := io.WriteString(w, "\n"); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
-				} else if line == "" {
-					// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
-					flusher.Flush()
-					lastDataAt = time.Now()
-					inPartialEvent = false
+				if outputStarted {
+					flushPendingClientLines()
+					writeAnthropicPassthroughLine(line)
 				} else {
-					inPartialEvent = true
+					// 写前阶段：缓冲前导帧，待真实输出确认后再 flush；写前 failover 时整体丢弃，不污染客户端。
+					pendingClientLines = append(pendingClientLines, line)
+					if line == "" {
+						inPartialEvent = false
+					} else {
+						inPartialEvent = true
+					}
 				}
 			}
 
@@ -5752,6 +5818,10 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
 			if time.Since(lastRead) < streamInterval {
 				continue
+			}
+			// 写前阶段超时：先 flush 缓冲前导帧（借写失败探测客户端是否已断开）。
+			if !outputStarted && !clientDisconnected {
+				flushPendingClientLines()
 			}
 			if clientDisconnected {
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
@@ -7915,6 +7985,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	sawTerminalEvent := false
 
 	pendingEventLines := make([]string, 0, 4)
+	// realOutputStarted: 是否已确认真实输出（非零 token 或内容增量）。写前缓冲输出块，
+	// 零输出 / 纯错误 / 缺终止时直接 failover，不向客户端写半截响应。
+	realOutputStarted := false
+	var pendingOutputBlocks []string
 
 	processSSEEvent := func(lines []string) ([]string, string, *sseUsagePatch, error) {
 		if len(lines) == 0 {
@@ -8041,12 +8115,89 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		return []string{block}, string(newData), usagePatch, nil
 	}
 
+	writeMainOutputBlock := func(block string) bool {
+		if clientDisconnected {
+			return false
+		}
+		restored := reverseToolNamesIfPresent(c, []byte(block))
+		if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
+			clientDisconnected = true
+			logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
+			return false
+		}
+		flusher.Flush()
+		lastDataAt = time.Now()
+		return true
+	}
+	flushPendingOutputBlocks := func() {
+		for _, b := range pendingOutputBlocks {
+			if !writeMainOutputBlock(b) {
+				break
+			}
+		}
+		pendingOutputBlocks = pendingOutputBlocks[:0]
+	}
+
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				// 上游完成，返回结果
+				// 处理 EOF 前残留、未以空行结尾的事件（如末尾 message_stop 无空行的情形），
+				// 以正确识别终止事件与最终 usage，再做写前/写后分类。
+				if len(pendingEventLines) > 0 {
+					outputBlocks, data, usagePatch, perr := processSSEEvent(pendingEventLines)
+					pendingEventLines = pendingEventLines[:0]
+					if perr == nil {
+						if !realOutputStarted && strings.TrimSpace(data) != "" {
+							if payload, isErr := anthropicStreamDataErrorPayload(data); isErr {
+								return nil, newAnthropicStreamFailoverError(payload, false)
+							}
+						}
+						if data != "" {
+							if firstTokenMs == nil && data != "[DONE]" {
+								ms := int(time.Since(startTime).Milliseconds())
+								firstTokenMs = &ms
+							}
+							if usagePatch != nil {
+								mergeSSEUsagePatch(usage, usagePatch)
+							}
+						}
+						if !realOutputStarted && (usage.InputTokens > 0 || usage.OutputTokens > 0 || anthropicStreamLineStartsRealOutput(data)) {
+							realOutputStarted = true
+						}
+						if realOutputStarted {
+							flushPendingOutputBlocks()
+						}
+						for _, block := range outputBlocks {
+							if clientDisconnected {
+								break
+							}
+							if !realOutputStarted {
+								pendingOutputBlocks = append(pendingOutputBlocks, block)
+								continue
+							}
+							if !writeMainOutputBlock(block) {
+								break
+							}
+						}
+					}
+				}
+				// 上游完成。写前阶段（客户端尚未收到真实输出）按结束形态分类 failover。
+				if !realOutputStarted && !clientDisconnected {
+					if !sawTerminalEvent {
+						return nil, newAnthropicStreamFailoverError(anthropicStreamFailoverBody(anthropicStreamIncompleteErrType, anthropicStreamIncompleteMessage), true)
+					}
+					if usage.InputTokens == 0 && usage.OutputTokens == 0 {
+						return nil, newAnthropicStreamFailoverError(anthropicStreamFailoverBody(anthropicStreamInvalidErrType, anthropicStreamInvalidMessage), false)
+					}
+					// 有终止事件且有非零用量但无流式内容：视为有效响应，flush 缓冲前导帧。
+					flushPendingOutputBlocks()
+				}
 				if !sawTerminalEvent {
+					// 写后阶段缺终止事件：客户端已收到部分输出，补发 error 事件告知截断。
+					if realOutputStarted && !clientDisconnected {
+						sendErrorEvent(anthropicStreamIncompleteErrType, anthropicStreamIncompleteMessage)
+					}
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
@@ -8108,28 +8259,47 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					if clientDisconnected {
 						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
 					}
+					// 写前阶段收到上游 error 事件：直接 failover 换号（透传上游错误体）。
+					if !realOutputStarted && strings.TrimSpace(data) != "" {
+						return nil, newAnthropicStreamFailoverError([]byte(data), false)
+					}
 					return nil, err
 				}
 
-				for _, block := range outputBlocks {
-					if !clientDisconnected {
-						restored := reverseToolNamesIfPresent(c, []byte(block))
-						if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
-							clientDisconnected = true
-							logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
-							break
-						}
-						flusher.Flush()
-						lastDataAt = time.Now()
+				// 写前阶段：data 帧本身是上游 error 事件（无 event: 行）时直接 failover 换号。
+				if !realOutputStarted && strings.TrimSpace(data) != "" {
+					if payload, isErr := anthropicStreamDataErrorPayload(data); isErr {
+						return nil, newAnthropicStreamFailoverError(payload, false)
 					}
-					if data != "" {
-						if firstTokenMs == nil && data != "[DONE]" {
-							ms := int(time.Since(startTime).Milliseconds())
-							firstTokenMs = &ms
-						}
-						if usagePatch != nil {
-							mergeSSEUsagePatch(usage, usagePatch)
-						}
+				}
+
+				// 先记录首字时间并合并 usage，再据此判断真实输出是否开始（用于写前缓冲决策）。
+				if data != "" {
+					if firstTokenMs == nil && data != "[DONE]" {
+						ms := int(time.Since(startTime).Milliseconds())
+						firstTokenMs = &ms
+					}
+					if usagePatch != nil {
+						mergeSSEUsagePatch(usage, usagePatch)
+					}
+				}
+				if !realOutputStarted && (usage.InputTokens > 0 || usage.OutputTokens > 0 || anthropicStreamLineStartsRealOutput(data)) {
+					realOutputStarted = true
+				}
+				if realOutputStarted {
+					flushPendingOutputBlocks()
+				}
+				for _, block := range outputBlocks {
+					if clientDisconnected {
+						break
+					}
+					if !realOutputStarted {
+						// 写前阶段：缓冲输出块，待真实输出确认后再 flush；failover 时整体丢弃，不污染客户端。
+						pendingOutputBlocks = append(pendingOutputBlocks, block)
+						continue
+					}
+					if !writeMainOutputBlock(block) {
+						break
 					}
 				}
 				continue
