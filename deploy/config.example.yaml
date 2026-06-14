@@ -203,16 +203,15 @@ gateway:
   # OpenAI OAuth compatibility mode for non-API_KEY accounts.
   # 非 API_KEY 账号访问 OpenAI/ChatGPT 上游时使用的兼容模式。
   #
-  # Values: off, cockpit_tools, codex_direct.
-  # off: default path; cockpit_tools: reuse cockpit-tools header shape;
-  # codex_direct: align with Codex Desktop direct headers and TLS fingerprint.
-  # 可选：off、cockpit_tools、codex_direct。
+  # Values: off. Legacy cockpit_tools/codex_direct values are normalized to off.
+  # off: default path. Enable Codex CLI simulation on individual accounts.
+  # 可选：off。历史 cockpit_tools/codex_direct 会自动归一为 off。
   openai_oauth_compat_mode: off
-  # Legacy boolean kept for old deployments. Prefer openai_oauth_compat_mode.
-  # 旧布尔配置保留给旧部署；新部署优先使用 openai_oauth_compat_mode。
+  # Legacy boolean kept for old deployments. It is ignored and normalized to off.
+  # 旧布尔配置仅保留给旧部署读取，运行时统一关闭。
   openai_cockpit_tools_compat: false
-  # When Codex Direct is selected, optionally force OAuth upstream requests to use WSv2.
-  # 选择 Codex 直连时，可选地强制 OAuth 上游请求走 WSv2。
+  # When account-level Codex CLI simulation is enabled, optionally force OAuth upstream requests to use WSv2.
+  # 账号级 Codex CLI 模拟开启时，可选地强制 OAuth 上游请求走 WSv2。
   openai_codex_direct_force_ws: false
   # Enable Codex image-generation bridge injection for /openai/v1/responses.
   # 是否为 Codex /responses 请求自动注入 image_generation 工具与桥接指令。

@@ -4182,44 +4182,6 @@
                 />
               </div>
 
-              <div>
-                <label
-                  class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >
-                  {{
-                    t(
-                      "admin.settings.gatewayForwarding.openaiOAuthCompatMode",
-                    )
-                  }}
-                </label>
-                <select
-                  v-model="form.openai_oauth_compat_mode"
-                  class="input w-full"
-                >
-                  <option value="off">
-                    {{
-                      t(
-                        "admin.settings.gatewayForwarding.openaiOAuthCompatModeOff",
-                      )
-                    }}
-                  </option>
-                  <option value="cockpit_tools">
-                    {{
-                      t(
-                        "admin.settings.gatewayForwarding.openaiOAuthCompatModeCockpitTools",
-                      )
-                    }}
-                  </option>
-                </select>
-                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{
-                    t(
-                      "admin.settings.gatewayForwarding.openaiOAuthCompatModeHint",
-                    )
-                  }}
-                </p>
-              </div>
-
               <div
                 class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700"
               >
@@ -8461,16 +8423,9 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
-    // 兼容旧后端只返回布尔开关的场景，避免设置页展示为空值。
-    form.openai_oauth_compat_mode =
-      settings.openai_oauth_compat_mode === "cockpit_tools" ||
-      settings.openai_oauth_compat_mode === "off"
-        ? settings.openai_oauth_compat_mode
-        : settings.openai_cockpit_tools_compat
-          ? "cockpit_tools"
-          : "off";
-    form.openai_cockpit_tools_compat =
-      form.openai_oauth_compat_mode === "cockpit_tools";
+    // 历史 cockpit_tools/codex_direct 全局模式不再生效，设置页统一展示为关闭。
+    form.openai_oauth_compat_mode = "off";
+    form.openai_cockpit_tools_compat = false;
     form.openai_codex_direct_force_ws =
       settings.openai_codex_direct_force_ws === true;
     form.openai_codex_direct_tls_fingerprint_profile_id =
@@ -8977,9 +8932,8 @@ async function saveSettings() {
         form.openai_codex_user_agent?.trim() || "",
       openai_allow_claude_code_codex_plugin:
         form.openai_allow_claude_code_codex_plugin,
-      openai_oauth_compat_mode: form.openai_oauth_compat_mode || "off",
-      openai_cockpit_tools_compat:
-        form.openai_oauth_compat_mode === "cockpit_tools",
+      openai_oauth_compat_mode: "off",
+      openai_cockpit_tools_compat: false,
       openai_codex_direct_force_ws:
         form.openai_codex_direct_force_ws,
       openai_codex_direct_tls_fingerprint_profile_id:
@@ -9146,15 +9100,8 @@ async function saveSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
-    form.openai_oauth_compat_mode =
-      updated.openai_oauth_compat_mode === "cockpit_tools" ||
-      updated.openai_oauth_compat_mode === "off"
-        ? updated.openai_oauth_compat_mode
-        : updated.openai_cockpit_tools_compat
-          ? "cockpit_tools"
-          : "off";
-    form.openai_cockpit_tools_compat =
-      form.openai_oauth_compat_mode === "cockpit_tools";
+    form.openai_oauth_compat_mode = "off";
+    form.openai_cockpit_tools_compat = false;
     form.openai_codex_direct_force_ws =
       updated.openai_codex_direct_force_ws === true;
     form.openai_codex_direct_tls_fingerprint_profile_id =

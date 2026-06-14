@@ -61,12 +61,12 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 		require.Equal(t, "account_force_http", decision.Reason)
 	})
 
-	t.Run("cockpit-tools兼容模式强制OAuth走HTTP", func(t *testing.T) {
+	t.Run("旧cockpit-tools兼容开关不再强制OAuth走HTTP", func(t *testing.T) {
 		cfg := *baseCfg
 		cfg.Gateway.OpenAICockpitToolsCompat = true
 		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(openAIOAuthEnabled)
-		require.Equal(t, OpenAIUpstreamTransportHTTPSSE, decision.Transport)
-		require.Equal(t, "cockpit_tools_compat", decision.Reason)
+		require.Equal(t, OpenAIUpstreamTransportResponsesWebsocketV2, decision.Transport)
+		require.Equal(t, "ws_v2_enabled", decision.Reason)
 	})
 
 	t.Run("遗留全局Codex直连不影响普通OAuth", func(t *testing.T) {

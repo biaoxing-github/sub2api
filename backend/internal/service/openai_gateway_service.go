@@ -3658,12 +3658,14 @@ httpRetryLoop:
 			resp, err := s.doOpenAIUpstreamWithHeaderTimeout(ctx, upstreamReq, proxyURL, account, body, policy, requestBaseURL)
 			SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 			if err != nil {
-				if policy.Enabled && policy.RequestPhaseFailoverEnabled && isOpenAIRequestPhaseTransientError(err) && !isClientRequestCanceled(c) {
+				if isOpenAIRequestPhaseTransientError(err) && !isClientRequestCanceled(c) {
 					s.recordOpenAIPathHealthFailure(account, requestBaseURL, openAIPathHealthReasonForStreamReadError(err))
-					if urlIdx+1 < len(requestBaseURLs) {
+					if account.Type == AccountTypeAPIKey && urlIdx+1 < len(requestBaseURLs) {
 						continue
 					}
-					return nil, newOpenAIRequestPhaseFailoverError(err)
+					if policy.Enabled && policy.RequestPhaseFailoverEnabled {
+						return nil, newOpenAIRequestPhaseFailoverError(err)
+					}
 				}
 				return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 			}
@@ -3968,12 +3970,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		resp, err = s.doOpenAIUpstreamWithHeaderTimeout(ctx, upstreamReq, proxyURL, account, body, policy, requestBaseURL)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
-			if policy.Enabled && policy.RequestPhaseFailoverEnabled && isOpenAIRequestPhaseTransientError(err) && !isClientRequestCanceled(c) {
+			if isOpenAIRequestPhaseTransientError(err) && !isClientRequestCanceled(c) {
 				s.recordOpenAIPathHealthFailure(account, requestBaseURL, openAIPathHealthReasonForStreamReadError(err))
-				if urlIdx+1 < len(requestBaseURLs) {
+				if account.Type == AccountTypeAPIKey && urlIdx+1 < len(requestBaseURLs) {
 					continue
 				}
-				return nil, newOpenAIRequestPhaseFailoverError(err)
+				if policy.Enabled && policy.RequestPhaseFailoverEnabled {
+					return nil, newOpenAIRequestPhaseFailoverError(err)
+				}
 			}
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
 		}

@@ -309,7 +309,7 @@ func TestSettingService_UpdateSettings_CodexStabilityRefreshesGatewayConfig(t *t
 	require.False(t, cfg.Gateway.CodexStability.StreamKeepaliveEnabled)
 }
 
-func TestSettingService_UpdateSettings_OpenAICockpitToolsCompatRefreshesGatewayConfig(t *testing.T) {
+func TestSettingService_UpdateSettings_LegacyOpenAICockpitToolsCompatNormalizesToOff(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	cfg := &config.Config{}
 	svc := NewSettingService(repo, cfg)
@@ -318,12 +318,12 @@ func TestSettingService_UpdateSettings_OpenAICockpitToolsCompatRefreshesGatewayC
 		OpenAICockpitToolsCompat: true,
 	})
 	require.NoError(t, err)
-	require.Equal(t, "true", repo.updates[SettingKeyOpenAICockpitToolsCompat])
-	require.True(t, cfg.Gateway.OpenAICockpitToolsCompat)
-	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCockpitTools, cfg.Gateway.OpenAIOAuthCompatMode)
+	require.Equal(t, "false", repo.updates[SettingKeyOpenAICockpitToolsCompat])
+	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeOff, cfg.Gateway.OpenAIOAuthCompatMode)
 }
 
-func TestSettingService_UpdateSettings_OpenAIOAuthCompatModeRefreshesGatewayConfig(t *testing.T) {
+func TestSettingService_UpdateSettings_LegacyOpenAIOAuthCompatModeRefreshesGatewayConfigAsOff(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	cfg := &config.Config{}
 	svc := NewSettingService(repo, cfg)
@@ -334,12 +334,12 @@ func TestSettingService_UpdateSettings_OpenAIOAuthCompatModeRefreshesGatewayConf
 		OpenAICodexDirectTLSFingerprintProfileID: 42,
 	})
 	require.NoError(t, err)
-	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCockpitTools, repo.updates[SettingKeyOpenAIOAuthCompatMode])
-	require.Equal(t, "true", repo.updates[SettingKeyOpenAICockpitToolsCompat])
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeOff, repo.updates[SettingKeyOpenAIOAuthCompatMode])
+	require.Equal(t, "false", repo.updates[SettingKeyOpenAICockpitToolsCompat])
 	require.Equal(t, "true", repo.updates[SettingKeyOpenAICodexDirectForceWS])
 	require.Equal(t, "42", repo.updates[SettingKeyOpenAICodexDirectTLSFingerprintProfileID])
-	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCockpitTools, cfg.Gateway.OpenAIOAuthCompatMode)
-	require.True(t, cfg.Gateway.OpenAICockpitToolsCompat)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeOff, cfg.Gateway.OpenAIOAuthCompatMode)
+	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
 	require.True(t, cfg.Gateway.OpenAICodexDirectForceWS)
 	require.Equal(t, int64(42), cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID)
 }
@@ -496,15 +496,15 @@ func TestSettingService_ParseSettings_APIKeyACLTrustForwardedIPFallsBackToConfig
 	require.True(t, got.APIKeyACLTrustForwardedIP)
 }
 
-func TestSettingService_ParseSettings_OpenAICockpitToolsCompatFallsBackToConfigWhenMissing(t *testing.T) {
+func TestSettingService_ParseSettings_LegacyOpenAICockpitToolsCompatFallsBackToOffWhenMissing(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAICockpitToolsCompat = true
 	svc := NewSettingService(&settingUpdateRepoStub{}, cfg)
 
 	got := svc.parseSettings(map[string]string{})
 
-	require.True(t, got.OpenAICockpitToolsCompat)
-	require.Equal(t, config.GatewayOpenAIOAuthCompatModeCockpitTools, got.OpenAIOAuthCompatMode)
+	require.False(t, got.OpenAICockpitToolsCompat)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeOff, got.OpenAIOAuthCompatMode)
 }
 
 func TestSettingService_ParseSettings_DeprecatedCodexDirectNormalizesToOff(t *testing.T) {

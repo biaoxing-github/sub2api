@@ -415,9 +415,9 @@ const (
 	SettingKeyOpenAICodexUserAgent = "openai_codex_user_agent"
 	// SettingKeyOpenAIAllowClaudeCodeCodexPlugin 是否允许 Claude Code 的 Codex 插件访问仅 Codex 官方客户端账号。
 	SettingKeyOpenAIAllowClaudeCodeCodexPlugin = "openai_allow_claude_code_codex_plugin"
-	// SettingKeyOpenAICockpitToolsCompat 是否按 cockpit-tools 的 Codex HTTP executor 方式发送 OpenAI OAuth Responses 请求。
+	// SettingKeyOpenAICockpitToolsCompat 旧 cockpit-tools 兼容开关，仅保留历史配置读取，运行时统一关闭。
 	SettingKeyOpenAICockpitToolsCompat = "openai_cockpit_tools_compat"
-	// SettingKeyOpenAIOAuthCompatMode OpenAI OAuth 上游兼容模式：off/cockpit_tools；codex_direct 仅作为历史值归一为 off。
+	// SettingKeyOpenAIOAuthCompatMode OpenAI OAuth 上游兼容模式：off；cockpit_tools/codex_direct 仅作为历史值归一为 off。
 	SettingKeyOpenAIOAuthCompatMode = "openai_oauth_compat_mode"
 	// SettingKeyOpenAICodexDirectForceWS 账号级 Codex CLI 模拟开启时是否允许 HTTP/SSE 入站请求强制转上游 WSv2。
 	SettingKeyOpenAICodexDirectForceWS = "openai_codex_direct_force_ws"

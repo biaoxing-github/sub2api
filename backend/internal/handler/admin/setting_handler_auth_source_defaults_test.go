@@ -206,7 +206,7 @@ func TestSettingHandler_UpdateSettings_PreservesOmittedAuthSourceDefaults(t *tes
 	require.Equal(t, true, data["force_email_on_third_party_signup"])
 }
 
-func TestSettingHandler_UpdateSettings_RejectsDeprecatedOpenAIOAuthCodexDirect(t *testing.T) {
+func TestSettingHandler_UpdateSettings_NormalizesDeprecatedOpenAIOAuthModeToOff(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &settingHandlerRepoStub{
 		values: map[string]string{
@@ -231,16 +231,20 @@ func TestSettingHandler_UpdateSettings_RejectsDeprecatedOpenAIOAuthCodexDirect(t
 
 	handler.UpdateSettings(c)
 
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	require.Empty(t, repo.values[service.SettingKeyOpenAIOAuthCompatMode])
-	require.Equal(t, "true", repo.values[service.SettingKeyOpenAICockpitToolsCompat])
-	require.Empty(t, repo.values[service.SettingKeyOpenAICodexDirectForceWS])
-	require.Empty(t, cfg.Gateway.OpenAIOAuthCompatMode)
-	require.False(t, cfg.Gateway.OpenAICodexDirectForceWS)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeOff, repo.values[service.SettingKeyOpenAIOAuthCompatMode])
+	require.Equal(t, "false", repo.values[service.SettingKeyOpenAICockpitToolsCompat])
+	require.Equal(t, "true", repo.values[service.SettingKeyOpenAICodexDirectForceWS])
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeOff, cfg.Gateway.OpenAIOAuthCompatMode)
+	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
+	require.True(t, cfg.Gateway.OpenAICodexDirectForceWS)
 
 	var resp response.Response
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Contains(t, resp.Message, "openai_oauth_compat_mode must be off or cockpit_tools")
+	data, ok := resp.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, config.GatewayOpenAIOAuthCompatModeOff, data["openai_oauth_compat_mode"])
+	require.Equal(t, false, data["openai_cockpit_tools_compat"])
 }
 
 func TestSettingHandler_UpdateSettings_PersistsPaymentVisibleMethodsAndAdvancedScheduler(t *testing.T) {

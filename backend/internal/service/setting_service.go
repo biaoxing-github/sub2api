@@ -1891,7 +1891,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAICodexUserAgent] = strings.TrimSpace(settings.OpenAICodexUserAgent)
 	updates[SettingKeyOpenAIAllowClaudeCodeCodexPlugin] = strconv.FormatBool(settings.OpenAIAllowClaudeCodeCodexPlugin)
 	settings.OpenAIOAuthCompatMode = normalizeOpenAIOAuthCompatMode(settings.OpenAIOAuthCompatMode, settings.OpenAICockpitToolsCompat)
-	settings.OpenAICockpitToolsCompat = settings.OpenAIOAuthCompatMode == config.GatewayOpenAIOAuthCompatModeCockpitTools
+	settings.OpenAICockpitToolsCompat = false
 	updates[SettingKeyOpenAIOAuthCompatMode] = settings.OpenAIOAuthCompatMode
 	updates[SettingKeyOpenAICockpitToolsCompat] = strconv.FormatBool(settings.OpenAICockpitToolsCompat)
 	updates[SettingKeyOpenAICodexDirectForceWS] = strconv.FormatBool(settings.OpenAICodexDirectForceWS)
@@ -2069,7 +2069,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	if s.cfg != nil {
 		s.cfg.SetTrustForwardedIPForAPIKeyACL(settings.APIKeyACLTrustForwardedIP)
 		s.cfg.Gateway.OpenAIOAuthCompatMode = normalizeOpenAIOAuthCompatMode(settings.OpenAIOAuthCompatMode, settings.OpenAICockpitToolsCompat)
-		s.cfg.Gateway.OpenAICockpitToolsCompat = settings.OpenAICockpitToolsCompat
+		s.cfg.Gateway.OpenAICockpitToolsCompat = false
 		s.cfg.Gateway.OpenAICodexDirectForceWS = settings.OpenAICodexDirectForceWS
 		s.cfg.Gateway.OpenAICodexDirectTLSFingerprintProfileID = tlsFingerprintProfileIDOrDefault(settings.OpenAICodexDirectTLSFingerprintProfileID, 0)
 		s.cfg.Gateway.OpenAISchedulerProbeInfiniteWaitEnabled = settings.OpenAISchedulerProbeInfiniteWaitEnabled
@@ -2145,7 +2145,7 @@ func (s *SettingService) defaultRewriteMessageCacheControl() bool {
 }
 
 func (s *SettingService) defaultOpenAICockpitToolsCompat() bool {
-	return s.defaultOpenAIOAuthCompatMode() == config.GatewayOpenAIOAuthCompatModeCockpitTools
+	return false
 }
 
 func (s *SettingService) defaultOpenAIOAuthCompatMode() string {
@@ -3700,7 +3700,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.RealtimeBalanceConfirmTimeoutMs = intSettingWithDefault(settings[SettingKeyRealtimeBalanceConfirmTimeoutMs], s.defaultRealtimeBalanceConfirmTimeoutMs())
 	legacyCockpitCompat := boolSettingWithDefault(settings[SettingKeyOpenAICockpitToolsCompat], s.defaultOpenAICockpitToolsCompat())
 	result.OpenAIOAuthCompatMode = normalizeOpenAIOAuthCompatMode(settings[SettingKeyOpenAIOAuthCompatMode], legacyCockpitCompat)
-	result.OpenAICockpitToolsCompat = result.OpenAIOAuthCompatMode == config.GatewayOpenAIOAuthCompatModeCockpitTools
+	result.OpenAICockpitToolsCompat = false
 	result.OpenAICodexDirectForceWS = boolSettingWithDefault(settings[SettingKeyOpenAICodexDirectForceWS], s.defaultOpenAICodexDirectForceWS())
 	result.OpenAICodexDirectTLSFingerprintProfileID = tlsFingerprintProfileIDSettingWithDefault(settings[SettingKeyOpenAICodexDirectTLSFingerprintProfileID], s.defaultOpenAICodexDirectTLSFingerprintProfileID())
 	result.OpenAISchedulerProbeInfiniteWaitEnabled = boolSettingWithDefault(settings[SettingKeyOpenAISchedulerProbeInfiniteWaitEnabled], s.defaultOpenAISchedulerProbeInfiniteWaitEnabled())
@@ -3802,14 +3802,11 @@ func normalizeOpenAIOAuthCompatMode(mode string, legacyCockpitCompat bool) strin
 	case config.GatewayOpenAIOAuthCompatModeOff:
 		return config.GatewayOpenAIOAuthCompatModeOff
 	case config.GatewayOpenAIOAuthCompatModeCockpitTools:
-		return config.GatewayOpenAIOAuthCompatModeCockpitTools
+		return config.GatewayOpenAIOAuthCompatModeOff
 	case config.GatewayOpenAIOAuthCompatModeCodexDirect:
 		// codex_direct 是历史全局开关；Codex 模拟只允许走账号级 extra 开关。
 		return config.GatewayOpenAIOAuthCompatModeOff
 	default:
-		if legacyCockpitCompat {
-			return config.GatewayOpenAIOAuthCompatModeCockpitTools
-		}
 		return config.GatewayOpenAIOAuthCompatModeOff
 	}
 }

@@ -1552,14 +1552,17 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if req.OpenAIOAuthCompatMode != nil {
 		normalized := strings.ToLower(strings.TrimSpace(*req.OpenAIOAuthCompatMode))
-		req.OpenAIOAuthCompatMode = &normalized
 		switch normalized {
-		case config.GatewayOpenAIOAuthCompatModeOff,
-			config.GatewayOpenAIOAuthCompatModeCockpitTools:
+		case config.GatewayOpenAIOAuthCompatModeOff:
+		case config.GatewayOpenAIOAuthCompatModeCockpitTools,
+			config.GatewayOpenAIOAuthCompatModeCodexDirect:
+			// 历史全局兼容模式不再生效，旧请求体只保留可解析性并统一落为 off。
+			normalized = config.GatewayOpenAIOAuthCompatModeOff
 		default:
-			response.Error(c, http.StatusBadRequest, "openai_oauth_compat_mode must be off or cockpit_tools")
+			response.Error(c, http.StatusBadRequest, "openai_oauth_compat_mode must be off")
 			return
 		}
+		req.OpenAIOAuthCompatMode = &normalized
 	}
 	if req.CodexStabilityMode != nil {
 		normalized := strings.ToLower(strings.TrimSpace(*req.CodexStabilityMode))
@@ -1798,9 +1801,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.OpenAIOAuthCompatMode
 			}
 			if req.OpenAICockpitToolsCompat != nil {
-				if *req.OpenAICockpitToolsCompat {
-					return config.GatewayOpenAIOAuthCompatModeCockpitTools
-				}
 				return config.GatewayOpenAIOAuthCompatModeOff
 			}
 			return previousSettings.OpenAIOAuthCompatMode

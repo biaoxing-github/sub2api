@@ -803,12 +803,10 @@ type GatewayConfig struct {
 	GeminiDebugResponseHeaders bool `mapstructure:"gemini_debug_response_headers"`
 	// ConnectionPoolIsolation: 上游连接池隔离策略（proxy/account/account_proxy）
 	ConnectionPoolIsolation string `mapstructure:"connection_pool_isolation"`
-	// OpenAICockpitToolsCompat: 按 cockpit-tools 的 Codex HTTP executor 组装 OAuth 上游请求。
-	// 开启后 OAuth 账号强制走 HTTP SSE，并使用 cockpit-tools 的 header 集合，避免网关自有 WS/session/header 改写。
+	// OpenAICockpitToolsCompat: 旧 cockpit-tools 兼容开关，仅用于读取历史配置，运行时统一归一为关闭。
 	OpenAICockpitToolsCompat bool `mapstructure:"openai_cockpit_tools_compat"`
 	// OpenAIOAuthCompatMode: OpenAI OAuth 上游兼容模式。
-	// off=默认路径，cockpit_tools=按 cockpit-tools HTTP executor。
-	// codex_direct 已废弃：Codex 模拟只能通过账号级 openai_codex_cli_simulation_enabled 开启。
+	// off=默认路径；cockpit_tools/codex_direct 为历史值，启动时统一归一为 off。
 	OpenAIOAuthCompatMode string `mapstructure:"openai_oauth_compat_mode"`
 	// OpenAICodexDirectForceWS: 账号级 Codex CLI 模拟开启时，允许 HTTP/SSE 入站请求强制转为上游 WSv2。
 	// 默认关闭，开启后仍受 gateway.openai_ws.enabled/oauth_enabled/force_http 和账号级模拟开关约束。
@@ -1515,11 +1513,6 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
 	}
-	if !hasExplicitConfigOrEnv("gateway.openai_oauth_compat_mode", "GATEWAY_OPENAI_OAUTH_COMPAT_MODE") {
-		// 让旧布尔开关在未显式配置新枚举时仍能映射到 cockpit_tools。
-		cfg.Gateway.OpenAIOAuthCompatMode = ""
-	}
-
 	cfg.RunMode = NormalizeRunMode(cfg.RunMode)
 	cfg.Server.Mode = strings.ToLower(strings.TrimSpace(cfg.Server.Mode))
 	if cfg.Server.Mode == "" {
@@ -2641,25 +2634,17 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("gateway.openai_request_header_timeout_seconds must be non-negative")
 	}
 	c.Gateway.OpenAIOAuthCompatMode = strings.ToLower(strings.TrimSpace(c.Gateway.OpenAIOAuthCompatMode))
-	if c.Gateway.OpenAIOAuthCompatMode == "" {
-		if c.Gateway.OpenAICockpitToolsCompat {
-			c.Gateway.OpenAIOAuthCompatMode = GatewayOpenAIOAuthCompatModeCockpitTools
-		} else {
-			c.Gateway.OpenAIOAuthCompatMode = GatewayOpenAIOAuthCompatModeOff
-		}
-	}
-	if c.Gateway.OpenAIOAuthCompatMode == GatewayOpenAIOAuthCompatModeCodexDirect {
+	if c.Gateway.OpenAIOAuthCompatMode == "" ||
+		c.Gateway.OpenAIOAuthCompatMode == GatewayOpenAIOAuthCompatModeCockpitTools ||
+		c.Gateway.OpenAIOAuthCompatMode == GatewayOpenAIOAuthCompatModeCodexDirect {
 		c.Gateway.OpenAIOAuthCompatMode = GatewayOpenAIOAuthCompatModeOff
 	}
 	switch c.Gateway.OpenAIOAuthCompatMode {
 	case GatewayOpenAIOAuthCompatModeOff:
 		c.Gateway.OpenAICockpitToolsCompat = false
-	case GatewayOpenAIOAuthCompatModeCockpitTools:
-		c.Gateway.OpenAICockpitToolsCompat = true
 	default:
-		return fmt.Errorf("gateway.openai_oauth_compat_mode must be one of: %s/%s",
-			GatewayOpenAIOAuthCompatModeOff,
-			GatewayOpenAIOAuthCompatModeCockpitTools)
+		return fmt.Errorf("gateway.openai_oauth_compat_mode must be %s",
+			GatewayOpenAIOAuthCompatModeOff)
 	}
 	if c.Gateway.OpenAICodexDirectTLSFingerprintProfileID < -1 {
 		return fmt.Errorf("gateway.openai_codex_direct_tls_fingerprint_profile_id must be -1 or greater")

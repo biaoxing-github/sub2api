@@ -165,8 +165,15 @@ func TestLoadOpenAICockpitToolsCompatConfig(t *testing.T) {
 	t.Setenv("GATEWAY_OPENAI_COCKPIT_TOOLS_COMPAT", "true")
 	cfg, err = Load()
 	require.NoError(t, err)
-	require.True(t, cfg.Gateway.OpenAICockpitToolsCompat)
-	require.Equal(t, GatewayOpenAIOAuthCompatModeCockpitTools, cfg.Gateway.OpenAIOAuthCompatMode)
+	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
+	require.Equal(t, GatewayOpenAIOAuthCompatModeOff, cfg.Gateway.OpenAIOAuthCompatMode)
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_OPENAI_OAUTH_COMPAT_MODE", GatewayOpenAIOAuthCompatModeCockpitTools)
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.False(t, cfg.Gateway.OpenAICockpitToolsCompat)
+	require.Equal(t, GatewayOpenAIOAuthCompatModeOff, cfg.Gateway.OpenAIOAuthCompatMode)
 
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_OPENAI_OAUTH_COMPAT_MODE", GatewayOpenAIOAuthCompatModeCodexDirect)

@@ -23,7 +23,6 @@ import (
 )
 
 const (
-	cockpitToolsUserAgent = codexCLIUserAgent
 	codexDesktopUserAgent = codexCLIUserAgent
 )
 
@@ -3285,7 +3284,7 @@ func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationUsesCodexProviderRespons
 	require.Equal(t, "https://new.sharedchat.cc/codex/responses", req.URL.String())
 }
 
-func TestOpenAIBuildUpstreamRequestCockpitToolsCompatibilityHeaders(t *testing.T) {
+func TestOpenAIBuildUpstreamRequestLegacyCockpitToolsCompatIsIgnored(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3314,20 +3313,19 @@ func TestOpenAIBuildUpstreamRequestCockpitToolsCompatibilityHeaders(t *testing.T
 	require.Equal(t, "Bearer token", req.Header.Get("Authorization"))
 	require.Equal(t, "application/json", req.Header.Get("Content-Type"))
 	require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
-	require.Equal(t, "Keep-Alive", req.Header.Get("Connection"))
-	require.Equal(t, cockpitToolsUserAgent, req.Header.Get("User-Agent"))
-	require.Equal(t, "codex_cli_rs", req.Header.Get("Originator"))
+	require.Empty(t, req.Header.Get("Connection"))
+	require.Equal(t, "opencode", req.Header.Get("Originator"))
 	require.Equal(t, "chatgpt-acc", req.Header.Get("Chatgpt-Account-Id"))
-	require.Equal(t, "client-session", req.Header.Get("Session_id"))
+	require.NotEqual(t, "client-session", req.Header.Get("Session_id"))
+	require.Equal(t, isolateOpenAISessionID(0, "prompt-cache-key"), req.Header.Get("Session_id"))
+	require.Equal(t, isolateOpenAISessionID(0, "prompt-cache-key"), req.Header.Get("conversation_id"))
 	require.Equal(t, "client-request-1", req.Header.Get("X-Client-Request-Id"))
 	require.Equal(t, "feature-a", req.Header.Get("X-Codex-Beta-Features"))
-	require.Empty(t, req.Header.Get("OpenAI-Beta"))
-	require.Empty(t, req.Header.Get("conversation_id"))
-	require.Empty(t, req.Header.Get("Accept-Language"))
-	require.Empty(t, req.Header.Get("X-Codex-Turn-State"))
+	require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
+	require.Equal(t, "turn-state", req.Header.Get("X-Codex-Turn-State"))
 }
 
-func TestOpenAIPassthroughCockpitToolsCompatibilityHeaders(t *testing.T) {
+func TestOpenAIPassthroughLegacyCockpitToolsCompatIsIgnored(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3349,10 +3347,11 @@ func TestOpenAIPassthroughCockpitToolsCompatibilityHeaders(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
-	require.Equal(t, cockpitToolsUserAgent, req.Header.Get("User-Agent"))
+	require.Equal(t, codexCLIUserAgent, req.Header.Get("User-Agent"))
 	require.Equal(t, "Codex Desktop", req.Header.Get("Originator"))
 	require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
 	require.NotEmpty(t, req.Header.Get("Session_id"))
+	require.Empty(t, req.Header.Get("Connection"))
 }
 
 func TestOpenAIBuildUpstreamRequestAccountCodexSimulationHeaders(t *testing.T) {

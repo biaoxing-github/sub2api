@@ -196,8 +196,8 @@ type SystemSettings struct {
 	AntigravityUserAgentVersion                   string // Antigravity 上游 User-Agent 版本号；空值使用配置/默认值
 	OpenAICodexUserAgent                          string // OpenAI Codex 上游完整 User-Agent；空值使用内置默认
 	OpenAIAllowClaudeCodeCodexPlugin              bool   // 是否允许 Claude Code 的 Codex 插件访问仅 Codex 官方客户端账号
-	OpenAICockpitToolsCompat                      bool   // 是否按 cockpit-tools 方式发送 OpenAI OAuth Responses 请求
-	OpenAIOAuthCompatMode                         string // OpenAI OAuth 上游兼容模式：off/cockpit_tools；codex_direct 历史值归一为 off
+	OpenAICockpitToolsCompat                      bool   // 旧 cockpit-tools 兼容开关，运行时统一关闭
+	OpenAIOAuthCompatMode                         string // OpenAI OAuth 上游兼容模式：off；历史值归一为 off
 	OpenAICodexDirectForceWS                      bool   // 账号级 Codex CLI 模拟开启时是否强制 OAuth 上游走 WSv2
 	OpenAICodexDirectTLSFingerprintProfileID      int64  // 账号级 Codex CLI 模拟上游 HTTP 请求使用的 TLS 指纹模板 ID：0=内置默认，-1=随机
 	OpenAISchedulerProbeInfiniteWaitEnabled       bool   // OpenAI 可调度账号耗尽后是否无限小请求探测等待
