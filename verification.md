@@ -3260,3 +3260,17 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN：`go test -tags unit ./internal/service -run "TestOpenAIStreaming.*DropEvent|TestOpenAIResponseTextErrorDetector" -count=1` 通过。
 - GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，server 编译切片无测试运行。
 - 风险：本轮只做 SSE 单事件丢弃，不引入跨 chunk SSE buffer；非流式 JSON 的 `drop` 仍沿用错误/failover 语义。未构建镜像、未部署、未推送。
+
+## 2026-06-14 14:13 +08:00 - 停用 cockpit-tools 模式并发布 v0.1.134.38
+
+- 执行者：Devil
+- 变更范围：`backend/internal/config/config.go`、`backend/internal/service/setting_service.go`、`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/openai_ws_protocol_resolver.go`、`backend/internal/handler/admin/setting_handler.go`、`frontend/src/views/admin/SettingsView.vue`、`deploy/.env.example`、`deploy/config.example.yaml`
+- GREEN：`go test -tags unit ./internal/config -run "TestLoadOpenAICockpitToolsCompatConfig" -count=1` 通过，覆盖旧 cockpit 布尔和枚举配置归一为 `off`。
+- GREEN：`go test -tags unit ./internal/service -run "TestOpenAIWSProtocolResolver|TestSettingService_(UpdateSettings_LegacyOpenAICockpitToolsCompatNormalizesToOff|UpdateSettings_LegacyOpenAIOAuthCompatModeRefreshesGatewayConfigAsOff|ParseSettings_LegacyOpenAICockpitToolsCompatFallsBackToOffWhenMissing|ParseSettings_DeprecatedCodexDirectNormalizesToOff|LoadRuntimeSettingsRefreshesGatewayConfig)|TestOpenAIGatewayService_APIKeyRequestBaseURLFailoverBeforeAccountFailover|TestOpenAIBuildUpstreamRequestLegacyCockpitToolsCompatIsIgnored|TestOpenAIPassthroughLegacyCockpitToolsCompatIsIgnored|TestOpenAIBuildUpstreamRequestAccountCodexSimulationHeaders|TestOpenAIUpstreamTLSProfileUsesAccountLevelCodexSimulationOnly" -count=1` 通过，覆盖 legacy cockpit ignored、WS 决策、SettingService 热刷新和 API Key base URL transport failover。
+- GREEN：`go test -tags unit ./internal/handler/admin -run "TestSettingHandler_UpdateSettings_NormalizesDeprecatedOpenAIOAuthModeToOff|Test.*Setting" -count=1` 通过，覆盖旧请求体归一和设置保存链路。
+- GREEN：`go test -tags unit ./cmd/server -run "^$" -count=1` 通过，server 编译切片无测试运行。
+- GREEN：`npm run typecheck` 通过。
+- BUILD：`sub2api:v0.1.134.38` 从提交 `60f272128043` 的 `git archive HEAD` 构建成功，镜像 label `org.opencontainers.image.revision=60f272128043`，镜像 ID `sha256:ae4764cc6c2d93bacb8e7f3c7dbfc78e585fb8585855046225489d27eabfad06`。
+- DEPLOY：发布前 active 为 blue `sub2api:v0.1.134.37`；新版本部署到 idle green，候选端口 `18082` 验证 `/health` 200、首页 200、静态资源 `/assets/index-CN6LQCCL.js` 200、未登录 `/api/v1/admin/system/version`/`/responses`/`/v1/messages` 均 401。
+- CUTOVER：`D:\sub2api-deploy\proxy\upstreams\active.conf` 切到 `sub2api-green:8080`，`docker exec sub2api-proxy nginx -t` 通过，`docker exec sub2api-proxy nginx -s reload` 成功；切流后 `8080` 同一组冒烟通过。
+- 风险：未做登录态管理端浏览器保存操作；已用 handler/service/typecheck 覆盖保存与类型链路。blue `sub2api:v0.1.134.37` 保持 healthy，可按 release note 秒级切回。
