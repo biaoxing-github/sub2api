@@ -3349,10 +3349,10 @@ func TestOpenAIPassthroughCockpitToolsCompatibilityHeaders(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
-	require.Equal(t, "client-ua/1.0", req.Header.Get("User-Agent"))
+	require.Equal(t, cockpitToolsUserAgent, req.Header.Get("User-Agent"))
 	require.Equal(t, "Codex Desktop", req.Header.Get("Originator"))
-	require.Empty(t, req.Header.Get("OpenAI-Beta"))
-	require.Empty(t, req.Header.Get("Session_id"))
+	require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
+	require.NotEmpty(t, req.Header.Get("Session_id"))
 }
 
 func TestOpenAIBuildUpstreamRequestAccountCodexSimulationHeaders(t *testing.T) {
