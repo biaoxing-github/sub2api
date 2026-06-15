@@ -220,6 +220,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	// Track if we've started streaming (for error handling)
 	streamStarted := false
+	// writerSizeBeforeLoop 记录进入 failover 循环前的 Writer 已写字节数。
+	// Forward 后若 Writer.Size() 增加，说明已向客户端写入真实内容，此时无法 failover。
+	writerSizeBeforeLoop := 0
 
 	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
 	if h.errorPassthroughService != nil {
@@ -276,7 +279,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
+		h.handleStreamingAwareError(c, status, code, message, streamStarted, false)
 		return
 	}
 
@@ -357,7 +360,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.String("platform", platform),
 						zap.Error(err),
 					)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted, false)
 					return
 				}
 				// Gemini 不支持无限调度配置，使用默认 false
@@ -407,7 +410,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.String("model", reqModel),
 						zap.String("platform", platform),
 					)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted, false)
 					return
 				}
 				accountWaitCounted := false
@@ -419,7 +422,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.Int64("account_id", account.ID),
 						zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
 					)
-					h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", streamStarted)
+					h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", streamStarted, false)
 					return
 				}
 				if err == nil && canWait {
@@ -500,7 +503,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 				}
-				wroteFallback := h.ensureForwardErrorResponse(c, streamStarted)
+				wroteFallback := h.ensureForwardErrorResponse(c, streamStarted, c.Writer.Size() > writerSizeBeforeLoop)
 				forwardFailedFields := []zap.Field{
 					zap.Int64("account_id", account.ID),
 					zap.String("account_name", account.Name),
@@ -625,7 +628,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.Bool("fallback_used", fallbackUsed),
 						zap.Error(err),
 					)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted, false)
 					return
 				}
 				action := fs.HandleSelectionExhausted(c.Request.Context(), h.cfg.Gateway.AnthropicSchedulerInfiniteWaitEnabled)
@@ -684,7 +687,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.String("model", reqModel),
 						zap.String("platform", platform),
 					)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted, false)
 					return
 				}
 				accountWaitCounted := false
@@ -696,7 +699,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.Int64("account_id", account.ID),
 						zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
 					)
-					h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", streamStarted)
+					h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later", streamStarted, false)
 					return
 				}
 				if err == nil && canWait {
@@ -868,7 +871,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 							if retryAfter > 0 {
 								c.Header("Retry-After", strconv.Itoa(retryAfter))
 							}
-							h.handleStreamingAwareError(c, status, code, message, streamStarted)
+							h.handleStreamingAwareError(c, status, code, message, streamStarted, c.Writer.Size() > writerSizeBeforeLoop)
 							return
 						}
 						// 兜底重试按"直接请求兜底分组"处理：清除强制平台，允许按分组平台调度
@@ -901,7 +904,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 				}
-				wroteFallback := h.ensureForwardErrorResponse(c, streamStarted)
+				wroteFallback := h.ensureForwardErrorResponse(c, streamStarted, c.Writer.Size() > writerSizeBeforeLoop)
 				forwardFailedFields := []zap.Field{
 					zap.Int64("account_id", account.ID),
 					zap.String("account_name", account.Name),
@@ -1527,7 +1530,7 @@ func (h *GatewayHandler) calculateSubscriptionRemaining(group *service.Group, su
 // handleConcurrencyError handles concurrency-related acquire errors.
 func (h *GatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotType string, streamStarted bool) {
 	status, errType, message := concurrencyErrorResponse(err, slotType)
-	h.handleStreamingAwareError(c, status, errType, message, streamStarted)
+	h.handleStreamingAwareError(c, status, errType, message, streamStarted, streamStarted)
 }
 
 func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
@@ -1535,7 +1538,7 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 	responseBody := failoverErr.ResponseBody
 	if service.IsOpenAISilentRefusalErrorBody(responseBody) {
 		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")
-		h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage(), streamStarted)
+		h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage(), streamStarted, streamStarted)
 		return
 	}
 
@@ -1558,7 +1561,7 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 				c.Set(service.OpsSkipPassthroughKey, true)
 			}
 
-			h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
+			h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted, streamStarted)
 			return
 		}
 	}
@@ -1569,14 +1572,14 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 
 	// 使用默认的错误映射
 	status, errType, errMsg := h.mapUpstreamError(statusCode)
-	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted, streamStarted)
 }
 
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况
 func (h *GatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCode int, streamStarted bool) {
 	status, errType, errMsg := h.mapUpstreamError(statusCode)
 	service.SetOpsUpstreamError(c, statusCode, errMsg, "")
-	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted, streamStarted)
 }
 
 func (h *GatewayHandler) mapUpstreamError(statusCode int) (int, string, string) {
@@ -1596,9 +1599,12 @@ func (h *GatewayHandler) mapUpstreamError(statusCode int) (int, string, string) 
 	}
 }
 
-// handleStreamingAwareError handles errors that may occur after streaming has started
-func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool) {
-	if streamStarted {
+// handleStreamingAwareError handles errors that may occur after streaming has started.
+// realOutputStarted 表示已转发真实 SSE 增量（如 content_block_delta），此时无法 failover。
+// streamStarted 表示已发响应头（保活 ping / probe），但仍可能 failover。
+func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, errType, message string, streamStarted bool, realOutputStarted bool) {
+	if realOutputStarted {
+		// 真实输出已开始，无法 failover，只能补 error 事件后关流
 		// /v1/responses 的严格 SDK（Codex CLI）要求终止事件必须属于
 		// response.completed/failed/incomplete/cancelled 集合。
 		// Anthropic-backed Responses 路径同样会因为通用 error 帧被拒。
@@ -1625,20 +1631,23 @@ func (h *GatewayHandler) handleStreamingAwareError(c *gin.Context, status int, e
 }
 
 // ensureForwardErrorResponse 在 Forward 返回错误但尚未写响应时补写统一错误响应。
-// Writer 已被写过时（ping 已 flush）走 streamStarted 分支，
-// 让 handleStreamingAwareError 通过 SSE 发协议合规的终止事件，
-// 否则下游收到的就是 silent EOF。
-func (h *GatewayHandler) ensureForwardErrorResponse(c *gin.Context, streamStarted bool) bool {
+// realOutputStarted 表示真实输出已开始，此时走补 SSE error 分支。
+// Writer 仅写过保活 ping 时（streamStarted=true 但 realOutputStarted=false）仍可 failover，
+// 因此只有 realOutputStarted=true 时才强制进入 SSE error 模式。
+func (h *GatewayHandler) ensureForwardErrorResponse(c *gin.Context, streamStarted bool, realOutputStarted bool) bool {
 	if c == nil || c.Writer == nil {
 		return false
 	}
 	if service.IsResponseCommitted(c) {
 		return false
 	}
+	// 响应已写（保活 ping 或真实内容），不再补写
 	if c.Writer.Written() {
-		streamStarted = true
+		return false
 	}
-	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed", streamStarted)
+	// 仅当真实输出已开始时才进入 SSE error 分支
+	effectiveStreamStarted := streamStarted && realOutputStarted
+	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed", effectiveStreamStarted, realOutputStarted)
 	return true
 }
 

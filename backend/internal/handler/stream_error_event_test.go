@@ -139,7 +139,7 @@ func TestOpenAIHandleStreamingAwareError_ChatCompletionsStreamingKeepsLegacy(t *
 func TestGatewayHandleStreamingAwareError_ResponsesStreamingEmitsResponseFailed(t *testing.T) {
 	c, w := newGinContextForEndpoint(t, EndpointResponses)
 	h := &GatewayHandler{}
-	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "upstream gone", true)
+	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "upstream gone", true, true)
 
 	_, errObj := parseResponsesFailedSSE(t, w.Body.String())
 	assert.Equal(t, "upstream_error", errObj["code"])
@@ -149,7 +149,7 @@ func TestGatewayHandleStreamingAwareError_ResponsesStreamingEmitsResponseFailed(
 func TestGatewayHandleStreamingAwareError_MessagesStreamingKeepsLegacy(t *testing.T) {
 	c, w := newGinContextForEndpoint(t, EndpointMessages)
 	h := &GatewayHandler{}
-	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "boom", true)
+	h.handleStreamingAwareError(c, http.StatusBadGateway, "upstream_error", "boom", true, true)
 
 	body := w.Body.String()
 	assert.True(t, strings.HasPrefix(body, `data: {"type":"error"`), "got: %q", body)

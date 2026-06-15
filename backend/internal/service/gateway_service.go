@@ -593,7 +593,7 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 	if failoverErr == nil {
 		return
 	}
-	// 统一熔断策略：429/503 直接写 Redis temp_unschedulable
+	// 统一熔断策略：429/503/529 直接写 Redis temp_unschedulable
 	switch failoverErr.StatusCode {
 	case http.StatusTooManyRequests: // 429 限流
 		until := time.Now().Add(5 * time.Minute)
@@ -604,12 +604,20 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 			slog.Info("temp_unschedule_429", "account_id", accountID, "until", until.Format("15:04:05"), "reason", reason)
 		}
 	case http.StatusServiceUnavailable: // 503 容量不足
-		until := time.Now().Add(10 * time.Second)
-		reason := "503: capacity exhausted (auto temp-unschedule 10s)"
+		until := time.Now().Add(60 * time.Second)
+		reason := "503: capacity exhausted (auto temp-unschedule 60s)"
 		if err := s.accountRepo.SetTempUnschedulable(ctx, accountID, until, reason); err != nil {
 			slog.Warn("temp_unschedule_503_failed", "account_id", accountID, "error", err)
 		} else {
 			slog.Info("temp_unschedule_503", "account_id", accountID, "until", until.Format("15:04:05"), "reason", reason)
+		}
+	case 529: // 过载
+		until := time.Now().Add(60 * time.Second)
+		reason := "529: overloaded (auto temp-unschedule 60s)"
+		if err := s.accountRepo.SetOverloaded(ctx, accountID, until); err != nil {
+			slog.Warn("overload_set_failed", "account_id", accountID, "error", err)
+		} else {
+			slog.Info("account_overloaded", "account_id", accountID, "until", until.Format("15:04:05"), "reason", reason)
 		}
 	case http.StatusBadRequest:
 		if failoverErr.RetryableOnSameAccount {

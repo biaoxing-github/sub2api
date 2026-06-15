@@ -122,7 +122,7 @@ const (
 	// maxConcurrencyWait 等待并发槽位的最大时间
 	maxConcurrencyWait = 30 * time.Second
 	// defaultPingInterval 流式响应等待时发送 ping 的默认间隔
-	defaultPingInterval = 10 * time.Second
+	defaultPingInterval = 60 * time.Second
 	// initialBackoff 初始退避时间
 	initialBackoff = 100 * time.Millisecond
 	// backoffMultiplier 退避时间乘数（指数退避）

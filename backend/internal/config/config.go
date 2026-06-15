@@ -1992,7 +1992,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.image_concurrency.max_waiting_requests", 100)
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
-	viper.SetDefault("gateway.openai_request_header_timeout_seconds", 20)
+	viper.SetDefault("gateway.openai_request_header_timeout_seconds", 30)
 	viper.SetDefault("gateway.codex_stability.mode", GatewayCodexStabilityModeCodex)
 	viper.SetDefault("gateway.codex_stability.dynamic_header_timeout_enabled", true)
 	viper.SetDefault("gateway.codex_stability.request_phase_failover_enabled", true)

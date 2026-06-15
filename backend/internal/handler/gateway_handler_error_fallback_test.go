@@ -18,7 +18,7 @@ func TestGatewayEnsureForwardErrorResponse_WritesFallbackWhenNotWritten(t *testi
 	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 
 	h := &GatewayHandler{}
-	wrote := h.ensureForwardErrorResponse(c, false)
+	wrote := h.ensureForwardErrorResponse(c, false, false)
 
 	require.True(t, wrote)
 	require.Equal(t, http.StatusBadGateway, w.Code)
@@ -41,7 +41,7 @@ func TestGatewayEnsureForwardErrorResponse_DoesNotOverrideWrittenResponse(t *tes
 	c.String(http.StatusTeapot, "already written")
 
 	h := &GatewayHandler{}
-	wrote := h.ensureForwardErrorResponse(c, false)
+	wrote := h.ensureForwardErrorResponse(c, false, false)
 
 	require.False(t, wrote)
 	require.Equal(t, http.StatusTeapot, w.Code)

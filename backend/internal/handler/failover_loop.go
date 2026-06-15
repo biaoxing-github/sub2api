@@ -128,6 +128,14 @@ func (s *FailoverState) HandleFailoverError(
 		// 执行短时临时封禁，避免 HandleSelectionExhausted 清空失败列表后再次选中
 		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
 
+	case 529: // 529 过载
+		// 529 过载：立即切换下一账号，60s 冷却
+		logger.FromContext(ctx).Warn("gateway.failover_529_immediate_switch",
+			zap.Int64("account_id", accountID),
+		)
+		// 执行 60s 临时封禁
+		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
+
 	case http.StatusBadGateway, http.StatusGatewayTimeout: // 502/504 网关错误
 		// 502/504 网关错误：同账号重试 1 次，等待 1s
 		if s.SameAccountRetryCount[accountID] < 1 {
