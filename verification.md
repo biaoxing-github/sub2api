@@ -3294,3 +3294,15 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - DEPLOY：blue 候选 `18083` 冒烟通过，`/health`、首页、静态资源 200，未登录 `/api/v1/admin/system/version`、`/responses`、`/v1/messages` 均 401。
 - VERIFY：blue 容器健康超过 60 秒；切流后 `8080` 同组冒烟通过；blue/green 均 healthy。
 - OBSERVE：日志仅命中一次 `pq: canceling statement due to user request` 的后台清理噪声，未见 panic/fatal/migration/bind/listen tcp/rebuild failed。
+
+## 2026-06-15 21:15 +08:00 - OpenAI 与 Anthropic 异常账号探测频率限制发布
+
+- 执行者：Devil
+- 变更范围：`backend/internal/handler/failover_loop.go`、`backend/internal/handler/openai_gateway_handler.go`、`backend/internal/handler/openai_chat_completions.go`、`backend/internal/handler/openai_images.go`、`backend/internal/service/gateway_service.go`、`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/account_test_service.go`、`backend/internal/service/gateway_retry_rate_limit_test.go`、相关测试与 JSONL 记录。
+- GREEN：`go test -tags unit ./internal/service -run "TestGatewayService_AnthropicAPIKeyPassthrough_.*DoesNotSwitchRequestBaseURLOn5xx|TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensDoesNotSwitchRequestBaseURLOn5xx|TestOpenAIGatewayService_APIKeyRequestBaseURLDoesNotFailoverBeforeAccountFailover|TestGatewayService_AnthropicRetryExhaustionDoesNotDelegateSameAccountRetry|TestGatewayService_TempUnscheduleRetryableError|TestRetryBackoffDelay|TestRetryBudget|TestOpenAIWSRetryBackoff|TestProbeIntervalFromErrorCount|TestOpenAIWSReconnect" -count=1` 通过。
+- GREEN：`go test ./internal/handler -run "TestSingleAccountExhaustionBackoffDelay|TestHandleFailoverError" -count=1 -v` 通过。
+- COMMIT：提交 `3490f86a4cbc fix(gateway): 限制异常账号探测频率`。
+- BUILD：从 `git archive HEAD` 构建 `sub2api:v0.1.134.40`，镜像 ID `sha256:e192033cbb10a9a230143895558f2a0a3e4d4571901e14c7bfcc15b5a917db4a`，label revision `3490f86a4cbc`，二进制版本显示 `image: v0.1.134.40`。
+- DEPLOY：发布前 active 为 blue `sub2api:v0.1.134.39`；新版本部署到 idle green，候选端口 `18082` 的 health/home/static 200，未登录 admin version、`/responses`、`/v1/messages` 均 401，green healthy 持续 66 秒。
+- CUTOVER：`D:\sub2api-deploy\proxy\upstreams\active.conf` 切到 `sub2api-green:8080`，`nginx -t` 和 reload 通过；切流后 `8080` 与 `18081` 同组冒烟通过，green/blue 均 healthy，proxy/green 关键错误日志命中 0。
+- 风险：未做登录态管理页操作；blue `sub2api:v0.1.134.39` 保留 healthy 作为回滚目标。
