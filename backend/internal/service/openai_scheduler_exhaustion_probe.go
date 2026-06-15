@@ -353,13 +353,7 @@ func (s *OpenAIGatewayService) collectOpenAISchedulerExhaustionFailureCounts(acc
 
 func probeIntervalFromErrorCount(errorCount int) time.Duration {
 	switch {
-	case errorCount <= 1:
-		return 1 * time.Second
-	case errorCount == 2:
-		return 3 * time.Second
-	case errorCount == 3:
-		return 10 * time.Second
-	case errorCount == 4:
+	case errorCount <= 4:
 		return 30 * time.Second
 	case errorCount == 5:
 		return 1 * time.Minute

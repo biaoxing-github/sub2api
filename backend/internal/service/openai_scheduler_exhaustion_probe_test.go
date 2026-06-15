@@ -42,7 +42,7 @@ func (r *schedulerExhaustionProbeRepo) ListByPlatform(ctx context.Context, platf
 	return result, nil
 }
 
-func TestOpenAISchedulerExhaustionProbeFiniteTriesEachCandidateSixTimes(t *testing.T) {
+func TestOpenAISchedulerExhaustionProbeFiniteTriesEachCandidateTwice(t *testing.T) {
 	groupID := int64(9)
 	repo := &schedulerExhaustionProbeRepo{
 		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{
@@ -67,8 +67,8 @@ func TestOpenAISchedulerExhaustionProbeFiniteTriesEachCandidateSixTimes(t *testi
 	require.False(t, recovered)
 	require.Error(t, err)
 	require.Equal(t, 1, repo.listByGroupCalls)
-	require.Equal(t, 6, attempts[11])
-	require.Equal(t, 6, attempts[12])
+	require.Equal(t, 2, attempts[11])
+	require.Equal(t, 2, attempts[12])
 }
 
 func TestOpenAISchedulerExhaustionProbeStopsOnSuccessAndClearsRuntimeBlock(t *testing.T) {
@@ -99,7 +99,7 @@ func TestOpenAISchedulerExhaustionProbeStopsOnSuccessAndClearsRuntimeBlock(t *te
 
 	require.NoError(t, err)
 	require.True(t, recovered)
-	require.Equal(t, 6, attempts[21])
+	require.Equal(t, 2, attempts[21])
 	require.Equal(t, 2, attempts[22])
 	_, blocked := svc.SnapshotOpenAIAccountRuntimeBlock(&repo.accounts[1], time.Now())
 	require.False(t, blocked)
@@ -184,14 +184,17 @@ func TestOpenAISchedulerExhaustionProbeInfiniteNotifiesAfterThresholdAndRepeatIn
 
 	require.False(t, recovered)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Len(t, events, 2)
+	require.Len(t, events, 4)
 	require.Equal(t, openAISchedulerExhaustionNotifyPhaseWaiting, events[0].Phase)
-	require.Equal(t, 4*time.Second, events[0].Elapsed)
-	require.Equal(t, 3, events[0].Attempts)
+	require.Equal(t, 30*time.Second, events[0].Elapsed)
+	require.Equal(t, 2, events[0].Attempts)
 	require.Equal(t, openAISchedulerExhaustionNotifyPhaseWaiting, events[1].Phase)
-	require.Equal(t, 8*time.Second, events[1].Elapsed)
-	require.Equal(t, 5, events[1].Attempts)
-	require.Equal(t, "still no schedulable account", events[1].LastError)
+	require.Equal(t, 1*time.Minute, events[1].Elapsed)
+	require.Equal(t, 3, events[1].Attempts)
+	require.Equal(t, openAISchedulerExhaustionNotifyPhaseWaiting, events[3].Phase)
+	require.Equal(t, 2*time.Minute, events[3].Elapsed)
+	require.Equal(t, 5, events[3].Attempts)
+	require.Equal(t, "still no schedulable account", events[3].LastError)
 }
 
 func TestOpenAISchedulerExhaustionProbeInfiniteSendsRecoveredNotificationAfterWaitingNotification(t *testing.T) {
@@ -245,7 +248,7 @@ func TestOpenAISchedulerExhaustionProbeInfiniteSendsRecoveredNotificationAfterWa
 	require.Equal(t, openAISchedulerExhaustionNotifyPhaseRecovered, events[1].Phase)
 	require.Equal(t, int64(51), events[1].AccountID)
 	require.Equal(t, "primary-oauth", events[1].AccountName)
-	require.Equal(t, 6*time.Second, events[1].Elapsed)
+	require.Equal(t, 90*time.Second, events[1].Elapsed)
 }
 
 func TestOpenAISchedulerExhaustionProbeFeishuNotificationSendsTextPayload(t *testing.T) {
@@ -344,10 +347,10 @@ func TestProbeIntervalFromErrorCount(t *testing.T) {
 		errorCount int
 		want       time.Duration
 	}{
-		{0, 1 * time.Second},
-		{1, 1 * time.Second},
-		{2, 3 * time.Second},
-		{3, 10 * time.Second},
+		{0, 30 * time.Second},
+		{1, 30 * time.Second},
+		{2, 30 * time.Second},
+		{3, 30 * time.Second},
 		{4, 30 * time.Second},
 		{5, 1 * time.Minute},
 		{6, 5 * time.Minute},
@@ -373,8 +376,8 @@ func TestRoundDelayFromFailureCounts(t *testing.T) {
 		want   time.Duration
 	}{
 		{"empty falls back to base", nil, openAISchedulerExhaustionProbeLoopDelay},
-		{"single low count", []int64{0}, 1 * time.Second},
-		{"single mid count", []int64{3}, 10 * time.Second},
+		{"single low count", []int64{0}, 30 * time.Second},
+		{"single mid count", []int64{3}, 30 * time.Second},
 		{"max wins", []int64{1, 5, 2}, 1 * time.Minute},
 		{"high count caps", []int64{8, 1}, 60 * time.Minute},
 	}

@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// TempUnscheduler 用于 HandleFailoverError 中同账号重试耗尽后的临时封禁。
+// TempUnscheduler 用于 HandleFailoverError 中异常账号重试/切换前的临时冷却。
 // GatewayService 隐式实现此接口。
 type TempUnscheduler interface {
 	TempUnscheduleRetryableError(ctx context.Context, accountID int64, failoverErr *service.UpstreamFailoverError)
@@ -33,17 +33,20 @@ const (
 )
 
 const (
-	// maxSameAccountRetries 同账号重试次数上限（针对 RetryableOnSameAccount 错误）
-	maxSameAccountRetries = 3
-	// sameAccountRetryDelay 同账号重试间隔
-	sameAccountRetryDelay = 500 * time.Millisecond
+	// maxSameAccountRetries 同账号重试次数上限（针对 RetryableOnSameAccount 错误）。
+	// 首次请求之外只允许 1 次同账号重试，配合 30 秒间隔保证每分钟最多两次。
+	maxSameAccountRetries = 1
+	// sameAccountRetryDelay 同账号重试间隔。异常账号探测/重试必须保持 30 秒下限，
+	// 确保单账号每分钟最多产生两次上游请求。
+	sameAccountRetryDelay = 30 * time.Second
 	// defaultSingleAccountBackoffDelay 单账号分组 503 退避重试默认延时。
-	// Service 层在 SingleAccountRetry 模式下已做充分原地重试（最多 3 次、总等待 30s），
-	// Handler 层只需短暂间隔后重新进入 Service 层即可。
-	defaultSingleAccountBackoffDelay = 2 * time.Second
+	// 该值同时作为 Anthropic/Gemini 单账号容量耗尽后的最小重试间隔。
+	defaultSingleAccountBackoffDelay = 30 * time.Second
 	// maxSingleAccountExhaustionBackoffDelay 限制默认退避增长上界，避免单个请求长时间静默。
-	maxSingleAccountExhaustionBackoffDelay = 8 * time.Second
+	maxSingleAccountExhaustionBackoffDelay = 30 * time.Second
 )
+
+var failoverSleepWithContext = defaultFailoverSleepWithContext
 
 // FailoverState 跨循环迭代共享的 failover 状态
 type FailoverState struct {
@@ -74,6 +77,9 @@ func NewFailoverStateWithBackoff(maxSwitches int, hasBoundSession bool, backoffS
 	backoffTime := defaultSingleAccountBackoffDelay
 	if backoffSeconds > 0 {
 		backoffTime = time.Duration(backoffSeconds) * time.Second
+		if backoffTime < defaultSingleAccountBackoffDelay {
+			backoffTime = defaultSingleAccountBackoffDelay
+		}
 	}
 	return &FailoverState{
 		MaxSwitches:              maxSwitches,
@@ -107,6 +113,7 @@ func (s *FailoverState) HandleFailoverError(
 		// 429 限流：同账号重试，等待 RetryAfter 或固定延时
 		if s.SameAccountRetryCount[accountID] < maxSameAccountRetries {
 			s.SameAccountRetryCount[accountID]++
+			tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 			logger.FromContext(ctx).Warn("gateway.failover_429_same_account_retry",
 				zap.Int64("account_id", accountID),
 				zap.Int("same_account_retry_count", s.SameAccountRetryCount[accountID]),
@@ -118,7 +125,7 @@ func (s *FailoverState) HandleFailoverError(
 			return FailoverContinue
 		}
 		// 同账号重试用尽，执行临时封禁后切换
-		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
+		tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 
 	case http.StatusServiceUnavailable: // 503 容量不足
 		// 503 容量不足：立即切换下一账号，短暂冷却避免循环选中
@@ -126,37 +133,39 @@ func (s *FailoverState) HandleFailoverError(
 			zap.Int64("account_id", accountID),
 		)
 		// 执行短时临时封禁，避免 HandleSelectionExhausted 清空失败列表后再次选中
-		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
+		tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 
 	case 529: // 529 过载
-		// 529 过载：立即切换下一账号，60s 冷却
+		// 529 过载：立即切换下一账号，30s 冷却
 		logger.FromContext(ctx).Warn("gateway.failover_529_immediate_switch",
 			zap.Int64("account_id", accountID),
 		)
-		// 执行 60s 临时封禁
-		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
+		// 执行 30s 临时封禁
+		tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 
 	case http.StatusBadGateway, http.StatusGatewayTimeout: // 502/504 网关错误
-		// 502/504 网关错误：同账号重试 1 次，等待 1s
+		// 502/504 网关错误：同账号重试 1 次，等待 30s，避免异常账号快速探测。
 		if s.SameAccountRetryCount[accountID] < 1 {
 			s.SameAccountRetryCount[accountID]++
+			tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 			logger.FromContext(ctx).Warn("gateway.failover_5xx_gateway_retry",
 				zap.Int64("account_id", accountID),
 				zap.Int("upstream_status", statusCode),
 				zap.Int("same_account_retry_count", s.SameAccountRetryCount[accountID]),
 			)
-			if !sleepWithContext(ctx, time.Second) {
+			if !sleepWithContext(ctx, sameAccountRetryDelay) {
 				return FailoverCanceled
 			}
 			return FailoverContinue
 		}
 		// 重试用尽，执行临时封禁后切换
-		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
+		tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 
 	default:
 		// 其他错误：原有逻辑，RetryableOnSameAccount 同账号重试
 		if failoverErr.RetryableOnSameAccount && s.SameAccountRetryCount[accountID] < maxSameAccountRetries {
 			s.SameAccountRetryCount[accountID]++
+			tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 			logger.FromContext(ctx).Warn("gateway.failover_same_account_retry",
 				zap.Int64("account_id", accountID),
 				zap.Int("upstream_status", statusCode),
@@ -170,7 +179,7 @@ func (s *FailoverState) HandleFailoverError(
 		}
 		// 同账号重试用尽，执行临时封禁
 		if failoverErr.RetryableOnSameAccount {
-			gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
+			tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 		}
 	}
 
@@ -200,6 +209,13 @@ func (s *FailoverState) HandleFailoverError(
 	}
 
 	return FailoverContinue
+}
+
+func tempUnscheduleFailoverAccount(ctx context.Context, gatewayService TempUnscheduler, accountID int64, failoverErr *service.UpstreamFailoverError) {
+	if gatewayService == nil || failoverErr == nil {
+		return
+	}
+	gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
 }
 
 // HandleSelectionExhausted 处理选号失败（所有候选账号都在排除列表中）时的退避重试决策。
@@ -254,10 +270,10 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context, infiniteWa
 	return FailoverExhausted
 }
 
-// singleAccountExhaustionBackoffDelay 计算选号耗尽后的指数退避延迟。
-// 配置值作为初始退避，默认最多增长到 8 秒；若配置值本身高于 8 秒，则尊重配置值不再额外放大。
+// singleAccountExhaustionBackoffDelay 计算选号耗尽后的退避延迟。
+// 30 秒是异常账号探测下限；若配置值本身高于 30 秒，则尊重配置值不再压低。
 func singleAccountExhaustionBackoffDelay(base time.Duration, retryCount int) time.Duration {
-	if base <= 0 {
+	if base <= 0 || base < defaultSingleAccountBackoffDelay {
 		base = defaultSingleAccountBackoffDelay
 	}
 	maxDelay := maxSingleAccountExhaustionBackoffDelay
@@ -289,6 +305,20 @@ func needForceCacheBilling(hasBoundSession bool, failoverErr *service.UpstreamFa
 
 // sleepWithContext 等待指定时长，返回 false 表示 context 已取消。
 func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	return failoverSleepWithContext(ctx, d)
+}
+
+func sameAccountRetryLimit(retryLimit int) int {
+	if retryLimit <= 0 {
+		return 0
+	}
+	if retryLimit > maxSameAccountRetries {
+		return maxSameAccountRetries
+	}
+	return retryLimit
+}
+
+func defaultFailoverSleepWithContext(ctx context.Context, d time.Duration) bool {
 	if d <= 0 {
 		return true
 	}

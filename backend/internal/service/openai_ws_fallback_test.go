@@ -182,16 +182,19 @@ func TestOpenAIWSRetryBackoff(t *testing.T) {
 	svc.cfg.Gateway.OpenAIWS.RetryBackoffMaxMS = 400
 	svc.cfg.Gateway.OpenAIWS.RetryJitterRatio = 0
 
-	require.Equal(t, time.Duration(100)*time.Millisecond, svc.openAIWSRetryBackoff(1))
-	require.Equal(t, time.Duration(200)*time.Millisecond, svc.openAIWSRetryBackoff(2))
-	require.Equal(t, time.Duration(400)*time.Millisecond, svc.openAIWSRetryBackoff(3))
-	require.Equal(t, time.Duration(400)*time.Millisecond, svc.openAIWSRetryBackoff(4))
+	require.Equal(t, 30*time.Second, svc.openAIWSRetryBackoff(1))
+	require.Equal(t, 30*time.Second, svc.openAIWSRetryBackoff(2))
+	require.Equal(t, 30*time.Second, svc.openAIWSRetryBackoff(3))
+	require.Equal(t, 30*time.Second, svc.openAIWSRetryBackoff(4))
 }
 
 func TestOpenAIWSRetryTotalBudget(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}
 	svc.cfg.Gateway.OpenAIWS.RetryTotalBudgetMS = 1200
-	require.Equal(t, 1200*time.Millisecond, svc.openAIWSRetryTotalBudget())
+	require.Equal(t, time.Duration(0), svc.openAIWSRetryTotalBudget())
+
+	svc.cfg.Gateway.OpenAIWS.RetryTotalBudgetMS = 30000
+	require.Equal(t, 30*time.Second, svc.openAIWSRetryTotalBudget())
 
 	svc.cfg.Gateway.OpenAIWS.RetryTotalBudgetMS = 0
 	require.Equal(t, time.Duration(0), svc.openAIWSRetryTotalBudget())

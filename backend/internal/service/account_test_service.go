@@ -755,7 +755,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 		}
 
-		for urlIdx, requestBaseURL := range baseURLsForAttempt {
+		for _, requestBaseURL := range baseURLsForAttempt {
 			req, err := s.buildOpenAITestResponsesRequest(ctx, c, account, payloadBytes, authToken, true, "", requestBaseURL, "/v1/responses")
 			if err != nil {
 				return s.sendErrorAndEnd(c, "Failed to create request")
@@ -764,9 +764,6 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			requestStartedAt := time.Now()
 			resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.openAIUpstreamTLSProfile(account))
 			if err != nil {
-				if account.Type == AccountTypeAPIKey && isOpenAIRequestPhaseTransientError(err) && urlIdx+1 < len(baseURLsForAttempt) {
-					continue
-				}
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 			}
 
@@ -781,9 +778,6 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			if resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)
 				_ = resp.Body.Close()
-				if account.Type == AccountTypeAPIKey && shouldFailoverOpenAIRequestBaseURLResponse(resp.StatusCode, extractUpstreamErrorMessage(body), body) && urlIdx+1 < len(baseURLsForAttempt) {
-					continue
-				}
 				accountScheduled := s.scheduleOpenAIAPIKeyFromTestError(ctx, account, resp.StatusCode, body)
 				if !accountScheduled && resp.StatusCode == http.StatusTooManyRequests {
 					s.reconcileOpenAI429State(ctx, account, resp.Header, body)

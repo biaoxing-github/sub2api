@@ -51,16 +51,16 @@ const (
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
 	// OpenAI WS Mode 失败后的重连次数上限（不含首次尝试）。
-	// 与 Codex 客户端保持一致：失败后最多重连 5 次。
-	openAIWSReconnectRetryLimit = 5
+	// 异常账号只允许首次请求和 30 秒后一次重连，避免快速探测。
+	openAIWSReconnectRetryLimit = 1
 	// 上游错误体只需要提取错误 JSON/日志摘要，默认 512KiB 避免错误风暴叠加大请求体。
 	openAIUpstreamErrorBodyReadLimit int64 = 512 << 10
 	// response.failed 中明确属于账号额度/计费类的失败短期摘除当前账号，避免后续粘性路由继续复用。
 	openAIStreamAccountTempUnschedDuration = 10 * time.Minute
-	// OpenAI WS Mode 重连退避默认值（可由配置覆盖）。
-	openAIWSRetryBackoffInitialDefault = 120 * time.Millisecond
-	openAIWSRetryBackoffMaxDefault     = 2 * time.Second
-	openAIWSRetryJitterRatioDefault    = 0.2
+	// OpenAI WS Mode 重连退避默认值（可由配置覆盖，但运行时会强制 30 秒下限）。
+	openAIWSRetryBackoffInitialDefault = 30 * time.Second
+	openAIWSRetryBackoffMaxDefault     = 30 * time.Second
+	openAIWSRetryJitterRatioDefault    = 0.0
 	openAICompactSessionSeedKey        = "openai_compact_session_seed"
 	codexCLIVersion                    = "0.138.0"
 	// Codex 限额快照仅用于后台展示/诊断，不需要每个成功请求都立即落库。
@@ -901,6 +901,9 @@ func (s *OpenAIGatewayService) openAIWSRetryBackoff(attempt int) time.Duration {
 	if initial <= 0 {
 		return 0
 	}
+	if initial < 30*time.Second {
+		initial = 30 * time.Second
+	}
 	if maxBackoff <= 0 {
 		maxBackoff = initial
 	}
@@ -934,8 +937,8 @@ func (s *OpenAIGatewayService) openAIWSRetryBackoff(attempt int) time.Duration {
 	}
 	delta := time.Duration(rand.Int63n(int64(jitter)*2+1)) - jitter
 	withJitter := backoff + delta
-	if withJitter < 0 {
-		return 0
+	if withJitter < 30*time.Second {
+		return 30 * time.Second
 	}
 	return withJitter
 }
@@ -943,7 +946,7 @@ func (s *OpenAIGatewayService) openAIWSRetryBackoff(attempt int) time.Duration {
 func (s *OpenAIGatewayService) openAIWSRetryTotalBudget() time.Duration {
 	if s != nil && s.cfg != nil {
 		ms := s.cfg.Gateway.OpenAIWS.RetryTotalBudgetMS
-		if ms <= 0 {
+		if ms <= 0 || time.Duration(ms)*time.Millisecond < 30*time.Second {
 			return 0
 		}
 		return time.Duration(ms) * time.Millisecond
@@ -2978,18 +2981,6 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
 }
 
-func shouldFailoverOpenAIRequestBaseURLResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
-	classification := ClassifyUpstreamError(UpstreamErrorInput{StatusCode: statusCode, Message: upstreamMsg, Body: upstreamBody})
-	switch classification.Category {
-	case UpstreamErrorCategoryUpstream5xx, UpstreamErrorCategoryCloudflareWAF:
-		return true
-	case UpstreamErrorCategoryUpstreamError:
-		return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
-	default:
-		return false
-	}
-}
-
 func marshalOpenAIUpstreamJSON(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -3636,7 +3627,7 @@ httpRetryLoop:
 		if len(requestBaseURLs) == 0 {
 			requestBaseURLs = []string{""}
 		}
-		for urlIdx, requestBaseURL := range requestBaseURLs {
+		for _, requestBaseURL := range requestBaseURLs {
 			// Build upstream request
 			upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 			upstreamReq, err := s.buildUpstreamRequestWithBaseURL(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI, requestBaseURL)
@@ -3660,9 +3651,6 @@ httpRetryLoop:
 			if err != nil {
 				if isOpenAIRequestPhaseTransientError(err) && !isClientRequestCanceled(c) {
 					s.recordOpenAIPathHealthFailure(account, requestBaseURL, openAIPathHealthReasonForStreamReadError(err))
-					if account.Type == AccountTypeAPIKey && urlIdx+1 < len(requestBaseURLs) {
-						continue
-					}
 					if policy.Enabled && policy.RequestPhaseFailoverEnabled {
 						return nil, newOpenAIRequestPhaseFailoverError(err)
 					}
@@ -3697,9 +3685,6 @@ httpRetryLoop:
 				}
 				if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 					s.recordOpenAIPathHealthFailure(account, requestBaseURL, firstNonEmptyString(upstreamMsg, strconv.Itoa(resp.StatusCode)))
-					if account.Type == AccountTypeAPIKey && shouldFailoverOpenAIRequestBaseURLResponse(resp.StatusCode, upstreamMsg, respBody) && urlIdx+1 < len(requestBaseURLs) {
-						continue
-					}
 					upstreamDetail := ""
 					if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 						maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
@@ -3958,7 +3943,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	}
 
 	var resp *http.Response
-	for urlIdx, requestBaseURL := range requestBaseURLs {
+	for _, requestBaseURL := range requestBaseURLs {
 		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		upstreamReq, err := s.buildUpstreamRequestOpenAIPassthroughWithBaseURL(upstreamCtx, c, account, body, token, requestBaseURL)
 		releaseUpstreamCtx()
@@ -3972,9 +3957,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if err != nil {
 			if isOpenAIRequestPhaseTransientError(err) && !isClientRequestCanceled(c) {
 				s.recordOpenAIPathHealthFailure(account, requestBaseURL, openAIPathHealthReasonForStreamReadError(err))
-				if account.Type == AccountTypeAPIKey && urlIdx+1 < len(requestBaseURLs) {
-					continue
-				}
 				if policy.Enabled && policy.RequestPhaseFailoverEnabled {
 					return nil, newOpenAIRequestPhaseFailoverError(err)
 				}
@@ -3983,17 +3965,14 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 
 		if resp.StatusCode >= 400 {
-			// 透传模式默认保持原样代理；但 429/529 属于网关必须兜底的
-			// 上游容量类错误，应先触发同账号 BaseURL 切换，再进入多账号 failover。
+			// 透传模式默认保持原样代理；但 429/529 属于网关必须兜底的上游容量类错误，
+			// 直接返回 failover，让 handler 按账号级冷却和切号节奏处理。
 			if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode) {
 				respBody := s.readUpstreamErrorBody(resp)
 				_ = resp.Body.Close()
 				resp.Body = io.NopCloser(bytes.NewReader(respBody))
 				upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 				s.recordOpenAIPathHealthFailure(account, requestBaseURL, firstNonEmptyString(upstreamMsg, strconv.Itoa(resp.StatusCode)))
-				if account.Type == AccountTypeAPIKey && shouldFailoverOpenAIRequestBaseURLResponse(resp.StatusCode, upstreamMsg, respBody) && urlIdx+1 < len(requestBaseURLs) {
-					continue
-				}
 				return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body)
 			}
 			return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body)
@@ -4643,6 +4622,43 @@ func (s *OpenAIGatewayService) applyOpenAIStreamFailoverAccountState(ctx context
 		zap.Time("until", until),
 		zap.String("reason", reason),
 	)
+}
+
+// TempUnscheduleRetryableError 在 OpenAI handler 进入同账号等待或切账号前写入账号级冷却，
+// 避免其他并发请求继续命中同一个异常账号。
+func (s *OpenAIGatewayService) TempUnscheduleRetryableError(ctx context.Context, accountID int64, failoverErr *UpstreamFailoverError) {
+	if s == nil || s.accountRepo == nil || failoverErr == nil {
+		return
+	}
+	if failoverErr.StatusCode >= 500 && failoverErr.StatusCode < 600 {
+		until := time.Now().Add(30 * time.Second)
+		reason := fmt.Sprintf("%d: server error (auto temp-unschedule 30s)", failoverErr.StatusCode)
+		if failoverErr.StatusCode == http.StatusServiceUnavailable {
+			reason = "503: capacity exhausted (auto temp-unschedule 30s)"
+		}
+		if failoverErr.StatusCode == 529 {
+			if err := s.accountRepo.SetOverloaded(ctx, accountID, until); err != nil {
+				logger.L().Warn("openai.account_overloaded_set_failed", zap.Int64("account_id", accountID), zap.Error(err))
+			}
+			return
+		}
+		if err := s.accountRepo.SetTempUnschedulable(ctx, accountID, until, reason); err != nil {
+			logger.L().Warn("openai.account_temp_unschedule_5xx_failed", zap.Int64("account_id", accountID), zap.Int("status", failoverErr.StatusCode), zap.Error(err))
+		}
+		return
+	}
+	switch failoverErr.StatusCode {
+	case http.StatusTooManyRequests:
+		until := time.Now().Add(5 * time.Minute)
+		reason := "429: rate limit (auto temp-unschedule 5m)"
+		if err := s.accountRepo.SetTempUnschedulable(ctx, accountID, until, reason); err != nil {
+			logger.L().Warn("openai.account_temp_unschedule_429_failed", zap.Int64("account_id", accountID), zap.Error(err))
+		}
+	case http.StatusBadRequest:
+		if failoverErr.RetryableOnSameAccount {
+			tempUnscheduleGoogleConfigError(ctx, s.accountRepo, accountID, "[openai-handler]")
+		}
+	}
 }
 
 func (s *OpenAIGatewayService) newOpenAIResponseTextFailoverError(ctx context.Context, c *gin.Context, account *Account, passthrough bool, upstreamRequestID string, match openAIResponseTextErrorMatch) *UpstreamFailoverError {

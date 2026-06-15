@@ -1556,7 +1556,7 @@ func TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledDoesNotFailoverW
 	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", upstream.lastReq.URL.String())
 }
 
-func TestOpenAIGatewayService_APIKeyRequestBaseURLFailoverBeforeAccountFailover(t *testing.T) {
+func TestOpenAIGatewayService_APIKeyRequestBaseURLDoesNotFailoverBeforeAccountFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -1593,13 +1593,15 @@ func TestOpenAIGatewayService_APIKeyRequestBaseURLFailoverBeforeAccountFailover(
 	}
 
 	result, err := svc.Forward(context.Background(), c, account, originalBody)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Len(t, upstream.requests, 2)
+	require.Error(t, err)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Len(t, upstream.requests, 1, "OpenAI 5xx/传输异常不应在同一账号内立即切换 request_base_urls")
 	require.Equal(t, "https://bad.example.com/v1/responses", upstream.requests[0].URL.String())
-	require.Equal(t, "https://good.example.com/v1/responses", upstream.requests[1].URL.String())
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"resp_1"`)
+	require.Empty(t, rec.Body.String())
 }
 
 func TestOpenAIStreamingResponseFailedBeforeOutputReturnsFailover(t *testing.T) {

@@ -43,8 +43,8 @@ type OpenAIGatewayHandler struct {
 
 const (
 	openAIResponsesUpstreamRequestBodyMaxBytes = 32 * 1024 * 1024
-	openAIFailoverRetryDelay                   = 2 * time.Second
-	openAIFailoverRetryMaxDelay                = 8 * time.Second
+	openAIFailoverRetryDelay                   = 30 * time.Second
+	openAIFailoverRetryMaxDelay                = 30 * time.Second
 	openAIFailoverRetryMaxWait                 = 30 * time.Second
 )
 
@@ -620,9 +620,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						return
 					}
 					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+					tempUnscheduleFailoverAccount(c.Request.Context(), h.gatewayService, account.ID, failoverErr)
 					// 池模式：同账号重试
 					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
+						retryLimit := sameAccountRetryLimit(account.GetPoolModeRetryCount())
 						if sameAccountRetryCount[account.ID] < retryLimit {
 							sameAccountRetryCount[account.ID]++
 							reqLog.Warn("openai.pool_mode_same_account_retry",
@@ -1064,9 +1065,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+					tempUnscheduleFailoverAccount(c.Request.Context(), h.gatewayService, account.ID, failoverErr)
 					// 池模式：同账号重试
 					if failoverErr.RetryableOnSameAccount {
-						retryLimit := account.GetPoolModeRetryCount()
+						retryLimit := sameAccountRetryLimit(account.GetPoolModeRetryCount())
 						if sameAccountRetryCount[account.ID] < retryLimit {
 							sameAccountRetryCount[account.ID]++
 							reqLog.Warn("openai_messages.pool_mode_same_account_retry",
@@ -1932,6 +1934,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			if errors.As(err, &failoverErr) {
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
 				releaseAccountSlot()
+				tempUnscheduleFailoverAccount(c.Request.Context(), h.gatewayService, account.ID, failoverErr)
 				failedAccountIDs[account.ID] = struct{}{}
 				lastFailoverErr = failoverErr
 				if switchCount >= maxAccountSwitches {

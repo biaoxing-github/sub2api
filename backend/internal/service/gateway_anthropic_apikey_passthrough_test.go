@@ -278,7 +278,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardCountTokensPreservesBo
 	require.Empty(t, rec.Header().Get("Set-Cookie"))
 }
 
-func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardSwitchesRequestBaseURLOn5xx(t *testing.T) {
+func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardDoesNotSwitchRequestBaseURLOn5xx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -311,7 +311,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardSwitchesRequestBaseURL
 	svc := &GatewayService{
 		cfg:              &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
 		httpUpstream:     upstream,
-		rateLimitService: &RateLimitService{},
+		rateLimitService: NewRateLimitService(&errorPolicyRepoStub{}, nil, &config.Config{}, nil, nil),
 	}
 	account := newAnthropicAPIKeyAccountForTest()
 	account.Credentials["base_url"] = "https://primary-anthropic.example.com"
@@ -319,20 +319,22 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardSwitchesRequestBaseURL
 		"https://primary-anthropic.example.com",
 		"https://backup-anthropic.example.com/",
 	}
+	account.Credentials["custom_error_codes_enabled"] = true
+	account.Credentials["custom_error_codes"] = []any{float64(http.StatusBadGateway)}
 
 	result, err := svc.Forward(context.Background(), c, account, parsed)
 
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Len(t, upstream.requests, 2)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Len(t, upstream.requests, 1, "5xx 不应在同一账号内立即切换 request_base_urls")
 	require.Equal(t, "https://primary-anthropic.example.com/v1/messages?beta=true", upstream.requests[0].URL.String())
-	require.Equal(t, "https://backup-anthropic.example.com/v1/messages?beta=true", upstream.requests[1].URL.String())
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.JSONEq(t, upstreamJSON, rec.Body.String())
-	require.Equal(t, "rid-backup", result.RequestID)
+	require.Empty(t, rec.Body.String(), "failover 前不能向客户端写入 backup base URL 的响应")
 }
 
-func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensSwitchesRequestBaseURLOn5xx(t *testing.T) {
+func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensDoesNotSwitchRequestBaseURLOn5xx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -364,7 +366,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensSwitchesRequestBas
 	svc := &GatewayService{
 		cfg:              &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}},
 		httpUpstream:     upstream,
-		rateLimitService: &RateLimitService{},
+		rateLimitService: NewRateLimitService(&errorPolicyRepoStub{}, nil, &config.Config{}, nil, nil),
 	}
 	account := newAnthropicAPIKeyAccountForTest()
 	account.Credentials["base_url"] = "https://primary-anthropic.example.com"
@@ -375,12 +377,11 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_CountTokensSwitchesRequestBas
 
 	err := svc.ForwardCountTokens(context.Background(), c, account, parsed)
 
-	require.NoError(t, err)
-	require.Len(t, upstream.requests, 2)
+	require.Error(t, err)
+	require.Len(t, upstream.requests, 1, "count_tokens 5xx 不应在同一账号内立即切换 request_base_urls")
 	require.Equal(t, "https://primary-anthropic.example.com/v1/messages/count_tokens?beta=true", upstream.requests[0].URL.String())
-	require.Equal(t, "https://backup-anthropic.example.com/v1/messages/count_tokens?beta=true", upstream.requests[1].URL.String())
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.JSONEq(t, upstreamJSON, rec.Body.String())
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Contains(t, rec.Body.String(), "Upstream request failed")
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_FormatContentIssueTriggersFailover(t *testing.T) {
