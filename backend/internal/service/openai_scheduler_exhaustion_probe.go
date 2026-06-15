@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	openAISchedulerExhaustionProbeAttemptsPerAccount = 6
-	openAISchedulerExhaustionProbeLoopDelay          = 2 * time.Second
+	openAISchedulerExhaustionProbeAttemptsPerAccount = 2
+	openAISchedulerExhaustionProbeLoopDelay          = 30 * time.Second
 	openAISchedulerExhaustionProbeBodyReadLimit      = 1 << 20
 )
 
@@ -158,6 +158,16 @@ func isOpenAISchedulerExhaustionProbeCandidate(ctx context.Context, account *Acc
 	if account.AutoPauseOnExpired && account.ExpiresAt != nil && !time.Now().Before(*account.ExpiresAt) {
 		return false
 	}
+
+	// 跳过冷却中的账号，避免无效探测
+	now := time.Now()
+	if account.OverloadUntil != nil && account.OverloadUntil.After(now) {
+		return false
+	}
+	if account.TempUnschedulableUntil != nil && account.TempUnschedulableUntil.After(now) {
+		return false
+	}
+
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
 		return false
 	}

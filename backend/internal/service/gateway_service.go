@@ -627,6 +627,17 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 		if failoverErr.RetryableOnSameAccount {
 			tempUnscheduleEmptyResponse(ctx, s.accountRepo, accountID, "[handler]")
 		}
+	default:
+		// 通用 5xx 兜底：封禁 30s，避免单账号死循环（保证 1 分钟最多 2-3 次）
+		if failoverErr.StatusCode >= 500 && failoverErr.StatusCode < 600 {
+			until := time.Now().Add(30 * time.Second)
+			reason := fmt.Sprintf("%d: server error (auto temp-unschedule 30s)", failoverErr.StatusCode)
+			if err := s.accountRepo.SetTempUnschedulable(ctx, accountID, until, reason); err != nil {
+				slog.Warn("temp_unschedule_5xx_failed", "account_id", accountID, "status", failoverErr.StatusCode, "error", err)
+			} else {
+				slog.Info("temp_unschedule_5xx", "account_id", accountID, "status", failoverErr.StatusCode, "until", until.Format("15:04:05"), "reason", reason)
+			}
+		}
 	}
 }
 
