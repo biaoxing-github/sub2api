@@ -3274,3 +3274,23 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - DEPLOY：发布前 active 为 blue `sub2api:v0.1.134.37`；新版本部署到 idle green，候选端口 `18082` 验证 `/health` 200、首页 200、静态资源 `/assets/index-CN6LQCCL.js` 200、未登录 `/api/v1/admin/system/version`/`/responses`/`/v1/messages` 均 401。
 - CUTOVER：`D:\sub2api-deploy\proxy\upstreams\active.conf` 切到 `sub2api-green:8080`，`docker exec sub2api-proxy nginx -t` 通过，`docker exec sub2api-proxy nginx -s reload` 成功；切流后 `8080` 同一组冒烟通过。
 - 风险：未做登录态管理端浏览器保存操作；已用 handler/service/typecheck 覆盖保存与类型链路。blue `sub2api:v0.1.134.37` 保持 healthy，可按 release note 秒级切回。
+
+## 2026-06-15 11:07 +08:00 - 账号管理页高密度总览布局
+
+- 执行者：Devil
+- 变更范围：`frontend/src/views/admin/AccountsView.vue`、`frontend/src/components/common/DataTable.vue`、`docs/feature_list.jsonl`、`docs/process_list.jsonl`
+- GREEN：`npm run typecheck` 通过。
+- GREEN：`npm run build` 通过；仅保留既有 Vite dynamic-import/chunk 体积警告。
+- GREEN：Playwright mock 数据验证账号管理页桌面布局：1366、1440、1920 宽度下 `wrapperOverflowX=0`、`wrapperScrollLeft=0`、body 无正向横向溢出；行高约 311/291/199 px；截图保存为 `.codex/accounts-layout-after-1366.png`、`.codex/accounts-layout-after-1440.png`、`.codex/accounts-layout-after-1920.png`。
+- 风险：移动端仍走 DataTable 卡片路径，本轮主要解决桌面“大页面一次看齐、无需左右滑动”的账号管理体验；未提交、未部署。
+
+## 2026-06-15 16:54 +08:00 - 账号管理页高密度总览布局发布
+
+- 执行者：Devil
+- 变更范围：`frontend/src/views/admin/AccountsView.vue`、`frontend/src/components/common/DataTable.vue`
+- GREEN：`npm run typecheck` 通过。
+- GREEN：`npm run build` 通过，只有既有 chunk size 警告。
+- BUILD：提交 `488015772fb1` 从 `git archive HEAD` 构建 `sub2api:v0.1.134.39`，镜像 revision `488015772fb1`，镜像 ID `sha256:f680eb1894586023a62a63c7a7833410601cfda06cc7bb81e1b6d96e954e80f8`。
+- DEPLOY：blue 候选 `18083` 冒烟通过，`/health`、首页、静态资源 200，未登录 `/api/v1/admin/system/version`、`/responses`、`/v1/messages` 均 401。
+- VERIFY：blue 容器健康超过 60 秒；切流后 `8080` 同组冒烟通过；blue/green 均 healthy。
+- OBSERVE：日志仅命中一次 `pq: canceling statement due to user request` 的后台清理噪声，未见 panic/fatal/migration/bind/listen tcp/rebuild failed。
