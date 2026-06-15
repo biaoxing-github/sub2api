@@ -66,10 +66,16 @@
     class="table-wrapper"
     :class="{
       'actions-expanded': actionsExpanded,
-      'is-scrollable': isScrollable
+      'is-scrollable': isScrollable,
+      'fit-width-table': fitWidth
     }"
   >
-    <table class="w-full min-w-max divide-y divide-gray-200 dark:divide-dark-700">
+    <table
+      :class="[
+        'w-full divide-y divide-gray-200 dark:divide-dark-700',
+        fitWidth ? 'min-w-full table-fixed' : 'min-w-max'
+      ]"
+    >
       <thead class="table-header bg-gray-50 dark:bg-dark-800">
         <tr>
           <th
@@ -361,6 +367,8 @@ interface Props {
   estimateRowHeight?: number
   /** Number of rows to render beyond the visible area (default 5) */
   overscan?: number
+  /** Keep the table inside the viewport and let rich cells wrap instead of forcing horizontal scroll. */
+  fitWidth?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -369,7 +377,8 @@ const props = withDefaults(defineProps<Props>(), {
   stickyActionsColumn: true,
   expandableActions: true,
   defaultSortOrder: 'asc',
-  serverSideSort: false
+  serverSideSort: false,
+  fitWidth: false
 })
 
 const sortKey = ref<string>('')
@@ -611,6 +620,10 @@ const hasSelectColumn = computed(() => {
 const getStickyColumnClass = (column: Column, index: number) => {
   const classes: string[] = []
 
+  if (props.fitWidth) {
+    return ''
+  }
+
   if (props.stickyFirstColumn) {
     // 如果第一列是勾选列，固定前两列（勾选+名称）
     if (hasSelectColumn.value) {
@@ -638,6 +651,10 @@ const getStickyColumnClass = (column: Column, index: number) => {
 // 根据列数自适应调整内边距
 const getAdaptivePaddingClass = () => {
   const columnCount = props.columns.length
+
+  if (props.fitWidth) {
+    return 'px-2'
+  }
 
   // 列数越多，内边距越小
   if (columnCount >= 10) {
@@ -714,6 +731,10 @@ defineExpose({
   flex: 1;
   min-height: 0;
   isolation: isolate;
+}
+
+.table-wrapper.fit-width-table {
+  overflow-x: hidden;
 }
 
 /* 表头容器，确保在滚动时覆盖表体内容 */

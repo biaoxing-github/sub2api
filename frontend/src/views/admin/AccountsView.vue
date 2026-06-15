@@ -255,8 +255,9 @@
           default-sort-key="name"
           default-sort-order="asc"
           :sort-storage-key="ACCOUNT_SORT_STORAGE_KEY"
-          :estimate-row-height="72"
+          :estimate-row-height="152"
           :overscan="5"
+          :fit-width="useCompactAccountTable"
         >
           <template #header-select>
             <input
@@ -271,18 +272,145 @@
             <input type="checkbox" :checked="isSelected(row.id)" @change="toggleSel(row.id)" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
           </template>
           <template #cell-name="{ row, value }">
-            <div class="flex min-w-0 flex-col gap-1">
-              <div class="flex min-w-0 flex-wrap items-center gap-1.5">
-                <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
-                <AccountAvailabilityRadarBadge :advice="row.load_factor_advice" />
+            <div class="account-overview">
+              <div class="account-overview-head">
+                <div class="min-w-0">
+                  <div class="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <span class="truncate text-sm font-semibold text-gray-950 dark:text-white">{{ value }}</span>
+                    <AccountAvailabilityRadarBadge :advice="row.load_factor_advice" />
+                    <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
+                  </div>
+                  <div class="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+                    <span
+                      v-if="row.extra?.email_address || row.extra?.email || row.credentials?.email"
+                      class="max-w-[22rem] truncate"
+                      :title="String(row.extra?.email_address || row.extra?.email || row.credentials?.email)"
+                    >
+                      {{ row.extra?.email_address || row.extra?.email || row.credentials?.email }}
+                    </span>
+                    <span v-if="row.notes" class="max-w-[22rem] truncate text-gray-600 dark:text-gray-300" :title="row.notes">
+                      {{ row.notes }}
+                    </span>
+                  </div>
+                </div>
+                <div class="account-overview-schedule">
+                  <span class="text-[10px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                    {{ t('admin.accounts.columns.schedulable') }}
+                  </span>
+                  <button
+                    @click="handleToggleSchedulable(row)"
+                    :disabled="togglingSchedulable === row.id"
+                    class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-dark-800"
+                    :class="[row.schedulable ? 'bg-primary-500 hover:bg-primary-600' : 'bg-gray-200 hover:bg-gray-300 dark:bg-dark-600 dark:hover:bg-dark-500']"
+                    :title="row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled')"
+                  >
+                    <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="[row.schedulable ? 'translate-x-4' : 'translate-x-0']" />
+                  </button>
+                </div>
               </div>
-              <span
-                v-if="row.extra?.email_address || row.extra?.email || row.credentials?.email"
-                class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]"
-                :title="String(row.extra?.email_address || row.extra?.email || row.credentials?.email)"
-              >
-                {{ row.extra?.email_address || row.extra?.email || row.credentials?.email }}
-              </span>
+
+              <div class="account-overview-grid">
+                <section class="account-overview-section">
+                  <span class="account-overview-label">{{ t('admin.accounts.columns.platformType') }}</span>
+                  <div class="flex min-w-0 flex-wrap items-center gap-1">
+                    <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
+                    <span
+                      v-if="getAntigravityTierLabel(row)"
+                      :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
+                    >
+                      {{ getAntigravityTierLabel(row) }}
+                    </span>
+                  </div>
+                  <div
+                    v-if="getOpenAICompactMeta(row)"
+                    :class="[
+                      'mt-1 inline-flex items-center gap-1.5 text-[11px] font-medium leading-4',
+                      getOpenAICompactMeta(row)?.className
+                    ]"
+                    :title="getOpenAICompactTitle(row)"
+                  >
+                    <span :class="['h-1.5 w-1.5 rounded-full', getOpenAICompactMeta(row)?.dotClass]" />
+                    <span>{{ getOpenAICompactMeta(row)?.label }}</span>
+                  </div>
+                </section>
+
+                <section class="account-overview-section">
+                  <span class="account-overview-label">{{ t('admin.accounts.columns.capacity') }}</span>
+                  <AccountCapacityCell :account="row" />
+                </section>
+
+                <section class="account-overview-section account-overview-section-wide">
+                  <span class="account-overview-label">{{ t('admin.accounts.columns.usageWindows') }}</span>
+                  <div class="mb-1 flex flex-wrap gap-1.5">
+                    <span class="account-metric-chip">
+                      {{ t('admin.accounts.columns.totalRequests') }} {{ formatNumber(row.total_requests ?? 0) }}
+                    </span>
+                    <span class="account-metric-chip">
+                      {{ t('admin.accounts.columns.totalAccountCost') }} {{ formatCurrency(row.total_account_cost ?? 0) }}
+                    </span>
+                  </div>
+                  <AccountUsageCell
+                    :account="row"
+                    :today-stats="todayStatsByAccountId[String(row.id)] ?? null"
+                    :today-stats-loading="todayStatsLoading"
+                    :manual-refresh-token="usageManualRefreshToken"
+                  />
+                </section>
+
+                <section class="account-overview-section">
+                  <span class="account-overview-label">{{ t('admin.accounts.columns.upstreamBalance') }}</span>
+                  <template v-if="row.upstream_balance">
+                    <div class="flex flex-wrap gap-1.5">
+                      <span class="account-metric-chip text-blue-700 dark:text-blue-300">
+                        {{ t('admin.accounts.upstreamBalanceActual') }} {{ formatCurrency(row.upstream_balance.available || 0) }}
+                      </span>
+                      <span v-if="formatConvertedGroups(row.upstream_balance)" class="account-metric-chip text-emerald-700 dark:text-emerald-300" :title="formatConvertedGroups(row.upstream_balance, false)">
+                        {{ t('admin.accounts.upstreamBalanceUsable') }} {{ formatConvertedGroups(row.upstream_balance) }}
+                      </span>
+                      <span class="account-metric-chip">
+                        {{ t('admin.accounts.upstreamBalanceKeys', { ok: row.upstream_balance.ok_count || 0, total: row.upstream_balance.key_count || 0 }) }}
+                      </span>
+                      <span v-if="row.upstream_balance.failed_count" class="account-metric-chip text-amber-700 dark:text-amber-300">
+                        {{ t('admin.accounts.upstreamBalanceFailed', { count: row.upstream_balance.failed_count }) }}
+                      </span>
+                    </div>
+                    <div v-if="formatUpstreamGroups(row.upstream_balance.groups)" class="mt-1 truncate text-[11px] text-violet-600 dark:text-violet-300" :title="formatUpstreamGroups(row.upstream_balance.groups)">
+                      {{ formatUpstreamGroups(row.upstream_balance.groups) }}
+                    </div>
+                  </template>
+                  <span v-else class="text-xs text-gray-400 dark:text-dark-500">-</span>
+                </section>
+
+                <section class="account-overview-section">
+                  <span class="account-overview-label">{{ t('admin.accounts.columns.groups') }}</span>
+                  <AccountGroupsCell :groups="row.groups" :max-display="3" />
+                  <div class="mt-1 flex flex-wrap gap-1.5">
+                    <span class="account-metric-chip">
+                      {{ t('admin.accounts.columns.priority') }} {{ row.priority }}
+                    </span>
+                    <span class="account-metric-chip">
+                      {{ t('admin.accounts.columns.billingRateMultiplier') }} {{ (row.rate_multiplier ?? 1).toFixed(2) }}x
+                    </span>
+                    <span v-if="row.proxy" class="account-metric-chip truncate" :title="row.proxy.name">
+                      {{ t('admin.accounts.columns.proxy') }} {{ row.proxy.name }}<template v-if="row.proxy.country_code"> ({{ row.proxy.country_code }})</template>
+                    </span>
+                  </div>
+                </section>
+
+                <section class="account-overview-section">
+                  <span class="account-overview-label">{{ t('admin.accounts.columns.createdAt') }}</span>
+                  <div class="grid grid-cols-1 gap-0.5 text-[11px] text-gray-600 dark:text-gray-300">
+                    <span>{{ formatAccountCreatedAt(row.created_at) }} · {{ formatAccountAge(row.created_at) }}</span>
+                    <span>{{ t('admin.accounts.columns.lastUsed') }} {{ formatRelativeTime(row.last_used_at) }}</span>
+                    <span>
+                      {{ t('admin.accounts.columns.expiresAt') }} {{ formatExpiresAt(row.expires_at) }}
+                      <span v-if="isExpired(row.expires_at)" class="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                        {{ t('admin.accounts.expired') }}
+                      </span>
+                    </span>
+                  </div>
+                </section>
+              </div>
             </div>
           </template>
           <template #cell-notes="{ value }">
@@ -435,28 +563,28 @@
             </div>
           </template>
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
+            <div class="flex items-center justify-end gap-1">
               <button
                 v-if="canRefreshUpstreamBalance(row)"
                 @click="handleRefreshUpstreamBalance(row)"
                 :disabled="refreshingUpstreamBalanceIds.has(row.id)"
                 :title="t('admin.accounts.refreshUpstreamBalance')"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-blue-900/20 dark:hover:text-blue-300"
+                class="account-row-icon-button hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-blue-900/20 dark:hover:text-blue-300"
               >
                 <Icon name="refresh" size="sm" :class="{ 'animate-spin': refreshingUpstreamBalanceIds.has(row.id) }" />
-                <span class="text-xs">{{ t('admin.accounts.refreshBalanceShort') }}</span>
+                <span class="sr-only">{{ t('admin.accounts.refreshBalanceShort') }}</span>
               </button>
-              <button @click="handleEdit(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>
-                <span class="text-xs">{{ t('common.edit') }}</span>
+              <button @click="handleEdit(row)" :title="t('common.edit')" class="account-row-icon-button hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400">
+                <Icon name="edit" size="sm" />
+                <span class="sr-only">{{ t('common.edit') }}</span>
               </button>
-              <button @click="handleDelete(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-                <span class="text-xs">{{ t('common.delete') }}</span>
+              <button @click="handleDelete(row)" :title="t('common.delete')" class="account-row-icon-button hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400">
+                <Icon name="trash" size="sm" />
+                <span class="sr-only">{{ t('common.delete') }}</span>
               </button>
-              <button @click="openMenu(row, $event)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white">
-                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" /></svg>
-                <span class="text-xs">{{ t('common.more') }}</span>
+              <button @click="openMenu(row, $event)" :title="t('common.more')" class="account-row-icon-button hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-700 dark:hover:text-white">
+                <Icon name="more" size="sm" />
+                <span class="sr-only">{{ t('common.more') }}</span>
               </button>
             </div>
           </template>
@@ -1070,8 +1198,27 @@ const bulkRefreshErrors = ref<Array<{ account_id: number; account_name: string; 
 const showAccountToolsDropdown = ref(false)
 const accountToolsDropdownRef = ref<HTMLElement | null>(null)
 const hiddenColumns = reactive<Set<string>>(new Set())
-const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'rate_multiplier']
-const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
+const DETAIL_COLUMN_KEYS = [
+  'platform_type',
+  'capacity',
+  'status',
+  'schedulable',
+  'today_stats',
+  'groups',
+  'usage',
+  'total_account_cost',
+  'total_requests',
+  'upstream_balance',
+  'proxy',
+  'priority',
+  'rate_multiplier',
+  'created_at',
+  'last_used_at',
+  'expires_at',
+  'notes'
+]
+const DEFAULT_HIDDEN_COLUMNS = [...DETAIL_COLUMN_KEYS]
+const HIDDEN_COLUMNS_KEY = 'account-hidden-columns-v2'
 
 // Sorting settings
 const ACCOUNT_SORT_STORAGE_KEY = 'account-table-sort'
@@ -1271,16 +1418,7 @@ const buildDefaultTodayStats = (): WindowStats => ({
 })
 
 const refreshTodayStatsBatch = async () => {
-  // Why this checks both columns:
-  // - today_stats column shows dedicated today's metrics.
-  // - usage column also embeds today's stats for Key/Bedrock rows.
-  // So we only skip fetching when BOTH columns are hidden.
-  if (hiddenColumns.has('today_stats') && hiddenColumns.has('usage')) {
-    todayStatsLoading.value = false
-    todayStatsError.value = null
-    return
-  }
-
+  // 账号总览卡片始终展示今日/窗口用量，因此不再依据详细列开关跳过批量统计。
   const accountIDs = accounts.value.map(account => account.id)
   const reqSeq = ++todayStatsReqSeq.value
   if (accountIDs.length === 0) {
@@ -1904,30 +2042,30 @@ function getAntigravityTierClass(row: any): string {
 // All available columns
 const allColumns = computed(() => {
   const c = [
-    { key: 'select', label: '', sortable: false },
-    { key: 'name', label: t('admin.accounts.columns.name'), sortable: true },
-    { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false },
-    { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false },
-    { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
-    { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
-    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false }
+    { key: 'select', label: '', sortable: false, class: 'w-[3.25rem] max-w-[3.25rem]' },
+    { key: 'name', label: t('admin.accounts.columns.name'), sortable: true, class: 'min-w-0 align-top !whitespace-normal' },
+    { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false, class: 'align-top' },
+    { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false, class: 'align-top' },
+    { key: 'status', label: t('admin.accounts.columns.status'), sortable: true, class: 'align-top' },
+    { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true, class: 'align-top' },
+    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false, class: 'align-top' }
   ]
   if (!authStore.isSimpleMode) {
-    c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false })
+    c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false, class: 'align-top' })
   }
   c.push(
-    { key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false },
-    { key: 'total_account_cost', label: t('admin.accounts.columns.totalAccountCost'), sortable: true },
-    { key: 'total_requests', label: t('admin.accounts.columns.totalRequests'), sortable: true },
-    { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false },
-    { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
-    { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
-    { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
-    { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true },
-    { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },
-    { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true },
-    { key: 'notes', label: t('admin.accounts.columns.notes'), sortable: false },
-    { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false }
+    { key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false, class: 'align-top' },
+    { key: 'total_account_cost', label: t('admin.accounts.columns.totalAccountCost'), sortable: true, class: 'align-top' },
+    { key: 'total_requests', label: t('admin.accounts.columns.totalRequests'), sortable: true, class: 'align-top' },
+    { key: 'upstream_balance', label: t('admin.accounts.columns.upstreamBalance'), sortable: false, class: 'align-top' },
+    { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false, class: 'align-top' },
+    { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true, class: 'align-top' },
+    { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true, class: 'align-top' },
+    { key: 'created_at', label: t('admin.accounts.columns.createdAt'), sortable: true, class: 'align-top' },
+    { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true, class: 'align-top' },
+    { key: 'expires_at', label: t('admin.accounts.columns.expiresAt'), sortable: true, class: 'align-top' },
+    { key: 'notes', label: t('admin.accounts.columns.notes'), sortable: false, class: 'align-top' },
+    { key: 'actions', label: t('admin.accounts.columns.actions'), sortable: false, class: 'w-32 max-w-[8rem] align-top' }
   )
   return c
 })
@@ -1942,6 +2080,10 @@ const cols = computed(() =>
   allColumns.value.filter(col =>
     col.key === 'select' || col.key === 'name' || col.key === 'actions' || !hiddenColumns.has(col.key)
   )
+)
+
+const useCompactAccountTable = computed(() =>
+  cols.value.every(col => col.key === 'select' || col.key === 'name' || col.key === 'actions')
 )
 
 const handleEdit = (a: Account) => { edAcc.value = a; showEdit.value = true }
@@ -2687,5 +2829,41 @@ onUnmounted(() => {
 
 .account-tools-menu-icon {
   @apply inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md;
+}
+
+.account-overview {
+  @apply min-w-0 rounded-lg border border-gray-100 bg-gray-50/70 p-2.5 dark:border-dark-700 dark:bg-dark-800/60;
+}
+
+.account-overview-head {
+  @apply flex min-w-0 flex-col gap-2 border-b border-gray-200/70 pb-1.5 dark:border-dark-700 sm:flex-row sm:items-start sm:justify-between;
+}
+
+.account-overview-schedule {
+  @apply flex shrink-0 items-center gap-2 rounded-md bg-white px-2 py-1 dark:bg-dark-900;
+}
+
+.account-overview-grid {
+  @apply mt-1.5 grid min-w-0 grid-cols-1 gap-1.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7;
+}
+
+.account-overview-section {
+  @apply min-w-0 rounded-md bg-white px-2 py-1.5 ring-1 ring-gray-100 dark:bg-dark-900 dark:ring-dark-700;
+}
+
+.account-overview-section-wide {
+  @apply lg:col-span-2 xl:col-span-2 2xl:col-span-2;
+}
+
+.account-overview-label {
+  @apply mb-1 block text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500;
+}
+
+.account-metric-chip {
+  @apply inline-flex max-w-full items-center rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium leading-4 text-gray-600 dark:bg-dark-700 dark:text-gray-300;
+}
+
+.account-row-icon-button {
+  @apply inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors;
 }
 </style>
