@@ -206,10 +206,11 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
 		Result: &OpenAIForwardResult{
-			RequestID: "resp_zero_usage",
-			Usage:     OpenAIUsage{},
-			Model:     "gpt-5.1",
-			Duration:  time.Second,
+			RequestID:     "resp_zero_usage",
+			Usage:         OpenAIUsage{},
+			UsageObserved: true,
+			Model:         "gpt-5.1",
+			Duration:      time.Second,
 		},
 		APIKey:        &APIKey{ID: 1000, Quota: 100, Group: &Group{RateMultiplier: 1}},
 		User:          &User{ID: 2000},
@@ -244,6 +245,31 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 	require.Zero(t, billingRepo.lastCmd.APIKeyQuotaCost)
 	require.Zero(t, billingRepo.lastCmd.APIKeyRateLimitCost)
 	require.Zero(t, billingRepo.lastCmd.AccountQuotaCost)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_MissingObservedUsageRejectsUsageLog(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, nil, nil, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:     "resp_missing_usage",
+			Usage:         OpenAIUsage{},
+			UsageObserved: false,
+			UsageMissing:  true,
+			Model:         "gpt-5.5",
+			Duration:      time.Second,
+		},
+		APIKey:  &APIKey{ID: 1001, Quota: 100, Group: &Group{RateMultiplier: 1}},
+		User:    &User{ID: 2001},
+		Account: &Account{ID: 3001, Type: AccountTypeAPIKey},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "usage was not observed")
+	require.Zero(t, billingRepo.calls)
+	require.Zero(t, usageRepo.calls)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_FeedsPathHealthSample(t *testing.T) {

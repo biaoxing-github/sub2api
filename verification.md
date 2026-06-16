@@ -3318,3 +3318,30 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - DEPLOY：发布前 active 为 green `sub2api:v0.1.134.40`；新版本部署到 idle blue，候选端口 `18083` 的 health/home/static 200，未登录 admin version、`/responses`、`/v1/messages` 均 401，blue healthy 持续 65 秒。
 - CUTOVER：`D:\sub2api-deploy\proxy\upstreams\active.conf` 切到 `sub2api-blue:8080`，`nginx -t` 和 reload 通过；切流后 `8080` 与 `18081` 同组冒烟通过，blue/green 均 healthy，proxy/blue 关键错误日志命中 0。
 - 风险：未做登录态管理端页面操作；green `sub2api:v0.1.134.40` 保留 healthy 作为回滚目标。
+
+## 2026-06-16 13:21 +08:00 - free-rawchat 账号隔离调用验证
+
+- 执行者：Devil
+- 范围：线上 active `sub2api-blue` / `sub2api:v0.1.134.41`，账号 `free-rawchat` `account_id=470`，模型 `gpt-5.3-codex`。
+- VERIFY：创建临时隔离 group/key，只绑定 `account_id=470`，经入口 `http://127.0.0.1:8080/responses` 发起 OpenAI Responses 流式请求；日志确认临时 key 请求进入 `group_id=28`，随后上游调用命中 `account_id=470`。
+- FAIL：上游返回 HTTP 403，错误码 `codex_access_restricted`，错误消息为“请使用最新版的codex客户端或codex cli调用”。因为临时组只有这一个账号，failover 后调度器持续 `no available OpenAI accounts supporting model: gpt-5.3-codex`，客户端侧最终超时。
+- CLEANUP：临时 group/key 已全部软删除或停用，`free-rawchat` 已恢复为原始状态：`schedulable=false`，只绑定回 `group_id=2`，临时不可调度与 error_message 字段为空。
+- 结论：passes:false；sub2api 能调度并调用到 `free-rawchat`，但该账号上游拒绝 Codex 形状请求，当前不能作为可通过账号使用。
+
+## 2026-06-16 16:08 +08:00 - gptai-plus 缺终态流和手动探测恢复修复
+
+- 执行者：Devil
+- 变更范围：`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/account_probe.go`、`backend/internal/handler/admin/account_handler.go` 及对应 service/handler 回归测试。
+- 证据：线上 `sub2api-blue` / `sub2api:v0.1.134.41` 日志显示 `gptai-plus` `account_id=434` 的 `/responses` 流在已有输出后缺少 terminal event，旧逻辑返回 `stream usage incomplete: missing terminal event` 并让客户端快速终止；数据库显示该账号最近三次 probe 成功且 `account_probe_health=normal`，但 `schedulable=false` 未恢复，因为异步人工 probe 被记为 `account_probe` 而不是 `manual_test`。
+- RED：`go test -tags unit ./internal/service -run 'TestOpenAIStreamingMissingTerminalEventAfterOutputSynthesizesTerminal|TestOpenAIStreamingMissingTerminalEventRecordsPathHealthFailure|TestAccountProbeOutcomeFromRunManualTriggerUsesManualTestSource' -count=1 -v` 修复前编译失败，缺少 `missingTerminalEvent` 标记和手动触发映射。
+- GREEN：`go test -tags unit ./internal/service -run 'TestOpenAIStreaming(MissingTerminalEventAfterOutputSynthesizesTerminal|TerminalEventFromSSEEventLineCompletes|MissingTerminalEventRecordsPathHealthFailure|ClientDisconnectDrainsUpstreamUsage|HTTP2ReadErrorAfterOutputRecordsProtocolFailure)|TestAccountProbe(Service_RunRecordsAccountProbeOutcomeFailure|OutcomeFromRunManualTriggerUsesManualTestSource)|TestRateLimitService_(RecordAccountProbeOutcome|RecoverAccountState)' -count=1 -v` 通过。
+- GREEN：`go test -tags unit ./internal/handler/admin -run 'TestAccountProbe(Create|ReportBatchCreate)|TestAccountModelProbe' -count=1 -v` 通过。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，server 编译切片无测试运行。
+- GREEN：`git diff --check -- backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_test.go backend/internal/service/account_probe.go backend/internal/service/account_probe_test.go backend/internal/handler/admin/account_handler.go backend/internal/handler/admin/account_probe_async_test.go backend/internal/handler/admin/account_probe_report_test.go` 通过。
+- 风险：本轮未提交、未构建镜像、未部署；线上 `gptai-plus` 当前仍保持原始 `schedulable=false`，需要发布后再次手动探测或按管理动作恢复。
+
+## 2026-06-16 17:23:09 +08:00 Devil - gptai-plus missing usage stream accounting
+- go test -tags unit ./internal/service -run "TestOpenAIStreaming(MissingTerminalEventAfterOutputSynthesizesTerminal|TerminalEventFromSSEEventLineCompletes|ReuseScannerBufferAndStillWorks)|TestOpenAIGatewayServiceRecordUsage_(ZeroUsageStillWritesUsageLog|MissingObservedUsageRejectsUsageLog|FeedsPathHealthSample|MissingPricingRecordsZeroCostUsageLog)" -count=1 -v: PASS
+- go test ./cmd/server -run TestNoSuchTest -count=1: PASS
+- go test -tags unit ./internal/handler -run TestNoSuchTest -count=1: PASS
+- git diff --check: PASS with existing CRLF warnings for .codegraph/daemon.pid and docs files

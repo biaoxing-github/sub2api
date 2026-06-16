@@ -243,7 +243,12 @@ type OpenAIForwardResult struct {
 	RequestID  string
 	ResponseID string
 	Usage      OpenAIUsage
-	Model      string // 原始模型（用于响应和日志显示）
+	// UsageObserved 标记是否真的从上游响应中解析到了 usage，
+	// 用于区分“真实 0 usage”和“缺少 usage 但被占位成 0”。
+	UsageObserved bool
+	// UsageMissing 标记当前响应路径确认缺少上游 usage，不应写入假 0 统计。
+	UsageMissing bool
+	Model        string // 原始模型（用于响应和日志显示）
 	// BillingModel is the model used for cost calculation.
 	// When non-empty, CalculateCost uses this instead of Model.
 	// This is set by the Anthropic Messages conversion path where
@@ -3726,6 +3731,7 @@ httpRetryLoop:
 
 			// Handle normal response
 			var usage *OpenAIUsage
+			usageObserved := false
 			var firstTokenMs *int
 			responseID := ""
 			imageCount := 0
@@ -3736,6 +3742,7 @@ httpRetryLoop:
 					return nil, err
 				}
 				usage = streamResult.usage
+				usageObserved = streamResult.usageObserved
 				firstTokenMs = streamResult.firstTokenMs
 				responseID = strings.TrimSpace(streamResult.responseID)
 				imageCount = streamResult.imageCount
@@ -3767,6 +3774,8 @@ httpRetryLoop:
 				RequestID:       resp.Header.Get("x-request-id"),
 				ResponseID:      responseID,
 				Usage:           *usage,
+				UsageObserved:   usageObserved,
+				UsageMissing:    reqStream && !usageObserved,
 				Model:           originalModel,
 				UpstreamModel:   upstreamModel,
 				ServiceTier:     serviceTier,
@@ -3982,6 +3991,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	serviceTier := extractOpenAIServiceTierFromBody(body)
 
 	var usage *OpenAIUsage
+	usageObserved := false
 	var firstTokenMs *int
 	responseID := ""
 	imageCount := 0
@@ -3992,6 +4002,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			return nil, err
 		}
 		usage = result.usage
+		usageObserved = result.usageObserved
 		firstTokenMs = result.firstTokenMs
 		responseID = strings.TrimSpace(result.responseID)
 		imageCount = result.imageCount
@@ -4020,6 +4031,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		RequestID:       resp.Header.Get("x-request-id"),
 		ResponseID:      responseID,
 		Usage:           *usage,
+		UsageObserved:   usageObserved,
+		UsageMissing:    reqStream && !usageObserved,
 		Model:           reqModel,
 		UpstreamModel:   upstreamPassthroughModel,
 		ServiceTier:     serviceTier,
@@ -4351,6 +4364,7 @@ func collectOpenAIPassthroughTimeoutHeaders(h http.Header) []string {
 
 type openaiStreamingResultPassthrough struct {
 	usage            *OpenAIUsage
+	usageObserved    bool
 	firstTokenMs     *int
 	responseID       string
 	imageCount       int
@@ -4953,7 +4967,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		return nil, errors.New("streaming not supported")
 	}
 
-	usage := &OpenAIUsage{}
+	var usage *OpenAIUsage
+	usageObserved := false
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
 	responseID := ""
@@ -5028,6 +5043,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
 		return &openaiStreamingResultPassthrough{
 			usage:            usage,
+			usageObserved:    usageObserved,
 			firstTokenMs:     firstTokenMs,
 			responseID:       responseID,
 			imageCount:       imageCounter.Count(),
@@ -5142,7 +5158,13 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if lineStartsClientOutput {
 				upstreamOutputStarted = true
 			}
-			s.parseSSEUsageBytes(dataBytes, usage)
+			if parsedUsage, ok := s.parseSSEUsageBytesObserved(dataBytes); ok {
+				if usage == nil {
+					usage = &OpenAIUsage{}
+				}
+				*usage = parsedUsage
+				usageObserved = true
+			}
 		}
 
 		if !clientDisconnected {
@@ -5857,6 +5879,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 // openaiStreamingResult streaming response result
 type openaiStreamingResult struct {
 	usage                *OpenAIUsage
+	usageObserved        bool
 	firstTokenMs         *int
 	responseID           string
 	imageCount           int
@@ -5971,7 +5994,8 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		return flushOpenAIInitialSSEHeartbeat(w, flusher)
 	}
 
-	usage := &OpenAIUsage{}
+	var usage *OpenAIUsage
+	usageObserved := false
 	imageCounter := newOpenAIImageOutputCounter()
 	var firstTokenMs *int
 	responseID := ""
@@ -6061,6 +6085,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	resultWithUsage := func() *openaiStreamingResult {
 		return &openaiStreamingResult{
 			usage:                usage,
+			usageObserved:        usageObserved,
 			firstTokenMs:         firstTokenMs,
 			responseID:           responseID,
 			imageCount:           imageCounter.Count(),
@@ -6122,7 +6147,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		}
 		inputTokens := 0
 		outputTokens := 0
-		if usage != nil {
+		if usage != nil && usageObserved {
 			inputTokens = usage.InputTokens
 			outputTokens = usage.OutputTokens
 		}
@@ -6131,7 +6156,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			OutputTokens: outputTokens,
 			TotalTokens:  inputTokens + outputTokens,
 		}
-		if usage != nil && usage.CacheReadInputTokens > 0 {
+		if usage != nil && usageObserved && usage.CacheReadInputTokens > 0 {
 			responsesUsage.InputTokensDetails = &apicompat.ResponsesInputTokensDetails{
 				CachedTokens: usage.CacheReadInputTokens,
 			}
@@ -6387,7 +6412,13 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
 			}
-			s.parseSSEUsageBytes(dataBytes, usage)
+			if parsedUsage, ok := s.parseSSEUsageBytesObserved(dataBytes); ok {
+				if usage == nil {
+					usage = &OpenAIUsage{}
+				}
+				*usage = parsedUsage
+				usageObserved = true
+			}
 			return
 		}
 
@@ -6647,19 +6678,26 @@ func (s *OpenAIGatewayService) parseSSEUsageBytes(data []byte, usage *OpenAIUsag
 	if usage == nil || len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 		return
 	}
+	if parsedUsage, ok := s.parseSSEUsageBytesObserved(data); ok {
+		*usage = parsedUsage
+	}
+}
+
+func (s *OpenAIGatewayService) parseSSEUsageBytesObserved(data []byte) (OpenAIUsage, bool) {
+	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+		return OpenAIUsage{}, false
+	}
 	// 选择性解析：仅在数据中包含终止事件标识时才进入字段提取。
 	if len(data) < 72 {
-		return
+		return OpenAIUsage{}, false
 	}
 	eventType := gjson.GetBytes(data, "type").String()
 	if eventType != "response.completed" && eventType != "response.done" && eventType != "response.failed" &&
 		eventType != "response.incomplete" && eventType != "response.cancelled" && eventType != "response.canceled" {
-		return
+		return OpenAIUsage{}, false
 	}
 
-	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(data); ok {
-		*usage = parsedUsage
-	}
+	return extractOpenAIUsageFromJSONBytes(data)
 }
 
 func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
@@ -7333,6 +7371,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	result := input.Result
 	if result == nil {
 		return errors.New("openai usage result is nil")
+	}
+	if result.UsageMissing && result.ImageCount == 0 {
+		return errors.New("openai usage was not observed in upstream response")
 	}
 	if s.rateLimitService != nil && input.Account != nil && input.Account.Platform == PlatformOpenAI {
 		s.rateLimitService.ResetOpenAI403Counter(ctx, input.Account.ID)
