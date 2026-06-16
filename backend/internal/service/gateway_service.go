@@ -2430,7 +2430,77 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 	return PlatformAnthropic, false, nil
 }
 
+type requestSchedulingSnapshotContextKeyType struct{}
+
+var requestSchedulingSnapshotContextKey = requestSchedulingSnapshotContextKeyType{}
+
+type requestSchedulingSnapshot struct {
+	groupID          *int64
+	platform         string
+	hasForcePlatform bool
+	accounts         []Account
+	useMixed         bool
+	err              error
+	loaded           bool
+}
+
+func (s *GatewayService) WithRequestSchedulingSnapshot(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, requestSchedulingSnapshotContextKey, &requestSchedulingSnapshot{
+		groupID:          cloneRequestSchedulingInt64Ptr(groupID),
+		platform:         platform,
+		hasForcePlatform: hasForcePlatform,
+	})
+}
+
+func requestSchedulingSnapshotFromContext(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) *requestSchedulingSnapshot {
+	if ctx == nil {
+		return nil
+	}
+	snapshot, ok := ctx.Value(requestSchedulingSnapshotContextKey).(*requestSchedulingSnapshot)
+	if !ok || snapshot == nil {
+		return nil
+	}
+	if !sameOptionalInt64(snapshot.groupID, groupID) || snapshot.platform != platform || snapshot.hasForcePlatform != hasForcePlatform {
+		return nil
+	}
+	return snapshot
+}
+
+func cloneRequestSchedulingInt64Ptr(v *int64) *int64 {
+	if v == nil {
+		return nil
+	}
+	cloned := *v
+	return &cloned
+}
+
+func sameOptionalInt64(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
+	if snapshot := requestSchedulingSnapshotFromContext(ctx, groupID, platform, hasForcePlatform); snapshot != nil && snapshot.loaded {
+		accounts := make([]Account, len(snapshot.accounts))
+		copy(accounts, snapshot.accounts)
+		return accounts, snapshot.useMixed, snapshot.err
+	}
+	rememberSnapshot := func(accounts []Account, useMixed bool, err error) {
+		snapshot := requestSchedulingSnapshotFromContext(ctx, groupID, platform, hasForcePlatform)
+		if snapshot == nil || snapshot.loaded {
+			return
+		}
+		snapshot.accounts = make([]Account, len(accounts))
+		copy(snapshot.accounts, accounts)
+		snapshot.useMixed = useMixed
+		snapshot.err = err
+		snapshot.loaded = true
+	}
 	if s.schedulerSnapshot != nil {
 		accounts, useMixed, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
 		if err == nil {
@@ -2451,6 +2521,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 				}
 			}
 		}
+		rememberSnapshot(accounts, useMixed, err)
 		return accounts, useMixed, err
 	}
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
@@ -2470,6 +2541,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 				"group_id", derefGroupID(groupID),
 				"platform", platform,
 				"error", err)
+			rememberSnapshot(nil, useMixed, err)
 			return nil, useMixed, err
 		}
 		filtered := make([]Account, 0, len(accounts))
@@ -2495,6 +2567,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 					"tls_fingerprint", acc.IsTLSFingerprintEnabled())
 			}
 		}
+		rememberSnapshot(filtered, useMixed, nil)
 		return filtered, useMixed, nil
 	}
 
@@ -2513,6 +2586,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 			"group_id", derefGroupID(groupID),
 			"platform", platform,
 			"error", err)
+		rememberSnapshot(nil, useMixed, err)
 		return nil, useMixed, err
 	}
 	slog.Debug("account_scheduling_list_single",
@@ -2530,6 +2604,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 				"tls_fingerprint", acc.IsTLSFingerprintEnabled())
 		}
 	}
+	rememberSnapshot(accounts, useMixed, nil)
 	return accounts, useMixed, nil
 }
 

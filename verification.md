@@ -3345,3 +3345,10 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - go test ./cmd/server -run TestNoSuchTest -count=1: PASS
 - go test -tags unit ./internal/handler -run TestNoSuchTest -count=1: PASS
 - git diff --check: PASS with existing CRLF warnings for .codegraph/daemon.pid and docs files
+
+## 2026-06-16 18:00:20 +08:00 Devil - gptai-plus terminal without usage verification
+- Direct upstream account_id=434 /v1/responses: HTTP 200, response.completed=True, output_delta=True, usage=False; response saved under .codex/gptai-plus-direct-upstream.sse without secrets.
+- go test ./internal/service -run "TestSelectAccountWithLoadAwareness_ReusesRequestSchedulingSnapshot|TestSelectAccountWithLoadAwareness_PrivacyUnsetSkipsWithoutSetError|TestOpenAIStreamingTerminalEventWithoutUsageMarksUsageMissing" -count=1 -v: PASS
+- go test ./cmd/server -run TestNoSuchTest -count=1: PASS
+- go test -tags unit ./internal/handler -run TestNoSuchTest -count=1: PASS
+- git diff --check: PASS with existing .codegraph/daemon.pid CRLF warning only
