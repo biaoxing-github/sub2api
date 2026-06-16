@@ -73,7 +73,16 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
+      t: (key: string) => {
+        if (key === 'admin.accounts.usageSummary') {
+          return 'USAGE_SUMMARY_ROOT_KEY'
+        }
+        if (key === 'admin.accounts.usageSummary.title') {
+          return 'Usage Summary Title'
+        }
+        return key
+      },
+      locale: { value: 'zh-CN' }
     })
   }
 })
@@ -117,6 +126,44 @@ const BulkEditAccountModalStub = {
   props: ['show', 'target'],
   template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
 }
+
+const mountAccountsView = () =>
+  mount(AccountsView, {
+    global: {
+      stubs: {
+        AppLayout: { template: '<div><slot /></div>' },
+        TablePageLayout: {
+          template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+        },
+        DataTable: DataTableStub,
+        Pagination: true,
+        ConfirmDialog: true,
+        AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+        AccountTableFilters: { template: '<div></div>' },
+        AccountBulkActionsBar: AccountBulkActionsBarStub,
+        AccountActionMenu: true,
+        ImportDataModal: true,
+        ReAuthAccountModal: true,
+        AccountTestModal: true,
+        AccountStatsModal: true,
+        ScheduledTestsPanel: true,
+        SyncFromCrsModal: true,
+        TempUnschedStatusModal: true,
+        ErrorPassthroughRulesModal: true,
+        TLSFingerprintProfilesModal: true,
+        CreateAccountModal: true,
+        EditAccountModal: true,
+        BulkEditAccountModal: BulkEditAccountModalStub,
+        PlatformTypeBadge: true,
+        AccountCapacityCell: true,
+        AccountStatusIndicator: true,
+        AccountTodayStatsCell: true,
+        AccountGroupsCell: true,
+        AccountUsageCell: true,
+        Icon: true
+      }
+    }
+  })
 
 describe('admin AccountsView bulk edit scope', () => {
   beforeEach(() => {
@@ -201,6 +248,29 @@ describe('admin AccountsView bulk edit scope', () => {
 
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-show')).toBe('true')
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-mode')).toBe('filtered')
+  })
+
+  it('uses the usage summary title leaf key in the collapsed info banner', async () => {
+    getUsageSummary.mockResolvedValue({
+      generated_at: '2026-06-16T10:00:00Z',
+      total_accounts: 1,
+      schedulable_accounts: 1,
+      rate_limited_accounts: 0,
+      missing_snapshot_accounts: 0,
+      five_hour: {},
+      seven_day: {},
+      upstream_balance: {},
+      openai_upstream_balance: {},
+      anthropic_upstream_balance: {},
+      plans: []
+    })
+
+    const wrapper = mountAccountsView()
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Usage Summary Title')
+    expect(wrapper.text()).not.toContain('USAGE_SUMMARY_ROOT_KEY')
   })
 
   it('shows account-level token refresh errors in a dialog', async () => {

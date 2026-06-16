@@ -242,8 +242,8 @@ func TestAccountProbeReportBatchCreateDeduplicatesAccounts(t *testing.T) {
 	require.Equal(t, int64(182), probeSvc.startedRuns[1].AccountID)
 	require.Equal(t, "stream", probeSvc.startedRuns[0].RequestMode)
 	require.False(t, probeSvc.startedRuns[0].IncludeCodexStability)
-	require.True(t, probeSvc.startedRuns[0].ManualTrigger)
-	require.True(t, probeSvc.startedRuns[1].ManualTrigger)
+	require.False(t, probeSvc.startedRuns[0].RepairSchedulingPoolState)
+	require.False(t, probeSvc.startedRuns[1].RepairSchedulingPoolState)
 }
 
 func TestAccountProbeReportBatchCreateLimitsBackgroundConcurrency(t *testing.T) {
@@ -281,7 +281,7 @@ func TestAccountProbeReportBatchCreateLimitsBackgroundConcurrency(t *testing.T) 
 	probeSvc.mu.Lock()
 	require.Len(t, probeSvc.runReqs, 4)
 	for _, got := range probeSvc.runReqs {
-		require.True(t, got.ManualTrigger)
+		require.False(t, got.RepairSchedulingPoolState)
 	}
 	probeSvc.mu.Unlock()
 }

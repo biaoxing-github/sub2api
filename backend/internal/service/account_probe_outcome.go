@@ -79,6 +79,7 @@ func (s *RateLimitService) RecordAccountProbeOutcome(ctx context.Context, outcom
 	}
 	outcome.Source = normalizeAccountProbeOutcomeSource(outcome.Source)
 	outcome.Reason = normalizeAccountProbeOutcomeReason(outcome)
+	repairSchedulingPoolState := outcome.Source == AccountProbeOutcomeSourceManualTest
 
 	previous := accountProbeHealthPayload(account)
 	previousLevel := accountProbeHealthLevel(previous)
@@ -86,6 +87,9 @@ func (s *RateLimitService) RecordAccountProbeOutcome(ctx context.Context, outcom
 		previousLevel = AccountProbeHealthNormal
 	}
 	nextLevel := accountProbeNextHealthLevel(account, previous, outcome)
+	if outcome.Success && !repairSchedulingPoolState {
+		nextLevel = previousLevel
+	}
 	successCount := accountProbePayloadInt(previous["success_count"])
 	failureCount := accountProbePayloadInt(previous["failure_count"])
 	if outcome.Success {
@@ -107,14 +111,17 @@ func (s *RateLimitService) RecordAccountProbeOutcome(ctx context.Context, outcom
 	}
 
 	if outcome.Success {
-		if canRecoverAccountAfterProbeSuccess(account) {
+		if repairSchedulingPoolState && canRecoverAccountAfterProbeSuccess(account) {
 			if _, err := s.RecoverAccountState(ctx, account.ID, AccountRecoveryOptions{
-				RestoreSchedulable: outcome.Source == AccountProbeOutcomeSourceManualTest,
+				RestoreSchedulable: true,
 			}); err != nil {
 				return nil, err
 			}
 		}
-		s.notifyAccountSchedulingBlockCleared(account.ID)
+		if repairSchedulingPoolState {
+			s.notifyAccountSchedulingBlockCleared(account.ID)
+			s.notifyAccountPathHealthCleared(account)
+		}
 	} else if blockedUntil != nil {
 		if err := s.applyAccountProbeBlockedState(ctx, account, nextLevel, *blockedUntil, outcome.Reason); err != nil {
 			return nil, err
@@ -146,6 +153,9 @@ func (s *RateLimitService) RecordAccountProbeOutcome(ctx context.Context, outcom
 	}
 	if fp := strings.TrimSpace(outcome.KeyFingerprint); fp != "" {
 		payload["key_fingerprint"] = fp
+	}
+	if outcome.Success && !repairSchedulingPoolState {
+		return transition, nil
 	}
 	if err := s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{AccountProbeHealthExtraKey: payload}); err != nil {
 		return nil, err

@@ -6047,6 +6047,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	errorEventSent := false
 	clientDisconnected := false // 客户端断开后继续 drain 上游以收集 usage
 	sawTerminalEvent := false
+	sawDone := false
 	sawFailedEvent := false
 	failedMessage := ""
 	clientOutputStarted := false
@@ -6133,6 +6134,21 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		lastDownstreamWriteAt = time.Now()
 		return nil
 	}
+	writeResponsesDoneMarker := func() error {
+		if clientDisconnected {
+			return nil
+		}
+		if _, err := bufferedWriter.WriteString("data: [DONE]\n\n"); err != nil {
+			clientDisconnected = true
+			return err
+		}
+		if err := flushBuffered(); err != nil {
+			clientDisconnected = true
+			return err
+		}
+		lastDownstreamWriteAt = time.Now()
+		return nil
+	}
 	// 上游已有真实输出但缺失终态时补齐 response.completed，避免 Codex 客户端把半截流当成网关失败。
 	writeSyntheticCompletedEvent := func() error {
 		if clientDisconnected {
@@ -6184,7 +6200,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			return err
 		}
 		lastDownstreamWriteAt = time.Now()
-		return nil
+		return writeResponsesDoneMarker()
 	}
 	finalizeStream := func() (*openaiStreamingResult, error) {
 		if !sawTerminalEvent {
@@ -6220,6 +6236,11 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		}
 		if !clientDisconnected {
 			_ = flushPendingClientLines()
+		}
+		if !sawDone {
+			if err := writeResponsesDoneMarker(); err != nil {
+				return resultWithUsage(), fmt.Errorf("stream usage incomplete while writing done marker: %w", err)
+			}
 		}
 		return resultWithUsage(), nil
 	}
@@ -6299,6 +6320,9 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			if eventType == "" {
 				eventType = currentSSEEventType
 			}
+			if strings.TrimSpace(data) == "[DONE]" {
+				sawDone = true
+			}
 			if openAIStreamEventIsTerminalType(eventType, data) {
 				sawTerminalEvent = true
 			}
@@ -6352,6 +6376,12 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 				}
 			}
 			if normalizedData, normalized := normalizeResponsesStreamingTerminalOutput(dataBytes, streamOutputAccumulator, streamImageOutputs); normalized {
+				dataBytes = normalizedData
+				data = string(normalizedData)
+				line = "data: " + data
+				eventType = strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
+			}
+			if normalizedData, normalized := normalizeResponsesStreamingTerminalUsage(dataBytes); normalized {
 				dataBytes = normalizedData
 				data = string(normalizedData)
 				line = "data: " + data
@@ -6988,6 +7018,23 @@ func normalizeResponsesStreamingTerminalOutput(data []byte, acc *apicompat.Buffe
 		outputJSON = reconstructed
 	}
 	updated, err := sjson.SetRawBytes(data, "response.output", outputJSON)
+	if err != nil {
+		return data, false
+	}
+	return updated, true
+}
+
+func normalizeResponsesStreamingTerminalUsage(data []byte) ([]byte, bool) {
+	eventType := strings.TrimSpace(gjson.GetBytes(data, "type").String())
+	switch eventType {
+	case "response.completed", "response.done":
+	default:
+		return data, false
+	}
+	if gjson.GetBytes(data, "response.usage").Exists() {
+		return data, false
+	}
+	updated, err := sjson.SetRawBytes(data, "response.usage", []byte(`{"input_tokens":0,"output_tokens":0,"total_tokens":0}`))
 	if err != nil {
 		return data, false
 	}

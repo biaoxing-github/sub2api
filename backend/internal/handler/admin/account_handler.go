@@ -1259,7 +1259,7 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	if h.rateLimitService != nil && result != nil {
 		transition, err := h.rateLimitService.RecordAccountProbeOutcome(c.Request.Context(), service.AccountProbeOutcome{
 			AccountID:    accountID,
-			Source:       service.AccountProbeOutcomeSourceManualTest,
+			Source:       service.AccountProbeOutcomeSourceAccountProbe,
 			Success:      result.Success,
 			ErrorMessage: result.ErrorMessage,
 			HTTPStatus:   result.HTTPStatus,
@@ -1375,12 +1375,27 @@ func (h *AccountHandler) ManualProbe(c *gin.Context) {
 	}
 
 	var updatedAccount *service.Account
-	if result.Success {
-		updatedAccount, err = h.adminService.RecoverAccountAfterManualProbe(c.Request.Context(), accountID, account.Platform)
-		if err != nil {
+	if result.Success && h.rateLimitService != nil {
+		if _, err := h.rateLimitService.RecordAccountProbeOutcome(c.Request.Context(), service.AccountProbeOutcome{
+			AccountID:    accountID,
+			Account:      account,
+			Source:       service.AccountProbeOutcomeSourceManualTest,
+			Success:      true,
+			ErrorMessage: result.ErrorMessage,
+			HTTPStatus:   result.HTTPStatus,
+			Reason:       result.Reason,
+			LatencyMs:    result.LatencyMs,
+			FirstTokenMs: result.FirstTokenMs,
+			ObservedAt:   result.FinishedAt,
+		}); err != nil {
 			response.InternalError(c, "Failed to recover account state")
 			return
 		}
+	}
+	updatedAccount, err = h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.InternalError(c, "Failed to get account")
+		return
 	}
 
 	resp := ManualProbeResponse{
@@ -1845,7 +1860,6 @@ func (h *AccountHandler) CreateProbeRun(c *gin.Context) {
 		Model:              req.Model,
 		IncludeLongContext: req.IncludeLongContext || req.LongContext,
 		RequestMode:        req.RequestMode,
-		ManualTrigger:      true,
 	}
 	result, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
 	if err != nil {
@@ -1875,7 +1889,6 @@ func (h *AccountHandler) CreateModelProbeRun(c *gin.Context) {
 		RequestMode:         req.RequestMode,
 		TrustedComparisonID: req.TrustedComparisonID,
 		ModelValidationOnly: true,
-		ManualTrigger:       true,
 	}
 	result, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
 	if err != nil {
@@ -1917,7 +1930,6 @@ func (h *AccountHandler) BatchCreateModelProbeRuns(c *gin.Context) {
 			RequestMode:         req.RequestMode,
 			TrustedComparisonID: req.TrustedComparisonID,
 			ModelValidationOnly: true,
-			ManualTrigger:       true,
 		}
 		run, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
 		if err != nil {
@@ -2186,7 +2198,6 @@ func (h *AccountHandler) BatchCreateProbeReportRuns(c *gin.Context) {
 			Model:              req.Model,
 			IncludeLongContext: req.IncludeLongContext || req.LongContext,
 			RequestMode:        req.RequestMode,
-			ManualTrigger:      true,
 		}
 		run, err := h.accountProbeService.Start(c.Request.Context(), probeReq)
 		if err != nil {
@@ -2220,7 +2231,6 @@ func (h *AccountHandler) runAccountProbeBatchBackground(runs []service.AccountPr
 			Model:              run.Model,
 			IncludeLongContext: run.IncludeLongContext || req.IncludeLongContext || req.LongContext,
 			RequestMode:        run.RequestMode,
-			ManualTrigger:      true,
 		}
 		if strings.TrimSpace(probeReq.Profile) == "" {
 			probeReq.Profile = req.Mode
@@ -2261,7 +2271,6 @@ func (h *AccountHandler) runAccountModelProbeBatchBackground(runs []service.Acco
 			RequestMode:         run.RequestMode,
 			TrustedComparisonID: req.TrustedComparisonID,
 			ModelValidationOnly: true,
-			ManualTrigger:       true,
 		}
 		if strings.TrimSpace(probeReq.Model) == "" {
 			probeReq.Model = req.Model

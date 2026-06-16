@@ -175,6 +175,16 @@ func (s *OpenAIGatewayService) OpenAIPathHealthTracker() *OpenAIPathHealthTracke
 	return s.openaiPathHealth
 }
 
+// ClearAccountPathHealth 把管理端人工探测成功视为当前账号和同线路聚合桶的健康样本。
+func (s *OpenAIGatewayService) ClearAccountPathHealth(account *Account) {
+	if s == nil || s.openaiPathHealth == nil || account == nil || !account.IsOpenAI() {
+		return
+	}
+	transport := string(OpenAIUpstreamTransportHTTPSSE)
+	s.openaiPathHealth.MarkHealthy(OpenAIPathHealthKeyForAccount(account, transport))
+	s.openaiPathHealth.MarkHealthy(OpenAIPathHealthBucketKeyForAccount(account, transport))
+}
+
 func (t *OpenAIPathHealthTracker) Snapshot(key OpenAIPathHealthKey) OpenAIPathHealthRecord {
 	key = normalizeOpenAIPathHealthKey(key)
 	if t == nil {
@@ -214,6 +224,25 @@ func (t *OpenAIPathHealthTracker) RecordSuccess(key OpenAIPathHealthKey, ttftMs 
 		record.CooldownUntil = nil
 		record.LastFailureReason = ""
 	}
+}
+
+// MarkHealthy 清除指定线路的窗口故障和熔断状态，用于人工探测已经证明该线路可用的场景。
+func (t *OpenAIPathHealthTracker) MarkHealthy(key OpenAIPathHealthKey) {
+	if t == nil || !t.options.Enabled {
+		return
+	}
+	key = normalizeOpenAIPathHealthKey(key)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	record := t.ensureLocked(key)
+	record.State = OpenAIPathHealthStateHealthy
+	record.ConsecutiveFailures = 0
+	record.WindowFailures = 0
+	record.FailureWindowStarted = nil
+	record.CooldownUntil = nil
+	record.LastFailureReason = ""
+	record.LastActionLabel = ""
+	record.ConsecutiveSuccesses++
 }
 
 func (t *OpenAIPathHealthTracker) RecordFailure(key OpenAIPathHealthKey, reason string, headerWaitMs *int64) {

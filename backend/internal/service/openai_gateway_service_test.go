@@ -2374,7 +2374,7 @@ func TestOpenAIStreamingTerminalEventFromSSEEventLineCompletes(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "event: response.completed")
 }
 
-func TestOpenAIStreamingTerminalEventWithoutUsageMarksUsageMissing(t *testing.T) {
+func TestOpenAIStreamingTerminalEventWithoutUsageAddsClientTerminalFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
@@ -2396,7 +2396,7 @@ func TestOpenAIStreamingTerminalEventWithoutUsageMarksUsageMissing(t *testing.T)
 			`data: {"type":"response.output_text.delta","delta":"OK"}`,
 			"",
 			"event: response.completed",
-			`data: {"type":"response.completed","response":{"id":"resp_missing_usage","status":"completed"}}`,
+			`data: {"response":{"id":"resp_missing_usage","status":"completed"}}`,
 			"",
 		}, "\n"))),
 		Header: http.Header{"X-Request-Id": []string{"rid-terminal-without-usage"}},
@@ -2405,9 +2405,50 @@ func TestOpenAIStreamingTerminalEventWithoutUsageMarksUsageMissing(t *testing.T)
 	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "model", "model")
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.False(t, result.usageObserved)
-	require.Nil(t, result.usage)
-	require.Contains(t, rec.Body.String(), "response.completed")
+	require.True(t, result.usageObserved)
+	require.NotNil(t, result.usage)
+	require.Equal(t, 0, result.usage.InputTokens)
+	require.Equal(t, 0, result.usage.OutputTokens)
+	body := rec.Body.String()
+	require.Contains(t, body, "response.completed")
+	require.Contains(t, body, `"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}`)
+	require.Contains(t, body, "data: [DONE]")
+}
+
+func TestOpenAIStreamingTerminalEventWithDoneDoesNotDuplicateDoneMarker(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"OK"}`,
+			"",
+			"event: response.completed",
+			`data: {"type":"response.completed","response":{"id":"resp_with_done","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}`,
+			"",
+			`data: [DONE]`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-terminal-with-done"}},
+	}
+
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "model", "model")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, strings.Count(rec.Body.String(), "data: [DONE]"))
 }
 
 func TestOpenAIStreamingMissingTerminalEventRecordsPathHealthFailure(t *testing.T) {

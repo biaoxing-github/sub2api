@@ -38,6 +38,10 @@ type AccountRuntimeBlocker interface {
 	ClearAccountSchedulingBlock(accountID int64)
 }
 
+type accountPathHealthClearer interface {
+	ClearAccountPathHealth(account *Account)
+}
+
 // SuccessfulTestRecoveryResult 表示测试成功后恢复了哪些运行时状态。
 type SuccessfulTestRecoveryResult struct {
 	ClearedError        bool
@@ -122,6 +126,17 @@ func (s *RateLimitService) notifyAccountSchedulingBlockCleared(accountID int64) 
 		return
 	}
 	s.runtimeBlocker.ClearAccountSchedulingBlock(accountID)
+}
+
+func (s *RateLimitService) notifyAccountPathHealthCleared(account *Account) {
+	if s == nil || s.runtimeBlocker == nil || account == nil {
+		return
+	}
+	clearer, ok := s.runtimeBlocker.(accountPathHealthClearer)
+	if !ok {
+		return
+	}
+	clearer.ClearAccountPathHealth(account)
 }
 
 // ErrorPolicyResult 表示错误策略检查的结果

@@ -188,7 +188,7 @@
               <Icon :name="showInfoBanners ? 'chevronUp' : 'chevronDown'" size="sm" />
               <span v-if="hasPendingListSync" class="text-amber-600">{{ t('admin.accounts.pendingSync') }}</span>
               <span v-if="actionItemsTotal > 0" class="text-rose-600">{{ actionItemsTotal }} {{ t('admin.accounts.actionItems.title') }}</span>
-              <span v-if="usageSummary" class="text-gray-600 dark:text-gray-400">{{ t('admin.accounts.usageSummary') }}</span>
+              <span v-if="usageSummary" class="text-gray-600 dark:text-gray-400">{{ t('admin.accounts.usageSummary.title') }}</span>
             </span>
           </button>
 

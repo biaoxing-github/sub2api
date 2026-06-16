@@ -221,7 +221,55 @@ func TestRateLimitService_RecordAccountProbeOutcomeManualSuccessRestoresSchedula
 	require.NotContains(t, health, "next_probe_at")
 }
 
-func TestRateLimitService_RecordAccountProbeOutcomeBackgroundSuccessDoesNotRestoreManualSchedulable(t *testing.T) {
+func TestRateLimitService_RecordAccountProbeOutcomeManualSuccessClearsPathHealth(t *testing.T) {
+	account := &Account{
+		ID:          62033,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"api_key": "sk-manual-success",
+		},
+		Extra: map[string]any{
+			AccountProbeHealthExtraKey: map[string]any{
+				"level":         AccountProbeHealthLineDegraded,
+				"failure_count": 2,
+				"last_error":    "unexpected EOF",
+			},
+		},
+	}
+	repo := &rateLimitAccountRepoStub{account: account}
+	gateway := &OpenAIGatewayService{
+		openaiPathHealth: NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+			Enabled:                  true,
+			CircuitBreakerEnabled:    true,
+			DegradedFailureThreshold: 1,
+			OpenFailureThreshold:     2,
+		}),
+	}
+	accountKey := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	bucketKey := OpenAIPathHealthBucketKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	gateway.openaiPathHealth.RecordFailure(accountKey, OpenAIPathFailureEOF, nil)
+	gateway.openaiPathHealth.RecordFailure(bucketKey, OpenAIPathFailureEOF, nil)
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetAccountRuntimeBlocker(gateway)
+
+	transition, err := service.RecordAccountProbeOutcome(context.Background(), AccountProbeOutcome{
+		AccountID: account.ID,
+		Account:   account,
+		Source:    AccountProbeOutcomeSourceManualTest,
+		Success:   true,
+		Reason:    "probe_success",
+	})
+
+	require.NoError(t, err)
+	require.True(t, transition.Restored)
+	require.Equal(t, OpenAIPathHealthStateHealthy, gateway.openaiPathHealth.Snapshot(accountKey).State)
+	require.Equal(t, OpenAIPathHealthStateHealthy, gateway.openaiPathHealth.Snapshot(bucketKey).State)
+}
+
+func TestRateLimitService_RecordAccountProbeOutcomeBackgroundSuccessDoesNotRepairSchedulingPoolState(t *testing.T) {
 	account := &Account{
 		ID:          62004,
 		Platform:    PlatformOpenAI,
@@ -248,13 +296,69 @@ func TestRateLimitService_RecordAccountProbeOutcomeBackgroundSuccessDoesNotResto
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, AccountProbeHealthNormal, transition.NextLevel)
+	require.Equal(t, AccountProbeHealthLightAbnormal, transition.PreviousLevel)
+	require.Equal(t, AccountProbeHealthLightAbnormal, transition.NextLevel)
+	require.False(t, transition.StateChanged)
+	require.False(t, transition.Restored)
 	require.Equal(t, 0, repo.setSchedulableCalls)
-	require.Equal(t, 1, repo.updateExtraCalls)
-	health, ok := repo.lastExtraUpdates[AccountProbeHealthExtraKey].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, AccountProbeHealthNormal, health["level"])
-	require.Equal(t, 0, health["failure_count"])
+	require.Equal(t, 0, repo.clearErrorCalls)
+	require.Equal(t, 0, repo.clearRateLimitCalls)
+	require.Equal(t, 0, repo.clearTempUnschedCalls)
+	require.Equal(t, 0, repo.updateExtraCalls)
+	require.Nil(t, repo.lastExtraUpdates)
+	health := account.Extra[AccountProbeHealthExtraKey].(map[string]any)
+	require.Equal(t, AccountProbeHealthLightAbnormal, health["level"])
+	require.Equal(t, 1, health["failure_count"])
+}
+
+func TestRateLimitService_RecordAccountProbeOutcomeBackgroundSuccessDoesNotClearPathHealth(t *testing.T) {
+	account := &Account{
+		ID:          62035,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"api_key": "sk-background-success",
+		},
+		Extra: map[string]any{
+			AccountProbeHealthExtraKey: map[string]any{
+				"level":         AccountProbeHealthLineDegraded,
+				"failure_count": 2,
+				"last_error":    "unexpected EOF",
+			},
+		},
+	}
+	repo := &rateLimitAccountRepoStub{account: account}
+	gateway := &OpenAIGatewayService{
+		openaiPathHealth: NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+			Enabled:                  true,
+			CircuitBreakerEnabled:    true,
+			DegradedFailureThreshold: 1,
+			OpenFailureThreshold:     2,
+		}),
+	}
+	accountKey := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	bucketKey := OpenAIPathHealthBucketKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	gateway.openaiPathHealth.RecordFailure(accountKey, OpenAIPathFailureEOF, nil)
+	gateway.openaiPathHealth.RecordFailure(bucketKey, OpenAIPathFailureEOF, nil)
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetAccountRuntimeBlocker(gateway)
+
+	transition, err := service.RecordAccountProbeOutcome(context.Background(), AccountProbeOutcome{
+		AccountID: account.ID,
+		Account:   account,
+		Source:    AccountProbeOutcomeSourceAccountProbe,
+		Success:   true,
+		Reason:    "probe_success",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeHealthLineDegraded, transition.NextLevel)
+	require.False(t, transition.Restored)
+	require.Equal(t, 0, repo.updateExtraCalls)
+	require.Equal(t, OpenAIPathHealthStateDegraded, gateway.openaiPathHealth.Snapshot(accountKey).State)
+	require.Equal(t, OpenAIPathHealthStateDegraded, gateway.openaiPathHealth.Snapshot(bucketKey).State)
 }
 
 type tokenCacheInvalidatorRecorder struct {

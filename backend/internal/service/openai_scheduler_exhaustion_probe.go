@@ -159,12 +159,8 @@ func isOpenAISchedulerExhaustionProbeCandidate(ctx context.Context, account *Acc
 		return false
 	}
 
-	// 跳过冷却中的账号，避免无效探测
 	now := time.Now()
 	if account.OverloadUntil != nil && account.OverloadUntil.After(now) {
-		return false
-	}
-	if account.TempUnschedulableUntil != nil && account.TempUnschedulableUntil.After(now) {
 		return false
 	}
 

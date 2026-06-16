@@ -210,6 +210,145 @@ func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolReadsPathHealthWith
 	require.InDelta(t, firstTokenMs, snapshot.Items[0].PathHealth.TTFTEWMAMs, 0.01)
 }
 
+func TestOpenAIGatewayService_ManualProbeSuccessRestoresSchedulingPoolHealth(t *testing.T) {
+	now := time.Date(2026, 6, 16, 18, 0, 0, 0, time.UTC)
+	account := Account{
+		ID:          62034,
+		Name:        "manual-probe-restore",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"api_key": "sk-restore"},
+		Extra: map[string]any{
+			AccountProbeHealthExtraKey: map[string]any{
+				"level":         AccountProbeHealthLineDegraded,
+				"failure_count": 2,
+				"last_error":    "unexpected EOF",
+			},
+		},
+		AccountGroups: []AccountGroup{{GroupID: 2}},
+	}
+	repo := &manualProbeSchedulingPoolRepo{account: &account}
+	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:                  true,
+		CircuitBreakerEnabled:    true,
+		DegradedFailureThreshold: 1,
+		OpenFailureThreshold:     2,
+	})
+	accountKey := OpenAIPathHealthKeyForAccount(&account, string(OpenAIUpstreamTransportHTTPSSE))
+	bucketKey := OpenAIPathHealthBucketKeyForAccount(&account, string(OpenAIUpstreamTransportHTTPSSE))
+	pathHealth.RecordFailure(accountKey, OpenAIPathFailureEOF, nil)
+	pathHealth.RecordFailure(bucketKey, OpenAIPathFailureEOF, nil)
+	gateway := &OpenAIGatewayService{
+		accountRepo:      repo,
+		openaiPathHealth: pathHealth,
+	}
+	rateLimitService := NewRateLimitService(repo, nil, nil, nil, nil)
+	rateLimitService.SetAccountRuntimeBlocker(gateway)
+
+	before, err := gateway.ListOpenAIAccountSchedulingPool(context.Background(), OpenAIAccountSchedulingPoolFilter{
+		GroupID:   schedulingPoolInt64Ptr(2),
+		Platform:  PlatformOpenAI,
+		Transport: OpenAIUpstreamTransportHTTPSSE,
+	}, now)
+	require.NoError(t, err)
+	require.Equal(t, OpenAIAccountSchedulingPoolStatusDegraded, before.Items[0].PoolStatus)
+	require.Equal(t, AccountDerivedHealthLineDegraded, before.Items[0].DerivedHealth.State)
+
+	_, err = rateLimitService.RecordAccountProbeOutcome(context.Background(), AccountProbeOutcome{
+		AccountID: account.ID,
+		Account:   &account,
+		Source:    AccountProbeOutcomeSourceManualTest,
+		Success:   true,
+		Reason:    "probe_success",
+	})
+	require.NoError(t, err)
+
+	after, err := gateway.ListOpenAIAccountSchedulingPool(context.Background(), OpenAIAccountSchedulingPoolFilter{
+		GroupID:   schedulingPoolInt64Ptr(2),
+		Platform:  PlatformOpenAI,
+		Transport: OpenAIUpstreamTransportHTTPSSE,
+	}, now)
+	require.NoError(t, err)
+	require.Equal(t, OpenAIAccountSchedulingPoolStatusSchedulable, after.Items[0].PoolStatus)
+	require.Equal(t, AccountDerivedHealthNormal, after.Items[0].DerivedHealth.State)
+	require.Equal(t, OpenAIPathHealthStateHealthy, after.Items[0].PathHealth.State)
+	require.Empty(t, after.Items[0].PoolReasons)
+}
+
+type manualProbeSchedulingPoolRepo struct {
+	mockAccountRepoForGemini
+	account *Account
+}
+
+func (r *manualProbeSchedulingPoolRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
+	if r.account != nil && r.account.ID == id {
+		return r.account, nil
+	}
+	return r.mockAccountRepoForGemini.GetByID(ctx, id)
+}
+
+func (r *manualProbeSchedulingPoolRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	if r.account == nil || r.account.Platform != platform || !r.account.IsSchedulable() {
+		return nil, nil
+	}
+	account := *r.account
+	return []Account{schedulerTestEnsureOpenAIAPIKeyCredentials(account)}, nil
+}
+
+func (r *manualProbeSchedulingPoolRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatform(ctx, 0, platform)
+}
+
+func (r *manualProbeSchedulingPoolRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatform(ctx, 0, platform)
+}
+
+func (r *manualProbeSchedulingPoolRepo) ClearError(ctx context.Context, id int64) error {
+	if r.account != nil && r.account.ID == id {
+		r.account.Status = StatusActive
+		r.account.ErrorMessage = ""
+	}
+	return nil
+}
+
+func (r *manualProbeSchedulingPoolRepo) ClearRateLimit(ctx context.Context, id int64) error {
+	if r.account != nil && r.account.ID == id {
+		r.account.RateLimitedAt = nil
+		r.account.RateLimitResetAt = nil
+	}
+	return nil
+}
+
+func (r *manualProbeSchedulingPoolRepo) ClearTempUnschedulable(ctx context.Context, id int64) error {
+	if r.account != nil && r.account.ID == id {
+		r.account.TempUnschedulableUntil = nil
+		r.account.TempUnschedulableReason = ""
+	}
+	return nil
+}
+
+func (r *manualProbeSchedulingPoolRepo) SetSchedulable(ctx context.Context, id int64, schedulable bool) error {
+	if r.account != nil && r.account.ID == id {
+		r.account.Schedulable = schedulable
+	}
+	return nil
+}
+
+func (r *manualProbeSchedulingPoolRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
+	if r.account == nil || r.account.ID != id {
+		return nil
+	}
+	if r.account.Extra == nil {
+		r.account.Extra = map[string]any{}
+	}
+	for key, value := range updates {
+		r.account.Extra[key] = value
+	}
+	return nil
+}
+
 func openAISchedulingPoolItemsByID(items []OpenAIAccountSchedulingPoolItem) map[int64]OpenAIAccountSchedulingPoolItem {
 	out := make(map[int64]OpenAIAccountSchedulingPoolItem, len(items))
 	for _, item := range items {

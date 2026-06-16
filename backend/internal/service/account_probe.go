@@ -62,7 +62,8 @@ type AccountProbeRunRequest struct {
 	RequestMode           string `json:"request_mode"`
 	TrustedComparisonID   int64  `json:"trusted_comparison_account_id,omitempty"`
 	ModelValidationOnly   bool   `json:"-"`
-	ManualTrigger         bool   `json:"-"` // ManualTrigger 标记管理端手动探测，成功后允许恢复账号可调度状态。
+	// RepairSchedulingPoolState 只给调度池人工测验使用；普通上游体检成功不能修复账号调度或池内健康状态。
+	RepairSchedulingPoolState bool `json:"-"`
 }
 
 type BazaarLinkProbeMode string
@@ -460,7 +461,7 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 			return run, err
 		}
 	}
-	s.recordAccountProbeOutcome(account, run, req.ManualTrigger)
+	s.recordAccountProbeOutcome(account, run, req.RepairSchedulingPoolState)
 	return run, nil
 }
 
@@ -484,11 +485,11 @@ func (s *AccountProbeService) recordProbePathHealth(account *Account, baseURL st
 	s.health.RecordFailure(key, reason, &headerWait)
 }
 
-func (s *AccountProbeService) recordAccountProbeOutcome(account *Account, run AccountProbeResult, manualTrigger bool) {
+func (s *AccountProbeService) recordAccountProbeOutcome(account *Account, run AccountProbeResult, repairSchedulingPoolState bool) {
 	if s == nil || s.rateLimitService == nil || account == nil {
 		return
 	}
-	outcome := accountProbeOutcomeFromRun(account, run, manualTrigger)
+	outcome := accountProbeOutcomeFromRun(account, run, repairSchedulingPoolState)
 	persistCtx, cancel := context.WithTimeout(context.Background(), accountProbePersistenceTimeout)
 	defer cancel()
 	if _, err := s.rateLimitService.RecordAccountProbeOutcome(persistCtx, outcome); err != nil {
@@ -496,7 +497,7 @@ func (s *AccountProbeService) recordAccountProbeOutcome(account *Account, run Ac
 	}
 }
 
-func accountProbeOutcomeFromRun(account *Account, run AccountProbeResult, manualTrigger bool) AccountProbeOutcome {
+func accountProbeOutcomeFromRun(account *Account, run AccountProbeResult, repairSchedulingPoolState bool) AccountProbeOutcome {
 	success := run.Status == AccountProbeStatusSuccess
 	latencyMs := run.AvgLatencyMillis
 	if latencyMs <= 0 {
@@ -512,7 +513,7 @@ func accountProbeOutcomeFromRun(account *Account, run AccountProbeResult, manual
 		observedAt = *run.FinishedAt
 	}
 	source := AccountProbeOutcomeSourceAccountProbe
-	if manualTrigger {
+	if repairSchedulingPoolState {
 		source = AccountProbeOutcomeSourceManualTest
 	}
 	return AccountProbeOutcome{

@@ -568,7 +568,7 @@ func TestAccountProbeService_RunRecordsAccountProbeOutcomeFailure(t *testing.T) 
 	require.Equal(t, float64(http.StatusPaymentRequired), health["http_status"])
 }
 
-func TestAccountProbeOutcomeFromRunManualTriggerUsesManualTestSource(t *testing.T) {
+func TestAccountProbeOutcomeFromRunRepairSchedulingPoolStateUsesManualTestSource(t *testing.T) {
 	t.Parallel()
 
 	account := &Account{ID: 130, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}

@@ -105,6 +105,43 @@ func TestOpenAISchedulerExhaustionProbeStopsOnSuccessAndClearsRuntimeBlock(t *te
 	require.False(t, blocked)
 }
 
+func TestOpenAISchedulerExhaustionProbeKeepsTempCoolingAccountAsWaitCandidate(t *testing.T) {
+	groupID := int64(9)
+	coolingUntil := time.Now().Add(2 * time.Minute)
+	repo := &schedulerExhaustionProbeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{
+			{
+				ID:                     26,
+				Platform:               PlatformOpenAI,
+				Type:                   AccountTypeAPIKey,
+				Status:                 StatusActive,
+				Schedulable:            true,
+				Concurrency:            1,
+				TempUnschedulableUntil: &coolingUntil,
+			},
+		}},
+	}
+	attempts := 0
+	svc := &OpenAIGatewayService{
+		accountRepo: repo,
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+			attempts++
+			require.Equal(t, int64(26), account.ID)
+			return nil
+		},
+	}
+
+	recovered, err := svc.RecoverOpenAISchedulerExhaustion(context.Background(), OpenAISchedulerExhaustionProbeOptions{
+		GroupID:        &groupID,
+		RequestedModel: "gpt-5.2",
+		Infinite:       true,
+	})
+
+	require.NoError(t, err)
+	require.True(t, recovered)
+	require.Equal(t, 1, attempts)
+}
+
 func TestOpenAISchedulerExhaustionProbeInfiniteIgnoresFiniteAttemptCapUntilSuccess(t *testing.T) {
 	groupID := int64(9)
 	repo := &schedulerExhaustionProbeRepo{
