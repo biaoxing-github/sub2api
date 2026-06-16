@@ -250,7 +250,6 @@
             </div>
           </div>
         </div>
-      </div>
       </template>
       <template #table>
         <AccountBulkActionsBar

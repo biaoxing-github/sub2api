@@ -20,17 +20,19 @@
 </template>
 
 <script setup lang="ts">
-import Icon from './Icon.vue'
+import Icon from '../icons/Icon.vue'
+
+type IconName = InstanceType<typeof Icon>['$props']['name']
 
 interface Props {
-  icon: string
+  icon: IconName
   label: string
   value: string | number
   sub?: string
   tone?: 'neutral' | 'success' | 'warning'
 }
 
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   tone: 'neutral'
 })
 
