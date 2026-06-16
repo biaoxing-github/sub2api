@@ -2320,6 +2320,50 @@ func TestOpenAIStreamingMissingTerminalEventReturnsIncompleteError(t *testing.T)
 	}
 }
 
+func TestOpenAIStreamingTerminalEventFromSSEEventLineCompletes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       pr,
+		Header:     http.Header{},
+	}
+
+	go func() {
+		defer func() { _ = pw.Close() }()
+		_, _ = pw.Write([]byte(strings.Join([]string{
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"ok"}`,
+			"",
+			"event: response.completed",
+			`data: {"response":{"id":"resp_1","usage":{"input_tokens":1,"output_tokens":1}}}`,
+			"",
+		}, "\n")))
+	}()
+
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "model", "model")
+	_ = pr.Close()
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.usage)
+	require.Equal(t, 1, result.usage.InputTokens)
+	require.Equal(t, 1, result.usage.OutputTokens)
+	require.Contains(t, rec.Body.String(), "event: response.completed")
+}
+
 func TestOpenAIStreamingMissingTerminalEventRecordsPathHealthFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
@@ -3350,7 +3394,7 @@ func TestOpenAIPassthroughLegacyCockpitToolsCompatIsIgnored(t *testing.T) {
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
 	require.Equal(t, codexCLIUserAgent, req.Header.Get("User-Agent"))
-	require.Equal(t, "Codex Desktop", req.Header.Get("Originator"))
+	require.Equal(t, "codex_cli_rs", req.Header.Get("Originator"))
 	require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
 	require.NotEmpty(t, req.Header.Get("Session_id"))
 	require.Empty(t, req.Header.Get("Connection"))
@@ -3390,12 +3434,12 @@ func TestOpenAIBuildUpstreamRequestAccountCodexSimulationHeaders(t *testing.T) {
 	require.Equal(t, "application/json", req.Header.Get("Content-Type"))
 	require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
 	require.Equal(t, codexDesktopUserAgent, req.Header.Get("User-Agent"))
-	require.Equal(t, "Codex Desktop", req.Header.Get("Originator"))
+	require.Equal(t, "codex_cli_rs", req.Header.Get("Originator"))
 	require.Equal(t, "chatgpt-acc", req.Header.Get("Chatgpt-Account-Id"))
 	require.Equal(t, "codex-session", req.Header.Get("Session-Id"))
 	require.Equal(t, "codex-thread", req.Header.Get("Thread-Id"))
 	require.Equal(t, "codex-request", req.Header.Get("X-Client-Request-Id"))
-	require.Equal(t, "terminal_resize_reflow,memories", req.Header.Get("X-Codex-Beta-Features"))
+	require.Equal(t, "compact-history", req.Header.Get("X-Codex-Beta-Features"))
 	require.Equal(t, `{"thread_source":"user"}`, req.Header.Get("X-Codex-Turn-Metadata"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"))
 	require.Equal(t, isolateOpenAISessionID(0, "prompt-cache-key"), req.Header.Get("conversation_id"))

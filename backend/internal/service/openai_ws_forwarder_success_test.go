@@ -693,7 +693,7 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationForceWS(
 	headers, sessionResolution := svc.buildOpenAIWSHeaders(c, account, "token", decision, false, "", "", "")
 	require.Equal(t, "Bearer token", headers.Get("authorization"))
 	require.Equal(t, codexDesktopUserAgent, headers.Get("user-agent"))
-	require.Equal(t, "Codex Desktop", headers.Get("originator"))
+	require.Equal(t, "codex_cli_rs", headers.Get("originator"))
 	require.Equal(t, "chatgpt-acc", headers.Get("chatgpt-account-id"))
 	require.Equal(t, isolateOpenAISessionID(0, "codex-session"), headers.Get("session_id"))
 	require.Equal(t, isolateOpenAISessionID(0, "codex-thread"), headers.Get("conversation_id"))

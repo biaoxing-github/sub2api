@@ -45,8 +45,8 @@ const (
 	openaiStickySessionTTL = time.Hour // 粘性会话TTL
 	// 与 @openai/codex@0.138.0 在 Windows 上的真实 exec 请求对齐。
 	codexCLIUserAgent    = "Codex Desktop/0.138.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.138.0)"
-	codexCLIOriginator   = "Codex Desktop"
-	codexCLIBetaFeatures = "terminal_resize_reflow"
+	codexCLIOriginator   = "codex_cli_rs"
+	codexCLIBetaFeatures = "compact-history"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
@@ -1834,9 +1834,7 @@ func applyOpenAICodexLatestClientHeaders(req *http.Request, body []byte) {
 	if req.Header.Get("accept") == "" {
 		req.Header.Set("accept", "text/event-stream")
 	}
-	if req.Header.Get("x-codex-beta-features") == "" {
-		req.Header.Set("x-codex-beta-features", codexCLIBetaFeatures)
-	}
+	req.Header.Set("x-codex-beta-features", codexCLIBetaFeatures)
 
 	sessionID := strings.TrimSpace(req.Header.Get("session-id"))
 	if sessionID == "" {
@@ -6195,18 +6193,28 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		sendErrorEvent("stream_read_error")
 		return resultWithUsage(), fmt.Errorf("stream read error: %w", scanErr), true
 	}
+	currentSSEEventType := ""
 	processSSELine := func(line string, queueDrained bool) {
 		_ = queueDrained
 		if streamFailoverErr != nil {
 			return
 		}
+		if line == "" {
+			currentSSEEventType = ""
+		} else if eventType, ok := extractOpenAISSEEventLine(line); ok {
+			currentSSEEventType = eventType
+		}
 		// Extract data from SSE line (supports both "data: " and "data:" formats)
 		if data, ok := extractOpenAISSEDataLine(line); ok {
+			data = openAICompatPayloadWithEventType(data, currentSSEEventType)
 			dataBytes := []byte(data)
-			if openAIStreamEventIsTerminal(data) {
+			eventType := strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
+			if eventType == "" {
+				eventType = currentSSEEventType
+			}
+			if openAIStreamEventIsTerminalType(eventType, data) {
 				sawTerminalEvent = true
 			}
-			eventType := strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			if responseID == "" {
 				responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
 			}

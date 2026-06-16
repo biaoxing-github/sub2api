@@ -755,7 +755,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 		}
 
-		for _, requestBaseURL := range baseURLsForAttempt {
+		for baseURLIndex, requestBaseURL := range baseURLsForAttempt {
 			req, err := s.buildOpenAITestResponsesRequest(ctx, c, account, payloadBytes, authToken, true, "", requestBaseURL, "/v1/responses")
 			if err != nil {
 				return s.sendErrorAndEnd(c, "Failed to create request")
@@ -764,6 +764,9 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			requestStartedAt := time.Now()
 			resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.openAIUpstreamTLSProfile(account))
 			if err != nil {
+				if account.Type == AccountTypeAPIKey && baseURLIndex < len(baseURLsForAttempt)-1 && isTransientAccountProbeError(err.Error()) {
+					continue
+				}
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 			}
 
@@ -1562,7 +1565,13 @@ func (s *AccountTestService) processOpenAIChatCompletionsStreamWithStart(c *gin.
 		}
 
 		line = strings.TrimSpace(line)
-		if line == "" || !sseDataPrefix.MatchString(line) {
+		if line == "" {
+			continue
+		}
+		if !sseDataPrefix.MatchString(line) {
+			if msg := extractOpenAISSEErrorMessage([]byte(line)); msg != "" {
+				return s.sendErrorAndEnd(c, msg)
+			}
 			continue
 		}
 
@@ -1631,6 +1640,12 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
+				line = strings.TrimSpace(line)
+				if line != "" && !sseDataPrefix.MatchString(line) {
+					if msg := extractOpenAISSEErrorMessage([]byte(line)); msg != "" {
+						return s.sendErrorAndEnd(c, msg)
+					}
+				}
 				if seenCompleted {
 					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 					return nil
@@ -1641,7 +1656,13 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 		}
 
 		line = strings.TrimSpace(line)
-		if line == "" || !sseDataPrefix.MatchString(line) {
+		if line == "" {
+			continue
+		}
+		if !sseDataPrefix.MatchString(line) {
+			if msg := extractOpenAISSEErrorMessage([]byte(line)); msg != "" {
+				return s.sendErrorAndEnd(c, msg)
+			}
 			continue
 		}
 

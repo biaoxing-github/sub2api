@@ -203,6 +203,21 @@ data: {"type":"response.completed"}
 	require.Contains(t, recorder.Body.String(), `"first_token_ms"`)
 }
 
+func TestAccountTestService_OpenAIResponsesStreamBareJSONErrorReturnsUpstreamMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+
+	stream := strings.NewReader(`{"error":{"message":"Only Codex clients can use this group (detected: bad ua)","type":"new_api_error","code":"access_denied"}}
+`)
+	err := svc.processOpenAIStream(ctx, stream)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Only Codex clients can use this group")
+	require.Contains(t, recorder.Body.String(), "Only Codex clients can use this group")
+	require.NotContains(t, recorder.Body.String(), "Stream ended before response.completed")
+	require.NotContains(t, recorder.Body.String(), `"success":true`)
+}
+
 func TestAccountTestService_TestAccountConnectionWithResultReturnsLatencyAndFirstToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
@@ -717,10 +732,10 @@ func TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationH
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Content-Type"))
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, codexCLIUserAgent, upstream.lastReq.Header.Get("User-Agent"))
-	require.Equal(t, codexCLIOriginator, upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("originator"))
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Empty(t, upstream.lastReq.Header.Get("version"))
-	require.Equal(t, codexCLIBetaFeatures, upstream.lastReq.Header.Get("X-Codex-Beta-Features"))
+	require.Equal(t, "compact-history", upstream.lastReq.Header.Get("X-Codex-Beta-Features"))
 	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Client-Request-Id"))
 	require.NotEmpty(t, upstream.lastReq.Header.Get("Session-Id"))
 	require.NotEmpty(t, upstream.lastReq.Header.Get("Thread-Id"))

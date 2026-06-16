@@ -67,7 +67,8 @@ func TestOpenAICodexCLISimulationUsesLatestClientVersion(t *testing.T) {
 	require.NotContains(t, codexCLIUserAgent, "0.125.0")
 	require.Contains(t, DefaultOpenAICodexUserAgent, "0.138.0")
 	require.NotContains(t, DefaultOpenAICodexUserAgent, "0.125.0")
-	require.Equal(t, "Codex Desktop", codexCLIOriginator)
+	require.Equal(t, "codex_cli_rs", codexCLIOriginator)
+	require.Equal(t, "compact-history", codexCLIBetaFeatures)
 }
 
 func TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape(t *testing.T) {
