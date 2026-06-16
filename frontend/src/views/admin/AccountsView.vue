@@ -176,24 +176,42 @@
             </template>
           </AccountTableActions>
         </div>
-        <div
-          v-if="hasPendingListSync"
-          class="mt-2 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200"
-        >
-          <span>{{ t('admin.accounts.listPendingSyncHint') }}</span>
+
+        <!-- Collapsible Info Banners -->
+        <div v-if="hasPendingListSync || usageSummary || actionItemsTotal > 0" class="mt-2">
           <button
-            class="btn btn-secondary px-2 py-1 text-xs"
-            @click="syncPendingListChanges"
+            type="button"
+            @click="showInfoBanners = !showInfoBanners"
+            class="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-750 flex items-center justify-between"
           >
-            {{ t('admin.accounts.listPendingSyncAction') }}
+            <span class="flex items-center gap-2">
+              <Icon :name="showInfoBanners ? 'chevronUp' : 'chevronDown'" size="sm" />
+              <span v-if="hasPendingListSync" class="text-amber-600">{{ t('admin.accounts.pendingSync') }}</span>
+              <span v-if="actionItemsTotal > 0" class="text-rose-600">{{ actionItemsTotal }} {{ t('admin.accounts.actionItems.title') }}</span>
+              <span v-if="usageSummary" class="text-gray-600 dark:text-gray-400">{{ t('admin.accounts.usageSummary') }}</span>
+            </span>
           </button>
-        </div>
-        <AccountUsageSummaryPanel
-          :summary="usageSummary"
-          :loading="usageSummaryLoading"
-          :error="usageSummaryError"
-        />
-        <div class="mt-3 rounded-lg border border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+
+          <div v-show="showInfoBanners" class="mt-2 space-y-2">
+            <div
+              v-if="hasPendingListSync"
+              class="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200"
+            >
+              <span>{{ t('admin.accounts.listPendingSyncHint') }}</span>
+              <button
+                type="button"
+                class="btn btn-secondary px-2 py-1 text-xs"
+                @click="syncPendingListChanges"
+              >
+                {{ t('admin.accounts.listPendingSyncAction') }}
+              </button>
+            </div>
+            <AccountUsageSummaryPanel
+              :summary="usageSummary"
+              :loading="usageSummaryLoading"
+              :error="usageSummaryError"
+            />
+            <div class="rounded-lg border border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
           <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">
@@ -228,8 +246,11 @@
             >
               {{ t('common.view') }}
             </button>
+              </div>
+            </div>
           </div>
         </div>
+      </div>
       </template>
       <template #table>
         <AccountBulkActionsBar
@@ -1113,6 +1134,7 @@ const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
 const accountTableRef = ref<HTMLElement | null>(null)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)
+const showInfoBanners = ref(false)
 type AccountBulkEditTarget =
   | {
       mode: 'selected'
