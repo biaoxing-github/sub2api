@@ -192,7 +192,7 @@ const filters = reactive<OpenAIAccountSchedulingPoolFilters>({
   search: '',
 })
 
-const snapshot = ref<OpenAIAccountSchedulingPoolResponse | null>(null)
+const snapshot = shallowRef<OpenAIAccountSchedulingPoolResponse | null>(null)
 const groups = ref<AdminGroup[]>([])
 const loading = ref(false)
 const error = ref('')
