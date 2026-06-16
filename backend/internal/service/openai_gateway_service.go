@@ -5856,11 +5856,12 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 
 // openaiStreamingResult streaming response result
 type openaiStreamingResult struct {
-	usage            *OpenAIUsage
-	firstTokenMs     *int
-	responseID       string
-	imageCount       int
-	imageOutputSizes []string
+	usage                *OpenAIUsage
+	firstTokenMs         *int
+	responseID           string
+	imageCount           int
+	imageOutputSizes     []string
+	missingTerminalEvent bool
 }
 
 type openaiNonStreamingResult struct {
@@ -5907,6 +5908,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithPolicy(
 	result, err := streamSvc.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, mappedModel)
 	if err != nil {
 		s.recordOpenAIPathHealthRequestBaseURLFailure(account, requestBaseURL, err)
+	} else if result != nil && result.missingTerminalEvent {
+		s.recordOpenAIPathHealthRequestBaseURLFailure(account, requestBaseURL, errors.New("missing terminal event"))
 	}
 	return result, err
 }
@@ -6024,6 +6027,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	failedMessage := ""
 	clientOutputStarted := false
 	upstreamOutputStarted := false
+	missingTerminalEvent := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	var streamFailoverErr error
 	sendErrorEvent := func(reason string) {
@@ -6056,11 +6060,12 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	responseTextDetector := newOpenAIResponseTextErrorDetector(account, s.getOpenAIResponseTextErrorRules(ctx))
 	resultWithUsage := func() *openaiStreamingResult {
 		return &openaiStreamingResult{
-			usage:            usage,
-			firstTokenMs:     firstTokenMs,
-			responseID:       responseID,
-			imageCount:       imageCounter.Count(),
-			imageOutputSizes: imageCounter.Sizes(),
+			usage:                usage,
+			firstTokenMs:         firstTokenMs,
+			responseID:           responseID,
+			imageCount:           imageCounter.Count(),
+			imageOutputSizes:     imageCounter.Sizes(),
+			missingTerminalEvent: missingTerminalEvent,
 		}
 	}
 	// 首个真实 SSE event 前只暂存 preamble；心跳仍直接下发用于保活。
@@ -6103,8 +6108,62 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		lastDownstreamWriteAt = time.Now()
 		return nil
 	}
+	// 上游已有真实输出但缺失终态时补齐 response.completed，避免 Codex 客户端把半截流当成网关失败。
+	writeSyntheticCompletedEvent := func() error {
+		if clientDisconnected {
+			return nil
+		}
+		if responseID == "" {
+			responseID = "resp_" + randomHex(12)
+		}
+		output := []apicompat.ResponsesOutput{}
+		if outputJSON, ok := buildResponsesOutputJSON(streamOutputAccumulator, streamImageOutputs); ok {
+			_ = json.Unmarshal(outputJSON, &output)
+		}
+		inputTokens := 0
+		outputTokens := 0
+		if usage != nil {
+			inputTokens = usage.InputTokens
+			outputTokens = usage.OutputTokens
+		}
+		responsesUsage := &apicompat.ResponsesUsage{
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+			TotalTokens:  inputTokens + outputTokens,
+		}
+		if usage != nil && usage.CacheReadInputTokens > 0 {
+			responsesUsage.InputTokensDetails = &apicompat.ResponsesInputTokensDetails{
+				CachedTokens: usage.CacheReadInputTokens,
+			}
+		}
+		event, err := apicompat.ResponsesEventToSSE(apicompat.ResponsesStreamEvent{
+			Type: "response.completed",
+			Response: &apicompat.ResponsesResponse{
+				ID:     responseID,
+				Object: "response",
+				Model:  originalModel,
+				Status: "completed",
+				Output: output,
+				Usage:  responsesUsage,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := bufferedWriter.WriteString(event); err != nil {
+			clientDisconnected = true
+			return err
+		}
+		if err := flushBuffered(); err != nil {
+			clientDisconnected = true
+			return err
+		}
+		lastDownstreamWriteAt = time.Now()
+		return nil
+	}
 	finalizeStream := func() (*openaiStreamingResult, error) {
 		if !sawTerminalEvent {
+			missingTerminalEvent = true
 			s.recordOpenAIPathHealthStreamIncomplete(account, "")
 			if !upstreamOutputStarted {
 				if err := flushPreOutputHeartbeat(); err != nil {
@@ -6123,7 +6182,10 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			if !clientDisconnected {
 				_ = flushPendingClientLines()
 			}
-			return resultWithUsage(), fmt.Errorf("stream usage incomplete: missing terminal event")
+			if err := writeSyntheticCompletedEvent(); err != nil {
+				return resultWithUsage(), fmt.Errorf("stream usage incomplete while writing synthetic terminal event: %w", err)
+			}
+			return resultWithUsage(), nil
 		}
 		if sawFailedEvent {
 			if !clientDisconnected {

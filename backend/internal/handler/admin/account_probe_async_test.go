@@ -271,6 +271,7 @@ func TestAccountModelProbeBatchCreateRunsManualValidationOnly(t *testing.T) {
 		require.Equal(t, "stream", got.RequestMode)
 		require.Equal(t, int64(777), got.TrustedComparisonID)
 		require.True(t, got.ModelValidationOnly)
+		require.True(t, got.ManualTrigger)
 	}
 
 	select {
@@ -282,6 +283,7 @@ func TestAccountModelProbeBatchCreateRunsManualValidationOnly(t *testing.T) {
 	defer probeSvc.mu.Unlock()
 	for _, got := range probeSvc.runReqs {
 		require.Equal(t, int64(777), got.TrustedComparisonID)
+		require.True(t, got.ManualTrigger)
 	}
 }
 
@@ -330,6 +332,7 @@ func TestAccountProbeCreateParsesRequestMode(t *testing.T) {
 
 	require.Equal(t, http.StatusAccepted, rec.Code)
 	require.Equal(t, "stream", probeSvc.req.RequestMode)
+	require.True(t, probeSvc.req.ManualTrigger)
 	close(probeSvc.release)
 }
 
@@ -362,6 +365,7 @@ func TestAccountModelProbeCreateRunsManualValidationOnly(t *testing.T) {
 	require.Equal(t, "stream", probeSvc.req.RequestMode)
 	require.Equal(t, int64(777), probeSvc.req.TrustedComparisonID)
 	require.True(t, probeSvc.req.ModelValidationOnly)
+	require.True(t, probeSvc.req.ManualTrigger)
 
 	select {
 	case <-probeSvc.started:

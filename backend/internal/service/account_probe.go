@@ -62,6 +62,7 @@ type AccountProbeRunRequest struct {
 	RequestMode           string `json:"request_mode"`
 	TrustedComparisonID   int64  `json:"trusted_comparison_account_id,omitempty"`
 	ModelValidationOnly   bool   `json:"-"`
+	ManualTrigger         bool   `json:"-"` // ManualTrigger 标记管理端手动探测，成功后允许恢复账号可调度状态。
 }
 
 type BazaarLinkProbeMode string
@@ -459,7 +460,7 @@ func (s *AccountProbeService) RunExisting(ctx context.Context, run AccountProbeR
 			return run, err
 		}
 	}
-	s.recordAccountProbeOutcome(account, run)
+	s.recordAccountProbeOutcome(account, run, req.ManualTrigger)
 	return run, nil
 }
 
@@ -483,11 +484,11 @@ func (s *AccountProbeService) recordProbePathHealth(account *Account, baseURL st
 	s.health.RecordFailure(key, reason, &headerWait)
 }
 
-func (s *AccountProbeService) recordAccountProbeOutcome(account *Account, run AccountProbeResult) {
+func (s *AccountProbeService) recordAccountProbeOutcome(account *Account, run AccountProbeResult, manualTrigger bool) {
 	if s == nil || s.rateLimitService == nil || account == nil {
 		return
 	}
-	outcome := accountProbeOutcomeFromRun(account, run)
+	outcome := accountProbeOutcomeFromRun(account, run, manualTrigger)
 	persistCtx, cancel := context.WithTimeout(context.Background(), accountProbePersistenceTimeout)
 	defer cancel()
 	if _, err := s.rateLimitService.RecordAccountProbeOutcome(persistCtx, outcome); err != nil {
@@ -495,7 +496,7 @@ func (s *AccountProbeService) recordAccountProbeOutcome(account *Account, run Ac
 	}
 }
 
-func accountProbeOutcomeFromRun(account *Account, run AccountProbeResult) AccountProbeOutcome {
+func accountProbeOutcomeFromRun(account *Account, run AccountProbeResult, manualTrigger bool) AccountProbeOutcome {
 	success := run.Status == AccountProbeStatusSuccess
 	latencyMs := run.AvgLatencyMillis
 	if latencyMs <= 0 {
@@ -510,10 +511,14 @@ func accountProbeOutcomeFromRun(account *Account, run AccountProbeResult) Accoun
 	if run.FinishedAt != nil {
 		observedAt = *run.FinishedAt
 	}
+	source := AccountProbeOutcomeSourceAccountProbe
+	if manualTrigger {
+		source = AccountProbeOutcomeSourceManualTest
+	}
 	return AccountProbeOutcome{
 		AccountID:      account.ID,
 		Account:        account,
-		Source:         AccountProbeOutcomeSourceAccountProbe,
+		Source:         source,
 		Success:        success,
 		ErrorMessage:   errorMessage,
 		HTTPStatus:     httpStatus,

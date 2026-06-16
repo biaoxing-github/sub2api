@@ -568,6 +568,24 @@ func TestAccountProbeService_RunRecordsAccountProbeOutcomeFailure(t *testing.T) 
 	require.Equal(t, float64(http.StatusPaymentRequired), health["http_status"])
 }
 
+func TestAccountProbeOutcomeFromRunManualTriggerUsesManualTestSource(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{ID: 130, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	run := AccountProbeResult{
+		Status:           AccountProbeStatusSuccess,
+		AvgLatencyMillis: 1200,
+	}
+
+	manualOutcome := accountProbeOutcomeFromRun(account, run, true)
+	require.Equal(t, AccountProbeOutcomeSourceManualTest, manualOutcome.Source)
+	require.True(t, manualOutcome.Success)
+
+	backgroundOutcome := accountProbeOutcomeFromRun(account, run, false)
+	require.Equal(t, AccountProbeOutcomeSourceAccountProbe, backgroundOutcome.Source)
+	require.True(t, backgroundOutcome.Success)
+}
+
 func TestEvaluateAccountProbeModelValidationEvidence(t *testing.T) {
 	t.Parallel()
 

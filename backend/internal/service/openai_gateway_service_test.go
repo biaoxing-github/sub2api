@@ -2286,7 +2286,7 @@ func TestOpenAIStreamingClientDisconnectDrainsUpstreamUsage(t *testing.T) {
 	}
 }
 
-func TestOpenAIStreamingMissingTerminalEventReturnsIncompleteError(t *testing.T) {
+func TestOpenAIStreamingMissingTerminalEventAfterOutputSynthesizesTerminal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
@@ -2310,14 +2310,20 @@ func TestOpenAIStreamingMissingTerminalEventReturnsIncompleteError(t *testing.T)
 
 	go func() {
 		defer func() { _ = pw.Close() }()
-		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\"},\"output_index\":0}\n\n"))
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]},\"output_index\":0}\n\n"))
+		_, _ = pw.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":0,\"content_index\":0,\"delta\":\"hello\"}\n\n"))
 	}()
 
-	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "model", "model")
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "model", "model")
 	_ = pr.Close()
-	if err == nil || !strings.Contains(err.Error(), "missing terminal event") {
-		t.Fatalf("expected missing terminal event error, got %v", err)
-	}
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.missingTerminalEvent)
+	body := rec.Body.String()
+	require.Contains(t, body, "event: response.completed")
+	require.Contains(t, body, `"status":"completed"`)
+	require.Contains(t, body, `"output"`)
+	require.NotContains(t, body, `"type":"error"`)
 }
 
 func TestOpenAIStreamingTerminalEventFromSSEEventLineCompletes(t *testing.T) {
@@ -2400,9 +2406,11 @@ func TestOpenAIStreamingMissingTerminalEventRecordsPathHealthFailure(t *testing.
 		Header: http.Header{"X-Request-Id": []string{"rid-missing-terminal"}},
 	}
 
-	_, err := svc.handleStreamingResponseWithPolicy(c.Request.Context(), resp, c, account, time.Now(), "model", "model", openAICodexStabilityPolicy{}, "https://selected-terminal.example.com/v1")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "missing terminal event")
+	result, err := svc.handleStreamingResponseWithPolicy(c.Request.Context(), resp, c, account, time.Now(), "model", "model", openAICodexStabilityPolicy{}, "https://selected-terminal.example.com/v1")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.missingTerminalEvent)
+	require.Contains(t, rec.Body.String(), "event: response.completed")
 
 	accountSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE)))
 	require.Equal(t, int64(1), accountSnapshot.FailureCount)

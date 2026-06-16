@@ -26,6 +26,7 @@ type accountProbeReportHTTPServiceStub struct {
 	rankingLimit int
 	rankingItems []service.AccountProbeRankingItem
 	startedRuns  []service.AccountProbeRunRequest
+	runReqs      []service.AccountProbeRunRequest
 	activeRuns   int
 	maxActive    int
 	runStarted   chan struct{}
@@ -50,6 +51,7 @@ func (s *accountProbeReportHTTPServiceStub) Start(ctx context.Context, req servi
 
 func (s *accountProbeReportHTTPServiceStub) RunExisting(ctx context.Context, run service.AccountProbeResult, req service.AccountProbeRunRequest) (service.AccountProbeResult, error) {
 	s.mu.Lock()
+	s.runReqs = append(s.runReqs, req)
 	s.activeRuns++
 	if s.activeRuns > s.maxActive {
 		s.maxActive = s.activeRuns
@@ -240,6 +242,8 @@ func TestAccountProbeReportBatchCreateDeduplicatesAccounts(t *testing.T) {
 	require.Equal(t, int64(182), probeSvc.startedRuns[1].AccountID)
 	require.Equal(t, "stream", probeSvc.startedRuns[0].RequestMode)
 	require.False(t, probeSvc.startedRuns[0].IncludeCodexStability)
+	require.True(t, probeSvc.startedRuns[0].ManualTrigger)
+	require.True(t, probeSvc.startedRuns[1].ManualTrigger)
 }
 
 func TestAccountProbeReportBatchCreateLimitsBackgroundConcurrency(t *testing.T) {
@@ -274,4 +278,10 @@ func TestAccountProbeReportBatchCreateLimitsBackgroundConcurrency(t *testing.T) 
 		defer probeSvc.mu.Unlock()
 		return probeSvc.maxActive == 2 && probeSvc.activeRuns == 0
 	}, time.Second, 10*time.Millisecond)
+	probeSvc.mu.Lock()
+	require.Len(t, probeSvc.runReqs, 4)
+	for _, got := range probeSvc.runReqs {
+		require.True(t, got.ManualTrigger)
+	}
+	probeSvc.mu.Unlock()
 }
