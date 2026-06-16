@@ -247,7 +247,7 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 	require.Zero(t, billingRepo.lastCmd.AccountQuotaCost)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_MissingObservedUsageRejectsUsageLog(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_MissingObservedUsageSkipsUsageLog(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
 	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, nil, nil, nil)
@@ -266,8 +266,7 @@ func TestOpenAIGatewayServiceRecordUsage_MissingObservedUsageRejectsUsageLog(t *
 		Account: &Account{ID: 3001, Type: AccountTypeAPIKey},
 	})
 
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "usage was not observed")
+	require.NoError(t, err)
 	require.Zero(t, billingRepo.calls)
 	require.Zero(t, usageRepo.calls)
 }
