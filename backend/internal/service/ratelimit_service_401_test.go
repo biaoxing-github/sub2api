@@ -17,6 +17,10 @@ type rateLimitAccountRepoStub struct {
 	mockAccountRepoForGemini
 	account                *Account
 	setErrorCalls          int
+	clearErrorCalls        int
+	clearRateLimitCalls    int
+	clearTempUnschedCalls  int
+	setSchedulableCalls    int
 	tempCalls              int
 	rateLimitedCalls       int
 	updateCredentialsCalls int
@@ -26,6 +30,7 @@ type rateLimitAccountRepoStub struct {
 	lastErrorMsg           string
 	lastTempReason         string
 	lastRateLimitedUntil   *time.Time
+	lastSchedulableValue   bool
 }
 
 func (r *rateLimitAccountRepoStub) GetByID(ctx context.Context, id int64) (*Account, error) {
@@ -38,6 +43,38 @@ func (r *rateLimitAccountRepoStub) GetByID(ctx context.Context, id int64) (*Acco
 func (r *rateLimitAccountRepoStub) SetError(ctx context.Context, id int64, errorMsg string) error {
 	r.setErrorCalls++
 	r.lastErrorMsg = errorMsg
+	return nil
+}
+
+func (r *rateLimitAccountRepoStub) ClearError(ctx context.Context, id int64) error {
+	r.clearErrorCalls++
+	if r.account != nil {
+		r.account.Status = StatusActive
+		r.account.ErrorMessage = ""
+	}
+	return nil
+}
+
+func (r *rateLimitAccountRepoStub) ClearRateLimit(ctx context.Context, id int64) error {
+	r.clearRateLimitCalls++
+	return nil
+}
+
+func (r *rateLimitAccountRepoStub) ClearTempUnschedulable(ctx context.Context, id int64) error {
+	r.clearTempUnschedCalls++
+	if r.account != nil {
+		r.account.TempUnschedulableUntil = nil
+		r.account.TempUnschedulableReason = ""
+	}
+	return nil
+}
+
+func (r *rateLimitAccountRepoStub) SetSchedulable(ctx context.Context, id int64, schedulable bool) error {
+	r.setSchedulableCalls++
+	r.lastSchedulableValue = schedulable
+	if r.account != nil {
+		r.account.Schedulable = schedulable
+	}
 	return nil
 }
 
@@ -133,6 +170,91 @@ func TestRateLimitService_RecordAccountProbeOutcomeManualFailureWritesHealth(t *
 	require.Equal(t, float64(http.StatusPaymentRequired), health["http_status"])
 	require.Equal(t, latencyMs, health["latency_ms"])
 	require.Equal(t, firstTokenMs, health["first_token_ms"])
+}
+
+func TestRateLimitService_RecordAccountProbeOutcomeManualSuccessRestoresSchedulableAndHealthy(t *testing.T) {
+	until := time.Now().Add(10 * time.Minute)
+	account := &Account{
+		ID:                      62003,
+		Platform:                PlatformOpenAI,
+		Type:                    AccountTypeOAuth,
+		Status:                  StatusError,
+		ErrorMessage:            "upstream failed",
+		Schedulable:             false,
+		TempUnschedulableUntil:  &until,
+		TempUnschedulableReason: "upstream_5xx",
+		Extra: map[string]any{
+			AccountProbeHealthExtraKey: map[string]any{
+				"level":         AccountProbeHealthTempUnsched,
+				"failure_count": 3,
+				"last_error":    "upstream failed",
+			},
+		},
+	}
+	repo := &rateLimitAccountRepoStub{account: account}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+
+	transition, err := service.RecordAccountProbeOutcome(context.Background(), AccountProbeOutcome{
+		AccountID: account.ID,
+		Account:   account,
+		Source:    AccountProbeOutcomeSourceManualTest,
+		Success:   true,
+		Reason:    "probe_success",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeHealthTempUnsched, transition.PreviousLevel)
+	require.Equal(t, AccountProbeHealthNormal, transition.NextLevel)
+	require.True(t, transition.Restored)
+	require.Equal(t, 1, repo.clearErrorCalls)
+	require.Equal(t, 1, repo.clearRateLimitCalls)
+	require.Equal(t, 1, repo.clearTempUnschedCalls)
+	require.Equal(t, 1, repo.setSchedulableCalls)
+	require.True(t, repo.lastSchedulableValue)
+	require.Equal(t, 1, repo.updateExtraCalls)
+	health, ok := repo.lastExtraUpdates[AccountProbeHealthExtraKey].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, AccountProbeHealthNormal, health["level"])
+	require.Equal(t, 0, health["failure_count"])
+	require.Equal(t, 1, health["success_count"])
+	require.NotContains(t, health, "last_error")
+	require.NotContains(t, health, "next_probe_at")
+}
+
+func TestRateLimitService_RecordAccountProbeOutcomeBackgroundSuccessDoesNotRestoreManualSchedulable(t *testing.T) {
+	account := &Account{
+		ID:          62004,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: false,
+		Extra: map[string]any{
+			AccountProbeHealthExtraKey: map[string]any{
+				"level":         AccountProbeHealthLightAbnormal,
+				"failure_count": 1,
+				"last_error":    "upstream failed",
+			},
+		},
+	}
+	repo := &rateLimitAccountRepoStub{account: account}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+
+	transition, err := service.RecordAccountProbeOutcome(context.Background(), AccountProbeOutcome{
+		AccountID: account.ID,
+		Account:   account,
+		Source:    AccountProbeOutcomeSourceAccountProbe,
+		Success:   true,
+		Reason:    "probe_success",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeHealthNormal, transition.NextLevel)
+	require.Equal(t, 0, repo.setSchedulableCalls)
+	require.Equal(t, 1, repo.updateExtraCalls)
+	health, ok := repo.lastExtraUpdates[AccountProbeHealthExtraKey].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, AccountProbeHealthNormal, health["level"])
+	require.Equal(t, 0, health["failure_count"])
 }
 
 type tokenCacheInvalidatorRecorder struct {

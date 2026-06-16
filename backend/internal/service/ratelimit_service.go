@@ -40,13 +40,15 @@ type AccountRuntimeBlocker interface {
 
 // SuccessfulTestRecoveryResult 表示测试成功后恢复了哪些运行时状态。
 type SuccessfulTestRecoveryResult struct {
-	ClearedError     bool
-	ClearedRateLimit bool
+	ClearedError        bool
+	ClearedRateLimit    bool
+	RestoredSchedulable bool
 }
 
 // AccountRecoveryOptions 控制账号恢复时的附加行为。
 type AccountRecoveryOptions struct {
-	InvalidateToken bool
+	InvalidateToken    bool
+	RestoreSchedulable bool
 }
 
 type geminiUsageCacheEntry struct {
@@ -1546,7 +1548,7 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 	}
 
 	result := &SuccessfulTestRecoveryResult{}
-	if account.Status == StatusError {
+	if account.Status == StatusError || strings.TrimSpace(account.ErrorMessage) != "" {
 		if err := s.accountRepo.ClearError(ctx, accountID); err != nil {
 			return nil, err
 		}
@@ -1564,7 +1566,13 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 		}
 		result.ClearedRateLimit = true
 	}
-	if result.ClearedError || result.ClearedRateLimit {
+	if options.RestoreSchedulable && !account.Schedulable {
+		if err := s.accountRepo.SetSchedulable(ctx, accountID, true); err != nil {
+			return nil, err
+		}
+		result.RestoredSchedulable = true
+	}
+	if result.ClearedError || result.ClearedRateLimit || result.RestoredSchedulable {
 		s.ResetOpenAI403Counter(ctx, accountID)
 		if result.ClearedError && !result.ClearedRateLimit {
 			s.notifyAccountSchedulingBlockCleared(accountID)

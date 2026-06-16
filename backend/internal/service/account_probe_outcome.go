@@ -108,7 +108,9 @@ func (s *RateLimitService) RecordAccountProbeOutcome(ctx context.Context, outcom
 
 	if outcome.Success {
 		if canRecoverAccountAfterProbeSuccess(account) {
-			if _, err := s.RecoverAccountState(ctx, account.ID, AccountRecoveryOptions{}); err != nil {
+			if _, err := s.RecoverAccountState(ctx, account.ID, AccountRecoveryOptions{
+				RestoreSchedulable: outcome.Source == AccountProbeOutcomeSourceManualTest,
+			}); err != nil {
 				return nil, err
 			}
 		}
