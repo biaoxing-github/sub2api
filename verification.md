@@ -3306,3 +3306,15 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - DEPLOY：发布前 active 为 blue `sub2api:v0.1.134.39`；新版本部署到 idle green，候选端口 `18082` 的 health/home/static 200，未登录 admin version、`/responses`、`/v1/messages` 均 401，green healthy 持续 66 秒。
 - CUTOVER：`D:\sub2api-deploy\proxy\upstreams\active.conf` 切到 `sub2api-green:8080`，`nginx -t` 和 reload 通过；切流后 `8080` 与 `18081` 同组冒烟通过，green/blue 均 healthy，proxy/green 关键错误日志命中 0。
 - 风险：未做登录态管理页操作；blue `sub2api:v0.1.134.39` 保留 healthy 作为回滚目标。
+
+## 2026-06-16 12:14 +08:00 - 调度恢复与 hotaruapi 修复发布 v0.1.134.41
+
+- 执行者：Devil
+- 变更范围：已提交 HEAD `0610d7bdcf69` 中的调度池人工测试恢复和 hotaruapi Codex CLI 模拟修复；本次追加 `docs/releases/v0.1.134.41.md`、`docs/feature_list.jsonl`、`docs/process_list.jsonl`。
+- GREEN：`go test -tags unit ./internal/service -run 'TestRateLimitService_(RecordAccountProbeOutcome|RecoverAccount|ClearRateLimit)|TestAccountProbeService_RunRecordsAccountProbeOutcomeFailure|TestAccountDerivedHealth|TestAccountTestService_OpenAIResponsesStreamBareJSONErrorReturnsUpstreamMessage|TestAccountTestService_OpenAIAPIKeyTriesNextRequestBaseURLOnTransientError|TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationHeaders|TestOpenAIStreamingTerminalEventFromSSEEventLineCompletes|TestOpenAIStreamingMissingTerminalEventReturnsIncompleteError|TestOpenAICodexCLISimulationUsesLatestClientVersion|TestOpenAIBuildUpstreamRequestAccountCodexSimulationHeaders|TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationForceWS|TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape' -count=1` 通过。
+- GREEN：`go test -tags unit ./internal/pkg/openai -run 'TestIsCodexOfficialClient' -count=1` 通过。
+- GREEN：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，server 编译切片无测试运行。
+- BUILD：从 `git archive HEAD` 构建 `sub2api:v0.1.134.41`，镜像 ID `sha256:0314391dcdbad4277477fc817431f32cacf2488e38e49bc0627b2d84820d4801`，label revision `0610d7bdcf69`，二进制版本显示 `image: v0.1.134.41`。
+- DEPLOY：发布前 active 为 green `sub2api:v0.1.134.40`；新版本部署到 idle blue，候选端口 `18083` 的 health/home/static 200，未登录 admin version、`/responses`、`/v1/messages` 均 401，blue healthy 持续 65 秒。
+- CUTOVER：`D:\sub2api-deploy\proxy\upstreams\active.conf` 切到 `sub2api-blue:8080`，`nginx -t` 和 reload 通过；切流后 `8080` 与 `18081` 同组冒烟通过，blue/green 均 healthy，proxy/blue 关键错误日志命中 0。
+- 风险：未做登录态管理端页面操作；green `sub2api:v0.1.134.40` 保留 healthy 作为回滚目标。
