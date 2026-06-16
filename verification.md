@@ -3352,3 +3352,11 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - go test ./cmd/server -run TestNoSuchTest -count=1: PASS
 - go test -tags unit ./internal/handler -run TestNoSuchTest -count=1: PASS
 - git diff --check: PASS with existing .codegraph/daemon.pid CRLF warning only
+
+## 2026-06-16 18:06:45 +08:00 Devil - release v0.1.134.45
+- Build: sub2api:v0.1.134.45 from HEAD dc03035462ab, image version in binary reports v0.1.134.45.
+- Deploy: active switched from green v0.1.134.44 to blue v0.1.134.45 via nginx upstream reload.
+- Candidate blue 18083: health 200, home 200, unauth admin version/responses/messages 401, healthy after 60s.
+- Candidate logs: one startup cleanup pq: canceling statement due to user request; a clean 90s observation window then had critical log hits=0.
+- Post-cutover 8080/18081: health 200 and unauth /responses 401.
+- Real gptai-plus upstream account_id=434: HTTP 200, response.completed=True, output_delta=True, usage=False.
