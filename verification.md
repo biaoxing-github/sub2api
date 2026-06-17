@@ -3360,3 +3360,37 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - Candidate logs: one startup cleanup pq: canceling statement due to user request; a clean 90s observation window then had critical log hits=0.
 - Post-cutover 8080/18081: health 200 and unauth /responses 401.
 - Real gptai-plus upstream account_id=434: HTTP 200, response.completed=True, output_delta=True, usage=False.
+
+## 2026-06-17 12:00:00 +08:00 Devil - OPTIMIZATION_TODO priority implementation
+- Scope: completed the remaining optimization backlog from `docs/OPTIMIZATION_TODO.md` across backend hot path scheduling, admin UI simplification/performance, shared account modal fields, and payment polling backoff.
+- RED/FIX: `AccountsView.bulkEdit.spec.ts` was repaired after a bad mechanical edit introduced extra `)` in several mocks; the single-file Vitest run exposed exact parser lines and the final repair kept wrapper unmount/timer cleanup.
+- GREEN: `rtk npm run test:run -- src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts`: 11 tests passed.
+- GREEN: `rtk npm run test:run -- src/views/admin/__tests__/DashboardView.spec.ts src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts src/components/payment/__tests__/PaymentStatusPolling.spec.ts src/components/payment/__tests__/PaymentStatusPanel.spec.ts src/components/account/__tests__/AccountPoolModeSection.spec.ts src/components/account/__tests__/AccountBasicInfoFields.spec.ts src/components/account/__tests__/AccountUpstreamBalanceFields.spec.ts src/components/account/__tests__/AccountModelRestrictionSection.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts`: 10 files and 57 tests passed.
+- GREEN: `rtk npm run typecheck`: passed.
+- GREEN: `rtk go test -tags unit ./internal/service -run "TestOpenAIAccountSchedulerPrivacySetSkipsWithoutSetError|TestSelectAccountWithLoadAwareness_RequestSchedulingSnapshotReusesPrefetchAcrossExclusions|TestWithWindowCostPrefetch" -count=1 -v`: 5 tests passed.
+- GREEN: `rtk go test -tags unit ./internal/handler -run "TestResolveGatewayRequestSchedulingSnapshotKey|TestGatewayHandlerSubmitUsageRecordTask_NilTask" -count=1 -v`: 5 tests passed.
+- GREEN: `rtk go test ./cmd/server -run TestNoSuchTest -count=1`: passed with no tests.
+- GREEN: `git diff --check`: passed; only existing CRLF warnings for `.codegraph/daemon.pid`, `docs/feature_list.jsonl`, and `docs/process_list.jsonl`.
+- Warnings observed: Browserslist `caniuse-lite` data is stale; Vitest still emits existing i18n missing key warnings for `common.time.never`.
+- Remaining risk: P2 modal extraction intentionally leaves Antigravity model mapping, OpenAI compact mapping, and quota-control sections in the original modals because they carry account-specific state sync and submit semantics.
+
+## 2026-06-17 14:08:31 +08:00 Devil - OPTIMIZATION_TODO parallel tail completion
+- Scope: continued parallel completion of the remaining safe optimization tail. Account modals now share API Key credential fields and upstream credential fields; SettingsView now shares the repeated section save button; `docs/OPTIMIZATION_TODO.md` now reflects the actual implemented state.
+- GREEN: `rtk npm run test:run -- src/components/account/__tests__/AccountAPIKeyCredentialsFields.spec.ts src/components/account/__tests__/AccountUpstreamCredentialsFields.spec.ts src/components/account/__tests__/AccountOptionSelector.spec.ts src/components/account/__tests__/AccountQuotaControlSection.spec.ts src/components/account/__tests__/AccountAnthropicQuotaControlSection.spec.ts src/components/account/__tests__/AccountAntigravityModelMappingSection.spec.ts src/components/account/__tests__/AccountOpenAICompactModeSection.spec.ts src/components/account/__tests__/AccountModelMappingList.spec.ts src/components/account/__tests__/AccountPoolModeSection.spec.ts src/components/account/__tests__/AccountBasicInfoFields.spec.ts src/components/account/__tests__/AccountUpstreamBalanceFields.spec.ts src/components/account/__tests__/AccountModelRestrictionSection.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts`: 13 files and 45 tests passed.
+- GREEN: `rtk npm run test:run -- src/views/admin/__tests__/SettingsSaveBar.spec.ts src/views/admin/__tests__/SettingsTabNavigation.spec.ts src/views/admin/__tests__/SettingsSectionSaveButton.spec.ts src/views/admin/__tests__/SettingsView.spec.ts`: 4 files and 21 tests passed.
+- GREEN: `rtk npm run typecheck`: passed.
+- GREEN: `rtk go test -tags unit ./internal/service -run "TestOpenAIAccountSchedulerPrivacySetSkipsWithoutSetError|TestSelectAccountWithLoadAwareness_RequestSchedulingSnapshotReusesPrefetchAcrossExclusions|TestWithWindowCostPrefetch|TestOpenAIAccountSchedulerSkipsAPIKeyAccountWithNoActiveKeys" -count=1 -v`: 6 tests passed.
+- GREEN: `rtk go test -tags unit ./internal/handler -run "TestResolveGatewayRequestSchedulingSnapshotKey|TestGatewayHandlerSubmitUsageRecordTask_NilTask" -count=1 -v`: 5 tests passed.
+- GREEN: `rtk go test ./cmd/server -run TestNoSuchTest -count=1`: passed with no tests.
+- GREEN: `git diff --check`: passed; only existing CRLF warnings for `.codegraph/daemon.pid`, `docs/feature_list.jsonl`, `docs/process_list.jsonl`, and `verification.md`.
+- Warnings observed: Browserslist `caniuse-lite` data is stale; `rtk` reports no global hook installed.
+- Remaining risk: no known unfinished P0/P1/P2/P3 item from `docs/OPTIMIZATION_TODO.md`; further account/Settings decomposition would be optional high-coupling refactor work, not part of the current optimization backlog.
+
+## 2026-06-17 15:58:36 +08:00 Devil - version 0.1.136 and image version display
+- Scope: paused visual/style changes and only updated version semantics. Main binary version source is now `0.1.136`; image version remains a separate build/runtime value surfaced as `image_version`.
+- GREEN: `go test ./internal/service -run TestUpdateServiceCheckUpdateExposesImageVersionSeparately -count=1`: passed.
+- GREEN: `go test ./cmd/server -run TestNoSuchTest -count=1`: passed with no tests.
+- GREEN: `corepack pnpm vitest run src/components/common/__tests__/VersionBadge.spec.ts src/stores/__tests__/app.spec.ts`: 2 files and 24 tests passed.
+- GREEN: `corepack pnpm typecheck`: passed.
+- GREEN: `git diff --check`: passed; only existing CRLF warnings for `.codegraph/daemon.pid`, `backend/cmd/server/VERSION`, `docs/feature_list.jsonl`, `docs/process_list.jsonl`, and `verification.md`.
+- Warnings observed: initial `pnpm ...` command failed because `pnpm` is not directly on PATH; `corepack pnpm` is available and was used. Browserslist data is stale.

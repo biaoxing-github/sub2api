@@ -39,9 +39,9 @@ describe('VersionBadge', () => {
     const appStore = useAppStore()
 
     ;(authStore as any).user = { id: 1, role: 'admin' }
-    appStore.currentVersion = '0.1.134'
-    ;(appStore as any).imageVersion = 'v0.1.134.3'
-    appStore.latestVersion = '0.1.134'
+    appStore.currentVersion = '0.1.136'
+    ;(appStore as any).imageVersion = 'v0.1.136.1'
+    appStore.latestVersion = '0.1.136'
     appStore.hasUpdate = false
     appStore.buildType = 'release'
     appStore.versionLoaded = true
@@ -55,13 +55,14 @@ describe('VersionBadge', () => {
       }
     })
 
-    expect(wrapper.find('button').text()).toContain('v0.1.134.3')
+    expect(wrapper.find('button').text()).toContain('v0.1.136')
+    expect(wrapper.find('button').text()).not.toContain('v0.1.136.1')
 
     await wrapper.find('button').trigger('click')
     await nextTick()
 
-    expect(wrapper.text()).toContain('v0.1.134')
+    expect(wrapper.text()).toContain('v0.1.136')
     expect(wrapper.text()).toContain('version.imageVersion')
-    expect(wrapper.text()).toContain('v0.1.134.3')
+    expect(wrapper.text()).toContain('v0.1.136.1')
   })
 })

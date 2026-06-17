@@ -35,8 +35,8 @@ func (imageVersionReleaseClientStub) FetchChecksumFile(ctx context.Context, url 
 }
 
 func TestUpdateServiceCheckUpdateExposesImageVersionSeparately(t *testing.T) {
-	t.Setenv("SUB2API_IMAGE_VERSION", "v0.1.134.3")
-	svc := NewUpdateService(imageVersionCacheStub{}, imageVersionReleaseClientStub{}, "0.1.134", "release")
+	t.Setenv("SUB2API_IMAGE_VERSION", "v0.1.136.1")
+	svc := NewUpdateService(imageVersionCacheStub{}, imageVersionReleaseClientStub{}, "0.1.136", "release")
 
 	info, err := svc.CheckUpdate(context.Background(), true)
 	require.NoError(t, err)
@@ -46,6 +46,6 @@ func TestUpdateServiceCheckUpdateExposesImageVersionSeparately(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(raw, &payload))
-	require.Equal(t, "0.1.134", payload["current_version"])
-	require.Equal(t, "v0.1.134.3", payload["image_version"])
+	require.Equal(t, "0.1.136", payload["current_version"])
+	require.Equal(t, "v0.1.136.1", payload["image_version"])
 }

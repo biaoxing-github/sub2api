@@ -256,9 +256,9 @@ describe('useAppStore', () => {
   describe('版本信息加载', () => {
     it('缓存主版本和镜像子版本', async () => {
       vi.mocked(checkUpdates).mockResolvedValue({
-        current_version: '0.1.134',
-        image_version: 'v0.1.134.3',
-        latest_version: '0.1.134',
+        current_version: '0.1.136',
+        image_version: 'v0.1.136.1',
+        latest_version: '0.1.136',
         has_update: false,
         build_type: 'release',
         cached: false
@@ -267,14 +267,14 @@ describe('useAppStore', () => {
       const store = useAppStore()
       const result = await store.fetchVersion(true)
 
-      expect(result?.current_version).toBe('0.1.134')
-      expect(result?.image_version).toBe('v0.1.134.3')
-      expect((store as any).currentVersion).toBe('0.1.134')
-      expect((store as any).imageVersion).toBe('v0.1.134.3')
+      expect(result?.current_version).toBe('0.1.136')
+      expect(result?.image_version).toBe('v0.1.136.1')
+      expect((store as any).currentVersion).toBe('0.1.136')
+      expect((store as any).imageVersion).toBe('v0.1.136.1')
 
       const cached = await store.fetchVersion(false)
-      expect(cached?.current_version).toBe('0.1.134')
-      expect(cached?.image_version).toBe('v0.1.134.3')
+      expect(cached?.current_version).toBe('0.1.136')
+      expect(cached?.image_version).toBe('v0.1.136.1')
       expect(checkUpdates).toHaveBeenCalledTimes(1)
     })
   })
