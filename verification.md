@@ -3394,3 +3394,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN: `corepack pnpm typecheck`: passed.
 - GREEN: `git diff --check`: passed; only existing CRLF warnings for `.codegraph/daemon.pid`, `backend/cmd/server/VERSION`, `docs/feature_list.jsonl`, `docs/process_list.jsonl`, and `verification.md`.
 - Warnings observed: initial `pnpm ...` command failed because `pnpm` is not directly on PATH; `corepack pnpm` is available and was used. Browserslist data is stale.
+
+## 2026-06-17 16:45:12 +08:00 Devil - release v0.1.136.1
+- Build: `sub2api:v0.1.136.1` from HEAD `d19b309c89dc`; image labels report `version=v0.1.136.1` and `revision=d19b309c89dc`.
+- Binary version: `docker run --rm sub2api:v0.1.136.1 /app/sub2api -version` and `docker exec sub2api-blue /app/sub2api -version` both report `Sub2API 0.1.136 (image: v0.1.136.1, commit: d19b309c89dc)`.
+- Deploy: active switched from green `sub2api:v0.1.134.48` to blue `sub2api:v0.1.136.1` via nginx upstream reload.
+- Candidate blue 18083: `/health` 200, home 200, unauth `/api/v1/admin/accounts` 401, unauth `/responses` 401, unauth `/v1/responses` 401, container `Health=healthy` after 70s.
+- Candidate logs: one startup request snapshot cleanup `pq: canceling statement due to user request` was observed before the observation window; the following 70s window had critical log hits=0.
+- Post-cutover 8080/18081: `/health` 200, home 200, unauth `/api/v1/admin/system/version` 401, unauth `/responses` 401.
+- Browser smoke: Playwright opened `http://127.0.0.1:8080/`, redirected to `/home`, title `Home - Sub2API`, page snapshot nonempty.
+- Current state: active blue `sub2api:v0.1.136.1`; rollback green `sub2api:v0.1.134.48`.
