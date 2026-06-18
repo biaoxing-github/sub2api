@@ -44,6 +44,7 @@ import { useAppStore } from '@/stores'
 import QRCode from 'qrcode'
 import alipayIcon from '@/assets/icons/alipay.svg'
 import wxpayIcon from '@/assets/icons/wxpay.svg'
+import { createPaymentStatusPoller, type PaymentStatusPoller } from '@/components/payment/PaymentStatusPolling'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -60,7 +61,7 @@ const expired = ref(false)
 const cancelling = ref(false)
 const paymentType = ref('')
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let statusPoller: PaymentStatusPoller | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
 const countdownDisplay = computed(() => {
@@ -131,16 +132,18 @@ async function renderQR() {
   }
 }
 
-async function pollStatus() {
+async function pollStatus(): Promise<void | false> {
   if (!orderId.value) return
   const order = await paymentStore.pollOrderStatus(orderId.value)
   if (!order) return
   if (order.status === 'COMPLETED' || order.status === 'PAID') {
     cleanup()
     router.push({ path: '/payment/result', query: { order_id: String(orderId.value), status: 'success' } })
+    return false
   } else if (order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'FAILED') {
     cleanup()
     expired.value = true
+    return false
   }
 }
 
@@ -174,7 +177,7 @@ async function handleCancel() {
 }
 
 function cleanup() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (statusPoller) { statusPoller.stop(); statusPoller = null }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
 }
 
@@ -195,7 +198,8 @@ onMounted(() => {
     seconds = Math.floor((expiresAt.getTime() - now.getTime()) / 1000)
   }
   startCountdown(seconds)
-  pollTimer = setInterval(pollStatus, 3000)
+  statusPoller = createPaymentStatusPoller(pollStatus)
+  statusPoller.start()
   renderQR()
 })
 

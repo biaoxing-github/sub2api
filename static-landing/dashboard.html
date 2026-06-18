@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"> <!-- 设置编码为 UTF-8 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- 移动端视口适配 -->
+    <title>控制台 - Sub2API</title> <!-- 控制面板标题 -->
+    <script src="https://cdn.tailwindcss.com"></script> <!-- 引入 Tailwind CSS CDN -->
+    <link rel="preconnect" href="https://fonts.googleapis.com"> <!-- 预解析 Google 字体库 -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin> <!-- 跨域解析 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet"> <!-- 导入所选英中字体 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Noto Sans SC"', 'sans-serif'], // 中文字体
+                        display: ['"Space Grotesk"', '"Noto Sans SC"', 'sans-serif'], // 英文字体
+                    },
+                    colors: {
+                        dark: '#0a0a0a', // 极简黑
+                        light: '#ffffff', // 纯白
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #ffffff; /* 纯白底色 */
+            color: #0a0a0a; /* 极深灰文字 */
+            font-family: 'Noto Sans SC', sans-serif; /* 全局思源黑体 */
+            -webkit-font-smoothing: antialiased; /* 抗锯齿渲染 */
+            overflow-x: hidden; /* 防止横向溢出 */
+        }
+        .hero-title {
+            font-family: 'Space Grotesk', sans-serif; /* 英文字体 */
+            font-size: clamp(2rem, 5vw, 3.5rem); /* 流式响应式计算标题 */
+            line-height: 0.95; /* 较窄行高 */
+            letter-spacing: -0.03em; /* 紧缩字距 */
+            font-weight: 700; /* 采用 700 粗体 */
+        }
+        /* 定制精细线条 */
+        .hairline-b { border-bottom: 0.5px solid rgba(10, 10, 10, 0.15); } /* 0.5px 精细底边框 */
+        .hairline-r { border-right: 0.5px solid rgba(10, 10, 10, 0.15); } /* 0.5px 精细右边框 */
+        .hairline-l { border-left: 0.5px solid rgba(10, 10, 10, 0.15); } /* 0.5px 精细左边框 */
+
+        /* 载入特效 */
+        .reveal-clip {
+            animation: revealUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards; /* 指数级平滑渐入 */
+            clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); /* 裁剪范围定义 */
+            opacity: 0; /* 默认透明 */
+            transform: translateY(30px); /* 默认下偏位移 */
+        }
+        .delay-1 { animation-delay: 150ms; } /* 延迟 */
+        @keyframes revealUp {
+            to {
+                opacity: 1; /* 渐入完成不透明 */
+                transform: translateY(0); /* 归零位移 */
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-dark selection:text-light">
+
+    <!-- 栅格化精细布局 Header -->
+    <header class="w-full hairline-b grid grid-cols-1 md:grid-cols-4 z-10 bg-white">
+        <!-- 品牌标识与控制台声明 -->
+        <div class="p-8 hairline-r flex items-center justify-between md:justify-start">
+            <a href="index.html" class="font-display font-bold text-xl tracking-tighter hover:opacity-60 transition-opacity">
+                Sub2API.
+            </a>
+            <span class="text-[10px] border border-dark/25 px-2 py-0.5 rounded uppercase font-semibold text-dark/50 ml-4">Console</span>
+        </div>
+        <!-- 导航指示区（空白占位，符合画册不对称留白） -->
+        <div class="hidden md:flex col-span-2 p-8 hairline-r items-center justify-start text-xs text-dark/40 font-light">
+            [ ADMINISTRATOR SESSION // ACTIVE ]
+        </div>
+        <!-- 安全注销退出登录 -->
+        <div class="hidden md:flex p-8 items-center justify-end">
+            <a href="login.html" class="text-xs uppercase tracking-widest font-semibold text-dark/50 hover:text-dark transition-colors">
+                Log Out // 退出登录 &rarr;
+            </a>
+        </div>
+    </header>
+
+    <!-- 控制台主栅格网格 -->
+    <main class="flex-grow z-10 w-full max-w-[90rem] mx-auto grid grid-cols-1 md:grid-cols-4">
+
+        <!-- 左侧菜单导航栏 (1列) -->
+        <nav class="p-8 md:p-12 hairline-r flex flex-col justify-between border-b md:border-b-0 border-dark/10 bg-white">
+            <!-- 功能菜单列表 -->
+            <div class="space-y-8">
+                <div>
+                    <span class="block text-[10px] font-bold text-dark/30 uppercase tracking-widest mb-3">Gateway overview</span>
+                    <a href="#" class="text-sm font-semibold tracking-wide border-b border-dark pb-1 block w-fit">01 // 核心网关概览</a>
+                </div>
+                <div>
+                    <span class="block text-[10px] font-bold text-dark/30 uppercase tracking-widest mb-3">Upstream configs</span>
+                    <a href="#" class="text-sm text-dark/50 hover:text-dark tracking-wide block transition-colors">02 // 渠道池与路由矩阵</a>
+                </div>
+                <div>
+                    <span class="block text-[10px] font-bold text-dark/30 uppercase tracking-widest mb-3">Analytics logs</span>
+                    <a href="#" class="text-sm text-dark/50 hover:text-dark tracking-wide block transition-colors">03 // 流量分析与计费日志</a>
+                </div>
+                <div>
+                    <span class="block text-[10px] font-bold text-dark/30 uppercase tracking-widest mb-3">Client control</span>
+                    <a href="#" class="text-sm text-dark/50 hover:text-dark tracking-wide block transition-colors">04 // 租户限流与密钥组</a>
+                </div>
+            </div>
+
+            <!-- 系统运行状态简报 -->
+            <div class="mt-16 md:mt-0 pt-8 border-t border-dark/10">
+                <span class="block text-[10px] font-bold text-dark/30 uppercase tracking-widest mb-2">Service status</span>
+                <div class="flex items-center gap-2 text-xs font-semibold">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>ONLINE // 节点健康</span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 右侧主内容展示面板 (占 3列) -->
+        <section class="col-span-1 md:col-span-3 p-8 md:p-16 flex flex-col gap-16 reveal-clip">
+
+            <!-- 核心标题 -->
+            <div class="border-b border-dark/10 pb-8">
+                <span class="block text-xs font-semibold uppercase tracking-[0.2em] text-dark/40 mb-4">[ GATEWAY DASHBOARD ]</span>
+                <h2 class="hero-title text-dark">SYSTEM OVERVIEW.</h2>
+            </div>
+
+            <!-- 数据总览排版（Stark Ledger List） -->
+            <div>
+                <span class="block text-xs font-bold uppercase tracking-widest text-dark/30 mb-6">01 // Real-time telemetry (24h)</span>
+                <div class="grid grid-cols-1 md:grid-cols-3 border-t border-b border-dark/10 divide-y md:divide-y-0 md:divide-x divide-dark/10 py-6">
+                    <div class="py-4 md:py-0 md:px-8 first:pl-0">
+                        <span class="text-xs text-dark/40 block mb-2">总请求处理量 (Total Requests)</span>
+                        <div class="font-display text-4xl font-extrabold tracking-tight">148,903</div>
+                    </div>
+                    <div class="py-4 md:py-0 md:px-8">
+                        <span class="text-xs text-dark/40 block mb-2">平均路由延迟 (Average Latency)</span>
+                        <div class="font-display text-4xl font-extrabold tracking-tight">2.14 ms</div>
+                    </div>
+                    <div class="py-4 md:py-0 md:px-8">
+                        <span class="text-xs text-dark/40 block mb-2">请求处理成功率 (SLA Success)</span>
+                        <div class="font-display text-4xl font-extrabold tracking-tight">99.98%</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 上游密钥渠道健康度矩阵 -->
+            <div>
+                <div class="flex justify-between items-baseline mb-6">
+                    <span class="block text-xs font-bold uppercase tracking-widest text-dark/30">02 // Upstream health matrix</span>
+                    <a href="#" class="text-xs text-dark/40 hover:text-dark border-b border-transparent hover:border-dark font-medium transition-all">// 配置密钥池 &rarr;</a>
+                </div>
+
+                <!-- 渠道列表 -->
+                <div class="w-full">
+                    <!-- 表头 -->
+                    <div class="grid grid-cols-5 pb-4 border-b border-dark/30 text-[10px] font-bold uppercase tracking-widest text-dark/40">
+                        <div class="col-span-2">渠道别名 (Alias)</div>
+                        <div>路由权重 (Weight)</div>
+                        <div>健康状况 (Status)</div>
+                        <div class="text-right">报错频率 (Error Rate)</div>
+                    </div>
+
+                    <!-- 行 1 -->
+                    <div class="grid grid-cols-5 py-6 border-b border-dark/10 items-center text-xs font-medium">
+                        <div class="col-span-2 font-semibold">OpenAI-HighPriority-01</div>
+                        <div class="font-display">45%</div>
+                        <div><span class="text-[10px] bg-dark text-light px-2 py-0.5 rounded font-bold uppercase tracking-wider">[ ONLINE ]</span></div>
+                        <div class="text-right font-display text-dark/50">0.02%</div>
+                    </div>
+                    <!-- 行 2 -->
+                    <div class="grid grid-cols-5 py-6 border-b border-dark/10 items-center text-xs font-medium">
+                        <div class="col-span-2 font-semibold">OpenAI-Secondary-Bypass</div>
+                        <div class="font-display">30%</div>
+                        <div><span class="text-[10px] bg-dark text-light px-2 py-0.5 rounded font-bold uppercase tracking-wider">[ ONLINE ]</span></div>
+                        <div class="text-right font-display text-dark/50">0.14%</div>
+                    </div>
+                    <!-- 行 3 -->
+                    <div class="grid grid-cols-5 py-6 border-b border-dark/10 items-center text-xs font-medium">
+                        <div class="col-span-2 font-semibold">Claude-Sonnet-Endpoint</div>
+                        <div class="font-display">25%</div>
+                        <div><span class="text-[10px] border border-dark text-dark px-2 py-0.5 rounded font-bold uppercase tracking-wider">[ BYPASS ]</span></div>
+                        <div class="text-right font-display text-dark/50">0.00%</div>
+                    </div>
+                    <!-- 行 4 -->
+                    <div class="grid grid-cols-5 py-6 border-b border-dark/10 items-center text-xs font-medium text-dark/40">
+                        <div class="col-span-2 font-semibold">DeepSeek-LowCost-Backup</div>
+                        <div class="font-display">0%</div>
+                        <div><span class="text-[10px] text-red-600 border border-red-200 px-2 py-0.5 rounded font-bold uppercase tracking-wider">[ DEGRADED ]</span></div>
+                        <div class="text-right font-display">14.8%</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 实时解析流量日志 -->
+            <div>
+                <span class="block text-xs font-bold uppercase tracking-widest text-dark/30 mb-6">03 // Real-time request stream</span>
+                <div class="w-full">
+                    <!-- 表头 -->
+                    <div class="grid grid-cols-5 pb-4 border-b border-dark/30 text-[10px] font-bold uppercase tracking-widest text-dark/40">
+                        <div>事件戳 (Time)</div>
+                        <div class="col-span-2">请求端点 (Endpoint)</div>
+                        <div>处理耗时 (Latency)</div>
+                        <div class="text-right">消耗代币 (Usage)</div>
+                    </div>
+
+                    <!-- 日志行 1 -->
+                    <div class="grid grid-cols-5 py-5 border-b border-dark/5 items-center text-xs font-medium">
+                        <div class="text-dark/40 font-mono">19:08:44</div>
+                        <div class="col-span-2 font-semibold flex items-center gap-2">
+                            <span class="text-[9px] bg-emerald-500/10 text-emerald-700 px-1 py-0.5 rounded font-bold">200</span>
+                            <span class="font-mono">/v1/chat/completions</span>
+                        </div>
+                        <div class="font-display">840ms</div>
+                        <div class="text-right font-mono text-dark/50">1,280 tok</div>
+                    </div>
+                    <!-- 日志行 2 -->
+                    <div class="grid grid-cols-5 py-5 border-b border-dark/5 items-center text-xs font-medium">
+                        <div class="text-dark/40 font-mono">19:08:41</div>
+                        <div class="col-span-2 font-semibold flex items-center gap-2">
+                            <span class="text-[9px] bg-emerald-500/10 text-emerald-700 px-1 py-0.5 rounded font-bold">200</span>
+                            <span class="font-mono">/v1/chat/completions</span>
+                        </div>
+                        <div class="font-display">1,240ms</div>
+                        <div class="text-right font-mono text-dark/50">4,120 tok</div>
+                    </div>
+                    <!-- 日志行 3 -->
+                    <div class="grid grid-cols-5 py-5 border-b border-dark/5 items-center text-xs font-medium">
+                        <div class="text-dark/40 font-mono">19:08:35</div>
+                        <div class="col-span-2 font-semibold flex items-center gap-2">
+                            <span class="text-[9px] bg-emerald-500/10 text-emerald-700 px-1 py-0.5 rounded font-bold">200</span>
+                            <span class="font-mono">/v1/embeddings</span>
+                        </div>
+                        <div class="font-display">120ms</div>
+                        <div class="text-right font-mono text-dark/50">512 tok</div>
+                    </div>
+                    <!-- 日志行 4 -->
+                    <div class="grid grid-cols-5 py-5 border-b border-dark/5 items-center text-xs font-medium">
+                        <div class="text-dark/40 font-mono">19:08:22</div>
+                        <div class="col-span-2 font-semibold flex items-center gap-2">
+                            <span class="text-[9px] bg-red-100 text-red-700 px-1 py-0.5 rounded font-bold">401</span>
+                            <span class="font-mono text-red-500">/v1/chat/completions</span>
+                        </div>
+                        <div class="font-display text-red-500">45ms</div>
+                        <div class="text-right font-mono text-red-500">0 tok</div>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="w-full px-8 py-10 flex flex-col md:flex-row justify-between items-center text-xs text-dark/40 font-medium max-w-[90rem] mx-auto border-t border-dark/10 z-10 bg-white">
+        <div>&copy; 2026 SUB2API SYSTEM. OPEN SOURCE PROJECT.</div>
+        <div class="mt-4 md:mt-0 uppercase tracking-widest font-display font-bold">ANTIGRAVITY // DESIGNED FOR THE COGNITIVE AGE</div>
+    </footer>
+</body>
+</html>

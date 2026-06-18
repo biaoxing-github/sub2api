@@ -17,49 +17,18 @@
             @create="showCreate = true"
           >
             <template #after>
-              <!-- Auto Refresh Dropdown -->
-              <div class="relative" ref="autoRefreshDropdownRef">
-                <button
-                  @click="
-                    showAutoRefreshDropdown = !showAutoRefreshDropdown;
-                    showAccountToolsDropdown = false
-                  "
-                  class="btn btn-secondary px-2 md:px-3"
-                  :title="t('admin.accounts.autoRefresh')"
-                >
-                  <Icon name="refresh" size="sm" :class="[autoRefreshEnabled ? 'animate-spin' : '']" />
-                  <span class="hidden md:inline">
-                    {{
-                      autoRefreshEnabled
-                        ? t('admin.accounts.autoRefreshCountdown', { seconds: autoRefreshCountdown })
-                        : t('admin.accounts.autoRefresh')
-                    }}
-                  </span>
-                </button>
-                <div
-                  v-if="showAutoRefreshDropdown"
-                  class="absolute right-0 z-50 mt-2 w-56 origin-top-right rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800"
-                >
-                  <div class="p-2">
-                    <button
-                      @click="setAutoRefreshEnabled(!autoRefreshEnabled)"
-                      class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-                    >
-                      <span>{{ t('admin.accounts.enableAutoRefresh') }}</span>
-                      <Icon v-if="autoRefreshEnabled" name="check" size="sm" class="text-primary-500" />
-                    </button>
-                    <div class="my-1 border-t border-gray-100 dark:border-gray-700"></div>
-                    <button
-                      v-for="sec in autoRefreshIntervals"
-                      :key="sec"
-                      @click="setAutoRefreshInterval(sec)"
-                      class="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-                    >
-                      <span>{{ autoRefreshIntervalLabel(sec) }}</span>
-                      <Icon v-if="autoRefreshIntervalSeconds === sec" name="check" size="sm" class="text-primary-500" />
-                    </button>
-                  </div>
-                </div>
+              <div ref="autoRefreshDropdownRef">
+                <AccountAutoRefreshControl
+                  :open="showAutoRefreshDropdown"
+                  :enabled="autoRefreshEnabled"
+                  :countdown="autoRefreshCountdown"
+                  :intervals="autoRefreshIntervals"
+                  :interval-seconds="autoRefreshIntervalSeconds"
+                  :interval-label="autoRefreshIntervalLabel"
+                  @update:open="setAutoRefreshDropdownOpen"
+                  @set-enabled="setAutoRefreshEnabled"
+                  @set-interval="setAutoRefreshInterval"
+                />
               </div>
 
               <!-- More Tools Dropdown -->
@@ -87,19 +56,19 @@
                       </div>
                     </div>
                     <button class="account-tools-menu-item" @click="openSyncFromCrs">
-                      <span class="account-tools-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
+                      <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                         <Icon name="sync" size="sm" />
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.accounts.syncFromCrs') }}</span>
                     </button>
                     <button class="account-tools-menu-item" @click="openImportData">
-                      <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
+                      <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                         <Icon name="upload" size="sm" />
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.accounts.dataImport') }}</span>
                     </button>
                     <button class="account-tools-menu-item" @click="openExportDataDialogFromMenu">
-                      <span class="account-tools-menu-icon bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300">
+                      <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                         <Icon name="download" size="sm" />
                       </span>
                       <span class="flex-1 text-left">
@@ -120,13 +89,13 @@
                       </div>
                     </div>
                     <button class="account-tools-menu-item" @click="openErrorPassthrough">
-                      <span class="account-tools-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
+                      <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                         <Icon name="shield" size="sm" />
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.errorPassthrough.title') }}</span>
                     </button>
                     <button class="account-tools-menu-item" @click="handleRefreshUpstreamBalances" :disabled="upstreamBalanceRefreshing">
-                      <span class="account-tools-menu-icon bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">
+                      <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                         <Icon name="refresh" size="sm" :class="{ 'animate-spin': upstreamBalanceRefreshing }" />
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.accounts.refreshUpstreamBalances') }}</span>
@@ -138,13 +107,13 @@
                       <span class="flex-1 text-left">{{ t('admin.tlsFingerprintProfiles.title') }}</span>
                     </button>
                     <button data-test="batch-test-non-apikey" class="account-tools-menu-item" :disabled="batchNonAPIKeyTesting" @click="handleBatchTestNonAPIKey">
-                      <span class="account-tools-menu-icon bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
+                      <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                         <Icon name="play" size="sm" :class="{ 'animate-pulse': batchNonAPIKeyTesting }" />
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.accounts.batchTestNonApiKey') }}</span>
                     </button>
                     <button data-test="batch-test-records" class="account-tools-menu-item" @click="openBatchTestRecords">
-                      <span class="account-tools-menu-icon bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-300">
+                      <span class="account-tools-menu-icon bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200">
                         <Icon name="clock" size="sm" />
                       </span>
                       <span class="flex-1 text-left">{{ t('admin.accounts.batchTest.records') }}</span>
@@ -181,6 +150,7 @@
         <div v-if="hasPendingListSync || usageSummary || actionItemsTotal > 0" class="mt-2">
           <button
             type="button"
+            data-test="account-info-banner-toggle"
             @click="showInfoBanners = !showInfoBanners"
             class="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-750 flex items-center justify-between"
           >
@@ -192,7 +162,7 @@
             </span>
           </button>
 
-          <div v-show="showInfoBanners" class="mt-2 space-y-2">
+          <div v-show="showInfoBanners" data-test="account-info-banner-details" class="mt-2 space-y-2">
             <div
               v-if="hasPendingListSync"
               class="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/20 dark:text-amber-200"
@@ -381,7 +351,7 @@
                   <span class="account-overview-label">{{ t('admin.accounts.columns.upstreamBalance') }}</span>
                   <template v-if="row.upstream_balance">
                     <div class="flex flex-wrap gap-1.5">
-                      <span class="account-metric-chip text-blue-700 dark:text-blue-300">
+                      <span class="account-metric-chip text-gray-700 dark:text-gray-300">
                         {{ t('admin.accounts.upstreamBalanceActual') }} {{ formatCurrency(row.upstream_balance.available || 0) }}
                       </span>
                       <span v-if="formatConvertedGroups(row.upstream_balance)" class="account-metric-chip text-emerald-700 dark:text-emerald-300" :title="formatConvertedGroups(row.upstream_balance, false)">
@@ -394,7 +364,7 @@
                         {{ t('admin.accounts.upstreamBalanceFailed', { count: row.upstream_balance.failed_count }) }}
                       </span>
                     </div>
-                    <div v-if="formatUpstreamGroups(row.upstream_balance.groups)" class="mt-1 truncate text-[11px] text-violet-600 dark:text-violet-300" :title="formatUpstreamGroups(row.upstream_balance.groups)">
+                    <div v-if="formatUpstreamGroups(row.upstream_balance.groups)" class="mt-1 truncate text-[11px] text-gray-500 dark:text-gray-400" :title="formatUpstreamGroups(row.upstream_balance.groups)">
                       {{ formatUpstreamGroups(row.upstream_balance.groups) }}
                     </div>
                   </template>
@@ -504,7 +474,7 @@
           </template>
           <template #cell-upstream_balance="{ row }">
             <div v-if="row.upstream_balance" class="min-w-[14rem] text-sm">
-              <div class="font-medium text-blue-700 dark:text-blue-300">
+              <div class="font-medium text-gray-700 dark:text-gray-300">
                 {{ t('admin.accounts.upstreamBalanceActual') }} {{ formatCurrency(row.upstream_balance.available || 0) }}
               </div>
               <div v-if="formatConvertedGroups(row.upstream_balance)" class="mt-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-300" :title="formatConvertedGroups(row.upstream_balance, false)">
@@ -516,7 +486,7 @@
               <div v-if="row.upstream_balance.failed_count" class="mt-0.5 text-xs text-amber-600 dark:text-amber-300">
                 {{ t('admin.accounts.upstreamBalanceFailed', { count: row.upstream_balance.failed_count }) }}
               </div>
-              <div v-if="formatUpstreamGroups(row.upstream_balance.groups)" class="mt-0.5 max-w-[16rem] truncate text-xs text-violet-600 dark:text-violet-300" :title="formatUpstreamGroups(row.upstream_balance.groups)">
+              <div v-if="formatUpstreamGroups(row.upstream_balance.groups)" class="mt-0.5 max-w-[16rem] truncate text-xs text-gray-500 dark:text-gray-400" :title="formatUpstreamGroups(row.upstream_balance.groups)">
                 {{ formatUpstreamGroups(row.upstream_balance.groups) }}
               </div>
               <div v-if="row.upstream_balance.keys?.length" class="mt-1 flex max-w-[16rem] flex-wrap gap-1">
@@ -527,7 +497,7 @@
                   :class="[
                     'inline-flex items-center rounded border px-1.5 py-0.5 text-[11px]',
                     key.status === 'ok'
-                      ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300'
+                      ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300'
                       : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300'
                   ]"
                 >
@@ -589,7 +559,7 @@
                 @click="handleRefreshUpstreamBalance(row)"
                 :disabled="refreshingUpstreamBalanceIds.has(row.id)"
                 :title="t('admin.accounts.refreshUpstreamBalance')"
-                class="account-row-icon-button hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-blue-900/20 dark:hover:text-blue-300"
+                class="account-row-icon-button hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-dark-700 dark:hover:text-primary-400"
               >
                 <Icon name="refresh" size="sm" :class="{ 'animate-spin': refreshingUpstreamBalanceIds.has(row.id) }" />
                 <span class="sr-only">{{ t('admin.accounts.refreshBalanceShort') }}</span>
@@ -782,9 +752,9 @@
           {{ t('admin.accounts.batchTest.submitted', { id: batchNonAPIKeySubmittedRun.id }) }}
         </div>
         <div class="grid gap-3 sm:grid-cols-4">
-          <div class="bg-emerald-50 px-3 py-2 dark:bg-emerald-900/20">
-            <div class="text-xs text-emerald-700 dark:text-emerald-300">{{ t('admin.accounts.batchTest.total') }}</div>
-            <div class="text-xl font-semibold text-emerald-900 dark:text-emerald-100">{{ selectedBatchRun?.total ?? batchNonAPIKeySubmittedRun?.total ?? 0 }}</div>
+          <div class="bg-gray-50 px-3 py-2 dark:bg-gray-800">
+            <div class="text-xs text-gray-600 dark:text-gray-300">{{ t('admin.accounts.batchTest.total') }}</div>
+            <div class="text-xl font-semibold text-gray-900 dark:text-gray-100">{{ selectedBatchRun?.total ?? batchNonAPIKeySubmittedRun?.total ?? 0 }}</div>
           </div>
           <button type="button" :class="batchTestFilterCardClass('ok')" @click="setBatchTestCategoryFilter('ok')">
             <div class="text-xs text-green-700 dark:text-green-300">{{ t('admin.accounts.batchTest.success') }}</div>
@@ -905,7 +875,7 @@
                 v-for="run in batchTestRecords"
                 :key="run.id"
                 class="cursor-pointer border-t border-gray-100 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/60"
-                :class="{ 'bg-emerald-50 dark:bg-emerald-900/20': selectedBatchRun?.id === run.id }"
+                :class="{ 'bg-gray-50 dark:bg-gray-800/80': selectedBatchRun?.id === run.id }"
                 @click="selectBatchTestRun(run.id)"
               >
                 <td class="px-3 py-2 font-medium">#{{ run.id }}</td>
@@ -1024,6 +994,7 @@ import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrs
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
+import AccountAutoRefreshControl from '@/components/admin/account/AccountAutoRefreshControl.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
@@ -1556,6 +1527,13 @@ const setAutoRefreshEnabled = (enabled: boolean) => {
   }
 }
 
+const setAutoRefreshDropdownOpen = (open: boolean) => {
+  showAutoRefreshDropdown.value = open
+  if (open) {
+    showAccountToolsDropdown.value = false
+  }
+}
+
 const setAutoRefreshInterval = (seconds: (typeof autoRefreshIntervals)[number]) => {
   autoRefreshIntervalSeconds.value = seconds
   saveAutoRefreshToStorage()
@@ -2054,8 +2032,8 @@ function getAntigravityTierClass(row: any): string {
   const tier = getAntigravityTierFromRow(row)
   switch (tier) {
     case 'free-tier': return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-    case 'g1-pro-tier': return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
-    case 'g1-ultra-tier': return 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300'
+    case 'g1-pro-tier': return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+    case 'g1-ultra-tier': return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
     default: return ''
   }
 }
@@ -2338,7 +2316,7 @@ const batchTestCategoryClass = (category: string) => {
   if (category === 'ok') return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-200'
   if (category === 'rate_limited') return 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-200'
   if (category === 'unauthorized' || category === 'reauth_required') return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
-  if (category === 'timeout') return 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-200'
+  if (category === 'timeout') return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
   return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200'
 }
 

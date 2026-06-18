@@ -256,91 +256,91 @@
                 <dd class="inline break-all"> {{ sample.error_code || '' }} {{ sample.error || sample.error_message || '' }}</dd>
               </div>
             </dl>
-            <div v-if="hasBazaarLinkResult(sample)" class="mt-3 space-y-3 rounded-lg border border-sky-200 bg-sky-50 p-3 dark:border-sky-900/60 dark:bg-sky-950/30">
+            <div v-if="hasBazaarLinkResult(sample)" class="mt-3 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-700 dark:bg-dark-950/30">
               <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="text-sm font-semibold text-sky-900 dark:text-sky-100">{{ t('admin.accountModelProbes.bazaarLinkResult') }}</div>
-                <span class="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-sky-700 dark:bg-dark-900 dark:text-sky-200">
+                <div class="text-sm font-semibold text-slate-900 dark:text-gray-100">{{ t('admin.accountModelProbes.bazaarLinkResult') }}</div>
+                <span class="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-700 dark:bg-dark-900 dark:text-gray-200">
                   {{ t('admin.accountModelProbes.runId') }} {{ bazaarLinkRunId(sample) }}
                 </span>
               </div>
-              <dl class="grid gap-3 text-xs text-sky-800 dark:text-sky-100 sm:grid-cols-2 lg:grid-cols-4">
+              <dl class="grid gap-3 text-xs text-slate-800 dark:text-gray-100 sm:grid-cols-2 lg:grid-cols-4">
                 <div>
-                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.score') }}</dt>
+                  <dt class="text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.score') }}</dt>
                   <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkScore(sample) }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.identityStatus') }}</dt>
+                  <dt class="text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.identityStatus') }}</dt>
                   <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkIdentityStatus(sample) }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.confidence') }}</dt>
+                  <dt class="text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.confidence') }}</dt>
                   <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkConfidence(sample) }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.status') }}</dt>
+                  <dt class="text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.status') }}</dt>
                   <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkStatus(sample) }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.claimedModel') }}</dt>
+                  <dt class="text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.claimedModel') }}</dt>
                   <dd class="mt-1 break-all text-sm font-semibold">{{ bazaarLinkClaimedModel(sample) }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.predictedFamily') }}</dt>
+                  <dt class="text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.predictedFamily') }}</dt>
                   <dd class="mt-1 text-sm font-semibold">{{ bazaarLinkPredictedFamily(sample) }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.v3fModel') }}</dt>
+                  <dt class="text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.v3fModel') }}</dt>
                   <dd class="mt-1 break-all text-sm font-semibold">{{ bazaarLinkV3F(sample) }}</dd>
                 </div>
                 <div>
-                  <dt class="text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.riskFlags') }}</dt>
+                  <dt class="text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.riskFlags') }}</dt>
                   <dd class="mt-1 break-all text-sm font-semibold">{{ bazaarLinkRiskFlags(sample) }}</dd>
                 </div>
               </dl>
               <div v-if="bazaarLinkV3Candidates(sample).length" data-test="bazaarlink-v3-candidates" class="overflow-x-auto">
-                <div class="mb-1 text-xs font-semibold text-sky-800 dark:text-sky-100">{{ t('admin.accountModelProbes.v3Candidates') }}</div>
+                <div class="mb-1 text-xs font-semibold text-slate-800 dark:text-gray-100">{{ t('admin.accountModelProbes.v3Candidates') }}</div>
                 <table class="w-full min-w-[640px]">
                   <thead>
                     <tr>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.candidateName') }}</th>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.candidateModel') }}</th>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.candidateFamily') }}</th>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.candidateScore') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.candidateName') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.candidateModel') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.candidateFamily') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.candidateScore') }}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="candidate in bazaarLinkV3Candidates(sample)" :key="bazaarLinkCandidateKey(candidate)" class="border-t border-sky-100 dark:border-sky-900/60">
-                      <td class="px-2 py-2 text-sm font-semibold text-sky-900 dark:text-sky-100">{{ candidate.displayName || '-' }}</td>
-                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ candidate.modelId || '-' }}</td>
-                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ candidate.family || '-' }}</td>
-                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ formatBazaarLinkCandidateScore(candidate) }}</td>
+                    <tr v-for="candidate in bazaarLinkV3Candidates(sample)" :key="bazaarLinkCandidateKey(candidate)" class="border-t border-gray-200 dark:border-dark-700">
+                      <td class="px-2 py-2 text-sm font-semibold text-slate-900 dark:text-gray-100">{{ candidate.displayName || '-' }}</td>
+                      <td class="px-2 py-2 text-sm text-slate-900 dark:text-gray-100">{{ candidate.modelId || '-' }}</td>
+                      <td class="px-2 py-2 text-sm text-slate-900 dark:text-gray-100">{{ candidate.family || '-' }}</td>
+                      <td class="px-2 py-2 text-sm text-slate-900 dark:text-gray-100">{{ formatBazaarLinkCandidateScore(candidate) }}</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
               <div v-if="bazaarLinkItems(sample).length" class="overflow-x-auto">
-                <div class="mb-1 text-xs font-semibold text-sky-800 dark:text-sky-100">{{ t('admin.accountModelProbes.probeItems') }}</div>
+                <div class="mb-1 text-xs font-semibold text-slate-800 dark:text-gray-100">{{ t('admin.accountModelProbes.probeItems') }}</div>
                 <table class="w-full min-w-[760px]">
                   <thead>
                     <tr>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.probeId') }}</th>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.evidence') }}</th>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.group') }}</th>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.passed') }}</th>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">TTFT</th>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">TPS</th>
-                      <th class="px-2 py-1 text-left text-xs font-medium text-sky-600 dark:text-sky-300">{{ t('admin.accountModelProbes.response') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.probeId') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.evidence') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.group') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.passed') }}</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">TTFT</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">TPS</th>
+                      <th class="px-2 py-1 text-left text-xs font-medium text-slate-500 dark:text-gray-400">{{ t('admin.accountModelProbes.response') }}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="item in bazaarLinkItems(sample)" :key="item.probeId || item.label" class="border-t border-sky-100 dark:border-sky-900/60">
-                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ item.probeId || '-' }}</td>
-                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ item.label || '-' }}</td>
-                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ item.group || '-' }}</td>
-                      <td class="px-2 py-2 text-sm font-semibold text-sky-900 dark:text-sky-100">{{ formatBazaarLinkPassed(item.passed) }}</td>
-                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ formatDuration(item.ttftMs) }}</td>
-                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100">{{ formatNumber(item.tps) }}</td>
-                      <td class="px-2 py-2 text-sm text-sky-900 dark:text-sky-100"><div class="max-h-20 overflow-auto whitespace-pre-wrap break-words">{{ item.response || '-' }}</div></td>
+                    <tr v-for="item in bazaarLinkItems(sample)" :key="item.probeId || item.label" class="border-t border-gray-200 dark:border-dark-700">
+                      <td class="px-2 py-2 text-sm text-slate-900 dark:text-gray-100">{{ item.probeId || '-' }}</td>
+                      <td class="px-2 py-2 text-sm text-slate-900 dark:text-gray-100">{{ item.label || '-' }}</td>
+                      <td class="px-2 py-2 text-sm text-slate-900 dark:text-gray-100">{{ item.group || '-' }}</td>
+                      <td class="px-2 py-2 text-sm font-semibold text-slate-900 dark:text-gray-100">{{ formatBazaarLinkPassed(item.passed) }}</td>
+                      <td class="px-2 py-2 text-sm text-slate-900 dark:text-gray-100">{{ formatDuration(item.ttftMs) }}</td>
+                      <td class="px-2 py-2 text-sm text-slate-900 dark:text-gray-100">{{ formatNumber(item.tps) }}</td>
+                      <td class="px-2 py-2 text-sm text-slate-900 dark:text-gray-100"><div class="max-h-20 overflow-auto whitespace-pre-wrap break-words">{{ item.response || '-' }}</div></td>
                     </tr>
                   </tbody>
                 </table>

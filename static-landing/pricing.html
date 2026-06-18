@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"> <!-- 设置编码为 UTF-8 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- 适配移动端 -->
+    <title>定价 - Sub2API</title> <!-- 页面标题 -->
+    <script src="https://cdn.tailwindcss.com"></script> <!-- 引入 Tailwind CDN -->
+    <link rel="preconnect" href="https://fonts.googleapis.com"> <!-- 预连接 Google Fonts -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin> <!-- 跨域预连接 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet"> <!-- 导入字体资源 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Noto Sans SC"', 'sans-serif'], // 默认中文字体
+                        display: ['"Space Grotesk"', '"Noto Sans SC"', 'sans-serif'], // 英文字体与备用中文
+                    },
+                    colors: {
+                        dark: '#0a0a0a', // 主调极客黑
+                        light: '#ffffff', // 主调极简白
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #ffffff; /* 纯白底色 */
+            color: #0a0a0a; /* 极深灰文字 */
+            font-family: 'Noto Sans SC', sans-serif; /* 全局思源黑体 */
+            -webkit-font-smoothing: antialiased; /* 平滑字体渲染 */
+            overflow-x: hidden; /* 防止横向溢出 */
+        }
+        .hero-title {
+            font-family: 'Space Grotesk', sans-serif; /* 英文字体 */
+            font-size: clamp(3rem, 8vw, 6.5rem); /* 响应式流式计算标题字号 */
+            line-height: 1.05; /* 适中的行高 */
+            letter-spacing: -0.02em; /* 微调字距 */
+            font-weight: 700; /* 使用 700 粗体 */
+        }
+        /* 进场载入裁剪渐入特效 */
+        .reveal-clip {
+            animation: revealUp 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; /* 配合指数缓动曲线 */
+            clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); /* 剪裁初始定义 */
+            opacity: 0; /* 初始透明 */
+            transform: translateY(40px); /* 初始位移偏移 */
+        }
+        .delay-1 { animation-delay: 150ms; } /* 延迟定义 */
+        .delay-2 { animation-delay: 300ms; }
+        @keyframes revealUp {
+            to {
+                opacity: 1; /* 渐入结束不透明度 */
+                transform: translateY(0); /* 归零位移 */
+            }
+        }
+        /* 定制精细线条 */
+        .hairline-b { border-bottom: 0.5px solid rgba(10, 10, 10, 0.15); } /* 0.5px 精细底边框 */
+        .hairline-r { border-right: 0.5px solid rgba(10, 10, 10, 0.15); } /* 0.5px 精细右边框 */
+    </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-dark selection:text-light">
+    <!-- 背景大水印装饰，营造前卫先锋感 -->
+    <div class="fixed -bottom-20 -right-20 text-[45vw] font-display font-extrabold text-dark/[0.012] leading-none pointer-events-none select-none z-0">
+        PR <!-- 巨型背景半透明字符 -->
+    </div>
+
+    <!-- 栅格化精细布局 Header -->
+    <header class="w-full hairline-b grid grid-cols-1 md:grid-cols-4 z-10 bg-white">
+        <div class="p-8 hairline-r flex items-center justify-between md:justify-start">
+            <a href="index.html" class="font-display font-bold text-2xl tracking-tighter hover:opacity-60 transition-opacity">
+                Sub2API. <!-- 品牌 LOGO -->
+            </a>
+            <!-- 移动端菜单按钮 -->
+            <button class="md:hidden text-xs uppercase tracking-widest border border-dark/20 px-3 py-1 rounded" onclick="document.getElementById('mobile-menu').classList.toggle('hidden')">Menu</button>
+        </div>
+        <div class="hidden md:flex p-8 hairline-r items-center">
+            <a href="features.html" class="text-xs uppercase tracking-widest font-medium hover:text-dark/50 transition-colors w-full">
+                特性 // Features <!-- 特性导航 -->
+            </a>
+        </div>
+        <div class="hidden md:flex p-8 hairline-r items-center bg-dark text-light">
+            <a href="pricing.html" class="text-xs uppercase tracking-widest font-medium w-full text-center">
+                定价 // Pricing <!-- 激活状态的定价导航 -->
+            </a>
+        </div>
+        <div class="hidden md:flex p-8 items-center justify-end">
+            <a href="login.html" class="text-xs uppercase tracking-widest font-semibold border border-dark px-6 py-3 rounded-full hover:bg-dark hover:text-light transition-all duration-500">
+                Console // 登录控制台 <!-- 登录控制台链接 -->
+            </a>
+        </div>
+    </header>
+
+    <!-- 移动端下拉菜单 -->
+    <div id="mobile-menu" class="hidden md:hidden bg-white hairline-b flex flex-col text-center py-6 gap-4 font-display z-20">
+        <a href="features.html" class="text-sm uppercase tracking-widest hover:opacity-50">特性 Features</a>
+        <a href="pricing.html" class="text-sm uppercase tracking-widest hover:opacity-50 font-bold">定价 Pricing</a>
+        <a href="login.html" class="text-sm uppercase tracking-widest font-bold">控制台 Login</a>
+    </div>
+
+    <!-- 主体区域 -->
+    <main class="flex-grow z-10 w-full max-w-[90rem] mx-auto grid grid-cols-1 md:grid-cols-4">
+
+        <!-- 左侧巨型文字栏，占3列 -->
+        <section class="col-span-1 md:col-span-3 p-8 md:p-16 flex flex-col justify-center min-h-[50vh] hairline-r border-b border-dark/10">
+            <div class="max-w-4xl">
+                <!-- 小号提示标识 -->
+                <span class="block text-xs font-semibold uppercase tracking-[0.3em] text-dark/40 mb-6 reveal-clip">
+                    [ TRANSPARENT LEDGER ]
+                </span>
+                <!-- 巨型标题 -->
+                <h1 class="hero-title text-dark reveal-clip delay-1">
+                    PURELY<br>
+                    USAGE BASED.
+                </h1>
+                <!-- 辅助副标题描述 -->
+                <p class="mt-8 text-xl text-dark/60 font-light tracking-wide leading-relaxed reveal-clip delay-2 max-w-2xl">
+                    没有任何隐形消费或复杂的订阅限制。开源版本供社区无偿自建，而官方托管节点则遵循最纯粹的用多少付多少原则。
+                </p>
+            </div>
+        </section>
+
+        <!-- 右侧竖向元数据栏，占1列 -->
+        <section class="p-8 md:p-16 flex flex-col justify-between border-b border-dark/10">
+            <div class="reveal-clip delay-2">
+                <span class="block text-xs font-bold uppercase tracking-widest text-dark/40 mb-4">// SIMPLE RULE</span>
+                <p class="text-xs text-dark/60 leading-relaxed font-light">
+                    告别繁杂的层级计费，我们的核心原则是最大化开放给开发者。不论你的并发是一万还是一百万，都不应当被强买强卖高级订阅包。
+                </p>
+            </div>
+        </section>
+
+        <!-- 先锋账单/账本式排版列表（Stark Ledger Table）而非普通卡片 -->
+        <section class="col-span-1 md:col-span-4 p-8 md:p-16">
+            <div class="w-full">
+                <!-- 列表头部，精细线条 -->
+                <div class="grid grid-cols-1 md:grid-cols-4 pb-6 border-b border-dark/30 text-xs font-bold uppercase tracking-widest text-dark/40">
+                    <div class="col-span-1 pb-4 md:pb-0">01 // 版本版本 (Version)</div>
+                    <div class="col-span-1 pb-4 md:pb-0">02 // 费用定价 (Pricing)</div>
+                    <div class="col-span-1 pb-4 md:pb-0">03 // 包含能力 (Capabilities)</div>
+                    <div class="col-span-1 text-left md:text-right">04 // 部署入口 (Deploy)</div>
+                </div>
+
+                <!-- 方案 01: 开源版 -->
+                <div class="grid grid-cols-1 md:grid-cols-4 py-12 border-b border-dark/10 items-start group hover:bg-dark/[0.01] transition-colors">
+                    <!-- 版本标识 -->
+                    <div class="col-span-1 pb-6 md:pb-0">
+                        <h4 class="text-2xl font-display font-extrabold tracking-tight mb-2">开源社区版</h4>
+                        <span class="text-xs text-dark/40 uppercase tracking-wider font-light">Self-Hosted Community</span>
+                    </div>
+                    <!-- 定价 -->
+                    <div class="col-span-1 pb-6 md:pb-0">
+                        <div class="font-display text-4xl font-extrabold tracking-tight mb-1">¥ 0</div>
+                        <span class="text-xs text-dark/40 uppercase font-light">永久无料 / 代码全开源</span>
+                    </div>
+                    <!-- 功能描述列表 -->
+                    <div class="col-span-1 pb-8 md:pb-0">
+                        <ul class="text-sm text-dark/70 font-light space-y-3">
+                            <li class="flex items-center gap-2"><span>—</span> 无限制的上游并发通道</li>
+                            <li class="flex items-center gap-2"><span>—</span> 完整的本地管理后台与控制面板</li>
+                            <li class="flex items-center gap-2"><span>—</span> 完美支持自建接入支付渠道</li>
+                            <li class="flex items-center gap-2"><span>—</span> GitHub 社区公开技术讨论与提交</li>
+                        </ul>
+                    </div>
+                    <!-- 行动按钮，右侧对齐 -->
+                    <div class="col-span-1 text-left md:text-right self-center">
+                        <a href="https://github.com" target="_blank" class="inline-block border border-dark text-xs uppercase tracking-widest font-semibold px-8 py-4 hover:bg-dark hover:text-light transition-all duration-300">
+                            克隆源码 &rarr;
+                        </a>
+                    </div>
+                </div>
+
+                <!-- 方案 02: 托管版 -->
+                <div class="grid grid-cols-1 md:grid-cols-4 py-12 border-b border-dark/10 items-start group hover:bg-dark/[0.01] transition-colors">
+                    <!-- 版本标识 -->
+                    <div class="col-span-1 pb-6 md:pb-0">
+                        <h4 class="text-2xl font-display font-extrabold tracking-tight mb-2">PinCC 托管版</h4>
+                        <span class="text-xs text-dark/40 uppercase tracking-wider font-light">Managed Node Network</span>
+                    </div>
+                    <!-- 定价 -->
+                    <div class="col-span-1 pb-6 md:pb-0">
+                        <div class="font-display text-4xl font-extrabold tracking-tight mb-1">按量计费</div>
+                        <span class="text-xs text-dark/40 uppercase font-light">根据实际 Token 用量扣除</span>
+                    </div>
+                    <!-- 功能描述列表 -->
+                    <div class="col-span-1 pb-8 md:pb-0">
+                        <ul class="text-sm text-dark/70 font-light space-y-3">
+                            <li class="flex items-center gap-2"><span>—</span> 官方节点多区网络极速加速网络</li>
+                            <li class="flex items-center gap-2"><span>—</span> 尊享 SLA 服务承诺（99.9% 在线率）</li>
+                            <li class="flex items-center gap-2"><span>—</span> 全自动运维与安全流量峰值洗涤</li>
+                            <li class="flex items-center gap-2"><span>—</span> 独家专属 1 对 1 专业技术顾问支持</li>
+                        </ul>
+                    </div>
+                    <!-- 行动按钮，右侧对齐 -->
+                    <div class="col-span-1 text-left md:text-right self-center">
+                        <a href="login.html" class="inline-block bg-dark text-light text-xs uppercase tracking-widest font-semibold px-8 py-4 hover:bg-dark/80 transition-colors">
+                            控制台开通 &rarr;
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="w-full px-8 py-10 flex flex-col md:flex-row justify-between items-center text-xs text-dark/40 font-medium max-w-[90rem] mx-auto border-t border-dark/10 z-10 bg-white">
+        <div>&copy; 2026 SUB2API SYSTEM. OPEN SOURCE PROJECT.</div>
+        <div class="mt-4 md:mt-0 uppercase tracking-widest font-display font-bold">ANTIGRAVITY // DESIGNED FOR THE COGNITIVE AGE</div>
+    </footer>
+</body>
+</html>

@@ -63,6 +63,22 @@ const SelectStub = {
   },
   template: '<select :value="modelValue ?? undefined" @change="onChange"><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>',
 }
+const DataTableStub = {
+  props: ['columns', 'data', 'loading'],
+  template: `
+    <div data-test="scheduling-pool-datatable">
+      <slot v-if="!loading && (!data || data.length === 0)" name="empty" />
+      <div v-for="row in data" :key="row.account.id" data-test="scheduling-pool-datatable-row">
+        <slot
+          v-for="column in columns"
+          :name="'cell-' + column.key"
+          :row="row"
+          :value="row[column.key]"
+        />
+      </div>
+    </div>
+  `,
+}
 
 describe('AccountSchedulingPoolView', () => {
   beforeEach(() => {
@@ -184,6 +200,7 @@ describe('AccountSchedulingPoolView', () => {
           AppLayout: AppLayoutStub,
           TablePageLayout: TablePageLayoutStub,
           Select: SelectStub,
+          DataTable: DataTableStub,
           Icon: true,
         },
       },
@@ -201,6 +218,7 @@ describe('AccountSchedulingPoolView', () => {
     expect(wrapper.text()).toContain('线路降级')
     expect(wrapper.text()).toContain('path_health:degraded:unexpected_eof')
     expect(wrapper.text()).toContain('429')
+    expect(wrapper.find('[data-test="scheduling-pool-datatable"]').exists()).toBe(true)
 
     await wrapper.find('[data-test="disable-scheduling"]').trigger('click')
     await flushPromises()
@@ -217,6 +235,7 @@ describe('AccountSchedulingPoolView', () => {
           AppLayout: AppLayoutStub,
           TablePageLayout: TablePageLayoutStub,
           Select: SelectStub,
+          DataTable: DataTableStub,
           Icon: true,
         },
       },
@@ -237,6 +256,7 @@ describe('AccountSchedulingPoolView', () => {
           AppLayout: AppLayoutStub,
           TablePageLayout: TablePageLayoutStub,
           Select: SelectStub,
+          DataTable: DataTableStub,
           Icon: true,
         },
       },
@@ -256,6 +276,7 @@ describe('AccountSchedulingPoolView', () => {
           AppLayout: AppLayoutStub,
           TablePageLayout: TablePageLayoutStub,
           Select: SelectStub,
+          DataTable: DataTableStub,
           Icon: true,
         },
       },
@@ -283,6 +304,7 @@ describe('AccountSchedulingPoolView', () => {
           AppLayout: AppLayoutStub,
           TablePageLayout: TablePageLayoutStub,
           Select: SelectStub,
+          DataTable: DataTableStub,
           Icon: true,
         },
       },
@@ -310,6 +332,7 @@ describe('AccountSchedulingPoolView', () => {
           AppLayout: AppLayoutStub,
           TablePageLayout: TablePageLayoutStub,
           Select: SelectStub,
+          DataTable: DataTableStub,
           Icon: true,
         },
       },
@@ -369,6 +392,7 @@ describe('AccountSchedulingPoolView', () => {
           AppLayout: AppLayoutStub,
           TablePageLayout: TablePageLayoutStub,
           Select: SelectStub,
+          DataTable: DataTableStub,
           Icon: true,
         },
       },

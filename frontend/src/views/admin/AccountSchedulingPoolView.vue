@@ -47,117 +47,108 @@
       </template>
 
       <template #table>
-        <div class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>{{ t('admin.accountSchedulingPool.account') }}</th>
-                <th>{{ t('admin.accountSchedulingPool.poolStatus') }}</th>
-                <th>{{ t('admin.accountSchedulingPool.health') }}</th>
-                <th>{{ t('admin.accountSchedulingPool.capacity') }}</th>
-                <th>{{ t('admin.accountSchedulingPool.reasons') }}</th>
-                <th>{{ t('common.actions') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="loading && items.length === 0">
-                <td colspan="6" class="py-12 text-center text-gray-500 dark:text-gray-400">
-                  {{ t('common.loading') }}
-                </td>
-              </tr>
-              <tr v-else-if="!loading && items.length === 0">
-                <td colspan="6" class="py-12 text-center text-gray-500 dark:text-gray-400">
-                  {{ t('admin.accountSchedulingPool.empty') }}
-                </td>
-              </tr>
-              <tr
-                v-for="item in items"
-                :key="item.account.id"
-                :class="['hover:bg-gray-50 dark:hover:bg-dark-700/40', schedulingPoolRowClass(item)]"
+        <DataTable
+          :columns="schedulingPoolColumns"
+          :data="items"
+          :loading="loading && items.length === 0"
+          :row-key="resolveSchedulingPoolRowKey"
+          :estimate-row-height="132"
+          :overscan="8"
+          fit-width
+        >
+          <template #empty>
+            <div class="py-8 text-center text-gray-500 dark:text-gray-400">
+              {{ t('admin.accountSchedulingPool.empty') }}
+            </div>
+          </template>
+
+          <template #cell-account="{ row: item }">
+            <div class="font-medium text-gray-900 dark:text-gray-100">{{ item.account.name }}</div>
+            <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              #{{ item.account.id }} · {{ formatAccountPlatform(item.account.platform) }} · {{ formatAccountType(item.account.type) }}
+            </div>
+            <div v-if="formatGroups(item.account)" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              {{ formatGroups(item.account) }}
+            </div>
+          </template>
+
+          <template #cell-pool_status="{ row: item }">
+            <span :class="poolStatusClass(item.pool_status)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium">
+              {{ formatPoolStatus(item.pool_status) }}
+            </span>
+            <div v-if="item.runtime_block?.reason" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accountSchedulingPool.runtimeBlock') }}: {{ item.runtime_block.reason }}
+            </div>
+          </template>
+
+          <template #cell-health="{ row: item }">
+            <span :class="healthClass(item.derived_health?.state)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium">
+              {{ item.derived_health?.label || formatPathHealth(item.path_health?.state) }}
+            </span>
+            <div v-if="item.account.load_factor_advice" class="mt-1">
+              <AccountAvailabilityRadarBadge :advice="item.account.load_factor_advice" />
+            </div>
+            <div v-if="item.path_health_available" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accountSchedulingPool.pathHealth') }}: {{ formatPathHealth(item.path_health?.state) }}
+            </div>
+            <div v-if="item.path_health_available && item.path_health?.last_failure_reason" class="mt-0.5 max-w-xs break-words text-xs text-gray-500 dark:text-gray-400">
+              {{ item.path_health.last_failure_reason }}
+            </div>
+          </template>
+
+          <template #cell-capacity="{ row: item }">
+            <div class="text-sm text-gray-700 dark:text-gray-300">
+              {{ t('admin.accountSchedulingPool.priority') }} {{ item.account.priority }}
+            </div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accountSchedulingPool.concurrency') }} {{ item.account.concurrency }}
+            </div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accountSchedulingPool.loadFactor') }} {{ item.effective_load_factor }}
+            </div>
+          </template>
+
+          <template #cell-reasons="{ row: item }">
+            <div v-if="visiblePoolReasons(item).length" class="flex max-w-xl flex-wrap gap-1.5">
+              <span
+                v-for="reason in visiblePoolReasons(item)"
+                :key="reason"
+                class="rounded-md bg-gray-100 px-2 py-1 font-mono text-xs text-gray-700 dark:bg-dark-700 dark:text-gray-200"
               >
-                <td>
-                  <div class="font-medium text-gray-900 dark:text-gray-100">{{ item.account.name }}</div>
-                  <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    #{{ item.account.id }} · {{ formatAccountPlatform(item.account.platform) }} · {{ formatAccountType(item.account.type) }}
-                  </div>
-                  <div v-if="formatGroups(item.account)" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    {{ formatGroups(item.account) }}
-                  </div>
-                </td>
-                <td>
-                  <span :class="poolStatusClass(item.pool_status)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium">
-                    {{ formatPoolStatus(item.pool_status) }}
-                  </span>
-                  <div v-if="item.runtime_block?.reason" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {{ t('admin.accountSchedulingPool.runtimeBlock') }}: {{ item.runtime_block.reason }}
-                  </div>
-                </td>
-                <td>
-                  <span :class="healthClass(item.derived_health?.state)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium">
-                    {{ item.derived_health?.label || formatPathHealth(item.path_health?.state) }}
-                  </span>
-                  <div v-if="item.account.load_factor_advice" class="mt-1">
-                    <AccountAvailabilityRadarBadge :advice="item.account.load_factor_advice" />
-                  </div>
-                  <div v-if="item.path_health_available" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {{ t('admin.accountSchedulingPool.pathHealth') }}: {{ formatPathHealth(item.path_health?.state) }}
-                  </div>
-                  <div v-if="item.path_health_available && item.path_health?.last_failure_reason" class="mt-0.5 max-w-xs break-words text-xs text-gray-500 dark:text-gray-400">
-                    {{ item.path_health.last_failure_reason }}
-                  </div>
-                </td>
-                <td>
-                  <div class="text-sm text-gray-700 dark:text-gray-300">
-                    {{ t('admin.accountSchedulingPool.priority') }} {{ item.account.priority }}
-                  </div>
-                  <div class="text-xs text-gray-500 dark:text-gray-400">
-                    {{ t('admin.accountSchedulingPool.concurrency') }} {{ item.account.concurrency }}
-                  </div>
-                  <div class="text-xs text-gray-500 dark:text-gray-400">
-                    {{ t('admin.accountSchedulingPool.loadFactor') }} {{ item.effective_load_factor }}
-                  </div>
-                </td>
-                <td>
-                  <div v-if="visiblePoolReasons(item).length" class="flex max-w-xl flex-wrap gap-1.5">
-                    <span
-                      v-for="reason in visiblePoolReasons(item)"
-                      :key="reason"
-                      class="rounded-md bg-gray-100 px-2 py-1 font-mono text-xs text-gray-700 dark:bg-dark-700 dark:text-gray-200"
-                    >
-                      {{ reason }}
-                    </span>
-                  </div>
-                  <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    data-test="disable-scheduling"
-                    class="btn btn-danger px-2 py-1 text-sm"
-                    :disabled="isDisabling(item.account.id)"
-                    :title="t('admin.accountSchedulingPool.disableScheduling')"
-                    @click="disableScheduling(item)"
-                  >
-                    <Icon name="ban" size="sm" :class="isDisabling(item.account.id) ? 'animate-pulse' : ''" />
-                    <span class="ml-1">{{ t('admin.accountSchedulingPool.disableScheduling') }}</span>
-                  </button>
-                  <button
-                    v-if="shouldShowManualProbe(item.account)"
-                    type="button"
-                    data-test="manual-probe"
-                    class="btn btn-primary px-2 py-1 text-sm ml-2"
-                    :disabled="isProbing(item.account.id)"
-                    :title="t('admin.accountSchedulingPool.manualProbe')"
-                    @click="manualProbe(item)"
-                  >
-                    <Icon name="refresh" size="sm" :class="isProbing(item.account.id) ? 'animate-spin' : ''" />
-                    <span class="ml-1">{{ t('admin.accountSchedulingPool.manualProbe') }}</span>
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                {{ reason }}
+              </span>
+            </div>
+            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+          </template>
+
+          <template #cell-actions="{ row: item }">
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                data-test="disable-scheduling"
+                class="btn btn-danger px-2 py-1 text-sm"
+                :disabled="isDisabling(item.account.id)"
+                :title="t('admin.accountSchedulingPool.disableScheduling')"
+                @click="disableScheduling(item)"
+              >
+                <Icon name="ban" size="sm" :class="isDisabling(item.account.id) ? 'animate-pulse' : ''" />
+                <span class="ml-1">{{ t('admin.accountSchedulingPool.disableScheduling') }}</span>
+              </button>
+              <button
+                v-if="shouldShowManualProbe(item.account)"
+                type="button"
+                data-test="manual-probe"
+                class="btn btn-primary px-2 py-1 text-sm"
+                :disabled="isProbing(item.account.id)"
+                :title="t('admin.accountSchedulingPool.manualProbe')"
+                @click="manualProbe(item)"
+              >
+                <Icon name="refresh" size="sm" :class="isProbing(item.account.id) ? 'animate-spin' : ''" />
+                <span class="ml-1">{{ t('admin.accountSchedulingPool.manualProbe') }}</span>
+              </button>
+            </div>
+          </template>
+        </DataTable>
       </template>
     </TablePageLayout>
   </AppLayout>
@@ -168,11 +159,13 @@ import { computed, onMounted, onUnmounted, reactive, ref, shallowRef } from 'vue
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
+import DataTable from '@/components/common/DataTable.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AccountAvailabilityRadarBadge from '@/components/account/AccountAvailabilityRadarBadge.vue'
 import { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels } from '@/api/admin/accounts'
 import groupsAPI from '@/api/admin/groups'
+import type { Column } from '@/components/common/types'
 import type {
   Account,
   AdminGroup,
@@ -205,6 +198,14 @@ let searchTimer: number | null = null
 
 const items = computed(() => snapshot.value?.items || [])
 const isOpenAIPlatform = computed(() => filters.platform === 'openai')
+const schedulingPoolColumns = computed<Column[]>(() => [
+  { key: 'account', label: t('admin.accountSchedulingPool.account'), class: 'w-[18rem] align-top !whitespace-normal' },
+  { key: 'pool_status', label: t('admin.accountSchedulingPool.poolStatus'), class: 'w-[12rem] align-top !whitespace-normal' },
+  { key: 'health', label: t('admin.accountSchedulingPool.health'), class: 'w-[16rem] align-top !whitespace-normal' },
+  { key: 'capacity', label: t('admin.accountSchedulingPool.capacity'), class: 'w-[10rem] align-top !whitespace-normal' },
+  { key: 'reasons', label: t('admin.accountSchedulingPool.reasons'), class: 'min-w-[16rem] align-top !whitespace-normal' },
+  { key: 'actions', label: t('common.actions'), class: 'w-[16rem] align-top !whitespace-normal' },
+])
 const metrics = computed(() => [
   { key: 'total', label: t('admin.accountSchedulingPool.metrics.total'), value: snapshot.value?.total ?? 0 },
   { key: 'schedulable', label: t('admin.accountSchedulingPool.metrics.schedulable'), value: snapshot.value?.schedulable_count ?? 0 },
@@ -301,6 +302,10 @@ function resetFilters() {
     search: '',
   })
   applyFilters()
+}
+
+function resolveSchedulingPoolRowKey(item: OpenAIAccountSchedulingPoolItem): number {
+  return item.account.id
 }
 
 async function disableScheduling(item: OpenAIAccountSchedulingPoolItem) {
@@ -479,36 +484,6 @@ function visiblePoolReasons(item: OpenAIAccountSchedulingPoolItem): string[] {
     ...(advice?.availability_radar?.reasons || []),
     ...(advice?.reasons || []),
   ])
-}
-
-function schedulingPoolRowClass(item: OpenAIAccountSchedulingPoolItem): string {
-  if (item.pool_status === 'blocked') return 'bg-rose-50/60 dark:bg-rose-950/20'
-  if (item.pool_status === 'filtered') return 'bg-sky-50/50 dark:bg-sky-950/20'
-  if (item.pool_status === 'degraded') return 'bg-amber-50/60 dark:bg-amber-950/20'
-
-  const state = item.derived_health?.state
-  if (state === 'quota_low' || state === 'quota_exhausted' || state === 'disabled' || state === 'unauthorized_invalid' || state === 'upstream_abnormal') {
-    return 'bg-rose-50/60 dark:bg-rose-950/20'
-  }
-  if (state === 'line_degraded' || state === 'temp_unschedulable' || state === 'moderate_abnormal' || state === 'rate_limited_cooldown') {
-    return 'bg-amber-50/60 dark:bg-amber-950/20'
-  }
-  if (state === 'light_abnormal' || state === 'pending_retest') {
-    return 'bg-sky-50/50 dark:bg-sky-950/20'
-  }
-
-  switch (item.account.load_factor_advice?.availability_radar?.status) {
-    case 'unstable':
-    case 'cooldown':
-      return 'bg-rose-50/60 dark:bg-rose-950/20'
-    case 'balance_risk':
-    case 'needs_probe':
-      return 'bg-amber-50/60 dark:bg-amber-950/20'
-    case 'slow_usable':
-      return 'bg-sky-50/50 dark:bg-sky-950/20'
-    default:
-      return ''
-  }
 }
 
 function uniqueVisibleReasons(values: string[]): string[] {

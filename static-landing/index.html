@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"> <!-- 设置字符编码为UTF-8 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- 适配移动端视口 -->
+    <title>Sub2API - 先锋级 AI 网关</title> <!-- 页面标题 -->
+    <script src="https://cdn.tailwindcss.com"></script> <!-- 引入 Tailwind CSS CDN -->
+    <link rel="preconnect" href="https://fonts.googleapis.com"> <!-- 预连接 Google 字体服务 -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin> <!-- 跨域预连接字体文件 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet"> <!-- 导入 Noto Sans SC 与 Space Grotesk 字体 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Noto Sans SC"', 'sans-serif'], // 设置默认无衬线字体为思源黑体
+                        display: ['"Space Grotesk"', '"Noto Sans SC"', 'sans-serif'], // 设置展示用字体为 Space Grotesk 混搭思源黑体
+                    },
+                    colors: {
+                        dark: '#0a0a0a', // 定义深色主题色为极深灰近乎纯黑
+                        light: '#ffffff', // 定义浅色主题色为纯白
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #ffffff; /* 纯白背景底色 */
+            color: #0a0a0a; /* 极深灰文字颜色 */
+            font-family: 'Noto Sans SC', sans-serif; /* 全局应用思源黑体 */
+            -webkit-font-smoothing: antialiased; /* 启用抗锯齿平滑渲染 */
+            overflow-x: hidden; /* 防止横向溢出滚动 */
+        }
+        .hero-title {
+            font-family: 'Space Grotesk', sans-serif; /* 标题使用 Space Grotesk 字体 */
+            font-size: clamp(3.5rem, 10vw, 8.5rem); /* 响应式流式字号计算 */
+            line-height: 1.05; /* 适中的行高 */
+            letter-spacing: -0.02em; /* 微调字距，使其更显精致 */
+            font-weight: 700; /* 采用 700 粗体，避免过度臃肿 */
+        }
+        /* 入场渐显动画与裁剪露出 */
+        .reveal-clip {
+            animation: revealUp 1.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; /* 配合指数平滑曲线 */
+            clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); /* 剪裁区域初始正常 */
+            opacity: 0; /* 初始透明 */
+            transform: translateY(60px); /* 初始下移位移 */
+        }
+        .delay-1 { animation-delay: 100ms; } /* 延迟100毫秒 */
+        .delay-2 { animation-delay: 200ms; } /* 延迟200毫秒 */
+        .delay-3 { animation-delay: 350ms; } /* 延迟350毫秒 */
+
+        @keyframes revealUp {
+            to {
+                opacity: 1; /* 渐显至完全不透明 */
+                transform: translateY(0); /* 位移归零 */
+            }
+        }
+        /* 定制精细线条 */
+        .hairline-b { border-bottom: 0.5px solid rgba(10, 10, 10, 0.15); } /* 0.5px 精细底边框 */
+        .hairline-r { border-right: 0.5px solid rgba(10, 10, 10, 0.15); } /* 0.5px 精细右边框 */
+        .hairline-l { border-left: 0.5px solid rgba(10, 10, 10, 0.15); } /* 0.5px 精细左边框 */
+    </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-dark selection:text-light">
+    <!-- 背景大水印装饰，营造前卫先锋感 -->
+    <div class="fixed -bottom-20 -right-20 text-[45vw] font-display font-extrabold text-dark/[0.015] leading-none pointer-events-none select-none z-0">
+        S2A <!-- 巨型背景半透明字符 -->
+    </div>
+
+    <!-- 栅格化精细布局 Header -->
+    <header class="w-full hairline-b grid grid-cols-1 md:grid-cols-4 z-10 bg-white">
+        <div class="p-8 hairline-r flex items-center justify-between md:justify-start">
+            <a href="index.html" class="font-display font-bold text-2xl tracking-tighter hover:opacity-60 transition-opacity">
+                Sub2API. <!-- 品牌 LOGO -->
+            </a>
+            <!-- 移动端菜单按钮逻辑（虽然是极简，但保留 affordance） -->
+            <button class="md:hidden text-xs uppercase tracking-widest border border-dark/20 px-3 py-1 rounded" onclick="document.getElementById('mobile-menu').classList.toggle('hidden')">Menu</button>
+        </div>
+        <div class="hidden md:flex p-8 hairline-r items-center">
+            <a href="features.html" class="text-xs uppercase tracking-widest font-medium hover:text-dark/50 transition-colors w-full">
+                特性 // Features <!-- 特性导航 -->
+            </a>
+        </div>
+        <div class="hidden md:flex p-8 hairline-r items-center">
+            <a href="pricing.html" class="text-xs uppercase tracking-widest font-medium hover:text-dark/50 transition-colors w-full">
+                定价 // Pricing <!-- 定价导航 -->
+            </a>
+        </div>
+        <div class="hidden md:flex p-8 items-center justify-end">
+            <a href="login.html" class="text-xs uppercase tracking-widest font-semibold border border-dark px-6 py-3 rounded-full hover:bg-dark hover:text-light transition-all duration-500">
+                Console // 登录控制台 <!-- 登录按钮 -->
+            </a>
+        </div>
+    </header>
+
+    <!-- 移动端下拉菜单 -->
+    <div id="mobile-menu" class="hidden md:hidden bg-white hairline-b flex flex-col text-center py-6 gap-4 font-display z-20">
+        <a href="features.html" class="text-sm uppercase tracking-widest hover:opacity-50">特性 Features</a>
+        <a href="pricing.html" class="text-sm uppercase tracking-widest hover:opacity-50">定价 Pricing</a>
+        <a href="login.html" class="text-sm uppercase tracking-widest font-bold">控制台 Login</a>
+    </div>
+
+    <!-- 主体区域：非对称排版 -->
+    <main class="flex-grow z-10 w-full max-w-[90rem] mx-auto grid grid-cols-1 md:grid-cols-4">
+
+        <!-- 左侧巨型文字栏，占3列 -->
+        <section class="col-span-1 md:col-span-3 p-8 md:p-16 flex flex-col justify-center min-h-[60vh] hairline-r">
+            <div class="max-w-4xl">
+                <!-- 小号提示标识 -->
+                <span class="block text-xs font-semibold uppercase tracking-[0.3em] text-dark/40 mb-6 reveal-clip">
+                    [ 001 / ENTERPRISE GATEWAY ]
+                </span>
+                <!-- 巨型英文字标题 -->
+                <h1 class="hero-title text-dark reveal-clip delay-1">
+                    REDEFINING<br>
+                    API ROUTING.
+                </h1>
+                <!-- 辅助中文副标题 -->
+                <p class="mt-8 text-xl md:text-2xl text-dark/70 font-light tracking-wide leading-relaxed reveal-clip delay-2 max-w-2xl">
+                    专为现代 AI 时代重构的高吞吐网关。通过非对称极简设计，达成多渠道负载均衡、毫秒级精准扣费与租户级并发隔离。
+                </p>
+                <!-- 交互按钮组 -->
+                <div class="mt-12 reveal-clip delay-3">
+                    <a href="login.html" class="inline-flex items-center gap-6 group">
+                        <span class="text-sm uppercase tracking-widest font-bold border-b border-dark pb-2 group-hover:opacity-60 transition-opacity">开始部署 API Gateway</span>
+                        <span class="text-2xl transform group-hover:translate-x-3 transition-transform duration-500">&rarr;</span>
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- 右侧竖向元数据栏，占1列，实现杂志感的不对称 -->
+        <section class="p-8 md:p-16 flex flex-col justify-between hairline-b md:hairline-b-0">
+            <!-- 顶部的简短描述 -->
+            <div class="reveal-clip delay-2">
+                <span class="block text-xs font-bold uppercase tracking-widest text-dark/40 mb-4">// ARCHITECTURE</span>
+                <p class="text-xs text-dark/60 leading-relaxed font-light">
+                    Sub2API 采用无状态架构设计，摒弃沉重的传统数据库反向查询，所有解析逻辑在内存中执行，专为低延迟 AI 路由优化。
+                </p>
+            </div>
+
+            <!-- 底部的装饰指标 -->
+            <div class="mt-16 md:mt-0 reveal-clip delay-3">
+                <span class="block text-xs font-bold uppercase tracking-widest text-dark/40 mb-4">// PERFORMANCE METRIC</span>
+                <div class="font-display text-5xl font-extrabold tracking-tighter mb-2">&lt; 2.4ms</div>
+                <p class="text-xs text-dark/50">在高并发状态下的全局路由解析延迟平均值。</p>
+            </div>
+        </section>
+
+        <!-- 底部非对称网格功能栏 (1+2 分块) -->
+        <!-- 块 1：占2列，突出核心点 -->
+        <div class="col-span-1 md:col-span-2 p-8 md:p-16 hairline-r hairline-b border-t border-dark/10 flex flex-col justify-between min-h-[300px]">
+            <div>
+                <span class="text-xs font-bold uppercase tracking-widest text-dark/30 block mb-6">01 // PRECISE BILLING</span>
+                <h3 class="text-2xl font-display font-extrabold tracking-tight mb-4">流式流量精准拦截计费</h3>
+            </div>
+            <p class="text-sm text-dark/60 font-light leading-relaxed max-w-md">
+                实时对出入 SSE 流（Server-Sent Events）进行精准的词元 (Token) 解析。无需额外的轮询拦截器，在 TCP 报文传输的同时完成逻辑判额与扣款，确保零防刷漏扣。
+            </p>
+        </div>
+
+        <!-- 块 2：占1列，常规功能 -->
+        <div class="p-8 md:p-16 hairline-r hairline-b border-t border-dark/10 flex flex-col justify-between min-h-[300px]">
+            <div>
+                <span class="text-xs font-bold uppercase tracking-widest text-dark/30 block mb-6">02 // WEIGHT ROUTING</span>
+                <h3 class="text-xl font-display font-bold tracking-tight mb-4">权重负载与降级</h3>
+            </div>
+            <p class="text-xs text-dark/60 font-light leading-relaxed">
+                动态探测各渠道 API 报错率。支持按权重无缝分配并发请求，当某通道响应时间超出阈值，网关自动静默熔断并平滑转移。
+            </p>
+        </div>
+
+        <!-- 块 3：占1列，商业闭环 -->
+        <div class="p-8 md:p-16 hairline-b border-t border-dark/10 flex flex-col justify-between min-h-[300px]">
+            <div>
+                <span class="text-xs font-bold uppercase tracking-widest text-dark/30 block mb-6">03 // COMMERCE SYSTEM</span>
+                <h3 class="text-xl font-display font-bold tracking-tight mb-4">商业化支付生态</h3>
+            </div>
+            <p class="text-xs text-dark/60 font-light leading-relaxed">
+                无需额外采购高价支付网关，原生封装微信、支付宝和 Stripe，集成卡密分发兑换，帮助您的独立 AI 服务迅速步入变现轨道。
+            </p>
+        </div>
+
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="w-full px-8 py-10 flex flex-col md:flex-row justify-between items-center text-xs text-dark/40 font-medium max-w-[90rem] mx-auto border-t border-dark/10 z-10 bg-white">
+        <div>&copy; 2026 SUB2API SYSTEM. OPEN SOURCE PROJECT.</div>
+        <div class="mt-4 md:mt-0 uppercase tracking-widest font-display font-bold">ANTIGRAVITY // DESIGNED FOR THE COGNITIVE AGE</div>
+    </footer>
+</body>
+</html>

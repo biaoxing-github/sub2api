@@ -103,6 +103,20 @@ const createDashboardStatsWithTokenBreakdown = (): DashboardStats => ({
   today_tokens: 210
 })
 
+const StatCardStub = {
+  props: ['icon', 'label', 'value', 'sub', 'tone'],
+  template: `
+    <section data-test="dashboard-stat-card" :data-tone="tone">
+      <span>{{ icon }}</span>
+      <span>{{ label }}</span>
+      <span>{{ value }}</span>
+      <span v-if="sub">{{ sub }}</span>
+      <slot />
+      <slot name="sub" />
+    </section>
+  `
+}
+
 describe('admin DashboardView', () => {
   beforeEach(() => {
     getSnapshotV2.mockReset()
@@ -137,6 +151,7 @@ describe('admin DashboardView', () => {
           AppLayout: { template: '<div><slot /></div>' },
           LoadingSpinner: true,
           Icon: true,
+          StatCard: StatCardStub,
           DateRangePicker: true,
           Select: true,
           ModelDistributionChart: true,
@@ -159,6 +174,39 @@ describe('admin DashboardView', () => {
     }))
   })
 
+  it('renders all eight top dashboard metrics through the shared StatCard component', async () => {
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          LoadingSpinner: true,
+          Icon: true,
+          StatCard: StatCardStub,
+          DateRangePicker: true,
+          Select: true,
+          ModelDistributionChart: true,
+          TokenUsageTrend: true,
+          Line: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const cards = wrapper.findAll('[data-test="dashboard-stat-card"]')
+    expect(cards).toHaveLength(8)
+    expect(cards.map(card => card.text())).toEqual(expect.arrayContaining([
+      expect.stringContaining('admin.dashboard.apiKeys'),
+      expect.stringContaining('admin.dashboard.accounts'),
+      expect.stringContaining('admin.dashboard.todayRequests'),
+      expect.stringContaining('admin.dashboard.users'),
+      expect.stringContaining('admin.dashboard.todayTokens'),
+      expect.stringContaining('admin.dashboard.totalTokens'),
+      expect.stringContaining('admin.dashboard.performance'),
+      expect.stringContaining('admin.dashboard.avgResponse')
+    ]))
+  })
+
   it('renders token input output cache read and cache read ratio', async () => {
     getSnapshotV2.mockResolvedValueOnce({
       stats: createDashboardStatsWithTokenBreakdown(),
@@ -172,6 +220,7 @@ describe('admin DashboardView', () => {
           AppLayout: { template: '<div><slot /></div>' },
           LoadingSpinner: true,
           Icon: true,
+          StatCard: StatCardStub,
           DateRangePicker: true,
           Select: true,
           ModelDistributionChart: true,

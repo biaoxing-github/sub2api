@@ -11,9 +11,11 @@
         <p class="text-xl font-bold text-gray-900 dark:text-white">
           {{ value }}
         </p>
-        <p v-if="sub" class="text-xs text-gray-500 dark:text-gray-400">
-          {{ sub }}
-        </p>
+        <slot name="sub">
+          <p v-if="sub" class="text-xs text-gray-500 dark:text-gray-400">
+            {{ sub }}
+          </p>
+        </slot>
       </div>
     </div>
   </div>

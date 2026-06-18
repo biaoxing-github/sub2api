@@ -80,6 +80,7 @@ import { useAppStore } from '@/stores'
 import { paymentAPI } from '@/api/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { getPaymentPopupFeatures } from '@/components/payment/providerConfig'
+import { createPaymentStatusPoller, type PaymentStatusPoller } from '@/components/payment/PaymentStatusPolling'
 import type { PaymentOrder } from '@/types/payment'
 import QRCode from 'qrcode'
 import alipayIcon from '@/assets/icons/alipay.svg'
@@ -112,7 +113,7 @@ const cancelling = ref(false)
 const success = ref(false)
 const paidOrder = ref<PaymentOrder | null>(null)
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let statusPoller: PaymentStatusPoller | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let verifyAttempts = 0
 let lastVerifyAt = 0
@@ -189,7 +190,7 @@ async function renderQR() {
   }
 }
 
-async function pollStatus() {
+async function pollStatus(): Promise<void | false> {
   if (!props.orderId) return
   let order = await paymentStore.pollOrderStatus(props.orderId)
   if (!order) return
@@ -199,9 +200,11 @@ async function pollStatus() {
     paidOrder.value = order
     success.value = true
     emit('success')
+    return false
   } else if (order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'FAILED') {
     cleanup()
     expired.value = true
+    return false
   }
 }
 
@@ -266,7 +269,7 @@ function handleDone() {
 }
 
 function cleanup() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (statusPoller) { statusPoller.stop(); statusPoller = null }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
 }
 
@@ -286,7 +289,8 @@ function init() {
     seconds = Math.floor((expiresAt.getTime() - Date.now()) / 1000)
   }
   startCountdown(seconds)
-  pollTimer = setInterval(pollStatus, 3000)
+  statusPoller = createPaymentStatusPoller(pollStatus)
+  statusPoller.start()
   renderQR()
 }
 

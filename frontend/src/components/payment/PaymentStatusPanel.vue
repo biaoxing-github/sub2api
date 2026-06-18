@@ -130,6 +130,7 @@ import { paymentAPI } from '@/api/payment'
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { getPaymentPopupFeatures } from '@/components/payment/providerConfig'
 import { formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
+import { createPaymentStatusPoller, type PaymentStatusPoller } from '@/components/payment/PaymentStatusPolling'
 import type { PaymentOrder } from '@/types/payment'
 import Icon from '@/components/icons/Icon.vue'
 import QRCode from 'qrcode'
@@ -173,7 +174,7 @@ const localeCode = computed(() => {
 // Terminal outcome: null = still active, 'success' | 'cancelled' | 'expired'
 const outcome = ref<PaymentOutcome | null>(null)
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let statusPoller: PaymentStatusPoller | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let verifyAttempts = 0
 let lastVerifyAt = 0
@@ -267,7 +268,7 @@ async function tryRecoverPendingOrder(order: PaymentOrder): Promise<PaymentOrder
   }
 }
 
-async function pollStatus() {
+async function pollStatus(): Promise<void | false> {
   if (!props.orderId || outcome.value) return
   let order = await paymentStore.pollOrderStatus(props.orderId)
   if (!order) return
@@ -277,12 +278,15 @@ async function pollStatus() {
     paidOrder.value = order
     setOutcome('success')
     emit('success')
+    return false
   } else if (order.status === 'CANCELLED') {
     cleanup()
     setOutcome('cancelled')
+    return false
   } else if (order.status === 'EXPIRED' || order.status === 'FAILED') {
     cleanup()
     setOutcome('expired')
+    return false
   }
 }
 
@@ -312,7 +316,7 @@ async function handleCancel() {
 function handleDone() { cleanup(); emit('done') }
 
 function cleanup() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (statusPoller) { statusPoller.stop(); statusPoller = null }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
 }
 
@@ -325,7 +329,8 @@ if (props.expiresAt) {
   seconds = Math.floor((new Date(props.expiresAt).getTime() - Date.now()) / 1000)
 }
 startCountdown(seconds)
-pollTimer = setInterval(pollStatus, 3000)
+statusPoller = createPaymentStatusPoller(pollStatus)
+statusPoller.start()
 renderQR()
 
 watch(() => qrUrl.value, () => renderQR())

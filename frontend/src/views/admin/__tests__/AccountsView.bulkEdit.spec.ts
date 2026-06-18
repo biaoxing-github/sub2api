@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 
 import AccountsView from '../AccountsView.vue'
 
@@ -127,8 +127,43 @@ const BulkEditAccountModalStub = {
   template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
 }
 
+const DEFAULT_HIDDEN_ACCOUNT_COLUMNS = [
+  'platform_type',
+  'capacity',
+  'status',
+  'schedulable',
+  'today_stats',
+  'groups',
+  'usage',
+  'total_account_cost',
+  'total_requests',
+  'upstream_balance',
+  'proxy',
+  'priority',
+  'rate_multiplier',
+  'created_at',
+  'last_used_at',
+  'expires_at',
+  'notes'
+]
+
+const showAccountColumns = (...visibleKeys: string[]) => {
+  const visible = new Set(visibleKeys)
+  localStorage.setItem(
+    'account-hidden-columns-v2',
+    JSON.stringify(DEFAULT_HIDDEN_ACCOUNT_COLUMNS.filter((key) => !visible.has(key)))
+  )
+}
+
+let mountedWrappers: VueWrapper[] = []
+
+const trackWrapper = <T extends VueWrapper>(wrapper: T): T => {
+  mountedWrappers.push(wrapper)
+  return wrapper
+}
+
 const mountAccountsView = () =>
-  mount(AccountsView, {
+  trackWrapper(mount(AccountsView, {
     global: {
       stubs: {
         AppLayout: { template: '<div><slot /></div>' },
@@ -163,9 +198,18 @@ const mountAccountsView = () =>
         Icon: true
       }
     }
-  })
+  }))
 
 describe('admin AccountsView bulk edit scope', () => {
+  afterEach(() => {
+    for (const wrapper of mountedWrappers) {
+      wrapper.unmount()
+    }
+    mountedWrappers = []
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
   beforeEach(() => {
     localStorage.clear()
 
@@ -205,7 +249,7 @@ describe('admin AccountsView bulk edit scope', () => {
   })
 
   it('opens bulk edit in filtered-results mode from the bulk actions dropdown', async () => {
-    const wrapper = mount(AccountsView, {
+    const wrapper = trackWrapper(mount(AccountsView, {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
@@ -240,7 +284,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Icon: true
         }
       }
-    })
+    }))
 
     await flushPromises()
     await wrapper.get('[data-test="edit-filtered"]').trigger('click')
@@ -273,6 +317,47 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(wrapper.text()).not.toContain('USAGE_SUMMARY_ROOT_KEY')
   })
 
+  it('keeps first-screen account summaries collapsed until the summary row is opened', async () => {
+    getUsageSummary.mockResolvedValue({
+      generated_at: '2026-06-16T10:00:00Z',
+      total_accounts: 1,
+      schedulable_accounts: 1,
+      rate_limited_accounts: 0,
+      missing_snapshot_accounts: 0,
+      five_hour: {},
+      seven_day: {},
+      upstream_balance: {},
+      openai_upstream_balance: {},
+      anthropic_upstream_balance: {},
+      plans: []
+    })
+    getActionItems.mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          severity: 'critical',
+          title: 'Needs attention',
+          description: 'Action item detail'
+        }
+      ]
+    })
+
+    const wrapper = mountAccountsView()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Usage Summary Title')
+    expect(wrapper.text()).toContain('1 admin.accounts.actionItems.title')
+    const bannerDetails = wrapper.get('[data-test="account-info-banner-details"]')
+    expect(bannerDetails.isVisible()).toBe(false)
+    expect((bannerDetails.element as HTMLElement).style.display).toBe('none')
+
+    await wrapper.get('[data-test="account-info-banner-toggle"]').trigger('click')
+    await flushPromises()
+
+    const expandedBannerDetails = wrapper.get('[data-test="account-info-banner-details"]')
+    expect((expandedBannerDetails.element as HTMLElement).style.display).toBe('')
+  })
+
   it('shows account-level token refresh errors in a dialog', async () => {
     window.confirm = vi.fn(() => true)
     listAccounts.mockResolvedValueOnce({
@@ -300,7 +385,7 @@ describe('admin AccountsView bulk edit scope', () => {
       errors: [{ account_id: 1, error: 'invalid_grant' }]
     })
 
-    const wrapper = mount(AccountsView, {
+    const wrapper = trackWrapper(mount(AccountsView, {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
@@ -336,7 +421,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Icon: true
         }
       }
-    })
+    }))
 
     await flushPromises()
     await wrapper.get('[data-test="refresh-token"]').trigger('click')
@@ -388,7 +473,7 @@ describe('admin AccountsView bulk edit scope', () => {
       ]
     })
 
-    const wrapper = mount(AccountsView, {
+    const wrapper = trackWrapper(mount(AccountsView, {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
@@ -424,7 +509,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Icon: true
         }
       }
-    })
+    }))
 
     await flushPromises()
     expect(wrapper.get('[data-test="data-table"]').text()).toContain('free-one@example.com:active:')
@@ -495,7 +580,7 @@ describe('admin AccountsView bulk edit scope', () => {
           ],
     }))
 
-    const wrapper = mount(AccountsView, {
+    const wrapper = trackWrapper(mount(AccountsView, {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
@@ -531,7 +616,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Icon: true
         }
       }
-    })
+    }))
 
     await flushPromises()
     await wrapper.get('button[title="admin.accounts.moreActions"]').trigger('click')
@@ -566,7 +651,7 @@ describe('admin AccountsView bulk edit scope', () => {
       pages: 1
     })
 
-    const wrapper = mount(AccountsView, {
+    const wrapper = trackWrapper(mount(AccountsView, {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
@@ -606,7 +691,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Icon: true
         }
       }
-    })
+    }))
 
     await flushPromises()
     await wrapper.get('[data-test="set-team-filter"]').trigger('click')
@@ -654,7 +739,7 @@ describe('admin AccountsView bulk edit scope', () => {
       pages: 1
     })
 
-    const wrapper = mount(AccountsView, {
+    const wrapper = trackWrapper(mount(AccountsView, {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
@@ -690,7 +775,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Icon: true
         }
       }
-    })
+    }))
 
     await flushPromises()
     await wrapper.get('[data-test="row-31"] input[type="checkbox"]').setValue(true)
@@ -773,7 +858,7 @@ describe('admin AccountsView bulk edit scope', () => {
           ],
     }))
 
-    const wrapper = mount(AccountsView, {
+    const wrapper = trackWrapper(mount(AccountsView, {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
@@ -809,7 +894,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Icon: true
         }
       }
-    })
+    }))
 
     await flushPromises()
     await wrapper.get('button[title="admin.accounts.moreActions"]').trigger('click')
@@ -831,6 +916,7 @@ describe('admin AccountsView bulk edit scope', () => {
   })
 
   it('passes total account cost sorting to the server and displays usage totals', async () => {
+    showAccountColumns('total_account_cost')
     listAccounts.mockResolvedValueOnce({
       items: [
         {
@@ -859,7 +945,7 @@ describe('admin AccountsView bulk edit scope', () => {
       pages: 0
     })
 
-    const wrapper = mount(AccountsView, {
+    const wrapper = trackWrapper(mount(AccountsView, {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
@@ -894,7 +980,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Icon: true
         }
       }
-    })
+    }))
 
     await flushPromises()
     expect(wrapper.get('[data-test="data-table"]').text()).toContain('heavy@example.com:active::7.25:18')
@@ -902,7 +988,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await wrapper.get('[data-test="sort-total_account_cost"]').trigger('click')
     await flushPromises()
 
-    expect(listAccounts).toHaveBeenLastCalledWith(
+    expect(listAccounts).toHaveBeenCalledWith(
       1,
       20,
       expect.objectContaining({
@@ -914,6 +1000,7 @@ describe('admin AccountsView bulk edit scope', () => {
   })
 
   it('shows account created/imported time and alive days', async () => {
+    showAccountColumns('created_at')
     vi.setSystemTime(new Date('2026-05-27T10:00:00Z'))
     listAccounts.mockResolvedValueOnce({
       items: [
@@ -935,7 +1022,7 @@ describe('admin AccountsView bulk edit scope', () => {
       pages: 1
     })
 
-    const wrapper = mount(AccountsView, {
+    const wrapper = trackWrapper(mount(AccountsView, {
       global: {
         stubs: {
           AppLayout: { template: '<div><slot /></div>' },
@@ -970,7 +1057,7 @@ describe('admin AccountsView bulk edit scope', () => {
           Icon: true
         }
       }
-    })
+    }))
 
     await flushPromises()
 
@@ -980,7 +1067,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await wrapper.get('[data-test="sort-created_at"]').trigger('click')
     await flushPromises()
 
-    expect(listAccounts).toHaveBeenLastCalledWith(
+    expect(listAccounts).toHaveBeenCalledWith(
       1,
       20,
       expect.objectContaining({

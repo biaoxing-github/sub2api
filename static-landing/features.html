@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"> <!-- 设置字符编码为 UTF-8 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- 优化移动端视口适配 -->
+    <title>特性 - Sub2API</title> <!-- 页面标题 -->
+    <script src="https://cdn.tailwindcss.com"></script> <!-- 引入 Tailwind CSS CDN -->
+    <link rel="preconnect" href="https://fonts.googleapis.com"> <!-- 预连接 Google 字体 -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin> <!-- 跨域预连接字体资源 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet"> <!-- 载入字体文件 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Noto Sans SC"', 'sans-serif'], // 中文字体栈定义
+                        display: ['"Space Grotesk"', '"Noto Sans SC"', 'sans-serif'], // 展示英文字体栈定义
+                    },
+                    colors: {
+                        dark: '#0a0a0a', // 纯粹的先锋黑
+                        light: '#ffffff', // 纯白底色
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #ffffff; /* 纯白底色 */
+            color: #0a0a0a; /* 极深字色 */
+            font-family: 'Noto Sans SC', sans-serif; /* 应用思源黑体 */
+            -webkit-font-smoothing: antialiased; /* 抗锯齿平滑渲染 */
+            overflow-x: hidden; /* 防止横向溢出 */
+        }
+        .hero-title {
+            font-family: 'Space Grotesk', sans-serif; /* 标题使用 Space Grotesk 字体 */
+            font-size: clamp(3rem, 8vw, 6.5rem); /* 流式响应式计算尺寸 */
+            line-height: 1.05; /* 适中的行高 */
+            letter-spacing: -0.02em; /* 微调字间距 */
+            font-weight: 700; /* 使用 700 粗体 */
+        }
+        /* 定制精细线条 */
+        .hairline-b { border-bottom: 0.5px solid rgba(10, 10, 10, 0.15); } /* 0.5px 精细底边框 */
+        .hairline-r { border-right: 0.5px solid rgba(10, 10, 10, 0.15); } /* 0.5px 精细右边框 */
+        /* 进场载入特效 */
+        .reveal-clip {
+            animation: revealUp 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; /* 高阶贝塞尔曲线平滑渐入 */
+            clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); /* 初始完整裁剪区 */
+            opacity: 0; /* 初始透明 */
+            transform: translateY(40px); /* 初始位移偏移 */
+        }
+        .delay-1 { animation-delay: 150ms; } /* 动画延迟 */
+        .delay-2 { animation-delay: 300ms; } /* 动画延迟 */
+        @keyframes revealUp {
+            to {
+                opacity: 1; /* 最终完全不透明 */
+                transform: translateY(0); /* 最终复位 */
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-dark selection:text-light">
+    <!-- 背景大水印装饰，营造前卫先锋感 -->
+    <div class="fixed -bottom-20 -right-20 text-[45vw] font-display font-extrabold text-dark/[0.012] leading-none pointer-events-none select-none z-0">
+        FT <!-- 巨型背景半透明字符 -->
+    </div>
+
+    <!-- 栅格化精细布局 Header -->
+    <header class="w-full hairline-b grid grid-cols-1 md:grid-cols-4 z-10 bg-white">
+        <div class="p-8 hairline-r flex items-center justify-between md:justify-start">
+            <a href="index.html" class="font-display font-bold text-2xl tracking-tighter hover:opacity-60 transition-opacity">
+                Sub2API. <!-- 品牌 LOGO -->
+            </a>
+            <!-- 移动端菜单按钮 -->
+            <button class="md:hidden text-xs uppercase tracking-widest border border-dark/20 px-3 py-1 rounded" onclick="document.getElementById('mobile-menu').classList.toggle('hidden')">Menu</button>
+        </div>
+        <div class="hidden md:flex p-8 hairline-r items-center bg-dark text-light">
+            <a href="features.html" class="text-xs uppercase tracking-widest font-medium w-full text-center">
+                特性 // Features <!-- 激活状态的特性导航 -->
+            </a>
+        </div>
+        <div class="hidden md:flex p-8 hairline-r items-center">
+            <a href="pricing.html" class="text-xs uppercase tracking-widest font-medium hover:text-dark/50 transition-colors w-full">
+                定价 // Pricing <!-- 定价导航 -->
+            </a>
+        </div>
+        <div class="hidden md:flex p-8 items-center justify-end">
+            <a href="login.html" class="text-xs uppercase tracking-widest font-semibold border border-dark px-6 py-3 rounded-full hover:bg-dark hover:text-light transition-all duration-500">
+                Console // 登录控制台 <!-- 登录控制台链接 -->
+            </a>
+        </div>
+    </header>
+
+    <!-- 移动端下拉菜单 -->
+    <div id="mobile-menu" class="hidden md:hidden bg-white hairline-b flex flex-col text-center py-6 gap-4 font-display z-20">
+        <a href="features.html" class="text-sm uppercase tracking-widest hover:opacity-50 font-bold">特性 Features</a>
+        <a href="pricing.html" class="text-sm uppercase tracking-widest hover:opacity-50">定价 Pricing</a>
+        <a href="login.html" class="text-sm uppercase tracking-widest font-bold">控制台 Login</a>
+    </div>
+
+    <!-- 主体区域 -->
+    <main class="flex-grow z-10 w-full max-w-[90rem] mx-auto grid grid-cols-1 md:grid-cols-4">
+
+        <!-- 左侧巨型文字栏，占3列 -->
+        <section class="col-span-1 md:col-span-3 p-8 md:p-16 flex flex-col justify-center min-h-[50vh] hairline-r border-b border-dark/10">
+            <div class="max-w-4xl">
+                <!-- 小号提示标识 -->
+                <span class="block text-xs font-semibold uppercase tracking-[0.3em] text-dark/40 mb-6 reveal-clip">
+                    [ TECHNICAL SPECIFICATIONS ]
+                </span>
+                <!-- 巨型标题 -->
+                <h1 class="hero-title text-dark reveal-clip delay-1">
+                    PERFORMANCE<br>
+                    UNCOMPROMISED.
+                </h1>
+                <!-- 辅助描述 -->
+                <p class="mt-8 text-xl text-dark/60 font-light tracking-wide leading-relaxed reveal-clip delay-2 max-w-2xl">
+                    彻底剔除繁杂，只保留最核心的请求分发与计费能力。每一行代码都为高吞吐量与极低延迟而设计。
+                </p>
+            </div>
+        </section>
+
+        <!-- 右侧竖向元数据栏，占1列 -->
+        <section class="p-8 md:p-16 flex flex-col justify-between border-b border-dark/10">
+            <div class="reveal-clip delay-2">
+                <span class="block text-xs font-bold uppercase tracking-widest text-dark/40 mb-4">// CORE VALUE</span>
+                <p class="text-xs text-dark/60 leading-relaxed font-light">
+                    在高并发高频次的AI代理场景中，哪怕是多出 10ms 的延迟，也会对最终用户的交互体验造成毁灭性打击。我们视延迟为天敌。
+                </p>
+            </div>
+        </section>
+
+        <!-- 交错/不对称特征排版区域 -->
+        <!-- 特性 1：左侧巨型数字，右侧说明，不规则排列 -->
+        <div class="col-span-1 md:col-span-4 grid grid-cols-1 md:grid-cols-4 hairline-b">
+            <!-- 巨大交错数字占位 -->
+            <div class="p-8 md:p-16 hairline-r flex items-end justify-start md:justify-end min-h-[200px] md:min-h-0">
+                <span class="font-display text-8xl md:text-9xl font-extrabold tracking-tighter text-dark/5 leading-none select-none">01</span>
+            </div>
+            <!-- 具体描述占3列 -->
+            <div class="col-span-1 md:col-span-3 p-8 md:p-16 flex flex-col justify-center">
+                <h3 class="text-2xl md:text-3xl font-display font-extrabold tracking-tight mb-6">极速流式拦截计费</h3>
+                <p class="text-sm md:text-base text-dark/60 font-light leading-relaxed max-w-3xl">
+                    抛弃传统网关的冗余中间件层，通过自研的轻量级流式解析引擎，在网络传输层实时对出入请求进行 Token 级精确计量。在毫秒级内完成协议解析、余额扣除与异常拦截，保证在高并发状态下的极速流式响应输出。
+                </p>
+            </div>
+        </div>
+
+        <!-- 特性 2：反向排列，数字在右（通过调整 grid order 或者空缺列） -->
+        <div class="col-span-1 md:col-span-4 grid grid-cols-1 md:grid-cols-4 hairline-b">
+            <!-- 描述占3列，带右边框 -->
+            <div class="col-span-1 md:col-span-3 p-8 md:p-16 hairline-r flex flex-col justify-center order-2 md:order-1">
+                <h3 class="text-2xl md:text-3xl font-display font-extrabold tracking-tight mb-6">多账号负载调度与降级</h3>
+                <p class="text-sm md:text-base text-dark/60 font-light leading-relaxed max-w-3xl">
+                    支持数十至上百个上游模型账号矩阵的高效管理。结合动态权重轮询分配请求流，网关能够自动识别超时、限流与密钥失效等异常。独特的会话粘性算法确保上下文连续的对话请求无缝交接，保证对话稳定性。
+                </p>
+            </div>
+            <!-- 巨大数字在最右侧，order-1 -->
+            <div class="p-8 md:p-16 flex items-end justify-start min-h-[200px] md:min-h-0 order-1 md:order-2">
+                <span class="font-display text-8xl md:text-9xl font-extrabold tracking-tighter text-dark/5 leading-none select-none">02</span>
+            </div>
+        </div>
+
+        <!-- 特性 3：数字再次在左 -->
+        <div class="col-span-1 md:col-span-4 grid grid-cols-1 md:grid-cols-4 hairline-b">
+            <!-- 巨大数字在左 -->
+            <div class="p-8 md:p-16 hairline-r flex items-end justify-start md:justify-end min-h-[200px] md:min-h-0">
+                <span class="font-display text-8xl md:text-9xl font-extrabold tracking-tighter text-dark/5 leading-none select-none">03</span>
+            </div>
+            <!-- 描述占3列 -->
+            <div class="col-span-1 md:col-span-3 p-8 md:p-16 flex flex-col justify-center">
+                <h3 class="text-2xl md:text-3xl font-display font-extrabold tracking-tight mb-6">租户级硬核并发控制</h3>
+                <p class="text-sm md:text-base text-dark/60 font-light leading-relaxed max-w-3xl">
+                    内置极高性能的自适应令牌桶隔离算法。支持在租户（用户）级别甚至单一 Key 级别配置硬性的并发通道上限。在业务高峰期，能够智能平摊负载，确保单一账户突发流量不会耗尽核心连接池资源。
+                </p>
+            </div>
+        </div>
+
+        <!-- 特性 4：数字在右 -->
+        <div class="col-span-1 md:col-span-4 grid grid-cols-1 md:grid-cols-4">
+            <!-- 描述占3列 -->
+            <div class="col-span-1 md:col-span-3 p-8 md:p-16 hairline-r flex flex-col justify-center order-2 md:order-1">
+                <h3 class="text-2xl md:text-3xl font-display font-extrabold tracking-tight mb-6">自闭环商业化收银台</h3>
+                <p class="text-sm md:text-base text-dark/60 font-light leading-relaxed max-w-3xl">
+                    免去第三方支付中介繁琐的开发对接。网关直接集成收银台模块，原生打通微信、支付宝及国际 Stripe 信用卡渠道。支持自定义生成兑换卡密，实现从免费开源试用到商业化运作的高效无缝闭环。
+                </p>
+            </div>
+            <!-- 数字在右 -->
+            <div class="p-8 md:p-16 flex items-end justify-start min-h-[200px] md:min-h-0 order-1 md:order-2">
+                <span class="font-display text-8xl md:text-9xl font-extrabold tracking-tighter text-dark/5 leading-none select-none">04</span>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="w-full px-8 py-10 flex flex-col md:flex-row justify-between items-center text-xs text-dark/40 font-medium max-w-[90rem] mx-auto border-t border-dark/10 z-10 bg-white">
+        <div>&copy; 2026 SUB2API SYSTEM. OPEN SOURCE PROJECT.</div>
+        <div class="mt-4 md:mt-0 uppercase tracking-widest font-display font-bold">ANTIGRAVITY // DESIGNED FOR THE COGNITIVE AGE</div>
+    </footer>
+</body>
+</html>

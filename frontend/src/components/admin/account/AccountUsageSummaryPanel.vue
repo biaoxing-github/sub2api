@@ -2,7 +2,7 @@
   <section class="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
     <div class="flex flex-col gap-3 border-b border-gray-100 px-4 py-3 dark:border-gray-700 md:flex-row md:items-center md:justify-between">
       <div class="flex min-w-0 items-center gap-2">
-        <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
+        <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 dark:bg-dark-700 dark:text-gray-300">
           <Icon name="chart" size="sm" :stroke-width="2" />
         </span>
         <div class="min-w-0">
@@ -41,13 +41,13 @@
         :label="t('admin.accounts.usageSummary.openaiBalance')"
         :value="formatBalancePair(summary.openai_upstream_balance)"
         :title="formatBalanceTitle(summary.openai_upstream_balance)"
-        tone="blue"
+        tone="slate"
       />
       <MetricCell
         :label="t('admin.accounts.usageSummary.anthropicBalance')"
         :value="formatBalancePair(summary.anthropic_upstream_balance)"
         :title="formatBalanceTitle(summary.anthropic_upstream_balance)"
-        tone="emerald"
+        tone="slate"
       />
       <MetricCell
         :label="t('admin.accounts.usageSummary.missingUpstreamBalanceSnapshots')"
@@ -64,8 +64,8 @@
       <div class="grid gap-0 md:grid-cols-4">
         <MetricCell :label="t('admin.accounts.usageSummary.schedulable')" :value="formatNumber(summary.schedulable_accounts)" />
         <MetricCell :label="t('admin.accounts.usageSummary.rateLimited')" :value="formatNumber(summary.rate_limited_accounts)" tone="amber" />
-        <MetricCell :label="t('admin.accounts.usageSummary.openaiKeys')" :value="formatUpstreamKeys(summary.openai_upstream_balance)" tone="blue" />
-        <MetricCell :label="t('admin.accounts.usageSummary.anthropicKeys')" :value="formatUpstreamKeys(summary.anthropic_upstream_balance)" tone="emerald" />
+        <MetricCell :label="t('admin.accounts.usageSummary.openaiKeys')" :value="formatUpstreamKeys(summary.openai_upstream_balance)" tone="slate" />
+        <MetricCell :label="t('admin.accounts.usageSummary.anthropicKeys')" :value="formatUpstreamKeys(summary.anthropic_upstream_balance)" tone="slate" />
       </div>
 
       <div class="grid gap-0 md:grid-cols-2">
@@ -174,14 +174,13 @@ const MetricCell = defineComponent({
     label: { type: String, required: true },
     value: { type: String, required: true },
     title: { type: String, default: '' },
-    tone: { type: String as PropType<'emerald' | 'amber' | 'slate' | 'blue'>, default: 'emerald' },
+    tone: { type: String as PropType<'emerald' | 'amber' | 'slate'>, default: 'slate' },
   },
   setup(cellProps) {
     const toneClass = computed(() => ({
       emerald: 'text-emerald-700 dark:text-emerald-300',
       amber: 'text-amber-700 dark:text-amber-300',
       slate: 'text-gray-700 dark:text-gray-200',
-      blue: 'text-blue-700 dark:text-blue-300',
     }[cellProps.tone]))
 
     return () => h('div', { class: 'border-b border-gray-100 px-4 py-3 last:border-b-0 dark:border-gray-700 md:border-b-0 md:border-r md:last:border-r-0', title: cellProps.title || undefined }, [
@@ -202,11 +201,11 @@ const ProviderBalanceBlock = defineComponent({
       h('dl', { class: 'mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs' }, [
         h('div', [
           h('dt', { class: 'text-gray-500 dark:text-gray-400' }, t('admin.accounts.usageSummary.upstreamUsableBalance')),
-          h('dd', { class: 'mt-0.5 font-medium text-emerald-700 dark:text-emerald-300' }, formatCost(upstreamUsableBalance(blockProps.summary))),
+          h('dd', { class: 'mt-0.5 font-medium text-gray-900 dark:text-gray-100' }, formatCost(upstreamUsableBalance(blockProps.summary))),
         ]),
         h('div', [
           h('dt', { class: 'text-gray-500 dark:text-gray-400' }, t('admin.accounts.usageSummary.upstreamActualBalance')),
-          h('dd', { class: 'mt-0.5 font-medium text-blue-700 dark:text-blue-300' }, formatCost(blockProps.summary?.available)),
+          h('dd', { class: 'mt-0.5 font-medium text-gray-900 dark:text-gray-100' }, formatCost(blockProps.summary?.available)),
         ]),
         h('div', [
           h('dt', { class: 'text-gray-500 dark:text-gray-400' }, t('admin.accounts.usageSummary.upstreamUsed')),
@@ -226,7 +225,7 @@ const ProviderBalanceBlock = defineComponent({
         ]),
       ]),
       formatConvertedGroups(blockProps.summary?.converted_available_by_group)
-        ? h('div', { class: 'mt-2 text-xs text-emerald-700 dark:text-emerald-300' }, `${t('admin.accounts.usageSummary.convertedUpstreamBalance')}: ${formatConvertedGroups(blockProps.summary?.converted_available_by_group)}`)
+        ? h('div', { class: 'mt-2 text-xs text-gray-600 dark:text-gray-300' }, `${t('admin.accounts.usageSummary.convertedUpstreamBalance')}: ${formatConvertedGroups(blockProps.summary?.converted_available_by_group)}`)
         : null,
     ])
   }

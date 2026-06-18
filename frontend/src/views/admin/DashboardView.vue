@@ -19,29 +19,23 @@
           />
 
           <!-- Service Accounts -->
-          <div class="card p-4">
-            <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-slate-100 p-2 dark:bg-slate-900/30">
-                <Icon name="server" size="md" class="text-slate-600 dark:text-slate-400" :stroke-width="2" />
-              </div>
-              <div class="min-w-0 flex-1">
-                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.accounts') }}
-                </p>
-                <p class="text-xl font-bold text-gray-900 dark:text-white">
-                  {{ stats.total_accounts }}
-                </p>
-                <p class="text-xs">
-                  <span class="text-green-600 dark:text-green-400"
-                    >{{ stats.normal_accounts }} {{ t('common.active') }}</span
-                  >
-                  <span v-if="stats.error_accounts > 0" class="ml-1 text-red-500"
-                    >{{ stats.error_accounts }} {{ t('common.error') }}</span
-                  >
-                </p>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon="server"
+            :label="t('admin.dashboard.accounts')"
+            :value="stats.total_accounts"
+            tone="neutral"
+          >
+            <template #sub>
+              <p class="text-xs">
+                <span class="text-green-600 dark:text-green-400"
+                  >{{ stats.normal_accounts }} {{ t('common.active') }}</span
+                >
+                <span v-if="stats.error_accounts > 0" class="ml-1 text-red-500"
+                  >{{ stats.error_accounts }} {{ t('common.error') }}</span
+                >
+              </p>
+            </template>
+          </StatCard>
 
           <!-- Today Requests -->
           <StatCard
@@ -53,165 +47,119 @@
           />
 
           <!-- New Users Today -->
-          <div class="card p-4">
-            <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-green-100 p-2 dark:bg-green-900/30">
-                <Icon name="userPlus" size="md" class="text-green-600 dark:text-green-400" :stroke-width="2" />
-              </div>
-              <div>
-                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.users') }}
-                </p>
-                <p class="text-xl font-bold text-green-600 dark:text-green-400">
-                  +{{ stats.today_new_users }}
-                </p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('common.total') }}: {{ formatNumber(stats.total_users) }}
-                </p>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon="userPlus"
+            :label="t('admin.dashboard.users')"
+            :value="`+${stats.today_new_users}`"
+            :sub="`${t('common.total')}: ${formatNumber(stats.total_users)}`"
+            tone="success"
+          />
         </div>
 
         <!-- Row 2: Token Stats -->
         <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <!-- Today Tokens -->
-          <div class="card p-4">
-            <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-slate-100 p-2 dark:bg-slate-900/30">
-                <Icon name="cube" size="md" class="text-slate-600 dark:text-slate-400" :stroke-width="2" />
-              </div>
-              <div class="min-w-0 flex-1">
-                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.todayTokens') }}
-                </p>
-                <p class="text-xl font-bold text-gray-900 dark:text-white">
-                  {{ formatTokens(stats.today_tokens) }}
-                </p>
-                <p class="text-xs">
-                  <span
-                    class="text-green-600 dark:text-green-400"
-                    :title="t('admin.dashboard.actual')"
-                    >${{ formatCost(stats.today_actual_cost) }}</span
-                  >
-                  <span class="text-gray-400 dark:text-gray-500"> / </span>
-                  <span
-                    class="text-orange-500 dark:text-orange-400"
-                    :title="t('admin.dashboard.accountCost')"
-                    >${{ formatCost(stats.today_account_cost) }}</span
-                  >
-                  <span class="text-gray-400 dark:text-gray-500"> / </span>
-                  <span
-                    class="text-gray-400 dark:text-gray-500"
-                    :title="t('admin.dashboard.standard')"
-                    >${{ formatCost(stats.today_cost) }}</span
-                  >
-                </p>
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.input') }}: {{ formatTokens(stats.today_input_tokens) }}
-                  <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
-                  {{ t('admin.dashboard.output') }}: {{ formatTokens(stats.today_output_tokens) }}
-                </p>
-                <p class="text-xs text-cyan-600 dark:text-cyan-400">
-                  {{ t('admin.dashboard.cacheRead') }}: {{ formatTokens(stats.today_cache_read_tokens) }}
-                  <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
-                  {{ formatPercent(stats.today_cache_read_ratio) }}
-                </p>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon="cube"
+            :label="t('admin.dashboard.todayTokens')"
+            :value="formatTokens(stats.today_tokens)"
+            tone="neutral"
+          >
+            <template #sub>
+              <p class="text-xs">
+                <span
+                  class="text-gray-600 dark:text-gray-300"
+                  :title="t('admin.dashboard.actual')"
+                  >${{ formatCost(stats.today_actual_cost) }}</span
+                >
+                <span class="text-gray-400 dark:text-gray-500"> / </span>
+                <span
+                  class="text-gray-500 dark:text-gray-400"
+                  :title="t('admin.dashboard.accountCost')"
+                  >${{ formatCost(stats.today_account_cost) }}</span
+                >
+                <span class="text-gray-400 dark:text-gray-500"> / </span>
+                <span
+                  class="text-gray-400 dark:text-gray-500"
+                  :title="t('admin.dashboard.standard')"
+                  >${{ formatCost(stats.today_cost) }}</span
+                >
+              </p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.dashboard.input') }}: {{ formatTokens(stats.today_input_tokens) }}
+                <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
+                {{ t('admin.dashboard.output') }}: {{ formatTokens(stats.today_output_tokens) }}
+              </p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.dashboard.cacheRead') }}: {{ formatTokens(stats.today_cache_read_tokens) }}
+                <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
+                {{ formatPercent(stats.today_cache_read_ratio) }}
+              </p>
+            </template>
+          </StatCard>
 
           <!-- Total Tokens -->
-          <div class="card p-4">
-            <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-slate-100 p-2 dark:bg-slate-900/30">
-                <Icon name="database" size="md" class="text-slate-600 dark:text-slate-400" :stroke-width="2" />
-              </div>
-              <div class="min-w-0 flex-1">
-                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.totalTokens') }}
-                </p>
-                <p class="text-xl font-bold text-gray-900 dark:text-white">
-                  {{ formatTokens(stats.total_tokens) }}
-                </p>
-                <p class="text-xs">
-                  <span
-                    class="text-green-600 dark:text-green-400"
-                    :title="t('admin.dashboard.actual')"
-                    >${{ formatCost(stats.total_actual_cost) }}</span
-                  >
-                  <span class="text-gray-400 dark:text-gray-500"> / </span>
-                  <span
-                    class="text-orange-500 dark:text-orange-400"
-                    :title="t('admin.dashboard.accountCost')"
-                    >${{ formatCost(stats.total_account_cost) }}</span
-                  >
-                  <span class="text-gray-400 dark:text-gray-500"> / </span>
-                  <span
-                    class="text-gray-400 dark:text-gray-500"
-                    :title="t('admin.dashboard.standard')"
-                    >${{ formatCost(stats.total_cost) }}</span
-                  >
-                </p>
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.input') }}: {{ formatTokens(stats.total_input_tokens) }}
-                  <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
-                  {{ t('admin.dashboard.output') }}: {{ formatTokens(stats.total_output_tokens) }}
-                </p>
-                <p class="text-xs text-cyan-600 dark:text-cyan-400">
-                  {{ t('admin.dashboard.cacheRead') }}: {{ formatTokens(stats.total_cache_read_tokens) }}
-                  <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
-                  {{ formatPercent(stats.total_cache_read_ratio) }}
-                </p>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon="database"
+            :label="t('admin.dashboard.totalTokens')"
+            :value="formatTokens(stats.total_tokens)"
+            tone="neutral"
+          >
+            <template #sub>
+              <p class="text-xs">
+                <span
+                  class="text-gray-600 dark:text-gray-300"
+                  :title="t('admin.dashboard.actual')"
+                  >${{ formatCost(stats.total_actual_cost) }}</span
+                >
+                <span class="text-gray-400 dark:text-gray-500"> / </span>
+                <span
+                  class="text-gray-500 dark:text-gray-400"
+                  :title="t('admin.dashboard.accountCost')"
+                  >${{ formatCost(stats.total_account_cost) }}</span
+                >
+                <span class="text-gray-400 dark:text-gray-500"> / </span>
+                <span
+                  class="text-gray-400 dark:text-gray-500"
+                  :title="t('admin.dashboard.standard')"
+                  >${{ formatCost(stats.total_cost) }}</span
+                >
+              </p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.dashboard.input') }}: {{ formatTokens(stats.total_input_tokens) }}
+                <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
+                {{ t('admin.dashboard.output') }}: {{ formatTokens(stats.total_output_tokens) }}
+              </p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.dashboard.cacheRead') }}: {{ formatTokens(stats.total_cache_read_tokens) }}
+                <span class="mx-1 text-gray-300 dark:text-gray-600">/</span>
+                {{ formatPercent(stats.total_cache_read_ratio) }}
+              </p>
+            </template>
+          </StatCard>
 
           <!-- Performance (RPM/TPM) -->
-          <div class="card p-4">
-            <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-violet-100 p-2 dark:bg-violet-900/30">
-                <Icon name="bolt" size="md" class="text-violet-600 dark:text-violet-400" :stroke-width="2" />
-              </div>
-              <div class="flex-1">
-                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.performance') }}
-                </p>
-                <div class="flex items-baseline gap-2">
-                  <p class="text-xl font-bold text-gray-900 dark:text-white">
-                    {{ formatTokens(stats.rpm) }}
-                  </p>
-                  <span class="text-xs text-gray-500 dark:text-gray-400">RPM</span>
-                </div>
-                <div class="flex items-baseline gap-2">
-                  <p class="text-sm font-semibold text-violet-600 dark:text-violet-400">
-                    {{ formatTokens(stats.tpm) }}
-                  </p>
-                  <span class="text-xs text-gray-500 dark:text-gray-400">TPM</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon="bolt"
+            :label="t('admin.dashboard.performance')"
+            :value="`${formatTokens(stats.rpm)} RPM`"
+            tone="neutral"
+          >
+            <template #sub>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                {{ formatTokens(stats.tpm) }} TPM
+              </p>
+            </template>
+          </StatCard>
 
           <!-- Avg Response Time -->
-          <div class="card p-4">
-            <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-rose-100 p-2 dark:bg-rose-900/30">
-                <Icon name="clock" size="md" class="text-rose-600 dark:text-rose-400" :stroke-width="2" />
-              </div>
-              <div>
-                <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.avgResponse') }}
-                </p>
-                <p class="text-xl font-bold text-gray-900 dark:text-white">
-                  {{ formatDuration(stats.average_duration_ms) }}
-                </p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">
-                  {{ stats.active_users }} {{ t('admin.dashboard.activeUsers') }}
-                </p>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            icon="clock"
+            :label="t('admin.dashboard.avgResponse')"
+            :value="formatDuration(stats.average_duration_ms)"
+            :sub="`${stats.active_users} ${t('admin.dashboard.activeUsers')}`"
+            tone="neutral"
+          />
         </div>
 
         <!-- Charts Section -->
@@ -308,7 +256,6 @@ import type {
 } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import Icon from '@/components/icons/Icon.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Select from '@/components/common/Select.vue'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'

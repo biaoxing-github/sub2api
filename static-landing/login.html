@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"> <!-- 设置字符集编码为 UTF-8 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- 适配移动设备视口 -->
+    <title>登录 - Sub2API</title> <!-- 网页标题 -->
+    <script src="https://cdn.tailwindcss.com"></script> <!-- 引入 Tailwind CSS CDN -->
+    <link rel="preconnect" href="https://fonts.googleapis.com"> <!-- 预连接 Google 字体 -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin> <!-- 跨域预解析连接 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet"> <!-- 导入所选英中字体 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Noto Sans SC"', 'sans-serif'], // 默认中文无衬线体使用思源黑体
+                        display: ['"Space Grotesk"', '"Noto Sans SC"', 'sans-serif'], // 展示字体使用 Space Grotesk 与思源黑体
+                    },
+                    colors: {
+                        dark: '#0a0a0a', // 极致酷黑
+                        light: '#ffffff', // 纯白底色
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #ffffff; /* 默认纯白背景 */
+            color: #0a0a0a; /* 极深灰文字 */
+            font-family: 'Noto Sans SC', sans-serif; /* 全局思源黑体 */
+            -webkit-font-smoothing: antialiased; /* 抗锯齿渲染 */
+            overflow-x: hidden; /* 防止横向溢出 */
+        }
+        .hero-title {
+            font-family: 'Space Grotesk', sans-serif; /* 先锋 Space Grotesk 字体 */
+            font-size: clamp(2.5rem, 6vw, 4.5rem); /* 响应式主字号 */
+            line-height: 1.05; /* 适中的行高 */
+            letter-spacing: -0.02em; /* 微调字间距 */
+            font-weight: 700; /* 使用 700 粗体 */
+        }
+        /* 定制超细输入框样式（极致极简，去边框，仅保留细底线） */
+        .minimal-input {
+            width: 100%; /* 全宽 */
+            background-color: transparent; /* 透明背景 */
+            border: none; /* 去除四周默认边框 */
+            border-bottom: 0.5px solid rgba(10, 10, 10, 0.2); /* 0.5px 超细灰底线 */
+            padding: 16px 0; /* 内边距腾出空间 */
+            font-size: 1.125rem; /* 字号定义 */
+            outline: none; /* 去除聚集高亮默认外框 */
+            transition: border-color 0.4s ease; /* 边框变色过渡 */
+            font-weight: 400; /* 常规字重 */
+        }
+        .minimal-input:focus {
+            border-color: #0a0a0a; /* 聚集时线条变全黑 */
+        }
+        .minimal-input::placeholder {
+            color: rgba(10, 10, 10, 0.25); /* 极淡色占位提示词 */
+            font-weight: 300; /* 更轻字重 */
+        }
+        /* 页面载入裁剪渐入动效 */
+        .reveal-clip {
+            animation: revealUp 1s cubic-bezier(0.16, 1, 0.3, 1) forwards; /* 指数缓动函数 */
+            clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); /* 裁剪基础 */
+            opacity: 0; /* 默认透明 */
+            transform: translateY(30px); /* 默认下偏移 */
+        }
+        .delay-1 { animation-delay: 150ms; } /* 延迟 */
+        @keyframes revealUp {
+            to {
+                opacity: 1; /* 渐显不透明 */
+                transform: translateY(0); /* 归零位移 */
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col md:flex-row selection:bg-dark selection:text-light">
+
+    <!-- 顶栏左上角品牌链接（浮动定位，保持视觉关联） -->
+    <a href="index.html" class="absolute top-8 left-8 font-display font-bold text-xl tracking-tighter text-dark hover:opacity-60 transition-opacity z-20">
+        Sub2API.
+    </a>
+
+    <!-- 左侧黑色分栏（仅在桌面端显示）占1/2视口，营造沉稳大气的专业感 -->
+    <section class="hidden md:flex md:w-1/2 bg-dark text-light p-16 flex-col justify-between relative overflow-hidden select-none">
+        <!-- 半透明大水印文字 -->
+        <div class="absolute -top-16 -left-16 text-[30vw] font-display font-extrabold text-light/[0.015] leading-none pointer-events-none">
+            KEY
+        </div>
+
+        <!-- 空占位，保持排版平衡 -->
+        <div></div>
+
+        <!-- 中部文案 -->
+        <div class="max-w-md z-10">
+            <span class="block text-xs font-semibold uppercase tracking-[0.3em] text-light/40 mb-6">[ SECURED ACCESS ]</span>
+            <p class="font-display text-4xl font-extrabold tracking-tight leading-tight">
+                Control the gateway.<br>
+                Define the future.
+            </p>
+            <p class="mt-6 text-sm text-light/60 font-light leading-relaxed">
+                在这里登录进入您的控制面板。配置多服务商智能切换通道，管理租户账单与流控。
+            </p>
+        </div>
+
+        <!-- 底部版权简述 -->
+        <div class="text-xs text-light/30 font-light z-10 uppercase tracking-widest">
+            Sub2API. Gatekeeper System
+        </div>
+    </section>
+
+    <!-- 右侧纯白表单分栏 占1/2视口 -->
+    <section class="w-full md:w-1/2 bg-light p-8 md:p-24 flex items-center justify-center relative min-h-screen md:min-h-0">
+
+        <!-- 浮动右上角返回首页 -->
+        <a href="index.html" class="absolute top-8 right-8 text-xs font-semibold text-dark/50 hover:text-dark transition-colors flex items-center gap-2 uppercase tracking-widest z-20">
+            返回首页 <span class="text-lg leading-none">&rarr;</span>
+        </a>
+
+        <!-- 登录表单包裹区 -->
+        <div class="w-full max-w-sm reveal-clip">
+            <!-- 极简大标题 -->
+            <h1 class="hero-title text-dark mb-12">Log In.</h1>
+
+            <form class="space-y-10">
+                <!-- 邮箱输入组 -->
+                <div class="relative">
+                    <label class="block text-xs font-semibold text-dark/40 uppercase tracking-widest mb-1" for="email">01 // 电子邮箱 (Email)</label>
+                    <input type="email" id="email" class="minimal-input" placeholder="name@domain.com">
+                </div>
+
+                <!-- 密码输入组 -->
+                <div class="relative">
+                    <div class="flex justify-between items-baseline mb-1">
+                        <label class="block text-xs font-semibold text-dark/40 uppercase tracking-widest" for="password">02 // 账户密码 (Password)</label>
+                        <!-- 找回密码小文字链接 -->
+                        <a href="#" class="text-xs text-dark/30 hover:text-dark transition-colors border-b border-transparent hover:border-dark">找回?</a>
+                    </div>
+                    <input type="password" id="password" class="minimal-input" placeholder="••••••••">
+                    <!-- 错误提示容器 -->
+                    <div id="error-msg" class="hidden text-xs font-bold text-red-600 tracking-wider mt-4">[ AUTHENTICATION FAILED: INVALID CREDENTIALS ]</div>
+                </div>
+
+                <!-- 登录提交按钮 -->
+                <div class="pt-8">
+                    <button type="button" id="login-btn" class="w-full bg-dark text-light font-semibold py-5 hover:bg-dark/90 transition-colors flex justify-between px-8 items-center group">
+                        <span class="text-xs uppercase tracking-widest">授权登录 (Authorize)</span>
+                        <span class="group-hover:translate-x-3 transition-transform duration-500 text-lg">&rarr;</span>
+                    </button>
+                </div>
+
+                <!-- 新账户引导提示区 -->
+                <div class="text-center pt-8 border-t border-dark/10">
+                    <p class="text-sm text-dark/45 font-light">
+                        还没有控制台账户? <a href="#" class="text-dark font-medium border-b border-dark pb-0.5 hover:opacity-60 transition-opacity">点击注册 &rarr;</a>
+                    </p>
+                </div>
+            </form>
+        </div>
+    </section>
+
+    <!-- 登录校验逻辑 JavaScript -->
+    <script>
+        document.getElementById('login-btn').addEventListener('click', function() {
+            var emailVal = document.getElementById('email').value.trim(); // 获取邮箱输入并去空格
+            var passVal = document.getElementById('password').value; // 获取密码输入
+            var errorDiv = document.getElementById('error-msg'); // 错误提示容器
+
+            // 判断是否是 admin/admin 账号密码
+            if (emailVal === 'admin' && passVal === 'admin') {
+                errorDiv.classList.add('hidden'); // 隐藏错误提示
+                window.location.href = 'dashboard.html'; // 跳转到控制面板
+            } else {
+                errorDiv.classList.remove('hidden'); // 显示错误提示
+            }
+        });
+    </script>
+</body>
+</html>
