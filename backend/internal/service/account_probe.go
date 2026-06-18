@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 )
@@ -1615,18 +1616,17 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 			var event map[string]any
 			if json.Unmarshal([]byte(jsonStr), &event) == nil {
 				eventType, _ := event["type"].(string)
-				switch eventType {
-				case "response.output_text.delta":
-					if delta, _ := event["delta"].(string); delta != "" {
-						output.WriteString(delta)
+				var streamEvent apicompat.ResponsesStreamEvent
+				if err := json.Unmarshal([]byte(jsonStr), &streamEvent); err == nil {
+					if _, saw := observeOpenAIResponsesVisibleText(&output, &streamEvent); saw {
 						seenOutput = true
-					}
-					if result.firstTokenMillis == nil {
-						if delta, _ := event["delta"].(string); delta != "" {
+						if result.firstTokenMillis == nil {
 							v := int(time.Since(start) / time.Millisecond)
 							result.firstTokenMillis = &v
 						}
 					}
+				}
+				switch eventType {
 				case "response.completed", "response.done":
 					if response, _ := event["response"].(map[string]any); response != nil {
 						input, output, total := parseOpenAIProbeUsageObject(response["usage"])

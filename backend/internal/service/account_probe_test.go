@@ -1290,6 +1290,52 @@ data: [DONE]
 	require.NotNil(t, result.firstTokenMillis)
 }
 
+func TestReadAccountProbeOpenAIResponsesStreamTextDoneAfterOutputCompletes(t *testing.T) {
+	t.Parallel()
+
+	stream := strings.NewReader(`data: {"type":"response.output_text.done","text":"君公益TEXT_DONE"}
+
+`)
+
+	result := readAccountProbeOpenAIStream(stream, true, time.Now())
+
+	require.Empty(t, result.err)
+	require.Equal(t, "君公益TEXT_DONE", result.outputText)
+	require.NotNil(t, result.firstTokenMillis)
+}
+
+func TestReadAccountProbeOpenAIResponsesStreamItemDoneAfterOutputCompletes(t *testing.T) {
+	t.Parallel()
+
+	stream := strings.NewReader(`data: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"君公益ITEM_DONE"}]}}
+
+data: [DONE]
+
+`)
+
+	result := readAccountProbeOpenAIStream(stream, true, time.Now())
+
+	require.Empty(t, result.err)
+	require.Equal(t, "君公益ITEM_DONE", result.outputText)
+	require.NotNil(t, result.firstTokenMillis)
+}
+
+func TestReadAccountProbeOpenAIResponsesStreamItemAddedAfterOutputCompletes(t *testing.T) {
+	t.Parallel()
+
+	stream := strings.NewReader(`data: {"type":"response.output_item.added","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"君公益ITEM_ADDED"}]}}
+
+data: [DONE]
+
+`)
+
+	result := readAccountProbeOpenAIStream(stream, true, time.Now())
+
+	require.Empty(t, result.err)
+	require.Equal(t, "君公益ITEM_ADDED", result.outputText)
+	require.NotNil(t, result.firstTokenMillis)
+}
+
 func TestReadAccountProbeOpenAIResponsesEmptyStreamStillFails(t *testing.T) {
 	t.Parallel()
 

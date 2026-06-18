@@ -202,6 +202,55 @@ data: [DONE]
 	require.NotContains(t, recorder.Body.String(), "Stream ended before response.completed")
 }
 
+func TestAccountTestService_OpenAIResponsesStreamTextDoneAfterOutputCompletes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+
+	stream := strings.NewReader(`data: {"type":"response.output_text.done","text":"hi-done"}
+
+`)
+	err := svc.processOpenAIStream(ctx, stream)
+	require.NoError(t, err)
+	require.Contains(t, recorder.Body.String(), `"text":"hi-done"`)
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+	require.NotContains(t, recorder.Body.String(), "Stream ended before response.completed")
+}
+
+func TestAccountTestService_OpenAIResponsesStreamItemDoneAfterOutputCompletes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+
+	stream := strings.NewReader(`data: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi-item"}]}}
+
+data: [DONE]
+
+`)
+	err := svc.processOpenAIStream(ctx, stream)
+	require.NoError(t, err)
+	require.Contains(t, recorder.Body.String(), `"text":"hi-item"`)
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+	require.NotContains(t, recorder.Body.String(), "Stream ended before response.completed")
+}
+
+func TestAccountTestService_OpenAIResponsesStreamItemAddedAfterOutputCompletes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+
+	stream := strings.NewReader(`data: {"type":"response.output_item.added","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi-added"}]}}
+
+data: [DONE]
+
+`)
+	err := svc.processOpenAIStream(ctx, stream)
+	require.NoError(t, err)
+	require.Contains(t, recorder.Body.String(), `"text":"hi-added"`)
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+	require.NotContains(t, recorder.Body.String(), "Stream ended before response.completed")
+}
+
 func TestAccountTestService_OpenAIResponsesEmptyStreamStillFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

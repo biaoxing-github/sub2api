@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -1633,6 +1634,7 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 	reader := bufio.NewReader(body)
 	seenCompleted := false
 	seenOutput := false
+	var output strings.Builder
 	var firstTokenMs *int
 	detector := firstOpenAIResponseTextErrorDetector(detectors)
 	completeAfterObservedOutput := func() error {
@@ -1694,14 +1696,18 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 		}
 
 		eventType, _ := data["type"].(string)
+		var streamEvent apicompat.ResponsesStreamEvent
+		if err := json.Unmarshal([]byte(jsonStr), &streamEvent); err == nil {
+			if addedText, saw := observeOpenAIResponsesVisibleText(&output, &streamEvent); saw {
+				seenOutput = true
+				firstToken := recordTestFirstTokenMs(&firstTokenMs, startedAt)
+				if addedText != "" {
+					s.sendEvent(c, TestEvent{Type: "content", Text: addedText, FirstTokenMs: firstToken})
+				}
+			}
+		}
 
 		switch eventType {
-		case "response.output_text.delta":
-			// OpenAI Responses API uses "delta" field for text content
-			if delta, ok := data["delta"].(string); ok && delta != "" {
-				seenOutput = true
-				s.sendEvent(c, TestEvent{Type: "content", Text: delta, FirstTokenMs: recordTestFirstTokenMs(&firstTokenMs, startedAt)})
-			}
 		case "response.completed", "response.done":
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
