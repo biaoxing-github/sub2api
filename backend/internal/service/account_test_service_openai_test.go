@@ -296,6 +296,22 @@ func TestAccountTestService_OpenAIResponsesStreamBareJSONErrorReturnsUpstreamMes
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
+func TestAccountTestService_OpenAIResponsesNonSSEHTMLReturnsProtocolError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+
+	stream := strings.NewReader(`<!DOCTYPE html>
+<html><title>relay landing</title></html>
+`)
+	err := svc.processOpenAIStream(ctx, stream)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-SSE HTML response")
+	require.Contains(t, recorder.Body.String(), "non-SSE HTML response")
+	require.NotContains(t, recorder.Body.String(), "Stream ended before response.completed")
+	require.NotContains(t, recorder.Body.String(), `"success":true`)
+}
+
 func TestAccountTestService_TestAccountConnectionWithResultReturnsLatencyAndFirstToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

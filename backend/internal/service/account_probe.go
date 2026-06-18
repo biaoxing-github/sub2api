@@ -1580,6 +1580,8 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 	var output strings.Builder
 	seenCompleted := false
 	seenOutput := false
+	seenSSEData := false
+	nonSSELine := ""
 	completeAfterObservedOutput := func() accountProbeOpenAIStreamResult {
 		result.outputText = output.String()
 		return result
@@ -1594,6 +1596,9 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 				if seenOutput {
 					return completeAfterObservedOutput()
 				}
+				if !seenSSEData && nonSSELine != "" {
+					return accountProbeOpenAIStreamResult{err: openAIResponsesNonSSEStreamError(nonSSELine)}
+				}
 				if strings.TrimSpace(line) == "" {
 					return accountProbeOpenAIStreamResult{err: "stream ended before response.completed"}
 				}
@@ -1603,6 +1608,7 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 		}
 		line = strings.TrimSpace(line)
 		if line != "" && sseDataPrefix.MatchString(line) {
+			seenSSEData = true
 			jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 			if jsonStr == "[DONE]" {
 				if seenCompleted {
@@ -1647,6 +1653,13 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 					return accountProbeOpenAIStreamResult{err: extractAccountProbeStreamError(event, "OpenAI response failed")}
 				}
 			}
+		} else if line != "" {
+			if msg := extractOpenAISSEErrorMessage([]byte(line)); msg != "" {
+				return accountProbeOpenAIStreamResult{err: msg}
+			}
+			if !seenSSEData && nonSSELine == "" {
+				nonSSELine = line
+			}
 		}
 		if err == io.EOF {
 			if seenCompleted {
@@ -1654,6 +1667,9 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 			}
 			if seenOutput {
 				return completeAfterObservedOutput()
+			}
+			if !seenSSEData && nonSSELine != "" {
+				return accountProbeOpenAIStreamResult{err: openAIResponsesNonSSEStreamError(nonSSELine)}
 			}
 			return accountProbeOpenAIStreamResult{err: "stream ended before response.completed"}
 		}

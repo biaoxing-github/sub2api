@@ -1345,6 +1345,18 @@ func TestReadAccountProbeOpenAIResponsesEmptyStreamStillFails(t *testing.T) {
 	require.Empty(t, result.outputText)
 }
 
+func TestReadAccountProbeOpenAIResponsesNonSSEHTMLReturnsProtocolError(t *testing.T) {
+	t.Parallel()
+
+	stream := strings.NewReader(`<!DOCTYPE html>
+<html><title>relay landing</title></html>
+`)
+	result := readAccountProbeOpenAIStream(stream, true, time.Now())
+
+	require.Contains(t, result.err, "non-SSE HTML response")
+	require.Empty(t, result.outputText)
+}
+
 func TestAccountProbeService_RunFeedsOpenAIPathHealth(t *testing.T) {
 	t.Parallel()
 

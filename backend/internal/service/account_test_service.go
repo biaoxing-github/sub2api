@@ -1634,6 +1634,8 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 	reader := bufio.NewReader(body)
 	seenCompleted := false
 	seenOutput := false
+	seenSSEData := false
+	nonSSELine := ""
 	var output strings.Builder
 	var firstTokenMs *int
 	detector := firstOpenAIResponseTextErrorDetector(detectors)
@@ -1651,6 +1653,9 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 					if msg := extractOpenAISSEErrorMessage([]byte(line)); msg != "" {
 						return s.sendErrorAndEnd(c, msg)
 					}
+					if !seenSSEData && nonSSELine == "" {
+						nonSSELine = line
+					}
 				}
 				if seenCompleted {
 					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
@@ -1658,6 +1663,9 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 				}
 				if seenOutput {
 					return completeAfterObservedOutput()
+				}
+				if !seenSSEData && nonSSELine != "" {
+					return s.sendErrorAndEnd(c, openAIResponsesNonSSEStreamError(nonSSELine))
 				}
 				return s.sendErrorAndEnd(c, "Stream ended before response.completed")
 			}
@@ -1672,8 +1680,12 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 			if msg := extractOpenAISSEErrorMessage([]byte(line)); msg != "" {
 				return s.sendErrorAndEnd(c, msg)
 			}
+			if !seenSSEData && nonSSELine == "" {
+				nonSSELine = line
+			}
 			continue
 		}
+		seenSSEData = true
 
 		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 		if jsonStr == "[DONE]" {
@@ -1731,6 +1743,16 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 			return s.sendErrorAndEnd(c, errorMsg)
 		}
 	}
+}
+
+func openAIResponsesNonSSEStreamError(line string) string {
+	normalized := strings.ToLower(strings.TrimSpace(line))
+	if strings.Contains(normalized, "<!doctype html") ||
+		strings.Contains(normalized, "<html") ||
+		strings.Contains(normalized, "<title") {
+		return "OpenAI Responses upstream returned non-SSE HTML response; expected text/event-stream data lines"
+	}
+	return "OpenAI Responses upstream returned non-SSE response; expected text/event-stream data lines"
 }
 
 // testOpenAIImageAPIKey tests OpenAI image generation using an API Key account.

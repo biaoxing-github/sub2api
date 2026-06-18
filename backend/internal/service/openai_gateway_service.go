@@ -7184,7 +7184,7 @@ func buildOpenAIResponsesURL(base string) string {
 }
 
 func buildOpenAIAccountResponsesURL(base string, account *Account) string {
-	if account != nil && account.IsOpenAICodexCLISimulationEnabled() {
+	if account != nil && account.IsOpenAICodexCLISimulationEnabled() && openAIBaseURLHasEndpointPath(base) {
 		return buildOpenAIEndpointURL(base, "/responses")
 	}
 	return buildOpenAIResponsesURL(base)

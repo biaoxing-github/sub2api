@@ -18,6 +18,22 @@ func buildOpenAIEndpointURL(base string, endpoint string) string {
 	return normalized + endpoint
 }
 
+func openAIBaseURLHasEndpointPath(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
+
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		return strings.Trim(parsed.Path, "/") != ""
+	}
+
+	if slash := strings.Index(trimmed, "/"); slash >= 0 {
+		return strings.Trim(trimmed[slash:], "/") != ""
+	}
+	return false
+}
+
 func openAIBaseURLHasVersionSuffix(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
