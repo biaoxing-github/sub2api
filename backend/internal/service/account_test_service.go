@@ -833,6 +833,10 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+authToken)
+	gateway := &OpenAIGatewayService{cfg: s.cfg}
+	restoreClientHeaders := applyOpenAITestDefaultClientHeaders(c)
+	gateway.applyOpenAICodexCLISimulationHeaders(req, c, account, payloadBytes)
+	restoreClientHeaders()
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

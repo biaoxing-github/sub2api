@@ -893,6 +893,61 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsP
 	require.NotContains(t, body, "当前测试接口仅支持 Responses API 路径")
 }
 
+func TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesGatewayCodexSimulationHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	ctx.Request.Header.Set("User-Agent", "curl/8.0")
+	ctx.Request.Header.Set("originator", "opencode")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_codex","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_codex","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          470,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-sharedchat",
+			"base_url": "https://new.sharedchat.cc/codex/v1",
+		},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesSupported: false,
+			OpenAICodexCLISimulationEnabledExtraKey:  true,
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.5", "ping", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://new.sharedchat.cc/codex/v1/chat/completions", upstream.lastReq.URL.String())
+	require.Equal(t, codexCLIUserAgent(), upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("originator"))
+	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.Empty(t, upstream.lastReq.Header.Get("version"))
+	require.Equal(t, "compact-history", upstream.lastReq.Header.Get("X-Codex-Beta-Features"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Client-Request-Id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("Session-Id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("Thread-Id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Codex-Window-Id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Codex-Turn-Metadata"))
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+}
+
 func TestAccountTestService_OpenAIChatCompletionsPathReturns4xx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
