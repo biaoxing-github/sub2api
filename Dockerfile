@@ -59,11 +59,14 @@ WORKDIR /app/backend
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
-# Copy backend source first
+# Cache frontend dist to a temp path early, so backend-only changes don't invalidate this layer
+COPY --from=frontend-builder /app/backend/internal/web/dist /tmp/web-dist
+
+# Copy backend source
 COPY backend/ ./
 
-# Copy frontend dist from previous stage (must be after backend copy to avoid being overwritten)
-COPY --from=frontend-builder /app/backend/internal/web/dist ./internal/web/dist
+# Restore frontend dist into the embedded path (backend source copy may have left it empty)
+RUN mkdir -p ./internal/web/dist && cp -a /tmp/web-dist/. ./internal/web/dist/
 
 # Build the binary (BuildType=release for CI builds, embed frontend)
 # Version precedence: build arg VERSION > cmd/server/VERSION
