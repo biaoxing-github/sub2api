@@ -75,14 +75,16 @@ func (s *usageLogWindowBatchRepoStub) GetAccountWindowStats(ctx context.Context,
 type sessionLimitCacheHotpathStub struct {
 	SessionLimitCache
 
-	batchData map[int64]float64
-	batchErr  error
+	batchData  map[int64]float64
+	batchErr   error
+	batchCalls atomic.Int64
 
 	setData map[int64]float64
 	setErr  error
 }
 
 func (s *sessionLimitCacheHotpathStub) GetWindowCostBatch(ctx context.Context, accountIDs []int64) (map[int64]float64, error) {
+	s.batchCalls.Add(1)
 	if s.batchErr != nil {
 		return nil, s.batchErr
 	}
@@ -104,6 +106,49 @@ func (s *sessionLimitCacheHotpathStub) SetWindowCost(ctx context.Context, accoun
 	}
 	s.setData[accountID] = cost
 	return nil
+}
+
+type rpmCacheHotpathStub struct {
+	RPMCache
+
+	batchData  map[int64]int
+	batchErr   error
+	batchCalls atomic.Int64
+
+	singleData  map[int64]int
+	singleErr   error
+	singleCalls atomic.Int64
+}
+
+func (s *rpmCacheHotpathStub) IncrementRPM(ctx context.Context, accountID int64) (int, error) {
+	return 0, nil
+}
+
+func (s *rpmCacheHotpathStub) GetRPM(ctx context.Context, accountID int64) (int, error) {
+	s.singleCalls.Add(1)
+	if s.singleErr != nil {
+		return 0, s.singleErr
+	}
+	if s.singleData != nil {
+		return s.singleData[accountID], nil
+	}
+	return 0, nil
+}
+
+func (s *rpmCacheHotpathStub) GetRPMBatch(ctx context.Context, accountIDs []int64) (map[int64]int, error) {
+	s.batchCalls.Add(1)
+	if s.batchErr != nil {
+		return nil, s.batchErr
+	}
+	out := make(map[int64]int, len(accountIDs))
+	for _, id := range accountIDs {
+		if s.batchData != nil {
+			out[id] = s.batchData[id]
+		} else {
+			out[id] = 0
+		}
+	}
+	return out, nil
 }
 
 type modelsListAccountRepoStub struct {
@@ -166,6 +211,46 @@ func (s *modelsListAccountRepoStub) ListSchedulable(ctx context.Context) ([]Acco
 	out := make([]Account, len(s.all))
 	copy(out, s.all)
 	return out, nil
+}
+
+func (s *modelsListAccountRepoStub) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	s.listAllCalls.Add(1)
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := make([]Account, 0, len(s.all))
+	for _, acc := range s.all {
+		if acc.Platform == platform {
+			out = append(out, acc)
+		}
+	}
+	return out, nil
+}
+
+func (s *modelsListAccountRepoStub) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return s.ListSchedulableByPlatform(ctx, platform)
+}
+
+func (s *modelsListAccountRepoStub) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	s.listAllCalls.Add(1)
+	if s.err != nil {
+		return nil, s.err
+	}
+	allowed := make(map[string]struct{}, len(platforms))
+	for _, platform := range platforms {
+		allowed[platform] = struct{}{}
+	}
+	out := make([]Account, 0, len(s.all))
+	for _, acc := range s.all {
+		if _, ok := allowed[acc.Platform]; ok {
+			out = append(out, acc)
+		}
+	}
+	return out, nil
+}
+
+func (s *modelsListAccountRepoStub) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return s.ListSchedulableByPlatforms(ctx, platforms)
 }
 
 func resetGatewayHotpathStatsForTest() {
@@ -642,6 +727,91 @@ func TestGatewayHotpathHelpers_CacheTTLAndStickyContext(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, 12.34, cost)
 	})
+}
+
+func TestSelectAccountWithLoadAwareness_RequestSchedulingSnapshotReusesPrefetchAcrossExclusions(t *testing.T) {
+	resetGatewayHotpathStatsForTest()
+
+	windowStart := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
+	windowEnd := windowStart.Add(5 * time.Hour)
+	oldest := time.Now().Add(-2 * time.Hour)
+	newer := time.Now().Add(-1 * time.Hour)
+	accounts := []Account{
+		{
+			ID:                 101,
+			Platform:           PlatformAnthropic,
+			Type:               AccountTypeOAuth,
+			Status:             StatusActive,
+			Schedulable:        true,
+			Concurrency:        2,
+			Priority:           1,
+			LastUsedAt:         &oldest,
+			Extra:              map[string]any{"window_cost_limit": 100.0, "base_rpm": 100},
+			SessionWindowStart: &windowStart,
+			SessionWindowEnd:   &windowEnd,
+		},
+		{
+			ID:                 202,
+			Platform:           PlatformAnthropic,
+			Type:               AccountTypeSetupToken,
+			Status:             StatusActive,
+			Schedulable:        true,
+			Concurrency:        2,
+			Priority:           1,
+			LastUsedAt:         &newer,
+			Extra:              map[string]any{"window_cost_limit": 100.0, "base_rpm": 100},
+			SessionWindowStart: &windowStart,
+			SessionWindowEnd:   &windowEnd,
+		},
+	}
+	accountRepo := &modelsListAccountRepoStub{all: accounts}
+	windowCache := &sessionLimitCacheHotpathStub{}
+	usageRepo := &usageLogWindowBatchRepoStub{
+		batchResult: map[int64]*usagestats.AccountStats{
+			101: {StandardCost: 1.5},
+			202: {StandardCost: 2.5},
+		},
+	}
+	rpmCache := &rpmCacheHotpathStub{
+		batchData: map[int64]int{
+			101: 1,
+			202: 2,
+		},
+	}
+	concurrencyCache := stubConcurrencyCache{
+		loadMap: map[int64]*AccountLoadInfo{
+			101: {AccountID: 101, LoadRate: 0},
+			202: {AccountID: 202, LoadRate: 10},
+		},
+	}
+	svc := &GatewayService{
+		accountRepo:        accountRepo,
+		usageLogRepo:       usageRepo,
+		sessionLimitCache:  windowCache,
+		rpmCache:           rpmCache,
+		cfg:                &config.Config{RunMode: config.RunModeStandard, Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{LoadBatchEnabled: true, FallbackWaitTimeout: time.Second, FallbackMaxWaiting: 1}}},
+		concurrencyService: NewConcurrencyService(concurrencyCache),
+		userGroupRateCache: gocache.New(time.Minute, time.Minute),
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+
+	ctx := context.WithValue(context.Background(), ctxkey.ForcePlatform, PlatformAnthropic)
+	ctx = svc.WithRequestSchedulingSnapshot(ctx, nil, PlatformAnthropic, true)
+	first, err := svc.SelectAccountWithLoadAwareness(ctx, nil, "", "", nil, "", 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(101), first.Account.ID)
+
+	second, err := svc.SelectAccountWithLoadAwareness(ctx, nil, "", "", map[int64]struct{}{101: {}}, "", 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(202), second.Account.ID)
+
+	require.Equal(t, int64(1), accountRepo.listAllCalls.Load())
+	require.Equal(t, int64(1), windowCache.batchCalls.Load())
+	require.Equal(t, int64(1), usageRepo.batchCalls.Load())
+	require.Equal(t, int64(1), rpmCache.batchCalls.Load())
+	require.Equal(t, int64(0), usageRepo.singleCalls.Load())
+	require.Equal(t, int64(0), rpmCache.singleCalls.Load())
 }
 
 func TestInvalidateAvailableModelsCache_ByDimensions(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -211,6 +212,40 @@ func TestSetClaudeCodeClientContext_ReuseParsedRequestAndContextCache(t *testing
 
 		SetClaudeCodeClientContext(c, []byte(`{invalid`), nil)
 		require.True(t, service.IsClaudeCodeClient(c.Request.Context()))
+	})
+}
+
+func TestResolveGatewayRequestSchedulingSnapshotKey(t *testing.T) {
+	groupID := int64(42)
+	apiKey := &service.APIKey{
+		GroupID: &groupID,
+		Group: &service.Group{
+			ID:       groupID,
+			Platform: service.PlatformGemini,
+		},
+	}
+
+	t.Run("force_platform_wins", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), ctxkey.ForcePlatform, service.PlatformAntigravity)
+		gotGroupID, platform, hasForce := resolveGatewayRequestSchedulingSnapshotKey(ctx, apiKey)
+		require.Equal(t, &groupID, gotGroupID)
+		require.Equal(t, service.PlatformAntigravity, platform)
+		require.True(t, hasForce)
+	})
+
+	t.Run("empty_force_platform_uses_current_group", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), ctxkey.ForcePlatform, "")
+		gotGroupID, platform, hasForce := resolveGatewayRequestSchedulingSnapshotKey(ctx, apiKey)
+		require.Equal(t, &groupID, gotGroupID)
+		require.Equal(t, service.PlatformGemini, platform)
+		require.False(t, hasForce)
+	})
+
+	t.Run("nil_group_defaults_to_anthropic", func(t *testing.T) {
+		gotGroupID, platform, hasForce := resolveGatewayRequestSchedulingSnapshotKey(context.Background(), &service.APIKey{})
+		require.Nil(t, gotGroupID)
+		require.Equal(t, service.PlatformAnthropic, platform)
+		require.False(t, hasForce)
 	})
 }
 

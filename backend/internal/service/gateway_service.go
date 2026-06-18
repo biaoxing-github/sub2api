@@ -1738,14 +1738,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	if len(accounts) == 0 {
 		return nil, ErrNoAvailableAccounts
 	}
-	ctx = s.withWindowCostPrefetch(ctx, accounts)
-	ctx = s.withRPMPrefetch(ctx, accounts)
+	ctx = s.withRequestSchedulingPrefetch(ctx, groupID, platform, hasForcePlatform, accounts)
 
 	// 提前构建 accountByID（供 Layer 1 和 Layer 1.5 使用）
-	accountByID := make(map[int64]*Account, len(accounts))
-	for i := range accounts {
-		accountByID[accounts[i].ID] = &accounts[i]
-	}
+	accountByID := requestSchedulingAccountByID(ctx, groupID, platform, hasForcePlatform, accounts)
 	isExcluded := func(accountID int64) bool {
 		if excludedIDs == nil {
 			return false
@@ -2439,9 +2435,15 @@ type requestSchedulingSnapshot struct {
 	platform         string
 	hasForcePlatform bool
 	accounts         []Account
+	accountByID      map[int64]*Account
 	useMixed         bool
 	err              error
 	loaded           bool
+
+	windowCosts          map[int64]float64
+	windowPrefetchLoaded bool
+	rpmCounts            map[int64]int
+	rpmPrefetchLoaded    bool
 }
 
 func (s *GatewayService) WithRequestSchedulingSnapshot(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) context.Context {
@@ -2497,6 +2499,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 		}
 		snapshot.accounts = make([]Account, len(accounts))
 		copy(snapshot.accounts, accounts)
+		snapshot.accountByID = nil
 		snapshot.useMixed = useMixed
 		snapshot.err = err
 		snapshot.loaded = true
@@ -2606,6 +2609,65 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 	}
 	rememberSnapshot(accounts, useMixed, nil)
 	return accounts, useMixed, nil
+}
+
+func buildSchedulingAccountByID(accounts []Account) map[int64]*Account {
+	accountByID := make(map[int64]*Account, len(accounts))
+	for i := range accounts {
+		accountByID[accounts[i].ID] = &accounts[i]
+	}
+	return accountByID
+}
+
+func requestSchedulingAccountByID(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool, accounts []Account) map[int64]*Account {
+	snapshot := requestSchedulingSnapshotFromContext(ctx, groupID, platform, hasForcePlatform)
+	if snapshot == nil {
+		return buildSchedulingAccountByID(accounts)
+	}
+	if snapshot.accountByID != nil {
+		return snapshot.accountByID
+	}
+	// 请求级快照账号集只读，索引指向同一份快照切片以避免 failover 每轮重建 map。
+	if snapshot.loaded {
+		snapshot.accountByID = buildSchedulingAccountByID(snapshot.accounts)
+	} else {
+		snapshot.accountByID = buildSchedulingAccountByID(accounts)
+	}
+	return snapshot.accountByID
+}
+
+func (s *GatewayService) withRequestSchedulingPrefetch(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool, accounts []Account) context.Context {
+	snapshot := requestSchedulingSnapshotFromContext(ctx, groupID, platform, hasForcePlatform)
+	if snapshot == nil {
+		ctx = s.withWindowCostPrefetch(ctx, accounts)
+		ctx = s.withRPMPrefetch(ctx, accounts)
+		return ctx
+	}
+
+	if snapshot.windowPrefetchLoaded {
+		if snapshot.windowCosts != nil {
+			ctx = context.WithValue(ctx, windowCostPrefetchContextKey, snapshot.windowCosts)
+		}
+	} else {
+		ctx = s.withWindowCostPrefetch(ctx, accounts)
+		if costs, ok := ctx.Value(windowCostPrefetchContextKey).(map[int64]float64); ok {
+			snapshot.windowCosts = costs
+		}
+		snapshot.windowPrefetchLoaded = true
+	}
+
+	if snapshot.rpmPrefetchLoaded {
+		if snapshot.rpmCounts != nil {
+			ctx = context.WithValue(ctx, rpmPrefetchContextKey, snapshot.rpmCounts)
+		}
+		return ctx
+	}
+	ctx = s.withRPMPrefetch(ctx, accounts)
+	if counts, ok := ctx.Value(rpmPrefetchContextKey).(map[int64]int); ok {
+		snapshot.rpmCounts = counts
+	}
+	snapshot.rpmPrefetchLoaded = true
+	return ctx
 }
 
 // IsSingleAntigravityAccountGroup 检查指定分组是否只有一个 antigravity 平台的可调度账号。
@@ -3349,10 +3411,8 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			if !s.isAccountSchedulableForSelection(acc) {
 				continue
 			}
-			// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
+			// require_privacy_set: 热路径只跳过 privacy 未设置的账号，避免选号循环同步写库。
 			if schedGroup != nil && schedGroup.RequirePrivacySet && !acc.IsPrivacySet() {
-				_ = s.accountRepo.SetError(ctx, acc.ID,
-					fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
 				continue
 			}
 			if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
@@ -3460,10 +3520,8 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 		if !s.isAccountSchedulableForSelection(acc) {
 			continue
 		}
-		// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
+		// require_privacy_set: 热路径只跳过 privacy 未设置的账号，避免选号循环同步写库。
 		if schedGroup != nil && schedGroup.RequirePrivacySet && !acc.IsPrivacySet() {
-			_ = s.accountRepo.SetError(ctx, acc.ID,
-				fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
 			continue
 		}
 		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
@@ -3605,10 +3663,8 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			if !s.isAccountSchedulableForSelection(acc) {
 				continue
 			}
-			// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
+			// require_privacy_set: 热路径只跳过 privacy 未设置的账号，避免选号循环同步写库。
 			if schedGroup != nil && schedGroup.RequirePrivacySet && !acc.IsPrivacySet() {
-				_ = s.accountRepo.SetError(ctx, acc.ID,
-					fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
 				continue
 			}
 			// 过滤：原生平台直接通过，antigravity 需要启用混合调度
@@ -3717,10 +3773,8 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		if !s.isAccountSchedulableForSelection(acc) {
 			continue
 		}
-		// require_privacy_set: 跳过 privacy 未设置的账号并标记异常
+		// require_privacy_set: 热路径只跳过 privacy 未设置的账号，避免选号循环同步写库。
 		if schedGroup != nil && schedGroup.RequirePrivacySet && !acc.IsPrivacySet() {
-			_ = s.accountRepo.SetError(ctx, acc.ID,
-				fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
 			continue
 		}
 		// 过滤：原生平台直接通过，antigravity 需要启用混合调度

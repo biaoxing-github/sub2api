@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -105,6 +106,22 @@ func claudeCodeBodyMapFromContextCache(c *gin.Context) map[string]any {
 		}
 	}
 	return nil
+}
+
+func resolveGatewayRequestSchedulingSnapshotKey(ctx context.Context, apiKey *service.APIKey) (*int64, string, bool) {
+	if forcePlatform, ok := ctx.Value(ctxkey.ForcePlatform).(string); ok && forcePlatform != "" {
+		if apiKey != nil {
+			return apiKey.GroupID, forcePlatform, true
+		}
+		return nil, forcePlatform, true
+	}
+	if apiKey != nil && apiKey.Group != nil {
+		return apiKey.GroupID, apiKey.Group.Platform, false
+	}
+	if apiKey != nil {
+		return apiKey.GroupID, service.PlatformAnthropic, false
+	}
+	return nil, service.PlatformAnthropic, false
 }
 
 // 并发槽位等待相关常量

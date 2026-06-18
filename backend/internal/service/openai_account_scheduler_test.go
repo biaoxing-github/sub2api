@@ -28,6 +28,28 @@ type schedulerGroupAwareOpenAIAccountRepo struct {
 	schedulerTestOpenAIAccountRepo
 }
 
+type schedulerPrivacySetErrorRepo struct {
+	schedulerTestOpenAIAccountRepo
+	setErrorCalls int
+}
+
+func (r *schedulerPrivacySetErrorRepo) SetError(ctx context.Context, id int64, errorMsg string) error {
+	r.setErrorCalls++
+	return errors.New("unexpected SetError")
+}
+
+type schedulerPrivacyGroupRepo struct {
+	GroupRepository
+	group *Group
+}
+
+func (r schedulerPrivacyGroupRepo) GetByID(ctx context.Context, id int64) (*Group, error) {
+	if r.group != nil && r.group.ID == id {
+		return r.group, nil
+	}
+	return nil, ErrGroupNotFound
+}
+
 func (r schedulerGroupAwareOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {
@@ -261,6 +283,7 @@ func newOpenAIAdvancedSchedulerRateLimitService(enabled string) *RateLimitServic
 func TestOpenAIAccountSchedulerSkipsAPIKeyAccountWithNoActiveKeys(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
+	now := testNow()
 	blocked := Account{
 		ID:          60101,
 		Platform:    PlatformOpenAI,
@@ -272,8 +295,9 @@ func TestOpenAIAccountSchedulerSkipsAPIKeyAccountWithNoActiveKeys(t *testing.T) 
 		Credentials: map[string]any{
 			"api_keys": []any{"disabled-key"},
 		},
+		nowForTest: &now,
 	}
-	require.True(t, blocked.DisableAPIKey("disabled-key", "rate_limited", testNow()))
+	require.True(t, blocked.DisableAPIKey("disabled-key", "rate_limited", now))
 	require.Empty(t, blocked.GetAPIKeys())
 
 	healthy := Account{
@@ -305,6 +329,82 @@ func TestOpenAIAccountSchedulerSkipsAPIKeyAccountWithNoActiveKeys(t *testing.T) 
 	require.NotNil(t, selection.Account)
 	require.Equal(t, healthy.ID, selection.Account.ID)
 	require.Equal(t, 1, decision.CandidateCount)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+func TestOpenAIAccountSchedulerPrivacySetSkipsWithoutSetError(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	ctx := context.Background()
+	groupID := int64(60110)
+	privacyMissing := Account{
+		ID:            60111,
+		Platform:      PlatformOpenAI,
+		Type:          AccountTypeAPIKey,
+		Status:        StatusActive,
+		Schedulable:   true,
+		Concurrency:   1,
+		Priority:      0,
+		Credentials:   map[string]any{"api_key": "privacy-missing-key"},
+		AccountGroups: []AccountGroup{{GroupID: groupID}},
+	}
+	privacySet := Account{
+		ID:            60112,
+		Platform:      PlatformOpenAI,
+		Type:          AccountTypeAPIKey,
+		Status:        StatusActive,
+		Schedulable:   true,
+		Concurrency:   1,
+		Priority:      1,
+		Credentials:   map[string]any{"api_key": "privacy-set-key"},
+		AccountGroups: []AccountGroup{{GroupID: groupID}},
+		Extra:         map[string]any{"privacy_mode": PrivacyModeTrainingOff},
+	}
+	repo := &schedulerPrivacySetErrorRepo{
+		schedulerTestOpenAIAccountRepo: schedulerTestOpenAIAccountRepo{
+			accounts: []Account{privacyMissing, privacySet},
+		},
+	}
+	snapshotCache := &openAISnapshotCacheStub{
+		snapshotAccounts: []*Account{&privacyMissing, &privacySet},
+		accountsByID: map[int64]*Account{
+			privacyMissing.ID: &privacyMissing,
+			privacySet.ID:     &privacySet,
+		},
+	}
+	svc := &OpenAIGatewayService{
+		accountRepo: repo,
+		cfg:         &config.Config{},
+		schedulerSnapshot: NewSchedulerSnapshotService(
+			snapshotCache,
+			nil,
+			nil,
+			schedulerPrivacyGroupRepo{
+				group: &Group{ID: groupID, Name: "privacy", Platform: PlatformOpenAI, RequirePrivacySet: true},
+			},
+			nil,
+		),
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+	scheduler := newDefaultOpenAIAccountScheduler(svc, nil)
+
+	selection, decision, err := scheduler.Select(ctx, OpenAIAccountScheduleRequest{
+		GroupID:           &groupID,
+		RequiredTransport: OpenAIUpstreamTransportAny,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, privacySet.ID, selection.Account.ID)
+	require.Equal(t, 1, decision.CandidateCount)
+	require.Equal(t, 0, repo.setErrorCalls)
+	block, ok := svc.SnapshotOpenAIAccountRuntimeBlock(&privacyMissing, time.Now())
+	require.True(t, ok)
+	require.Equal(t, "privacy_not_set", block.Reason)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
