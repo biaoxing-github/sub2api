@@ -1193,9 +1193,16 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		}
 	}
 	if s.shouldSimulateOpenAICodexCLI(account) {
-		headers.Set("user-agent", codexCLIUserAgent())
-		headers.Set("originator", codexCLIOriginator)
-		headers.Del("version")
+		if isRealOpenAICodexClientRequest(c) {
+			// WS 协议头仍由上方 decision 决定；客户端身份和版本指纹按真实 Codex 请求保留。
+			copyOpenAIInboundHeaderIfPresent(headers, c, "User-Agent")
+			copyOpenAIInboundHeaderIfPresent(headers, c, "Originator")
+			copyOpenAIInboundHeaderIfPresent(headers, c, "Version")
+		} else {
+			headers.Set("user-agent", codexCLIUserAgent())
+			headers.Set("originator", codexCLIOriginator)
+			headers.Del("version")
+		}
 	} else if account != nil && account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(headers.Get("user-agent")) {
 		headers.Set("user-agent", codexCLIUserAgent())
 	}

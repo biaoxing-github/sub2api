@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -699,6 +700,41 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationForceWS(
 	require.Equal(t, isolateOpenAISessionID(0, "codex-thread"), headers.Get("conversation_id"))
 	require.Equal(t, "header_session_id", sessionResolution.SessionSource)
 	require.Equal(t, "header_conversation_id", sessionResolution.ConversationSource)
+}
+
+func TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationPreservesRealCodexClientHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "Codex Desktop/0.140.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.140.0)")
+	c.Request.Header.Set("Originator", "codex_desktop")
+	c.Request.Header.Set("Version", "0.140.0")
+	c.Request.Header.Set("Session-Id", "codex-session")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+		Extra: map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
+	}
+	decision := OpenAIWSProtocolDecision{
+		Transport:     OpenAIUpstreamTransportResponsesWebsocketV2,
+		Reason:        "account_codex_cli_force_ws_v2",
+		AllowHTTPToWS: true,
+	}
+
+	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator"))
+	headers, sessionResolution := svc.buildOpenAIWSHeaders(c, account, "token", decision, isCodexCLI, "", "", "")
+	require.Equal(t, "Bearer token", headers.Get("authorization"))
+	require.Equal(t, "Codex Desktop/0.140.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.140.0)", headers.Get("user-agent"))
+	require.Equal(t, "codex_desktop", headers.Get("originator"))
+	require.Equal(t, "0.140.0", headers.Get("version"))
+	require.Equal(t, isolateOpenAISessionID(0, "codex-session"), headers.Get("session_id"))
+	require.Equal(t, "header_session_id", sessionResolution.SessionSource)
 }
 
 func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheKey(t *testing.T) {

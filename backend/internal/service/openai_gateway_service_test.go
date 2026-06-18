@@ -3447,6 +3447,43 @@ func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationUsesV1ResponsesForBareHo
 	require.Equal(t, "https://relay.example.test/v1/responses", req.URL.String())
 }
 
+func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationPreservesRealCodexClientHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gpt-5.5","prompt_cache_key":"client-session"}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(body))
+	c.Request.Header.Set("User-Agent", "Codex Desktop/0.140.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.140.0)")
+	c.Request.Header.Set("Originator", "codex_desktop")
+	c.Request.Header.Set("OpenAI-Beta", "responses=experimental,assistants=v2")
+	c.Request.Header.Set("Version", "0.140.0")
+	c.Request.Header.Set("X-Codex-Beta-Features", "terminal_resize_reflow,memories")
+	c.Request.Header.Set("X-Codex-Window-Id", "window-123")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}}
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://new.sharedchat.cc/codex",
+		},
+		Extra: map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
+	}
+
+	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator"))
+	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, body, "token", true, "", isCodexCLI)
+	require.NoError(t, err)
+	require.Equal(t, "https://new.sharedchat.cc/codex/responses", req.URL.String())
+	require.Equal(t, "Codex Desktop/0.140.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.140.0)", req.Header.Get("User-Agent"))
+	require.Equal(t, "codex_desktop", req.Header.Get("Originator"))
+	require.Equal(t, "responses=experimental,assistants=v2", req.Header.Get("OpenAI-Beta"))
+	require.Equal(t, "0.140.0", req.Header.Get("Version"))
+	require.Equal(t, "terminal_resize_reflow,memories", req.Header.Get("X-Codex-Beta-Features"))
+	require.Equal(t, "window-123", req.Header.Get("X-Codex-Window-Id"))
+}
+
 func TestOpenAIBuildUpstreamRequestLegacyCockpitToolsCompatIsIgnored(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

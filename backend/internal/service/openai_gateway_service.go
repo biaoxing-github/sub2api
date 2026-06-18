@@ -82,11 +82,13 @@ var openaiAllowedHeaders = map[string]bool{
 	"accept-language":                       true,
 	"content-type":                          true,
 	"conversation_id":                       true,
+	"openai-beta":                           true,
 	"session-id":                            true,
 	"thread-id":                             true,
 	"user-agent":                            true,
 	"originator":                            true,
 	"session_id":                            true,
+	"version":                               true,
 	"x-client-request-id":                   true,
 	"x-codex-beta-features":                 true,
 	"x-codex-installation-id":               true,
@@ -110,6 +112,7 @@ var openaiPassthroughAllowedHeaders = map[string]bool{
 	"user-agent":                            true,
 	"originator":                            true,
 	"session_id":                            true,
+	"version":                               true,
 	"x-client-request-id":                   true,
 	"x-codex-beta-features":                 true,
 	"x-codex-installation-id":               true,
@@ -1824,8 +1827,41 @@ func (s *OpenAIGatewayService) shouldSimulateOpenAICodexCLI(account *Account) bo
 	return account != nil && account.IsOpenAICodexCLISimulationEnabled()
 }
 
-func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Request, account *Account, body []byte) {
+// isRealOpenAICodexClientRequest 只用真实 Codex 家族 UA 识别客户端直连请求，避免浏览器 UA 伪装 originator 后被透传。
+func isRealOpenAICodexClientRequest(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	userAgent := strings.TrimSpace(c.GetHeader("User-Agent"))
+	if userAgent == "" || openai.IsBrowserUserAgent(userAgent) {
+		return false
+	}
+	return openai.IsCodexOfficialClientRequest(userAgent)
+}
+
+// copyOpenAIInboundHeaderIfPresent 将客户端已有的 Codex 指纹头复制到上游请求，空值不覆盖已有兜底值。
+func copyOpenAIInboundHeaderIfPresent(dst http.Header, c *gin.Context, key string) {
+	if dst == nil || c == nil {
+		return
+	}
+	if value := strings.TrimSpace(c.GetHeader(key)); value != "" {
+		dst.Set(key, value)
+	}
+}
+
+func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Request, c *gin.Context, account *Account, body []byte) {
 	if req == nil || !s.shouldSimulateOpenAICodexCLI(account) {
+		return
+	}
+	if isRealOpenAICodexClientRequest(c) {
+		// 真实 Codex CLI/Desktop 请求优先保留客户端已经带来的身份和版本指纹。
+		copyOpenAIInboundHeaderIfPresent(req.Header, c, "User-Agent")
+		copyOpenAIInboundHeaderIfPresent(req.Header, c, "Originator")
+		copyOpenAIInboundHeaderIfPresent(req.Header, c, "OpenAI-Beta")
+		copyOpenAIInboundHeaderIfPresent(req.Header, c, "Version")
+		copyOpenAIInboundHeaderIfPresent(req.Header, c, "X-Codex-Beta-Features")
+		copyOpenAIInboundHeaderIfPresent(req.Header, c, "X-Codex-Window-Id")
+		ensureOpenAICodexClientMetadataHeaders(req, body, false)
 		return
 	}
 	applyOpenAICodexLatestClientHeaders(req, body)
@@ -1841,10 +1877,20 @@ func applyOpenAICodexLatestClientHeaders(req *http.Request, body []byte) {
 	req.Header.Set("originator", codexCLIOriginator)
 	req.Header.Del("OpenAI-Beta")
 	req.Header.Del("version")
+	ensureOpenAICodexClientMetadataHeaders(req, body, true)
+}
+
+// ensureOpenAICodexClientMetadataHeaders 补齐 Codex 上游需要的会话和 turn 元数据，已有客户端值保持不变。
+func ensureOpenAICodexClientMetadataHeaders(req *http.Request, body []byte, forceBetaFeatures bool) {
+	if req == nil {
+		return
+	}
 	if req.Header.Get("accept") == "" {
 		req.Header.Set("accept", "text/event-stream")
 	}
-	req.Header.Set("x-codex-beta-features", codexCLIBetaFeatures)
+	if forceBetaFeatures || req.Header.Get("x-codex-beta-features") == "" {
+		req.Header.Set("x-codex-beta-features", codexCLIBetaFeatures)
+	}
 
 	sessionID := strings.TrimSpace(req.Header.Get("session-id"))
 	if sessionID == "" {
@@ -1881,6 +1927,7 @@ func applyOpenAICodexLatestClientHeaders(req *http.Request, body []byte) {
 		req.Header.Set("x-codex-window-id", windowID)
 	}
 	if req.Header.Get("x-codex-turn-metadata") == "" {
+		// 缺少 turn metadata 时按 Codex 客户端最小必需字段补齐，已有客户端值不覆盖。
 		turnMetadata := map[string]any{
 			"session_id":              sessionID,
 			"thread_id":               threadID,
@@ -4200,7 +4247,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 		req.Header.Set("user-agent", customUA)
 	}
 	if s.shouldSimulateOpenAICodexCLI(account) {
-		s.applyOpenAICodexCLISimulationHeaders(req, account, body)
+		s.applyOpenAICodexCLISimulationHeaders(req, c, account, body)
 	} else if account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
 		// OAuth 安全透传：对非 Codex UA 统一兜底，降低被上游风控拦截概率。
 		req.Header.Set("user-agent", codexCLIUserAgent())
@@ -5562,7 +5609,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 		req.Header.Set("user-agent", customUA)
 	}
 
-	s.applyOpenAICodexCLISimulationHeaders(req, account, body)
+	s.applyOpenAICodexCLISimulationHeaders(req, c, account, body)
 
 	// 浏览器型 UA 兜底：仅 OAuth（ChatGPT 内部接口）账号生效，若最终 user-agent 仍为浏览器
 	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。
