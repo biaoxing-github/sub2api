@@ -3458,3 +3458,22 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - Browser/page smoke by HTTP: `http://127.0.0.1:8080/` returned 200, contained `<title>`, and body length was 2627.
 - Post-cutover logs: 65-second green critical scan had hit count 0.
 - Current state: active green `sub2api:v0.1.136.6`; rollback blue `sub2api:v0.1.136.5`; no PostgreSQL/Redis restart.
+
+## 2026-06-18 23:18:55 +08:00 Devil - release v0.1.136.7
+- Commit: `806cea4a3e28 fix(openai): 修复 rawchat Codex 模拟头`.
+- Root cause evidence: old active green logged trace `6fd1389d-2dc7-49f0-a647-c6fee5d51db7` at `2026-06-18T22:45:27+08:00` from `service/account_test_service.go:793` with upstream `codex_access_restricted`.
+- Fix scope: rawchat `/v1/chat/completions`, `/responses` forced raw chat fallback, and admin OpenAI API Key chat-completions test now reuse `applyOpenAICodexCLISimulationHeaders`.
+- GREEN: `go test -tags unit ./internal/service -run TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesGatewayCodexSimulationHeaders -count=1`.
+- GREEN: `go test -tags unit ./internal/service -run TestForwardAsRawChatCompletions_UsesCodexSimulationHeaders -count=1`.
+- GREEN: `go test -tags unit ./internal/service -run TestForwardResponses_ForceChatCompletionsUsesCodexSimulationHeaders -count=1`.
+- GREEN: focused service regression for rawchat, forced chat fallback, and account-test chat-completions paths passed.
+- GREEN: `go test -tags unit ./cmd/server -run TestNoSuchTest -count=1`.
+- Build: `sub2api:v0.1.136.7` from committed HEAD `806cea4a3e28`; image label version/revision are `v0.1.136.7` / `806cea4a3e28`.
+- Binary: `docker run --rm sub2api:v0.1.136.7 /app/sub2api -version` reported `Sub2API 0.1.136 (image: v0.1.136.7, commit: 806cea4a3e28, built: 2026-06-18T15:01:18Z)`.
+- Candidate blue 18083: `/health` 200, home 200, static JS 200, unauth `/api/v1/admin/accounts` 401, unauth `/responses` 401, unauth `/v1/responses` 401, `Health=healthy`, `RestartCount=0`.
+- Candidate logs: 65-second critical log window hit count 0.
+- Cutover: `D:\sub2api-deploy\proxy\upstreams\active.conf` switched from `sub2api-green:8080` to `sub2api-blue:8080`; `nginx -t` and reload both succeeded.
+- Post-cutover 8080/18081: `/health` 200, home 200, unauth `/api/v1/admin/system/version` 401, unauth `/responses` 401, unauth `/v1/responses` 401.
+- Post-cutover logs: 65-second blue critical scan hit count 0 and recent blue logs did not contain `codex_access_restricted`.
+- Not run: authenticated `POST /api/v1/admin/accounts/470/test`, because `D:\sub2api-deploy\.env` does not contain `ADMIN_EMAIL` or `ADMIN_PASSWORD`; no admin JWT was available and no database/login bypass was used.
+- Current state: active blue `sub2api:v0.1.136.7`; rollback green `sub2api:v0.1.136.6`; no PostgreSQL/Redis restart.
