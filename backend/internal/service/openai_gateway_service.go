@@ -1867,7 +1867,7 @@ func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Re
 	applyOpenAICodexLatestClientHeaders(req, body)
 }
 
-// applyOpenAICodexLatestClientHeaders 将账号级模拟请求收敛到真实 Codex Desktop 0.138.0 的请求头形态。
+// applyOpenAICodexLatestClientHeaders 将账号级模拟请求收敛到真实 Codex Desktop 0.141.0 的请求头形态。
 // 这里主动移除旧实验头，避免人工测试和普通网关请求继续携带过期客户端指纹。
 func applyOpenAICodexLatestClientHeaders(req *http.Request, body []byte) {
 	if req == nil {

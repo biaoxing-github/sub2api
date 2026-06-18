@@ -2,36 +2,43 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"os/exec"
-	"regexp"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	// CodexCLIDefaultVersion is the fallback version used when local Codex CLI
-	// is unavailable in the runtime environment.
-	CodexCLIDefaultVersion = "0.138.0"
+	// CodexCLIDefaultVersion is the fallback version used when the npm registry
+	// is unreachable at startup. Keep it aligned with the latest published
+	// @openai/codex release so upstream version gates are satisfied even offline.
+	CodexCLIDefaultVersion = "0.141.0"
 
 	defaultCodexCLIVersionSyncInterval = 30 * time.Minute
-	defaultCodexCLIVersionCommand      = "codex"
-	defaultCodexCLIVersionTimeout      = 5 * time.Second
+	// defaultCodexCLIRegistryURL points at the npm "latest" manifest endpoint,
+	// mirroring the Claude Code fetcher. Server deployments have no local Codex
+	// binary, so the version must come from a remote source, not `codex --version`.
+	defaultCodexCLIRegistryURL = "https://registry.npmjs.org/@openai/codex/latest"
 )
 
-var codexCLIVersionPattern = regexp.MustCompile(`\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b`)
-
-type codexCLICommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
-
-// CodexCLIVersionFetcher reads the installed local Codex CLI version.
+// CodexCLIVersionFetcher resolves the latest Codex CLI version from npm.
 type CodexCLIVersionFetcher struct {
 	mu             sync.RWMutex
 	currentVersion string
 	lastFetchTime  time.Time
 	fetchInterval  time.Duration
-	commandName    string
-	commandRunner  codexCLICommandRunner
+	httpClient     *http.Client
+	registryURL    string
+}
+
+// npmCodexRegistryResponse npm registry API 响应结构
+type npmCodexRegistryResponse struct {
+	Version  string `json:"version"`
+	DistTags struct {
+		Latest string `json:"latest"`
+	} `json:"dist-tags"`
 }
 
 var (
@@ -47,8 +54,10 @@ func NewCodexCLIVersionFetcher(fetchInterval time.Duration) *CodexCLIVersionFetc
 	return &CodexCLIVersionFetcher{
 		currentVersion: CodexCLIDefaultVersion,
 		fetchInterval:  fetchInterval,
-		commandName:    defaultCodexCLIVersionCommand,
-		commandRunner:  runCodexCLIVersionCommand,
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+		registryURL: defaultCodexCLIRegistryURL,
 	}
 }
 
@@ -70,7 +79,8 @@ func (f *CodexCLIVersionFetcher) GetCurrentVersion() string {
 	return f.currentVersion
 }
 
-// FetchLatestVersion reads the current local Codex CLI version.
+// FetchLatestVersion pulls the latest @openai/codex version from the npm registry.
+// 失败时保持当前缓存值，不阻断服务启动。
 func (f *CodexCLIVersionFetcher) FetchLatestVersion(ctx context.Context) (string, error) {
 	if f == nil {
 		return CodexCLIDefaultVersion, fmt.Errorf("nil Codex CLI version fetcher")
@@ -79,28 +89,45 @@ func (f *CodexCLIVersionFetcher) FetchLatestVersion(ctx context.Context) (string
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	// 检查是否需要更新（避免频繁请求）
 	if time.Since(f.lastFetchTime) < f.fetchInterval {
 		return f.currentVersion, nil
 	}
 
-	commandCtx, cancel := context.WithTimeout(ctx, defaultCodexCLIVersionTimeout)
-	defer cancel()
-
-	output, err := f.commandRunner(commandCtx, f.commandName, "--version")
-	version, parseErr := parseCodexCLIVersionOutput(string(output))
-	if parseErr != nil {
-		if err != nil {
-			return f.currentVersion, fmt.Errorf("failed to run codex --version: %w", err)
-		}
-		return f.currentVersion, parseErr
+	req, err := http.NewRequestWithContext(ctx, "GET", f.registryURL, nil)
+	if err != nil {
+		return f.currentVersion, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	f.currentVersion = version
+	resp, err := f.httpClient.Do(req)
+	if err != nil {
+		return f.currentVersion, fmt.Errorf("failed to fetch from npm: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return f.currentVersion, fmt.Errorf("npm registry returned status %d", resp.StatusCode)
+	}
+
+	var npmResp npmCodexRegistryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&npmResp); err != nil {
+		return f.currentVersion, fmt.Errorf("failed to parse npm response: %w", err)
+	}
+
+	latestVersion := strings.TrimSpace(npmResp.Version)
+	if latestVersion == "" {
+		latestVersion = strings.TrimSpace(npmResp.DistTags.Latest)
+	}
+	if latestVersion == "" {
+		return f.currentVersion, fmt.Errorf("empty version from npm registry")
+	}
+
+	f.currentVersion = latestVersion
 	f.lastFetchTime = time.Now()
-	return version, nil
+	return latestVersion, nil
 }
 
-// StartBackgroundSync starts immediate and periodic local Codex CLI version sync.
+// StartBackgroundSync starts immediate and periodic Codex CLI version sync.
 func (f *CodexCLIVersionFetcher) StartBackgroundSync(ctx context.Context) func() {
 	stopCh := make(chan struct{})
 	doneCh := make(chan struct{})
@@ -174,21 +201,4 @@ func CodexCLIDefaultUserAgentForVersion(version string) string {
 		version = CodexCLIDefaultVersion
 	}
 	return fmt.Sprintf("codex_cli_rs/%s (Ubuntu 22.4.0; x86_64) xterm-256color", version)
-}
-
-func parseCodexCLIVersionOutput(output string) (string, error) {
-	output = strings.TrimSpace(output)
-	if output == "" {
-		return "", fmt.Errorf("empty codex --version output")
-	}
-	version := codexCLIVersionPattern.FindString(output)
-	if version == "" {
-		return "", fmt.Errorf("no semver version found in codex --version output: %q", output)
-	}
-	return version, nil
-}
-
-func runCodexCLIVersionCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.CombinedOutput()
 }
