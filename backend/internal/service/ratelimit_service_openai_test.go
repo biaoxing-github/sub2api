@@ -416,10 +416,11 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyBadRequestQuotaUsesSch
 	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.rateLimitedCalls)
 	require.Equal(t, 0, repo.setErrorCalls)
-	require.Equal(t, 0, repo.updateCredentialsCalls)
-	require.Equal(t, 1, repo.tempCalls)
-	require.Contains(t, repo.lastTempReason, "insufficient_balance")
-	require.Equal(t, []string{"key-bad-quota", "key-ok"}, account.GetAPIKeys())
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.Equal(t, 0, repo.tempCalls)
+	disabled, _ := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.Contains(t, disabled, FingerprintAPIKey("key-bad-quota"))
+	require.Equal(t, []string{"key-ok"}, account.GetAPIKeys())
 }
 
 func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyForbiddenInvalidKeyUsesSchedulingCooldown(t *testing.T) {
@@ -446,11 +447,12 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyForbiddenInvalidKeyUse
 	)
 
 	require.True(t, shouldDisable)
-	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, 0, repo.tempCalls)
 	require.Equal(t, 0, repo.setErrorCalls)
-	require.Equal(t, 0, repo.updateCredentialsCalls)
-	require.Contains(t, repo.lastTempReason, "invalid_api_key")
-	require.Equal(t, []string{"key-revoked", "key-ok"}, account.GetAPIKeys())
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	disabled, _ := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.Contains(t, disabled, FingerprintAPIKey("key-revoked"))
+	require.Equal(t, []string{"key-ok"}, account.GetAPIKeys())
 	require.Equal(t, []int64{1}, counter.counts)
 }
 

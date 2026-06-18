@@ -483,12 +483,22 @@ func TestRateLimitService_HandleUpstreamError_NonOAuth401(t *testing.T) {
 		ID:       102,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-a", "key-b"},
+		},
 	}
+	require.Equal(t, "key-a", account.GetAPIKey())
 
 	shouldDisable := service.HandleUpstreamError(context.Background(), account, 401, http.Header{}, []byte("unauthorized"))
 
 	require.True(t, shouldDisable)
-	require.Equal(t, 1, repo.setErrorCalls)
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.NotNil(t, repo.lastCredentials)
+	disabled, _ := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.Contains(t, disabled, FingerprintAPIKey("key-a"))
+	require.Equal(t, []string{"key-b"}, account.GetAPIKeys())
 	require.Empty(t, invalidator.accounts)
 }
 

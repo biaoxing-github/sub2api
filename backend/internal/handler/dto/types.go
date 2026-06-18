@@ -289,11 +289,14 @@ type AccountDerivedHealth struct {
 }
 
 type APIKeyItem struct {
-	Fingerprint string `json:"fingerprint"`
-	Masked      string `json:"masked"`
-	Disabled    bool   `json:"disabled,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	DisabledAt  string `json:"disabled_at,omitempty"`
+	Fingerprint   string `json:"fingerprint"`
+	Masked        string `json:"masked"`
+	Status        string `json:"status"`
+	Disabled      bool   `json:"disabled,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	DisabledAt    string `json:"disabled_at,omitempty"`
+	DisabledUntil string `json:"disabled_until,omitempty"`
+	DisabledCount int    `json:"disabled_count,omitempty"`
 }
 
 type UpstreamBalanceKeySnapshot struct {

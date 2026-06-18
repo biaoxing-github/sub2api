@@ -70,8 +70,10 @@ func TestAccountFromServiceShallow_ExposesMaskedAPIKeyItems(t *testing.T) {
 			"api_keys": []any{keyA, keyB},
 			"api_keys_disabled": map[string]any{
 				service.FingerprintAPIKey(keyB): map[string]any{
-					"reason":      "insufficient_balance",
-					"disabled_at": "2026-05-22T00:00:00Z",
+					"reason":         "insufficient_balance",
+					"disabled_at":    "2026-05-22T00:00:00Z",
+					"disabled_until": "2999-05-22T00:30:00Z",
+					"disabled_count": 2,
 				},
 			},
 		},
@@ -85,6 +87,9 @@ func TestAccountFromServiceShallow_ExposesMaskedAPIKeyItems(t *testing.T) {
 	require.False(t, got.APIKeyItems[0].Disabled)
 	require.True(t, got.APIKeyItems[1].Disabled)
 	require.Equal(t, "insufficient_balance", got.APIKeyItems[1].Reason)
+	require.Equal(t, "2999-05-22T00:30:00Z", got.APIKeyItems[1].DisabledUntil)
+	require.Equal(t, 2, got.APIKeyItems[1].DisabledCount)
+	require.Equal(t, "cooling", got.APIKeyItems[1].Status)
 
 	raw, err := json.Marshal(got)
 	require.NoError(t, err)
@@ -92,6 +97,35 @@ func TestAccountFromServiceShallow_ExposesMaskedAPIKeyItems(t *testing.T) {
 	require.NotContains(t, string(raw), keyB)
 	require.Contains(t, string(raw), "api_key_items")
 	require.Contains(t, string(raw), "sk-pro...wxyz")
+}
+
+func TestAccountFromServiceShallow_ExpiredAPIKeyCooldownIsActiveAgain(t *testing.T) {
+	key := "sk-expired-abcdefghijklmnopqrstuvwxyz"
+	src := &service.Account{
+		ID:       44,
+		Name:     "openai",
+		Platform: "openai",
+		Type:     "apikey",
+		Credentials: map[string]any{
+			"api_keys": []any{key},
+			"api_keys_disabled": map[string]any{
+				service.FingerprintAPIKey(key): map[string]any{
+					"reason":         "rate_limited",
+					"disabled_at":    "2026-05-22T00:00:00Z",
+					"disabled_until": "2026-05-22T00:00:01Z",
+					"disabled_count": 1,
+				},
+			},
+		},
+	}
+
+	got := AccountFromServiceShallow(src)
+
+	require.NotNil(t, got)
+	require.Len(t, got.APIKeyItems, 1)
+	require.Equal(t, "active", got.APIKeyItems[0].Status)
+	require.False(t, got.APIKeyItems[0].Disabled)
+	require.Empty(t, got.APIKeyItems[0].DisabledUntil)
 }
 
 func TestAccountFromServiceShallow_NilCredentialsOmitsStatus(t *testing.T) {

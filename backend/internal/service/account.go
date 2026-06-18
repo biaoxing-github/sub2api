@@ -31,6 +31,15 @@ const (
 	OpenAICodexCLISimulationEnabledExtraKey = "openai_codex_cli_simulation_enabled"
 )
 
+type APIKeyDisabledDetail struct {
+	Status        string
+	Reason        string
+	DisabledAt    string
+	DisabledUntil string
+	DisabledCount int
+	Disabled      bool
+}
+
 type Account struct {
 	ID          int64
 	Name        string
@@ -498,10 +507,7 @@ func normalizeDisabledAPIKeyFingerprintsWithRecovery(credentials map[string]any,
 			if reason == "" {
 				reason = "disabled"
 			}
-			count := 1
-			if c, ok := record["disabled_count"].(int); ok && c > 0 {
-				count = c
-			}
+			count := positiveIntFromAny(record["disabled_count"], 1)
 			interval := disabledAPIKeyRecoveryInterval(reason, count)
 			disabledAt := now.Add(-time.Hour)
 			if atStr, ok := record["disabled_at"].(string); ok {
@@ -535,6 +541,70 @@ func normalizeDisabledAPIKeyFingerprintsWithRecovery(credentials map[string]any,
 		return nil
 	}
 	return out
+}
+
+// DisabledAPIKeyDetails 解析账号保存的单 Key 冷却状态，供管理端展示当前可调度状态。
+func DisabledAPIKeyDetails(credentials map[string]any, now time.Time) map[string]APIKeyDisabledDetail {
+	if credentials == nil {
+		return nil
+	}
+	disabledMap, ok := credentials[CredentialAPIKeysDisabled].(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]APIKeyDisabledDetail, len(disabledMap))
+	for fp, recordRaw := range disabledMap {
+		fp = strings.TrimSpace(fp)
+		if fp == "" {
+			continue
+		}
+		record, ok := recordRaw.(map[string]any)
+		if !ok {
+			out[fp] = APIKeyDisabledDetail{Status: "cooling", Disabled: true}
+			continue
+		}
+		detail := APIKeyDisabledDetail{
+			Status:        "active",
+			Reason:        strings.TrimSpace(apiKeyStatusStringFromAny(record["reason"])),
+			DisabledAt:    strings.TrimSpace(apiKeyStatusStringFromAny(record["disabled_at"])),
+			DisabledCount: positiveIntFromAny(record["disabled_count"], 0),
+		}
+		until := disabledAPIKeyUntilFromRecord(record, now)
+		if !until.IsZero() && now.Before(until) {
+			detail.Status = "cooling"
+			detail.Disabled = true
+			detail.DisabledUntil = until.UTC().Format(time.RFC3339)
+		}
+		out[fp] = detail
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func disabledAPIKeyUntilFromRecord(record map[string]any, now time.Time) time.Time {
+	if record == nil {
+		return time.Time{}
+	}
+	if untilStr := strings.TrimSpace(apiKeyStatusStringFromAny(record["disabled_until"])); untilStr != "" {
+		if until, err := time.Parse(time.RFC3339, untilStr); err == nil {
+			return until
+		}
+		return now.Add(time.Hour)
+	}
+	reason := strings.TrimSpace(apiKeyStatusStringFromAny(record["reason"]))
+	if reason == "" {
+		reason = "disabled"
+	}
+	count := positiveIntFromAny(record["disabled_count"], 1)
+	disabledAt := now.Add(-time.Hour)
+	if atStr := strings.TrimSpace(apiKeyStatusStringFromAny(record["disabled_at"])); atStr != "" {
+		if parsed, err := time.Parse(time.RFC3339, atStr); err == nil {
+			disabledAt = parsed
+		}
+	}
+	return disabledAt.Add(disabledAPIKeyRecoveryInterval(reason, count))
 }
 
 func filterDisabledAPIKeys(keys []string, disabled map[string]struct{}) []string {
@@ -619,12 +689,7 @@ func (a *Account) DisableAPIKey(apiKey, reason string, now time.Time) bool {
 	}
 
 	existingRecord, _ := disabled[fingerprint].(map[string]any)
-	existingCount := 0
-	if existingRecord != nil {
-		if c, ok := existingRecord["disabled_count"].(int); ok {
-			existingCount = c
-		}
-	}
+	existingCount := positiveIntFromAny(existingRecord["disabled_count"], 0)
 
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -642,6 +707,59 @@ func (a *Account) DisableAPIKey(apiKey, reason string, now time.Time) bool {
 	}
 	a.Credentials[CredentialAPIKeysDisabled] = disabled
 	return true
+}
+
+func (a *Account) SavedAPIKeyCount() int {
+	if a == nil || a.Credentials == nil {
+		return 0
+	}
+	keys := normalizeAPIKeys(a.Credentials["api_keys"])
+	if len(keys) > 0 {
+		return len(keys)
+	}
+	if strings.TrimSpace(a.GetCredential("api_key")) != "" {
+		return 1
+	}
+	return 0
+}
+
+func positiveIntFromAny(value any, fallback int) int {
+	switch v := value.(type) {
+	case int:
+		if v > 0 {
+			return v
+		}
+	case int64:
+		if v > 0 {
+			return int(v)
+		}
+	case float64:
+		if v > 0 {
+			return int(v)
+		}
+	case json.Number:
+		if i, err := v.Int64(); err == nil && i > 0 {
+			return int(i)
+		}
+	case string:
+		if i, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && i > 0 {
+			return i
+		}
+	}
+	return fallback
+}
+
+func apiKeyStatusStringFromAny(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case json.Number:
+		return v.String()
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return ""
+	}
 }
 
 // disabledAPIKeyRecoveryInterval 按禁用原因和累计次数计算自动恢复间隔。

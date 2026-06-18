@@ -104,20 +104,30 @@
               <span
                 v-for="item in existingApiKeyItems"
                 :key="item.fingerprint || item.masked"
+                :data-testid="`api-key-state-${item.fingerprint || item.masked.replace(/[^a-zA-Z0-9_-]/g, '-')}`"
                 :class="[
-                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[11px]',
+                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs',
                   item.disabled
                     ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
                     : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
                 ]"
                 :title="item.disabled ? (item.reason || t('admin.accounts.apiKeyDisabled')) : t('common.active')"
               >
-                {{ item.masked }}
-                <span v-if="item.disabled" class="font-sans">{{ t('admin.accounts.apiKeyDisabled') }}</span>
+                <span class="font-mono text-[11px]">{{ item.masked }}</span>
+                <span class="font-sans text-[11px]">
+                  {{ item.disabled || item.status === 'cooling' ? t('admin.accounts.apiKeyStatusCooling') : t('admin.accounts.apiKeyStatusActive') }}
+                </span>
+                <span v-if="item.reason" class="truncate font-sans text-[11px]">{{ item.reason }}</span>
+                <span v-if="item.disabled_until" class="font-sans text-[11px]">
+                  {{ t('admin.accounts.apiKeyDisabledUntil') }} {{ item.disabled_until }}
+                </span>
+                <span v-if="item.disabled_count" class="font-sans text-[11px]">
+                  {{ t('admin.accounts.apiKeyDisabledCount') }} {{ item.disabled_count }}
+                </span>
                 <button
                   v-if="item.fingerprint && item.disabled"
                   type="button"
-                  class="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
+                  class="ml-auto inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
                   :title="t('admin.accounts.restoreApiKey')"
                   :aria-label="t('admin.accounts.restoreApiKey')"
                   :disabled="
@@ -136,7 +146,7 @@
                 <button
                   v-if="item.fingerprint"
                   type="button"
-                  class="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
+                  class="inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-black/10 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
                   :title="t('admin.accounts.deleteApiKey')"
                   :aria-label="t('admin.accounts.deleteApiKey')"
                   :disabled="

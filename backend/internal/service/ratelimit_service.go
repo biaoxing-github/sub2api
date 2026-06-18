@@ -223,8 +223,8 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		return false
 	}
 
-	// API Key 列表账号不再停用单个 Key；命中可归因到 Key 的上游错误时，
-	// 复用账号级临时不可调度，让调度器按阶梯时间重新探测整个账号。
+	// API Key 列表账号命中可归因到 Key 的上游错误时，优先冷却本次报错 Key；
+	// 单 Key 或无法定位具体 Key 时，再退回账号级临时不可调度。
 	if s.tryAPIKeyAccountSchedulingCooldown(ctx, account, statusCode, responseBody) {
 		return true
 	}
@@ -1930,10 +1930,42 @@ func (s *RateLimitService) tryAPIKeyAccountSchedulingCooldown(ctx context.Contex
 	if account == nil || account.Type != AccountTypeAPIKey || !shouldUseAPIKeyAccountSchedulingCooldown(statusCode, responseBody) {
 		return false
 	}
+	if account.SavedAPIKeyCount() == 0 {
+		return false
+	}
+	if tryDisableSelectedAPIKeyForCooldown(ctx, s.accountRepo, account, statusCode, responseBody) {
+		return true
+	}
 	if s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
 		return true
 	}
 	return applyAPIKeyAccountSchedulingCooldown(ctx, s.accountRepo, s.tempUnschedCache, s.notifyAccountSchedulingBlocked, account, statusCode, responseBody)
+}
+
+func tryDisableSelectedAPIKeyForCooldown(ctx context.Context, repo AccountRepository, account *Account, statusCode int, responseBody []byte) bool {
+	if repo == nil || account == nil || account.SavedAPIKeyCount() <= 1 {
+		return false
+	}
+	selectedKey := strings.TrimSpace(account.LastSelectedAPIKey())
+	if selectedKey == "" {
+		return false
+	}
+	reason := apiKeyAccountSchedulingReason(statusCode, responseBody)
+	now := time.Now()
+	if !account.DisableAPIKey(selectedKey, reason, now) {
+		return false
+	}
+	if len(account.GetAPIKeys()) == 0 {
+		removeDisabledAPIKeyFingerprint(account.Credentials, FingerprintAPIKey(selectedKey))
+		return false
+	}
+	if err := persistAccountCredentials(ctx, repo, account, account.Credentials); err != nil {
+		slog.Warn("api_key_selected_key_cooldown_failed", "account_id", account.ID, "status_code", statusCode, "reason", reason, "error", err)
+		removeDisabledAPIKeyFingerprint(account.Credentials, FingerprintAPIKey(selectedKey))
+		return false
+	}
+	slog.Info("api_key_selected_key_cooldown", "account_id", account.ID, "status_code", statusCode, "reason", reason, "key_fingerprint", FingerprintAPIKey(selectedKey))
+	return true
 }
 
 func applyAPIKeyAccountSchedulingCooldown(

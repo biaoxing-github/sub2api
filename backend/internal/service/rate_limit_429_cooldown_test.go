@@ -128,8 +128,8 @@ func TestHandle429_FallbackUsesDefaultSecondsWhenSettingServiceMissing(t *testin
 	require.True(t, !accountRepo.lastRateLimitReset.Before(before.Add(5*time.Second)) && !accountRepo.lastRateLimitReset.After(after.Add(5*time.Second)))
 }
 
-// 确认 API Key 列表账号遇到 429 时复用账号级调度冷却，不再停用单个 Key。
-func TestHandleUpstreamError429_OpenAIAPIKeyUsesAccountSchedulingCooldown(t *testing.T) {
+// 确认多 Key 账号遇到 429 时只冷却本次报错 Key，保留同账号其他 Key 继续参与调度。
+func TestHandleUpstreamError429_OpenAIAPIKeyDisablesSelectedKey(t *testing.T) {
 	accountRepo := &rateLimit429AccountRepoStub{}
 	svc := NewRateLimitService(accountRepo, nil, &config.Config{}, nil, nil)
 	account := &Account{
@@ -146,14 +146,17 @@ func TestHandleUpstreamError429_OpenAIAPIKeyUsesAccountSchedulingCooldown(t *tes
 
 	require.True(t, shouldDisable)
 	require.Zero(t, accountRepo.rateLimitCalls)
-	require.Equal(t, 1, accountRepo.tempCalls)
-	require.WithinDuration(t, time.Now().Add(probeIntervalFromErrorCount(1)), accountRepo.lastTempUntil, 2*time.Second)
-	require.Contains(t, accountRepo.lastTempReason, "rate_limited")
-	require.Nil(t, accountRepo.updatedCredentials)
-	require.Equal(t, []string{"key-a", "key-b"}, account.GetAPIKeys())
+	require.Equal(t, 0, accountRepo.tempCalls)
+	require.NotNil(t, accountRepo.updatedCredentials)
+	disabled, _ := accountRepo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	record, _ := disabled[FingerprintAPIKey("key-a")].(map[string]any)
+	require.NotNil(t, record)
+	require.Equal(t, "rate_limited", record["reason"])
+	require.Equal(t, 1, record["disabled_count"])
+	require.Equal(t, []string{"key-b"}, account.GetAPIKeys())
 }
 
-// 确认 API Key 账号默认冷却按同类错误次数使用阶梯退避时间。
+// 确认单 Key API Key 账号默认冷却按同类错误次数使用账号级阶梯退避时间。
 func TestHandleUpstreamError429_OpenAIAPIKeySchedulingCooldownUsesSteppedErrorCount(t *testing.T) {
 	accountRepo := &rateLimit429AccountRepoStub{}
 	svc := NewRateLimitService(accountRepo, nil, &config.Config{}, nil, nil)
@@ -174,7 +177,7 @@ func TestHandleUpstreamError429_OpenAIAPIKeySchedulingCooldownUsesSteppedErrorCo
 		Type:                    AccountTypeAPIKey,
 		TempUnschedulableReason: string(previousReason),
 		TempUnschedulableUntil:  &now,
-		Credentials:             map[string]any{"api_keys": []any{"key-a", "key-b"}},
+		Credentials:             map[string]any{"api_keys": []any{"key-a"}},
 	}
 
 	shouldDisable := svc.HandleUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, []byte(`{"error":{"message":"slow down"}}`))
@@ -186,11 +189,11 @@ func TestHandleUpstreamError429_OpenAIAPIKeySchedulingCooldownUsesSteppedErrorCo
 	require.NoError(t, json.Unmarshal([]byte(accountRepo.lastTempReason), &state))
 	require.Equal(t, 2, state.ErrorCount)
 	require.Equal(t, "rate_limited", state.MatchedKeyword)
-	require.Equal(t, []string{"key-a", "key-b"}, account.GetAPIKeys())
+	require.Equal(t, []string{"key-a"}, account.GetAPIKeys())
 }
 
-// 确认 API Key 列表账号配置了临时不可调度规则时，429 仍走账号级调度冷却。
-func TestHandleUpstreamError429_OpenAIAPIKeyUsesTempUnschedulableRules(t *testing.T) {
+// 确认多 Key 账号配置了临时不可调度规则时，429 优先冷却本次报错 Key。
+func TestHandleUpstreamError429_OpenAIAPIKeyWithTempRulesDisablesSelectedKey(t *testing.T) {
 	accountRepo := &rateLimit429AccountRepoStub{}
 	svc := NewRateLimitService(accountRepo, nil, &config.Config{}, nil, nil)
 	account := &Account{
@@ -215,9 +218,9 @@ func TestHandleUpstreamError429_OpenAIAPIKeyUsesTempUnschedulableRules(t *testin
 
 	require.True(t, shouldDisable)
 	require.Zero(t, accountRepo.rateLimitCalls)
-	require.Equal(t, 1, accountRepo.tempCalls)
-	require.WithinDuration(t, time.Now().Add(10*time.Minute), accountRepo.lastTempUntil, 2*time.Second)
-	require.Contains(t, accountRepo.lastTempReason, "slow down")
-	require.Nil(t, accountRepo.updatedCredentials)
-	require.Equal(t, []string{"key-a", "key-b"}, account.GetAPIKeys())
+	require.Equal(t, 0, accountRepo.tempCalls)
+	require.NotNil(t, accountRepo.updatedCredentials)
+	disabled, _ := accountRepo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.Contains(t, disabled, FingerprintAPIKey("key-a"))
+	require.Equal(t, []string{"key-b"}, account.GetAPIKeys())
 }

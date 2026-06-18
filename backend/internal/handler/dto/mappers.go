@@ -450,49 +450,24 @@ func APIKeyItemsFromService(a *service.Account) []APIKeyItem {
 	if len(keys) == 0 {
 		return nil
 	}
-	disabled := disabledAPIKeyDetails(a.Credentials[service.CredentialAPIKeysDisabled])
+	disabled := service.DisabledAPIKeyDetails(a.Credentials, time.Now())
 	out := make([]APIKeyItem, 0, len(keys))
 	for _, key := range keys {
 		fingerprint := service.FingerprintAPIKey(key)
 		item := APIKeyItem{
 			Fingerprint: fingerprint,
 			Masked:      maskAPIKey(key),
+			Status:      "active",
 		}
 		if detail, ok := disabled[fingerprint]; ok {
-			item.Disabled = true
+			item.Status = detail.Status
+			item.Disabled = detail.Disabled
 			item.Reason = detail.Reason
 			item.DisabledAt = detail.DisabledAt
+			item.DisabledUntil = detail.DisabledUntil
+			item.DisabledCount = detail.DisabledCount
 		}
 		out = append(out, item)
-	}
-	return out
-}
-
-type disabledAPIKeyDetail struct {
-	Reason     string
-	DisabledAt string
-}
-
-func disabledAPIKeyDetails(raw any) map[string]disabledAPIKeyDetail {
-	out := make(map[string]disabledAPIKeyDetail)
-	switch v := raw.(type) {
-	case map[string]any:
-		for fingerprint, detail := range v {
-			fp := strings.TrimSpace(fingerprint)
-			if fp == "" {
-				continue
-			}
-			item := disabledAPIKeyDetail{}
-			if m, ok := detail.(map[string]any); ok {
-				if reason, ok := m["reason"].(string); ok {
-					item.Reason = reason
-				}
-				if disabledAt, ok := m["disabled_at"].(string); ok {
-					item.DisabledAt = disabledAt
-				}
-			}
-			out[fp] = item
-		}
 	}
 	return out
 }

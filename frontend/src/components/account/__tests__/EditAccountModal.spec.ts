@@ -486,6 +486,36 @@ describe('EditAccountModal', () => {
     expect(wrapper.emitted('updated')?.[0]).toEqual([updatedAccount])
   })
 
+  it('renders current API key cooling status details', () => {
+    const account = {
+      ...buildAccount(),
+      api_key_items: [
+        { fingerprint: 'fp-active', masked: 'sk-...tive', status: 'active' },
+        {
+          fingerprint: 'fp-cooling',
+          masked: 'sk-...ling',
+          disabled: true,
+          status: 'cooling',
+          reason: 'rate_limited',
+          disabled_until: '2026-05-22T00:30:00Z',
+          disabled_count: 2
+        }
+      ]
+    }
+
+    const wrapper = mountModal(account)
+
+    const cooling = wrapper.get('[data-testid="api-key-state-fp-cooling"]')
+    expect(cooling.text()).toContain('admin.accounts.apiKeyStatusCooling')
+    expect(cooling.text()).toContain('rate_limited')
+    expect(cooling.text()).toContain('2026-05-22T00:30:00Z')
+    expect(cooling.text()).toContain('admin.accounts.apiKeyDisabledCount')
+    expect(cooling.text()).toContain('2')
+
+    const active = wrapper.get('[data-testid="api-key-state-fp-active"]')
+    expect(active.text()).toContain('admin.accounts.apiKeyStatusActive')
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()

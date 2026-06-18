@@ -964,10 +964,7 @@ func (s *AccountTestService) scheduleOpenAIAPIKeyFromTestError(ctx context.Conte
 		return false
 	}
 	rateLimitService := &RateLimitService{accountRepo: s.accountRepo}
-	if rateLimitService.tryTempUnschedulable(ctx, account, statusCode, body) {
-		return true
-	}
-	return applyAPIKeyAccountSchedulingCooldown(ctx, s.accountRepo, nil, nil, account, statusCode, body)
+	return rateLimitService.tryAPIKeyAccountSchedulingCooldown(ctx, account, statusCode, body)
 }
 
 func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, account *Account, headers http.Header, body []byte) {

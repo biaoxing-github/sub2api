@@ -1279,9 +1279,12 @@ export interface Account {
   api_key_items?: Array<{
     fingerprint: string
     masked: string
+    status?: 'active' | 'cooling' | string
     disabled?: boolean
     reason?: string
     disabled_at?: string
+    disabled_until?: string
+    disabled_count?: number
   }>
   upstream_balance?: UpstreamBalanceSnapshot | null
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.

@@ -699,7 +699,7 @@ func TestAccountTestService_OpenAI401SetsPermanentErrorOnly(t *testing.T) {
 	require.Nil(t, account.RateLimitResetAt)
 }
 
-func TestAccountTestService_OpenAIAPIKeyInsufficientBalanceSchedulesAccount(t *testing.T) {
+func TestAccountTestService_OpenAIAPIKeyInsufficientBalanceDisablesSelectedKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 
@@ -730,11 +730,11 @@ func TestAccountTestService_OpenAIAPIKeyInsufficientBalanceSchedulesAccount(t *t
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
 	require.Error(t, err)
 	require.Contains(t, recorder.Body.String(), "API returned 403")
-	require.Nil(t, repo.updatedCredentials)
-	require.Equal(t, account.ID, repo.tempUnschedID)
-	require.NotNil(t, repo.tempUnschedAt)
-	require.Contains(t, repo.tempUnschedReason, "insufficient_balance")
-	require.Equal(t, []string{"key-empty", "key-ok"}, account.GetAPIKeys())
+	require.NotNil(t, repo.updatedCredentials)
+	disabled, _ := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.Contains(t, disabled, FingerprintAPIKey("key-empty"))
+	require.Zero(t, repo.tempUnschedID)
+	require.Equal(t, []string{"key-ok"}, account.GetAPIKeys())
 	require.Zero(t, repo.setErrorID)
 	require.Len(t, upstream.requests, 1)
 	require.Equal(t, "Bearer key-empty", upstream.requests[0].Header.Get("Authorization"))
@@ -985,7 +985,7 @@ func TestAccountTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *tes
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
-func TestAccountTestService_OpenAIChatCompletionsPathSchedulesAccount(t *testing.T) {
+func TestAccountTestService_OpenAIChatCompletionsPathDisablesSelectedKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 
@@ -1013,14 +1013,14 @@ func TestAccountTestService_OpenAIChatCompletionsPathSchedulesAccount(t *testing
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
 	require.Error(t, err)
 	require.Zero(t, repo.setErrorID)
-	require.Nil(t, repo.updatedCredentials)
-	require.Equal(t, account.ID, repo.tempUnschedID)
-	require.NotNil(t, repo.tempUnschedAt)
-	require.Contains(t, repo.tempUnschedReason, "invalid_api_key")
-	require.Equal(t, []string{"key-chat-bad", "key-chat-ok"}, account.GetAPIKeys())
+	require.NotNil(t, repo.updatedCredentials)
+	disabled, _ := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.Contains(t, disabled, FingerprintAPIKey("key-chat-bad"))
+	require.Zero(t, repo.tempUnschedID)
+	require.Equal(t, []string{"key-chat-ok"}, account.GetAPIKeys())
 }
 
-func TestAccountTestService_OpenAICompactPathSchedulesAccount(t *testing.T) {
+func TestAccountTestService_OpenAICompactPathDisablesSelectedKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 
@@ -1048,14 +1048,14 @@ func TestAccountTestService_OpenAICompactPathSchedulesAccount(t *testing.T) {
 	require.Error(t, err)
 	require.Zero(t, repo.rateLimitedID)
 	require.Zero(t, repo.setErrorID)
-	require.Nil(t, repo.updatedCredentials)
-	require.Equal(t, account.ID, repo.tempUnschedID)
-	require.NotNil(t, repo.tempUnschedAt)
-	require.Contains(t, repo.tempUnschedReason, "rate_limited")
-	require.Equal(t, []string{"key-compact-bad", "key-compact-ok"}, account.GetAPIKeys())
+	require.NotNil(t, repo.updatedCredentials)
+	disabled, _ := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.Contains(t, disabled, FingerprintAPIKey("key-compact-bad"))
+	require.Zero(t, repo.tempUnschedID)
+	require.Equal(t, []string{"key-compact-ok"}, account.GetAPIKeys())
 }
 
-func TestAccountTestService_OpenAIImagePathSchedulesAccount(t *testing.T) {
+func TestAccountTestService_OpenAIImagePathDisablesSelectedKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 
@@ -1082,9 +1082,9 @@ func TestAccountTestService_OpenAIImagePathSchedulesAccount(t *testing.T) {
 	err := svc.testOpenAIImageAPIKey(ctx, context.Background(), account, "gpt-image-1", "test image")
 	require.Error(t, err)
 	require.Zero(t, repo.setErrorID)
-	require.Nil(t, repo.updatedCredentials)
-	require.Equal(t, account.ID, repo.tempUnschedID)
-	require.NotNil(t, repo.tempUnschedAt)
-	require.Contains(t, repo.tempUnschedReason, "insufficient_balance")
-	require.Equal(t, []string{"key-image-bad", "key-image-ok"}, account.GetAPIKeys())
+	require.NotNil(t, repo.updatedCredentials)
+	disabled, _ := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.Contains(t, disabled, FingerprintAPIKey("key-image-bad"))
+	require.Zero(t, repo.tempUnschedID)
+	require.Equal(t, []string{"key-image-ok"}, account.GetAPIKeys())
 }

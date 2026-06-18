@@ -115,7 +115,7 @@ func TestRateLimitService_HandleUpstreamError_OpenAIImageGenerationPermissionSki
 	require.Equal(t, []int64{1}, counter.counts)
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceSchedulesAccount(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceDisablesSelectedKey(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	counter := &openAI403CounterCacheStub{counts: []int64{1}}
 	blocker := &runtimeBlockRecorder{}
@@ -150,11 +150,13 @@ func TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceSchedu
 
 	require.True(t, shouldDisable)
 	require.Equal(t, 0, repo.setErrorCalls)
-	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, 0, repo.tempCalls)
 	require.Equal(t, 0, repo.rateLimitedCalls)
-	require.Equal(t, 0, repo.updateCredentialsCalls)
-	require.Nil(t, repo.lastCredentials)
-	require.Equal(t, []string{"key-a", "key-b"}, account.GetAPIKeys())
-	require.Len(t, blocker.accounts, 1)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.NotNil(t, repo.lastCredentials)
+	disabled, _ := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.Contains(t, disabled, FingerprintAPIKey("key-a"))
+	require.Equal(t, []string{"key-b"}, account.GetAPIKeys())
+	require.Empty(t, blocker.accounts)
 	require.Equal(t, []int64{1}, counter.counts)
 }
