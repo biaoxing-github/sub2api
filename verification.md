@@ -3414,6 +3414,19 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN: `git diff --check -- backend/internal/service/account_test_service.go backend/internal/service/account_test_service_openai_test.go backend/internal/service/account_probe.go backend/internal/service/account_probe_test.go` passed.
 - Remaining state: not committed, not built, not deployed; online `sub2api-blue` still runs `sub2api:v0.1.136.1` until a release is performed.
 
+## 2026-06-18 19:19:25 +08:00 Devil - multi-key API key status display and selected-key cooldown
+
+- Scope: OpenAI API Key accounts with multiple saved keys now expose each saved key's current status in account DTO/UI, and schedulable upstream errors first cool down the selected failing key before falling back to account-level scheduling cooldown.
+- Backend behavior: `RateLimitService.tryAPIKeyAccountSchedulingCooldown` calls selected-key cooldown for multi-key accounts using `LastSelectedAPIKey`; single-key or un-attributable errors keep the existing account-level cooldown path. Admin account tests now use the same cooldown helper.
+- DTO/UI behavior: `api_key_items` now includes `status`, `disabled_until`, and `disabled_count`; expired key cooldowns render as active again; the account key field displays active/cooling status, reason, recovery time, cooldown count, restore and delete actions.
+- GREEN: `go test -tags unit ./internal/service -run "TestRateLimitService_HandleUpstreamError_OpenAIAPIKey(402UsesSchedulingCooldown|InsufficientBalance403UsesSchedulingCooldown|BadRequestQuotaUsesSchedulingCooldown|ForbiddenInvalidKeyUsesSchedulingCooldown)|TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceDisablesSelectedKey|TestHandleUpstreamError429_OpenAIAPIKey(DisablesSelectedKey|SchedulingCooldownUsesSteppedErrorCount|WithTempRulesDisablesSelectedKey)|TestRateLimitService_HandleUpstreamError_(OpenAIAPIKey429UsesAccountScheduling|NonOAuth401)|TestAccountTestService_OpenAI(APIKeyInsufficientBalanceDisablesSelectedKey|ChatCompletionsPathDisablesSelectedKey|CompactPathDisablesSelectedKey|ImagePathDisablesSelectedKey)" -count=1`: PASS.
+- GREEN: `go test -tags unit ./internal/handler/dto -run TestAccountFromServiceShallow -count=1`: PASS.
+- GREEN: `go test ./cmd/server -run TestNoSuchTest -count=1`: PASS.
+- GREEN: `corepack pnpm vitest run src/components/account/__tests__/AccountAPIKeyCredentialsFields.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts`: PASS, 2 files / 25 tests.
+- GREEN: `corepack pnpm typecheck`: PASS.
+- Warning observed: Vitest reports stale Browserslist `caniuse-lite` data; no test failure.
+- Remaining state: not committed, not built, not deployed; worktree still contains unrelated pre-existing UI/static/generated changes outside this feature.
+
 ## 2026-06-18 17:00:44 +08:00 Devil - release v0.1.136.5
 - Commit: `ec1ad1cfa83a fix(openai): 修正 Codex 模拟裸域名响应路径`。
 - Build: `sub2api:v0.1.136.5` from committed HEAD `ec1ad1cfa83a`; binary reports `Sub2API 0.1.136 (image: v0.1.136.5, commit: ec1ad1cfa83a, built: 2026-06-18T08:43:06Z)`。
@@ -3422,3 +3435,13 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - Post-cutover 8080/18081: `/health` 200, home 200, unauth `/api/v1/admin/system/version` 401, unauth `/responses` 401, unauth `/v1/responses` 401。
 - Real admin route verification: authenticated `POST /api/v1/admin/accounts/453/test` returned HTTP 200 SSE with `test_start -> error -> status`; business error is `model_not_found` for `gpt-5.5`, and the old protocol error `Stream ended before response.completed` no longer appears。
 - Log window after real verification: `sub2api-blue` 65-second critical scan had hit count 0; logs do not contain `Stream ended before response.completed` or `non-SSE HTML response`。
+
+## 2026-06-18 21:49:36 +08:00 Devil - SettingsView Gateway tab extraction
+- Scope: continued `.cursor/plans/性能调度重构与页面简约化_53324140.plan.md` Phase 2a and extracted the remaining Gateway settings blocks into `frontend/src/views/admin/settings/GatewaySettingsTab.vue`.
+- Behavior: `SettingsView.vue` now renders one Gateway tab component and keeps loading, saving, OpenAI route-policy preset operations, Web Search emulation actions, and payload orchestration in the parent.
+- GREEN: `corepack pnpm typecheck`: passed.
+- GREEN: `corepack pnpm vitest run src/views/admin/__tests__/SettingsView.spec.ts src/views/admin/__tests__/SettingsTabNavigation.spec.ts src/views/admin/__tests__/SettingsSaveBar.spec.ts src/views/admin/__tests__/SettingsSectionSaveButton.spec.ts src/views/admin/settings/__tests__/GeneralSettingsTab.spec.ts src/views/admin/settings/__tests__/AgreementSettingsTab.spec.ts src/views/admin/settings/__tests__/FeaturesSettingsTab.spec.ts src/views/admin/settings/__tests__/SecuritySettingsTab.spec.ts src/views/admin/settings/__tests__/UsersSettingsTab.spec.ts src/views/admin/settings/__tests__/PaymentSettingsTab.spec.ts src/views/admin/settings/__tests__/EmailSettingsTab.spec.ts src/views/admin/settings/__tests__/GatewaySettingsTab.spec.ts`: 12 files and 30 tests passed.
+- GREEN: `corepack pnpm vitest run src/views/admin/__tests__/SettingsView.spec.ts src/views/admin/settings/__tests__/GatewaySettingsTab.spec.ts`: 2 files and 16 tests passed.
+- GREEN: `corepack pnpm build`: passed; existing warnings were stale Browserslist data, mixed dynamic/static imports, and chunks larger than 500 KB.
+- GREEN: `git diff --check -- frontend/src/views/admin/SettingsView.vue frontend/src/views/admin/settings/GatewaySettingsTab.vue frontend/src/views/admin/settings/__tests__/GatewaySettingsTab.spec.ts`: exit 0; existing CRLF warning remained for `frontend/src/views/admin/SettingsView.vue`.
+- Remaining state: not committed, not deployed; worktree still contains unrelated pre-existing backend/frontend/static changes outside this Settings tab extraction slice.

@@ -18,6 +18,7 @@
 - 固定顺序：先提交，再给镜像生成递增版本，再构建/推送不可变版本镜像，再启动候选容器验证，最后切流量；部署必须使用已提交的 HEAD，不用未提交工作树构建线上镜像。
 - 提交前执行 `git status --short --branch`、`git diff --cached --check`，只暂存同一功能范围的文件；提交 subject 使用中文，并按功能拆分多个 commit。
 - 每次发版必须在 `docs/releases/` 下新增或更新对应版本日志（目录不存在则创建），文件名使用不可变版本号，例如 `docs/releases/v0.1.134.8.md`；版本日志必须包含日期、执行者 `Devil`、Git 提交、镜像标签、active/idle 颜色、更新内容、验证结果、回滚目标和遗留风险。`docs/feature_list.jsonl`、`docs/process_list.jsonl` 只作为过程流水，不能替代版本日志；切流完成后必须回填最终 active 颜色、线上镜像和验证结论。
+- 每次发版的 `docs/releases/` 版本日志必须写“详细更新日志”：至少按条目列出相较上个版本新增/修改了什么、涉及的文件或模块、对用户可见行为的影响、验证命令和结果、回滚目标和遗留风险；只写一句摘要不算完成。`docs/feature_list.jsonl`、`docs/process_list.jsonl` 仍只作为过程流水，不能替代版本日志；切流完成后必须回填最终 active 颜色、线上镜像和验证结论。
 - 每次发布或修改版本接口时，必须把不可变镜像小版本写到管理端可见位置；`/admin/system/version`、前端 store 至少要透出 `image_version`。`VersionBadge` 侧边栏按钮内只展示主版本号（`currentVersion`），镜像小版本（`imageVersion`）只在下拉框内展示，不能只写入日志或文档。
 - 禁止把生产或当前 Codex 网关连接到可变标签 `sub2api:multi-key-local`。该标签只能作为“最新本地构建源”打不可变候选版本，不能直接作为发布镜像、compose 运行镜像或网关主链路镜像。
 - 每次构建或候选验证必须使用 Git 版本线提供的不可变版本标签，当前版本线从 `sub2api:v0.1.134`（对应 Git tag `v0.1.134`）向后补丁延伸为 `sub2api:v0.1.134.N`，例如本轮使用 `sub2api:v0.1.134.1`。禁止另起 `sub2api:vYYYYMMDD.N-<12位commit>` 这类日期/自主序号；同一个版本标签一旦用于候选验证或推送，禁止覆盖重建。
