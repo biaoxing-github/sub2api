@@ -1193,11 +1193,11 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		}
 	}
 	if s.shouldSimulateOpenAICodexCLI(account) {
-		headers.Set("user-agent", codexCLIUserAgent)
+		headers.Set("user-agent", codexCLIUserAgent())
 		headers.Set("originator", codexCLIOriginator)
 		headers.Del("version")
 	} else if account != nil && account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(headers.Get("user-agent")) {
-		headers.Set("user-agent", codexCLIUserAgent)
+		headers.Set("user-agent", codexCLIUserAgent())
 	}
 
 	return headers, sessionResolution

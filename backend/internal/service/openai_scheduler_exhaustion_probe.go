@@ -220,8 +220,8 @@ func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Co
 		req.Host = "chatgpt.com"
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
 		req.Header.Set("originator", "codex_cli_rs")
-		req.Header.Set("user-agent", codexCLIUserAgent)
-		req.Header.Set("version", codexCLIVersion)
+		req.Header.Set("user-agent", codexCLIUserAgent())
+		req.Header.Set("version", codexCLIVersion())
 		sessionID := fmt.Sprintf("sub2api-scheduler-probe-%d", account.ID)
 		req.Header.Set("session_id", sessionID)
 		req.Header.Set("conversation_id", sessionID)

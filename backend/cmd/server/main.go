@@ -18,7 +18,9 @@ import (
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
 	"github.com/Wei-Shaw/sub2api/internal/web"
@@ -100,6 +102,11 @@ func main() {
 }
 
 func runSetupServer() {
+	syncCtx, cancelSync := context.WithCancel(context.Background())
+	defer cancelSync()
+	stopVersionSync := startVersionSync(syncCtx)
+	defer stopVersionSync()
+
 	r := gin.New()
 	r.Use(middleware.Recovery())
 	r.Use(middleware.CORS(config.CORSConfig{}))
@@ -148,6 +155,11 @@ func runMainServer() {
 		log.Println("⚠️  WARNING: Running in SIMPLE mode - billing and quota checks are DISABLED")
 	}
 
+	syncCtx, cancelSync := context.WithCancel(context.Background())
+	defer cancelSync()
+	stopVersionSync := startVersionSync(syncCtx)
+	defer stopVersionSync()
+
 	buildInfo := handler.BuildInfo{
 		Version:      Version,
 		ImageVersion: ImageVersion,
@@ -184,4 +196,16 @@ func runMainServer() {
 	}
 
 	log.Println("Server exited")
+}
+
+func startVersionSync(ctx context.Context) func() {
+	codexFetcher := openai.GetGlobalCodexCLIVersionFetcher()
+	_, _ = codexFetcher.FetchLatestVersion(ctx)
+
+	claudeStop := claude.GetGlobalFetcher().StartBackgroundSync(ctx)
+	codexStop := codexFetcher.StartBackgroundSync(ctx)
+	return func() {
+		codexStop()
+		claudeStop()
+	}
 }

@@ -61,12 +61,12 @@ func TestOpenAIGatewayService_GetCodexClientRestrictionDetector(t *testing.T) {
 }
 
 func TestOpenAICodexCLISimulationUsesLatestClientVersion(t *testing.T) {
-	require.Equal(t, "0.138.0", codexCLIVersion)
-	require.Contains(t, codexCLIUserAgent, "Codex Desktop/0.138.0 ")
-	require.Contains(t, codexCLIUserAgent, "(codex_exec; 0.138.0)")
-	require.NotContains(t, codexCLIUserAgent, "0.125.0")
-	require.Contains(t, DefaultOpenAICodexUserAgent, "0.138.0")
-	require.NotContains(t, DefaultOpenAICodexUserAgent, "0.125.0")
+	require.Equal(t, "0.138.0", codexCLIVersion())
+	require.Contains(t, codexCLIUserAgent(), "Codex Desktop/0.138.0 ")
+	require.Contains(t, codexCLIUserAgent(), "(codex_exec; 0.138.0)")
+	require.NotContains(t, codexCLIUserAgent(), "0.125.0")
+	require.Contains(t, defaultOpenAICodexUserAgent(), "0.138.0")
+	require.NotContains(t, defaultOpenAICodexUserAgent(), "0.125.0")
 	require.Equal(t, "codex_cli_rs", codexCLIOriginator)
 	require.Equal(t, "compact-history", codexCLIBetaFeatures)
 }
@@ -82,7 +82,7 @@ func TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape(t *testin
 
 	applyOpenAICodexLatestClientHeaders(req, body)
 
-	require.Equal(t, codexCLIUserAgent, req.Header.Get("User-Agent"))
+	require.Equal(t, codexCLIUserAgent(), req.Header.Get("User-Agent"))
 	require.Equal(t, codexCLIOriginator, req.Header.Get("originator"))
 	require.Empty(t, req.Header.Get("OpenAI-Beta"))
 	require.Empty(t, req.Header.Get("version"))

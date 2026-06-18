@@ -186,7 +186,7 @@ func applyOpenAITestDefaultClientHeaders(c *gin.Context) func() {
 	uaWasEmpty := strings.TrimSpace(c.Request.Header.Get("User-Agent")) == ""
 	originatorWasEmpty := strings.TrimSpace(c.Request.Header.Get("originator")) == ""
 	if uaWasEmpty {
-		c.Request.Header.Set("User-Agent", codexCLIUserAgent)
+		c.Request.Header.Set("User-Agent", codexCLIUserAgent())
 	}
 	if originatorWasEmpty {
 		c.Request.Header.Set("originator", codexCLIOriginator)
@@ -216,7 +216,7 @@ func (s *AccountTestService) openAIPathHealth() *OpenAIPathHealthTracker {
 }
 
 // generateSessionString generates a Claude Code style session string.
-// The output format is determined by the UA version in claude.DefaultHeaders,
+// The output format is determined by the current Claude Code CLI version,
 // ensuring consistency between the user_id format and the UA sent to upstream.
 func generateSessionString() (string, error) {
 	b := make([]byte, 32)
@@ -225,8 +225,7 @@ func generateSessionString() (string, error) {
 	}
 	hex64 := hex.EncodeToString(b)
 	sessionUUID := uuid.New().String()
-	uaVersion := ExtractCLIVersion(claude.DefaultHeaders["User-Agent"])
-	return FormatMetadataUserID(hex64, "", sessionUUID, uaVersion), nil
+	return FormatMetadataUserID(hex64, "", sessionUUID, claude.GetCurrentCLIVersion()), nil
 }
 
 // createTestPayload creates a Claude Code style test request payload
@@ -429,7 +428,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	// Apply Claude Code client headers
-	for key, value := range claude.DefaultHeaders {
+	for key, value := range claude.DefaultHeadersForCurrentVersion() {
 		req.Header.Set(key, value)
 	}
 

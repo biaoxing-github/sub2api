@@ -43,10 +43,8 @@ const (
 	// OpenAI Platform API for API Key accounts (fallback)
 	openaiPlatformAPIURL   = "https://api.openai.com/v1/responses"
 	openaiStickySessionTTL = time.Hour // 粘性会话TTL
-	// 与 @openai/codex@0.138.0 在 Windows 上的真实 exec 请求对齐。
-	codexCLIUserAgent    = "Codex Desktop/0.138.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.138.0)"
-	codexCLIOriginator   = "codex_cli_rs"
-	codexCLIBetaFeatures = "compact-history"
+	codexCLIOriginator     = "codex_cli_rs"
+	codexCLIBetaFeatures   = "compact-history"
 	// codex_cli_only 拒绝时单个请求头日志长度上限（字符）
 	codexCLIOnlyHeaderValueMaxBytes = 256
 
@@ -62,7 +60,6 @@ const (
 	openAIWSRetryBackoffMaxDefault     = 30 * time.Second
 	openAIWSRetryJitterRatioDefault    = 0.0
 	openAICompactSessionSeedKey        = "openai_compact_session_seed"
-	codexCLIVersion                    = "0.138.0"
 	// Codex 限额快照仅用于后台展示/诊断，不需要每个成功请求都立即落库。
 	openAICodexSnapshotPersistMinInterval = 30 * time.Second
 	// 配额自动暂停时，超过该时长仍未刷新的 used% 快照视为陈旧，不再据此暂停账号。
@@ -70,6 +67,14 @@ const (
 	// 陈旧时放行一次请求，从而通过正常响应头自愈，而无需等待整个窗口（5h/7d）重置。
 	openAICodexAutoPauseStaleAfter = 2 * time.Hour
 )
+
+func codexCLIUserAgent() string {
+	return openai.GetCurrentCodexCLIUserAgent()
+}
+
+func codexCLIVersion() string {
+	return openai.GetCurrentCodexCLIVersion()
+}
 
 // OpenAI allowed headers whitelist (for non-passthrough).
 var openaiAllowedHeaders = map[string]bool{
@@ -1832,7 +1837,7 @@ func applyOpenAICodexLatestClientHeaders(req *http.Request, body []byte) {
 	if req == nil {
 		return
 	}
-	req.Header.Set("user-agent", codexCLIUserAgent)
+	req.Header.Set("user-agent", codexCLIUserAgent())
 	req.Header.Set("originator", codexCLIOriginator)
 	req.Header.Del("OpenAI-Beta")
 	req.Header.Del("version")
@@ -4160,7 +4165,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 		if isOpenAIResponsesCompactPath(c) {
 			req.Header.Set("accept", "application/json")
 			if req.Header.Get("version") == "" {
-				req.Header.Set("version", codexCLIVersion)
+				req.Header.Set("version", codexCLIVersion())
 			}
 			if clientSessionID == "" {
 				clientSessionID = resolveOpenAICompactSessionID(c)
@@ -4198,7 +4203,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 		s.applyOpenAICodexCLISimulationHeaders(req, account, body)
 	} else if account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
 		// OAuth 安全透传：对非 Codex UA 统一兜底，降低被上游风控拦截概率。
-		req.Header.Set("user-agent", codexCLIUserAgent)
+		req.Header.Set("user-agent", codexCLIUserAgent())
 	}
 
 	// 浏览器型 UA 兜底：仅 OAuth（ChatGPT 内部接口）账号生效，若最终 user-agent 仍为浏览器
@@ -5535,7 +5540,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 		if isOpenAIResponsesCompactPath(c) {
 			req.Header.Set("accept", "application/json")
 			if req.Header.Get("version") == "" {
-				req.Header.Set("version", codexCLIVersion)
+				req.Header.Set("version", codexCLIVersion())
 			}
 			compactSession := resolveOpenAICompactSessionID(c)
 			req.Header.Set("session_id", isolateOpenAISessionID(apiKeyID, compactSession))
@@ -5586,7 +5591,7 @@ func (s *OpenAIGatewayService) overrideBrowserUserAgent(ctx context.Context, acc
 	if !openai.IsBrowserUserAgent(currentUA) {
 		return
 	}
-	codexUA := DefaultOpenAICodexUserAgent
+	codexUA := defaultOpenAICodexUserAgent()
 	if s != nil && s.settingService != nil {
 		if v := strings.TrimSpace(s.settingService.GetOpenAICodexUserAgent(ctx)); v != "" {
 			codexUA = v

@@ -22,9 +22,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const (
-	codexDesktopUserAgent = codexCLIUserAgent
-)
+var codexDesktopUserAgent = codexCLIUserAgent()
 
 // 编译期接口断言
 var _ AccountRepository = (*stubOpenAIAccountRepo)(nil)
@@ -3286,7 +3284,7 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthroughPreservesCompactPath(t *test
 	require.NoError(t, err)
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
-	require.Equal(t, codexCLIVersion, req.Header.Get("Version"))
+	require.Equal(t, codexCLIVersion(), req.Header.Get("Version"))
 	require.NotEmpty(t, req.Header.Get("Session_Id"))
 }
 
@@ -3307,7 +3305,7 @@ func TestOpenAIBuildUpstreamRequestCompactForcesJSONAcceptForOAuth(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
-	require.Equal(t, codexCLIVersion, req.Header.Get("Version"))
+	require.Equal(t, codexCLIVersion(), req.Header.Get("Version"))
 	require.NotEmpty(t, req.Header.Get("Session_Id"))
 }
 
@@ -3483,7 +3481,7 @@ func TestOpenAIPassthroughLegacyCockpitToolsCompatIsIgnored(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
-	require.Equal(t, codexCLIUserAgent, req.Header.Get("User-Agent"))
+	require.Equal(t, codexCLIUserAgent(), req.Header.Get("User-Agent"))
 	require.Equal(t, "codex_cli_rs", req.Header.Get("Originator"))
 	require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
 	require.NotEmpty(t, req.Header.Get("Session_id"))
