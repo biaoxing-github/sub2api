@@ -3404,3 +3404,21 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - Post-cutover 8080/18081: `/health` 200, home 200, unauth `/api/v1/admin/system/version` 401, unauth `/responses` 401.
 - Browser smoke: Playwright opened `http://127.0.0.1:8080/`, redirected to `/home`, title `Home - Sub2API`, page snapshot nonempty.
 - Current state: active blue `sub2api:v0.1.136.1`; rollback green `sub2api:v0.1.134.48`.
+
+## 2026-06-18 08:27:39 +08:00 Devil - Jungongyi GPT Codex CLI simulation terminal compatibility
+- Scope: fixed account test and account probe OpenAI Responses stream parsing for upstreams that emit text deltas and then close with EOF or `data: [DONE]` without `response.completed`.
+- Evidence: production `sub2api-blue` log contains `Account test error: Stream ended before response.completed` from `service/account_test_service.go:1653` at `2026-06-18T08:21:27+08:00`.
+- RED: account test and account probe parser tests failed on output-present EOF/[DONE] cases before implementation; empty stream stayed failing.
+- GREEN: service focused command passed: `go test -tags unit ./internal/service -run "TestAccountTestService_OpenAIResponses(StreamEOFAfterOutputCompletes|StreamDoneAfterOutputCompletes|EmptyStreamStillFails|StreamEmitsFirstTokenMs|StreamBareJSONErrorReturnsUpstreamMessage)$|TestReadAccountProbeOpenAIResponses(StreamEOFAfterOutputCompletes|StreamDoneAfterOutputCompletes|EmptyStreamStillFails)$|TestAccountProbeService_RunOpenAIAPIKeyStreamModeRecordsFirstToken$|TestOpenAIStreaming(TerminalEventWithoutUsageAddsClientTerminalFields|TerminalEventWithDoneDoesNotDuplicateDoneMarker|MissingTerminalEventAfterOutputSynthesizesTerminal|MissingTerminalEventRecordsPathHealthFailure)" -count=1 -v`.
+- GREEN: `go test ./cmd/server -run TestNoSuchTest -count=1` passed.
+- GREEN: `git diff --check -- backend/internal/service/account_test_service.go backend/internal/service/account_test_service_openai_test.go backend/internal/service/account_probe.go backend/internal/service/account_probe_test.go` passed.
+- Remaining state: not committed, not built, not deployed; online `sub2api-blue` still runs `sub2api:v0.1.136.1` until a release is performed.
+
+## 2026-06-18 17:00:44 +08:00 Devil - release v0.1.136.5
+- Commit: `ec1ad1cfa83a fix(openai): 修正 Codex 模拟裸域名响应路径`。
+- Build: `sub2api:v0.1.136.5` from committed HEAD `ec1ad1cfa83a`; binary reports `Sub2API 0.1.136 (image: v0.1.136.5, commit: ec1ad1cfa83a, built: 2026-06-18T08:43:06Z)`。
+- Candidate blue 18083: `/health` 200, home 200, unauth `/api/v1/admin/accounts` 401, unauth `/responses` 401, unauth `/v1/responses` 401, `Health=healthy`, `RestartCount=0` after 65 seconds。
+- Cutover: nginx upstream switched from `sub2api-green:8080` to `sub2api-blue:8080`; `nginx -t` and reload both succeeded。
+- Post-cutover 8080/18081: `/health` 200, home 200, unauth `/api/v1/admin/system/version` 401, unauth `/responses` 401, unauth `/v1/responses` 401。
+- Real admin route verification: authenticated `POST /api/v1/admin/accounts/453/test` returned HTTP 200 SSE with `test_start -> error -> status`; business error is `model_not_found` for `gpt-5.5`, and the old protocol error `Stream ended before response.completed` no longer appears。
+- Log window after real verification: `sub2api-blue` 65-second critical scan had hit count 0; logs do not contain `Stream ended before response.completed` or `non-SSE HTML response`。
