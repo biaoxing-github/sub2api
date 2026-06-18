@@ -1327,7 +1327,7 @@ func TestOpenAIStreamingReadErrorBeforeOutputReturnsFailover(t *testing.T) {
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
-func TestOpenAIStreamingReadErrorAfterOutputRecordsPathHealthFailure(t *testing.T) {
+func TestOpenAIStreamingUnexpectedEOFAfterOutputCompletesAndRecordsPathHealthFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
@@ -1366,11 +1366,17 @@ func TestOpenAIStreamingReadErrorAfterOutputRecordsPathHealthFailure(t *testing.
 		_ = pw.CloseWithError(io.ErrUnexpectedEOF)
 	}()
 
-	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
 	_ = pr.Close()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "stream read error")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.missingTerminalEvent)
 	require.True(t, c.Writer.Written())
+	body := rec.Body.String()
+	require.Contains(t, body, "response.output_text.delta")
+	require.Contains(t, body, "event: response.completed")
+	require.Contains(t, body, "data: [DONE]")
+	require.NotContains(t, body, `"type":"error"`)
 
 	accountSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE)))
 	require.Equal(t, int64(1), accountSnapshot.FailureCount)

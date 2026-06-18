@@ -1632,8 +1632,13 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body io.Reader, startedAt time.Time, detectors ...*openAIResponseTextErrorDetector) error {
 	reader := bufio.NewReader(body)
 	seenCompleted := false
+	seenOutput := false
 	var firstTokenMs *int
 	detector := firstOpenAIResponseTextErrorDetector(detectors)
+	completeAfterObservedOutput := func() error {
+		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+		return nil
+	}
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -1648,6 +1653,9 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 				if seenCompleted {
 					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 					return nil
+				}
+				if seenOutput {
+					return completeAfterObservedOutput()
 				}
 				return s.sendErrorAndEnd(c, "Stream ended before response.completed")
 			}
@@ -1671,6 +1679,9 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 				return nil
 			}
+			if seenOutput {
+				return completeAfterObservedOutput()
+			}
 			return s.sendErrorAndEnd(c, "Stream ended before response.completed")
 		}
 		if keyword, ok := detector.ObserveSSEPayload([]byte(jsonStr)); ok {
@@ -1688,6 +1699,7 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 		case "response.output_text.delta":
 			// OpenAI Responses API uses "delta" field for text content
 			if delta, ok := data["delta"].(string); ok && delta != "" {
+				seenOutput = true
 				s.sendEvent(c, TestEvent{Type: "content", Text: delta, FirstTokenMs: recordTestFirstTokenMs(&firstTokenMs, startedAt)})
 			}
 		case "response.completed", "response.done":

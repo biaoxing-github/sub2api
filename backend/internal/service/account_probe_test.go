@@ -1260,6 +1260,45 @@ func TestAccountProbeService_RunOpenAIAPIKeyStreamModeRecordsFirstToken(t *testi
 	require.Contains(t, client.bodies[0], `"stream":true`)
 }
 
+func TestReadAccountProbeOpenAIResponsesStreamEOFAfterOutputCompletes(t *testing.T) {
+	t.Parallel()
+
+	stream := strings.NewReader(`data: {"type":"response.output_text.delta","delta":"君公益OK"}
+
+`)
+
+	result := readAccountProbeOpenAIStream(stream, true, time.Now())
+
+	require.Empty(t, result.err)
+	require.Equal(t, "君公益OK", result.outputText)
+	require.NotNil(t, result.firstTokenMillis)
+}
+
+func TestReadAccountProbeOpenAIResponsesStreamDoneAfterOutputCompletes(t *testing.T) {
+	t.Parallel()
+
+	stream := strings.NewReader(`data: {"type":"response.output_text.delta","delta":"君公益DONE"}
+
+data: [DONE]
+
+`)
+
+	result := readAccountProbeOpenAIStream(stream, true, time.Now())
+
+	require.Empty(t, result.err)
+	require.Equal(t, "君公益DONE", result.outputText)
+	require.NotNil(t, result.firstTokenMillis)
+}
+
+func TestReadAccountProbeOpenAIResponsesEmptyStreamStillFails(t *testing.T) {
+	t.Parallel()
+
+	result := readAccountProbeOpenAIStream(strings.NewReader(""), true, time.Now())
+
+	require.Equal(t, "stream ended before response.completed", result.err)
+	require.Empty(t, result.outputText)
+}
+
 func TestAccountProbeService_RunFeedsOpenAIPathHealth(t *testing.T) {
 	t.Parallel()
 

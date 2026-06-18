@@ -6302,6 +6302,12 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		if clientDisconnected {
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete after disconnect: %w", scanErr), true
 		}
+		if upstreamOutputStarted && (errors.Is(scanErr, io.ErrUnexpectedEOF) || strings.Contains(strings.ToLower(scanErr.Error()), "unexpected eof")) {
+			if result, finalizeErr := finalizeStream(); finalizeErr != nil {
+				return result, finalizeErr, true
+			}
+			return resultWithUsage(), nil, true
+		}
 		s.recordOpenAIPathHealthStreamReadError(account, "", scanErr)
 		sendErrorEvent("stream_read_error")
 		return resultWithUsage(), fmt.Errorf("stream read error: %w", scanErr), true

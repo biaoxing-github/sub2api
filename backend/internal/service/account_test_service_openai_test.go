@@ -159,7 +159,7 @@ func TestAccountTestService_OpenAISuccessPersistsSnapshotFromHeaders(t *testing.
 	require.Contains(t, recorder.Body.String(), "test_complete")
 }
 
-func TestAccountTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
+func TestAccountTestService_OpenAIResponsesStreamEOFAfterOutputCompletes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 
@@ -179,8 +179,37 @@ func TestAccountTestService_OpenAIStreamEOFBeforeCompletedFails(t *testing.T) {
 	}
 
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+	require.NoError(t, err)
+	require.Contains(t, recorder.Body.String(), `"text":"hi"`)
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+	require.NotContains(t, recorder.Body.String(), "Stream ended before response.completed")
+}
+
+func TestAccountTestService_OpenAIResponsesStreamDoneAfterOutputCompletes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+
+	stream := strings.NewReader(`data: {"type":"response.output_text.delta","delta":"hi"}
+
+data: [DONE]
+
+`)
+	err := svc.processOpenAIStream(ctx, stream)
+	require.NoError(t, err)
+	require.Contains(t, recorder.Body.String(), `"text":"hi"`)
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+	require.NotContains(t, recorder.Body.String(), "Stream ended before response.completed")
+}
+
+func TestAccountTestService_OpenAIResponsesEmptyStreamStillFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+
+	err := svc.processOpenAIStream(ctx, strings.NewReader(""))
 	require.Error(t, err)
-	require.Contains(t, recorder.Body.String(), "response.completed")
+	require.Contains(t, recorder.Body.String(), "Stream ended before response.completed")
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 

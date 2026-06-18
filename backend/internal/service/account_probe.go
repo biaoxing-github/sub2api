@@ -1578,12 +1578,20 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 	result := accountProbeOpenAIStreamResult{}
 	var output strings.Builder
 	seenCompleted := false
+	seenOutput := false
+	completeAfterObservedOutput := func() accountProbeOpenAIStreamResult {
+		result.outputText = output.String()
+		return result
+	}
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
 				if seenCompleted {
 					return result
+				}
+				if seenOutput {
+					return completeAfterObservedOutput()
 				}
 				if strings.TrimSpace(line) == "" {
 					return accountProbeOpenAIStreamResult{err: "stream ended before response.completed"}
@@ -1599,6 +1607,9 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 				if seenCompleted {
 					return result
 				}
+				if seenOutput {
+					return completeAfterObservedOutput()
+				}
 				return accountProbeOpenAIStreamResult{err: "stream ended before response.completed"}
 			}
 			var event map[string]any
@@ -1608,6 +1619,7 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 				case "response.output_text.delta":
 					if delta, _ := event["delta"].(string); delta != "" {
 						output.WriteString(delta)
+						seenOutput = true
 					}
 					if result.firstTokenMillis == nil {
 						if delta, _ := event["delta"].(string); delta != "" {
@@ -1639,6 +1651,9 @@ func parseAccountProbeResponsesStream(body io.Reader, start time.Time) accountPr
 		if err == io.EOF {
 			if seenCompleted {
 				return result
+			}
+			if seenOutput {
+				return completeAfterObservedOutput()
 			}
 			return accountProbeOpenAIStreamResult{err: "stream ended before response.completed"}
 		}
