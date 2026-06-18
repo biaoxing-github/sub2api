@@ -3445,3 +3445,16 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN: `corepack pnpm build`: passed; existing warnings were stale Browserslist data, mixed dynamic/static imports, and chunks larger than 500 KB.
 - GREEN: `git diff --check -- frontend/src/views/admin/SettingsView.vue frontend/src/views/admin/settings/GatewaySettingsTab.vue frontend/src/views/admin/settings/__tests__/GatewaySettingsTab.spec.ts`: exit 0; existing CRLF warning remained for `frontend/src/views/admin/SettingsView.vue`.
 - Remaining state: not committed, not deployed; worktree still contains unrelated pre-existing backend/frontend/static changes outside this Settings tab extraction slice.
+
+## 2026-06-18 22:34:21 +08:00 Devil - release v0.1.136.6
+- Commit: `7a97fb7baa88 docs: 记录调度重构与页面简化进度`.
+- Build: `sub2api:v0.1.136.6` from committed HEAD `7a97fb7baa88`; image label version/revision are `v0.1.136.6` / `7a97fb7baa88`.
+- Binary: `docker run --rm sub2api:v0.1.136.6 /app/sub2api -version` reported `Sub2API 0.1.136 (image: v0.1.136.6, commit: 7a97fb7baa88, built: 2026-06-18T14:24:37Z)`.
+- Active before release: blue `sub2api:v0.1.136.5`; idle target: green `sub2api:v0.1.136.4`.
+- Candidate green 18082: `/health` 200, home 200, unauth `/api/v1/admin/accounts` 401, unauth `/responses` 401, unauth `/v1/responses` 401, `Health=healthy`, `RestartCount=0`.
+- Candidate logs: startup had one existing cleanup noise `pq: canceling statement due to user request`; following 70-second critical log window had hit count 0.
+- Cutover: `D:\sub2api-deploy\proxy\upstreams\active.conf` switched from `sub2api-blue:8080` to `sub2api-green:8080`; `nginx -t` and reload both succeeded.
+- Post-cutover 8080/18081: `/health` 200, home 200, unauth `/api/v1/admin/system/version` 401, unauth `/responses` 401, unauth `/v1/responses` 401.
+- Browser/page smoke by HTTP: `http://127.0.0.1:8080/` returned 200, contained `<title>`, and body length was 2627.
+- Post-cutover logs: 65-second green critical scan had hit count 0.
+- Current state: active green `sub2api:v0.1.136.6`; rollback blue `sub2api:v0.1.136.5`; no PostgreSQL/Redis restart.
