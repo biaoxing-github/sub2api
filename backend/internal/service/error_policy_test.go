@@ -555,6 +555,38 @@ func TestHandleUpstreamError_UnifiedErrorHandlingRules(t *testing.T) {
 		require.Equal(t, 0, repo.rateCalls)
 		require.Equal(t, 0, repo.setErrCalls)
 	})
+
+	t.Run("openai_5xx_temp_unschedulable_rules_override_state_skip", func(t *testing.T) {
+		repo := &errorPolicyRepoStub{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		account := &Account{
+			ID:       54,
+			Type:     AccountTypeAPIKey,
+			Platform: PlatformOpenAI,
+			Credentials: map[string]any{
+				"temp_unschedulable_enabled": true,
+				"temp_unschedulable_rules": []any{
+					map[string]any{
+						"error_code":       float64(http.StatusBadGateway),
+						"keywords":         []any{"bad gateway"},
+						"duration_minutes": float64(10),
+						"description":      "upstream gateway cooldown",
+					},
+				},
+			},
+		}
+
+		shouldDisable := svc.HandleUpstreamError(context.Background(), account, http.StatusBadGateway, http.Header{}, []byte(`bad gateway from upstream`))
+
+		require.True(t, shouldDisable)
+		require.Equal(t, 1, repo.tempCalls)
+		require.Equal(t, int64(54), repo.lastTempID)
+		require.True(t, repo.lastTempUntil.After(time.Now().Add(9*time.Minute)))
+		require.Contains(t, repo.lastTempReason, `"status_code":502`)
+		require.Contains(t, repo.lastTempReason, `"matched_keyword":"bad gateway"`)
+		require.Equal(t, 0, repo.rateCalls)
+		require.Equal(t, 0, repo.setErrCalls)
+	})
 }
 
 func TestResolveUnifiedRateLimitResetAt(t *testing.T) {

@@ -397,6 +397,10 @@ func shouldSkipOpenAIAccountStateMutation(account *Account, statusCode int, upst
 	if account == nil || account.Platform != PlatformOpenAI || customErrorCodesEnabled {
 		return false
 	}
+	// 账号显式配置了旧式临时不可调度规则时，用户规则优先于 OpenAI 通用 5xx 跳过策略。
+	if account.IsTempUnschedulableEnabled() && len(account.GetTempUnschedulableRules()) > 0 {
+		return false
+	}
 	// 529 过载需要执行过载冷却状态变更（handle529 → SetOverloaded，受 OverloadCooldownSettings 控制），
 	// 不能被下面的通用 5xx 跳过逻辑吞掉，否则 OpenAI 账号收到 529 永远不会进入过载冷却。
 	if statusCode == 529 {

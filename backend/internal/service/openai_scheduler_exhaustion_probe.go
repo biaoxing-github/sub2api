@@ -163,6 +163,9 @@ func isOpenAISchedulerExhaustionProbeCandidate(ctx context.Context, account *Acc
 	if account.OverloadUntil != nil && account.OverloadUntil.After(now) {
 		return false
 	}
+	if account.TempUnschedulableUntil != nil && account.TempUnschedulableUntil.After(now) {
+		return false
+	}
 
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
 		return false

@@ -105,7 +105,7 @@ func TestOpenAISchedulerExhaustionProbeStopsOnSuccessAndClearsRuntimeBlock(t *te
 	require.False(t, blocked)
 }
 
-func TestOpenAISchedulerExhaustionProbeKeepsTempCoolingAccountAsWaitCandidate(t *testing.T) {
+func TestOpenAISchedulerExhaustionProbeSkipsTempCoolingAccount(t *testing.T) {
 	groupID := int64(9)
 	coolingUntil := time.Now().Add(2 * time.Minute)
 	repo := &schedulerExhaustionProbeRepo{
@@ -126,7 +126,6 @@ func TestOpenAISchedulerExhaustionProbeKeepsTempCoolingAccountAsWaitCandidate(t 
 		accountRepo: repo,
 		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
 			attempts++
-			require.Equal(t, int64(26), account.ID)
 			return nil
 		},
 	}
@@ -137,9 +136,9 @@ func TestOpenAISchedulerExhaustionProbeKeepsTempCoolingAccountAsWaitCandidate(t 
 		Infinite:       true,
 	})
 
-	require.NoError(t, err)
-	require.True(t, recovered)
-	require.Equal(t, 1, attempts)
+	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+	require.False(t, recovered)
+	require.Equal(t, 0, attempts)
 }
 
 func TestOpenAISchedulerExhaustionProbeInfiniteIgnoresFiniteAttemptCapUntilSuccess(t *testing.T) {
