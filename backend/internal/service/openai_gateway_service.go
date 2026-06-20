@@ -1854,14 +1854,9 @@ func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Re
 		return
 	}
 	if isRealOpenAICodexClientRequest(c) {
-		// 真实 Codex CLI/Desktop 请求优先保留客户端已经带来的身份和版本指纹。
-		copyOpenAIInboundHeaderIfPresent(req.Header, c, "User-Agent")
-		copyOpenAIInboundHeaderIfPresent(req.Header, c, "Originator")
-		copyOpenAIInboundHeaderIfPresent(req.Header, c, "OpenAI-Beta")
-		copyOpenAIInboundHeaderIfPresent(req.Header, c, "Version")
-		copyOpenAIInboundHeaderIfPresent(req.Header, c, "X-Codex-Beta-Features")
+		// API Key 模拟必须使用已验证的最新 Codex 指纹，避免旧客户端版本被上游拒绝。
+		applyOpenAICodexSyntheticClientHeaders(req, body, account)
 		copyOpenAIInboundHeaderIfPresent(req.Header, c, "X-Codex-Window-Id")
-		ensureOpenAICodexClientMetadataHeaders(req, body, false)
 		return
 	}
 	applyOpenAICodexLatestClientHeaders(req, body, account)

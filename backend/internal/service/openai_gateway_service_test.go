@@ -3472,7 +3472,7 @@ func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesWildcardAccept(
 	require.Equal(t, []string{"text/event-stream"}, req.Header.Values("Accept"))
 }
 
-func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationPreservesRealCodexClientHeaders(t *testing.T) {
+func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesOutdatedRealCodexClientHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -3501,11 +3501,11 @@ func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationPreservesRealCodexClient
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, body, "token", true, "", isCodexCLI)
 	require.NoError(t, err)
 	require.Equal(t, "https://new.sharedchat.cc/codex/responses", req.URL.String())
-	require.Equal(t, "Codex Desktop/0.140.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.140.0)", req.Header.Get("User-Agent"))
-	require.Equal(t, "codex_desktop", req.Header.Get("Originator"))
-	require.Equal(t, "responses=experimental,assistants=v2", req.Header.Get("OpenAI-Beta"))
-	require.Equal(t, "0.140.0", req.Header.Get("Version"))
-	require.Equal(t, "terminal_resize_reflow,memories", req.Header.Get("X-Codex-Beta-Features"))
+	require.Equal(t, codexCLIUserAgent(), req.Header.Get("User-Agent"))
+	require.Equal(t, codexCLIOriginator, req.Header.Get("Originator"))
+	require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
+	require.Equal(t, codexCLIVersion(), req.Header.Get("Version"))
+	require.Equal(t, codexCLIBetaFeatures, req.Header.Get("X-Codex-Beta-Features"))
 	require.Equal(t, "window-123", req.Header.Get("X-Codex-Window-Id"))
 }
 
