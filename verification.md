@@ -3523,3 +3523,20 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN: `go test -tags unit ./internal/service -run 'TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationUsesCodexProviderResponsesPath|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationUsesV1ResponsesForBareHost|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesWildcardAccept|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationPreservesRealCodexClientHeaders|TestOpenAIBuildUpstreamRequestAccountCodexSimulationHeaders|TestAccountProbeService_RunOpenAIAPIKeyCodexSimulationUsesCodexHeaders|TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationHeaders|TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesGatewayCodexSimulationHeaders|TestForwardAsChatCompletions_APIKeyCodexSimulationUsesTLSProfile|TestForwardAsRawChatCompletions_UsesCodexSimulationHeaders|TestForwardResponses_ForceChatCompletionsUsesCodexSimulationHeaders' -count=1`.
 - GREEN: `git diff --check` exited 0 with only CRLF normalization warnings for already dirty files.
 - LIMIT: `go test -tags unit ./internal/service -count=1` timed out after 124 seconds via the tool wrapper and did not emit failure details.
+
+## 2026-06-20 13:51:20 +08:00 Devil - release v0.1.136.9
+- Commit: `a65044b5a370b4f0b0db9e1caefbdd203005630a` (`fix(openai): 修复 Codex 模拟 Accept 覆盖`).
+- Build: `sub2api:v0.1.136.9` from committed HEAD via `git archive --format=tar HEAD | docker build --pull=false ... -`.
+- Image: `sha256:53c16df84bcb450e8aee9e193b813ccf25746db6d965cf0441274e489289e4e0`; labels version/revision are `v0.1.136.9` / `a65044b5a370`.
+- Binary: `docker run --rm sub2api:v0.1.136.9 /app/sub2api -version` reported `Sub2API 0.1.136 (image: v0.1.136.9, commit: a65044b5a370, built: 2026-06-20T05:43:51Z)`.
+- Pre-release state: active green `sub2api:v0.1.136.8`; rollback blue `sub2api:v0.1.136.7`.
+- Candidate deploy: recreated only `sub2api-blue` with `sub2api:v0.1.136.9`; active green, PostgreSQL, Redis, and proxy were not restarted during candidate deployment.
+- GREEN candidate: `sub2api-blue` `Health=healthy`, `RestartCount=0`, image `sub2api:v0.1.136.9`.
+- GREEN candidate smoke: `http://127.0.0.1:18083/health` 200, homepage 200, static JS 200, unauth `/api/v1/admin/accounts` 401, unauth `/responses` 401, unauth `/v1/responses` 401.
+- GREEN candidate logs: 60-second health window stayed healthy and recent 2-minute critical log scan hit count 0.
+- Cutover: changed `D:\sub2api-deploy\proxy\upstreams\active.conf` from `sub2api-green:8080` to `sub2api-blue:8080`; `docker exec sub2api-proxy nginx -t` passed and reload succeeded.
+- Compose sync: `D:\sub2api-deploy\docker-compose.blue.yml` default image updated to `sub2api:v0.1.136.9`.
+- GREEN post-cutover smoke: `8080` and `18081` `/health` 200, homepage 200, static JS 200, unauth `/api/v1/admin/system/version` 401, unauth `/responses` 401, unauth `/v1/responses` 401.
+- GREEN post-cutover logs: 65-second health window stayed healthy; 90-second blue critical log scan hit count 0; proxy error log scan hit count 0.
+- Current state: active blue `sub2api:v0.1.136.9`; rollback green `sub2api:v0.1.136.8` remains healthy.
+- Not run: authenticated admin version/account 470 test, because `D:\sub2api-deploy\.env` has no `ADMIN_PASSWORD`; no JWT/database bypass was used.
