@@ -301,6 +301,72 @@ func TestAccountHandler_ManualProbeRepairsSchedulingPoolState(t *testing.T) {
 	}
 }
 
+func TestAccountHandler_TestRepairsSchedulingPoolState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	until := time.Now().Add(10 * time.Minute)
+	account := service.Account{
+		ID:                      45,
+		Name:                    "openai-test-restore",
+		Platform:                service.PlatformOpenAI,
+		Type:                    service.AccountTypeOAuth,
+		Status:                  service.StatusError,
+		ErrorMessage:            "upstream failed",
+		Schedulable:             false,
+		TempUnschedulableUntil:  &until,
+		TempUnschedulableReason: "upstream_5xx",
+		Credentials: map[string]any{
+			"access_token": "test-token",
+		},
+		Extra: map[string]any{
+			service.AccountProbeHealthExtraKey: map[string]any{
+				"level":         service.AccountProbeHealthTempUnsched,
+				"failure_count": 3,
+				"last_error":    "upstream failed",
+			},
+		},
+	}
+	repo := &manualProbeAccountRepo{account: &account}
+	upstream := &manualProbeHTTPUpstream{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"hi"}`,
+			``,
+			`data: {"type":"response.completed"}`,
+			``,
+		}, "\n"))),
+	}}
+	rateLimitSvc := service.NewRateLimitService(repo, nil, nil, nil, nil)
+	handler := &AccountHandler{
+		accountTestService: service.NewAccountTestService(repo, nil, nil, nil, upstream, nil, nil),
+		rateLimitService:   rateLimitSvc,
+	}
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/:id/test", handler.Test)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/45/test", strings.NewReader(`{"model_id":"gpt-5.4"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, account.Schedulable)
+	assert.Empty(t, strings.TrimSpace(account.ErrorMessage))
+	assert.Nil(t, account.TempUnschedulableUntil)
+	assert.Contains(t, w.Body.String(), `"type":"status"`)
+	assert.Contains(t, w.Body.String(), `"state_before":"temp_unschedulable"`)
+	assert.Contains(t, w.Body.String(), `"state_after":"normal"`)
+	assert.NotContains(t, w.Body.String(), "账号状态保持")
+
+	health, ok := account.Extra[service.AccountProbeHealthExtraKey].(map[string]any)
+	if assert.True(t, ok) {
+		assert.Equal(t, service.AccountProbeHealthNormal, health["level"])
+		assert.Equal(t, 0, health["failure_count"])
+		assert.NotContains(t, health, "last_error")
+	}
+}
+
 func TestManualProbeResultResponseFromService(t *testing.T) {
 	latencyMS := 1472
 	firstTokenMS := 310

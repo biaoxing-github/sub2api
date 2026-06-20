@@ -1259,7 +1259,7 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	if h.rateLimitService != nil && result != nil {
 		transition, err := h.rateLimitService.RecordAccountProbeOutcome(c.Request.Context(), service.AccountProbeOutcome{
 			AccountID:    accountID,
-			Source:       service.AccountProbeOutcomeSourceAccountProbe,
+			Source:       service.AccountProbeOutcomeSourceManualTest,
 			Success:      result.Success,
 			ErrorMessage: result.ErrorMessage,
 			HTTPStatus:   result.HTTPStatus,
