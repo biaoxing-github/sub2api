@@ -1873,6 +1873,14 @@ func applyOpenAICodexLatestClientHeaders(req *http.Request, body []byte) {
 	if req == nil {
 		return
 	}
+	applyOpenAICodexSyntheticClientHeaders(req, body)
+}
+
+// applyOpenAICodexSyntheticClientHeaders 为非真实 Codex 客户端请求写入统一的模拟客户端指纹。
+func applyOpenAICodexSyntheticClientHeaders(req *http.Request, body []byte) {
+	if req == nil {
+		return
+	}
 	req.Header.Set("user-agent", codexCLIUserAgent())
 	req.Header.Set("originator", codexCLIOriginator)
 	req.Header.Del("OpenAI-Beta")
@@ -1885,9 +1893,7 @@ func ensureOpenAICodexClientMetadataHeaders(req *http.Request, body []byte, forc
 	if req == nil {
 		return
 	}
-	if req.Header.Get("accept") == "" {
-		req.Header.Set("accept", "text/event-stream")
-	}
+	req.Header.Set("accept", "text/event-stream")
 	if forceBetaFeatures || req.Header.Get("x-codex-beta-features") == "" {
 		req.Header.Set("x-codex-beta-features", codexCLIBetaFeatures)
 	}

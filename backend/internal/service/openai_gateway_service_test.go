@@ -3447,6 +3447,31 @@ func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationUsesV1ResponsesForBareHo
 	require.Equal(t, "https://relay.example.test/v1/responses", req.URL.String())
 }
 
+func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesWildcardAccept(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader([]byte(`{"model":"gpt-5.5"}`)))
+	c.Request.Header.Set("Accept", "*/*")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}}
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://new.sharedchat.cc/codex",
+		},
+		Extra: map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
+	}
+
+	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5.5"}`), "token", true, "", true)
+	require.NoError(t, err)
+	require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
+	require.Equal(t, []string{"text/event-stream"}, req.Header.Values("Accept"))
+}
+
 func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationPreservesRealCodexClientHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

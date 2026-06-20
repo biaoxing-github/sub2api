@@ -3477,3 +3477,49 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - Post-cutover logs: 65-second blue critical scan hit count 0 and recent blue logs did not contain `codex_access_restricted`.
 - Not run: authenticated `POST /api/v1/admin/accounts/470/test`, because `D:\sub2api-deploy\.env` does not contain `ADMIN_EMAIL` or `ADMIN_PASSWORD`; no admin JWT was available and no database/login bypass was used.
 - Current state: active blue `sub2api:v0.1.136.7`; rollback green `sub2api:v0.1.136.6`; no PostgreSQL/Redis restart.
+
+## 2026-06-19 23:22:45 +08:00 Devil - GwentDraw 本地任务脚本更新
+- Scope: ignored local script `D:\sub2api-src\scripts\gwent_draw.ps1`.
+- Behavior: `draw` now loops until response content contains a cooldown signal, auth fails, or `draw_until_cooldown_max_attempts` is reached.
+- Behavior: every script run builds a per-account summary and sends it to Hermes Feishu home channel when `notify_feishu` is enabled.
+- GREEN: PowerShell parser returned `PARSE_OK`.
+- GREEN: Hermes Feishu config load confirmed platform enabled and home channel present.
+- GREEN: direct Hermes `send_message_tool` Feishu test returned `success=true` and a Feishu `message_id`.
+- Not run: full script execution, because it would perform real `share_unlock` and `draw` operations.
+
+## 2026-06-19 23:30:13 +08:00 Devil - OpenAI 502 cooldown rule and scheduler probe fix
+- Scope: `backend/internal/service/ratelimit_service.go`, `backend/internal/service/openai_scheduler_exhaustion_probe.go`, and focused service tests.
+- RED: `go test -tags unit ./internal/service -run 'TestHandleUpstreamError_UnifiedErrorHandlingRules/openai_5xx_temp_unschedulable_rules_override_state_skip' -count=1` failed because OpenAI 502 was still skipped by `openai_account_state_mutation_skipped`.
+- RED: `go test ./internal/service -run 'TestOpenAISchedulerExhaustionProbeSkipsTempCoolingAccount' -count=1` failed because a temp-cooling account was still selected and recovered.
+- Fix: `shouldSkipOpenAIAccountStateMutation` now lets explicit legacy `temp_unschedulable_rules` handle matching OpenAI 5xx responses; `isOpenAISchedulerExhaustionProbeCandidate` now excludes accounts whose `temp_unschedulable_until` is still in the future.
+- GREEN: `go test -tags unit ./internal/service -run 'TestHandleUpstreamError_UnifiedErrorHandlingRules/openai_5xx_temp_unschedulable_rules_override_state_skip' -count=1`.
+- GREEN: `go test ./internal/service -run 'TestOpenAISchedulerExhaustionProbeSkipsTempCoolingAccount' -count=1`.
+- GREEN: `go test -tags unit ./internal/service -run 'Test(CheckErrorPolicy|HandleUpstreamError_UnifiedErrorHandlingRules|AccountGetErrorHandlingRules_NormalizesUnifiedSchema)' -count=1`.
+- GREEN: `go test ./internal/service -run 'TestOpenAISchedulerExhaustionProbe' -count=1`.
+- GREEN: `git diff --check -- backend/internal/service/ratelimit_service.go backend/internal/service/openai_scheduler_exhaustion_probe.go backend/internal/service/error_policy_test.go backend/internal/service/openai_scheduler_exhaustion_probe_test.go`.
+- RED unrelated: `go test ./internal/service -count=1` still fails outside this slice in `TestAccountDisableAPIKeyWritesDisabledUntilAndCount` timing expectations and `TestOpenAIGatewayService_Forward_WSv2ErrorEventUsageLimitPersistsRateLimit` nil-pointer behavior in a test stub.
+- Current state: not committed, not built into an image, not deployed.
+
+## 2026-06-19 23:52:13 +08:00 Devil - v0.1.136.8 OpenAI 502 cooldown release
+- Scope: committed OpenAI 5xx temp-unschedulable rule fix and scheduler probe guard from `4d1a741d14e1`.
+- Build: `git archive --format=tar HEAD | docker build --pull=false -t sub2api:v0.1.136.8 ... -` succeeded from committed HEAD; image label version is `v0.1.136.8`, revision is `4d1a741d14e1`.
+- Image: `sub2api:v0.1.136.8`, image ID `sha256:671656df0fe2bc2addc307ed8ef13ea63c66866a7e223610b3ef8c45fcc5aae0`.
+- Pre-release state: active blue `sub2api:v0.1.136.7`; idle green `sub2api:v0.1.136.6`.
+- Candidate deploy: recreated only `sub2api-green` with `sub2api:v0.1.136.8`; PostgreSQL, Redis, proxy, and active blue were not restarted.
+- GREEN candidate: `sub2api-green` `Health=healthy`, `RestartCount=0`, image `sub2api:v0.1.136.8`.
+- GREEN candidate smoke: `http://127.0.0.1:18082/health` 200, homepage 200, first JS static asset 200, unauth `/api/v1/admin/accounts` 401, unauth `/api/v1/admin/system/version` 401, unauth `/responses` 401, unauth `/v1/responses` 401.
+- Note: initial 2-minute candidate log scan saw one startup cleanup cancellation line `pq: canceling statement due to user request`; follow-up 70-second candidate critical log window had hit count 0.
+- Cutover: changed `D:\sub2api-deploy\proxy\upstreams\active.conf` from `sub2api-blue:8080` to `sub2api-green:8080`; `docker exec sub2api-proxy nginx -t` passed and `docker exec sub2api-proxy nginx -s reload` succeeded.
+- GREEN post-cutover smoke: `8080` and `18081` `/health` 200, homepage 200, unauth `/api/v1/admin/system/version` 401, unauth `/responses` 401, unauth `/v1/responses` 401.
+- GREEN post-cutover logs: 70-second green critical log scan hit count 0.
+- Current state: active green `sub2api:v0.1.136.8`; rollback blue `sub2api:v0.1.136.7` remains healthy.
+- Not run: authenticated admin version check, because no admin JWT was available and no login bypass/database mutation was used.
+
+## 2026-06-20 13:36:27 +08:00 Devil - free-rawchat Codex Accept override fix
+- Scope: local code fix only; not committed, not built into an image, not deployed.
+- Root cause: API Key Codex simulation inherited client `Accept: */*` through `openaiAllowedHeaders`; `ensureOpenAICodexClientMetadataHeaders` only set `text/event-stream` when the header was empty, so Codex simulation could send the wrong Accept value upstream.
+- Fix: `ensureOpenAICodexClientMetadataHeaders` now always sets `Accept: text/event-stream` for Codex simulation metadata/header preparation.
+- RED: `go test -tags unit ./internal/service -run TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesWildcardAccept -count=1` failed with actual `Accept: */*`.
+- GREEN: `go test -tags unit ./internal/service -run 'TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationUsesCodexProviderResponsesPath|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationUsesV1ResponsesForBareHost|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesWildcardAccept|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationPreservesRealCodexClientHeaders|TestOpenAIBuildUpstreamRequestAccountCodexSimulationHeaders|TestAccountProbeService_RunOpenAIAPIKeyCodexSimulationUsesCodexHeaders|TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationHeaders|TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesGatewayCodexSimulationHeaders|TestForwardAsChatCompletions_APIKeyCodexSimulationUsesTLSProfile|TestForwardAsRawChatCompletions_UsesCodexSimulationHeaders|TestForwardResponses_ForceChatCompletionsUsesCodexSimulationHeaders' -count=1`.
+- GREEN: `git diff --check` exited 0 with only CRLF normalization warnings for already dirty files.
+- LIMIT: `go test -tags unit ./internal/service -count=1` timed out after 124 seconds via the tool wrapper and did not emit failure details.

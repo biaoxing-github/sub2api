@@ -527,6 +527,50 @@ func TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples(t *testing.T) {
 	require.NotContains(t, repo.samples[0].APIKeyMasked, "sk-one")
 }
 
+func TestAccountProbeService_RunOpenAIAPIKeyCodexSimulationUsesCodexHeaders(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       470,
+		Name:     "free-rawchat",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://new.sharedchat.cc/codex/v1",
+			"api_keys": []any{"sk-one"},
+		},
+		Extra: map[string]any{
+			"openai_api_mode":                       "responses",
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
+	}
+	repo := &accountProbeRepoStub{}
+	client := &accountProbeHTTPClientStub{}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, repo, client, nil)
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID: 470,
+		Profile:   AccountProbeProfileQuick,
+		Model:     "gpt-5.5",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, AccountProbeStatusSuccess, result.Status)
+	require.NotEmpty(t, client.requests)
+	req := client.requests[0]
+	require.Equal(t, "https://new.sharedchat.cc/codex/v1/responses", req.URL.String())
+	require.Equal(t, codexCLIUserAgent(), req.Header.Get("User-Agent"))
+	require.Equal(t, "codex_cli_rs", req.Header.Get("originator"))
+	require.Equal(t, "compact-history", req.Header.Get("X-Codex-Beta-Features"))
+	require.NotEmpty(t, req.Header.Get("X-Client-Request-Id"))
+	require.NotEmpty(t, req.Header.Get("Session-Id"))
+	require.NotEmpty(t, req.Header.Get("Thread-Id"))
+	require.NotEmpty(t, req.Header.Get("X-Codex-Window-Id"))
+	require.NotEmpty(t, req.Header.Get("X-Codex-Turn-Metadata"))
+	require.NotEmpty(t, client.bodies)
+}
+
 func TestAccountProbeService_RunRecordsAccountProbeOutcomeFailure(t *testing.T) {
 	t.Parallel()
 

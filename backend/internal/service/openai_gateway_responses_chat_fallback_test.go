@@ -146,6 +146,8 @@ func TestForwardResponses_ForceChatCompletionsUsesCodexSimulationHeaders(t *test
 	require.NotEmpty(t, upstream.lastReq.Header.Get("Thread-Id"))
 	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Codex-Window-Id"))
 	require.NotEmpty(t, upstream.lastReq.Header.Get("X-Codex-Turn-Metadata"))
+	require.NotNil(t, upstream.lastTLSProfile)
+	require.Equal(t, builtInDefaultTLSFingerprintProfileName, upstream.lastTLSProfile.Name)
 }
 
 func TestForwardResponses_AutoSupportedAccountStillUsesResponsesEndpoint(t *testing.T) {

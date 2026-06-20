@@ -1262,8 +1262,10 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 	requestPrompt := strings.TrimSpace(sample.Prompt)
 	requestBody := accountProbeRequestBodyForDisplay(method, endpoint, requestModel, stream, payload)
 	var body io.Reader
+	var wireBody []byte
 	if payload != nil {
 		data, _ := json.Marshal(payload)
+		wireBody = data
 		requestBody = truncateAccountProbeTranscript(string(data))
 		body = bytes.NewReader(data)
 	}
@@ -1280,6 +1282,9 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 	}
 	if stream {
 		req.Header.Set("Accept", "text/event-stream")
+	}
+	if account.IsOpenAICodexCLISimulationEnabled() && payload != nil {
+		applyOpenAICodexSyntheticClientHeaders(req, wireBody)
 	}
 
 	proxyURL := ""
