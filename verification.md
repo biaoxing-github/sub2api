@@ -3540,3 +3540,18 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN post-cutover logs: 65-second health window stayed healthy; 90-second blue critical log scan hit count 0; proxy error log scan hit count 0.
 - Current state: active blue `sub2api:v0.1.136.9`; rollback green `sub2api:v0.1.136.8` remains healthy.
 - Not run: authenticated admin version/account 470 test, because `D:\sub2api-deploy\.env` has no `ADMIN_PASSWORD`; no JWT/database bypass was used.
+
+## 2026-06-20 19:10:00 +08:00 Devil - release v0.1.136.10
+- Commit: `6162f1969290fb0f854db501a54f43a641cf346a` (`fix(openai): 修复 Codex 模拟安装标识与版本头`).
+- GREEN: `go test -tags unit ./internal/service -run 'TestApplyCodexCLISimulationClientMetadata_APIKeyAccountAddsStableInstallationID|TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape|TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationHeaders|TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesGatewayCodexSimulationHeaders|TestOpenAIGatewayService_APIKeyCodexCLISimulation_ForcesHeadersAndPreservesCodexFields|TestOpenAIGatewayService_APIKeyPassthroughCodexCLISimulation_ForcesHeaders|TestOpenAIBuildUpstreamRequestAccountCodexSimulationHeaders|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesWildcardAccept|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationUsesCodexProviderResponsesPath|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationUsesV1ResponsesForBareHost|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationPreservesRealCodexClientHeaders' -count=1` 通过。
+- GREEN: 依据当前代码派生 installation_id `81b4ba42-4573-4eff-943c-4c57c5d55b9a` 运行 `go run .\cmd\codex-live-probe`，对 `https://new.sharedchat.cc/codex/responses` 返回 `status=200`、`protocol_mode=openai_h1`。
+- GREEN: `docker image inspect sub2api:v0.1.136.10` 显示 version/revision 为 `v0.1.136.10` / `6162f1969290`。
+- GREEN: `docker run --rm sub2api:v0.1.136.10 /app/sub2api -version` 输出 `Sub2API 0.1.136 (image: v0.1.136.10, commit: 6162f1969290, built: 2026-06-20T11:04:07Z)`。
+- OBSERVE: 第一次重建 green 候选后发现 `D:\sub2api-deploy\docker-compose.green.yml` 默认镜像仍是 `sub2api:v0.1.136.8`；修正为 `sub2api:v0.1.136.10` 后重新重建 green。
+- GREEN: green 候选 `18082` `/health` 200、首页 200、静态资源 200、未登录 `/api/v1/admin/accounts` 401、未登录 `/responses` 401、未登录 `/v1/responses` 401。
+- OBSERVE: 候选初始关键日志窗口命中 1 条 `pq: canceling statement due to user request`，定位为 `openai_request_snapshot` 启动后清理任务；后续 70 秒 candidate 关键日志窗口命中 0。
+- GREEN: `docker exec sub2api-proxy nginx -t` 通过，`docker exec sub2api-proxy nginx -s reload` 成功。
+- GREEN: 切流后 `8080` 与 `18081` `/health` 200、首页 200、`8080` 静态资源 200、未登录 `/api/v1/admin/system/version` 401、未登录 `/responses` 401、未登录 `/v1/responses` 401。
+- GREEN: 切流后 75 秒健康窗口保持 healthy；90 秒 green 关键日志命中 0，proxy 错误日志命中 0。
+- Current state: active green `sub2api:v0.1.136.10`; rollback blue `sub2api:v0.1.136.9` remains healthy.
+- Not run: authenticated admin version/account 470 test, because `D:\sub2api-deploy\.env` has no `ADMIN_PASSWORD`; no JWT/database bypass was used.
