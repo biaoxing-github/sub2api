@@ -725,7 +725,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	c.Writer.Flush()
 
 	// Create OpenAI Responses API payload
-	payload := createOpenAITestPayload(testModelID, isOAuth)
+	payload := createOpenAITestPayload(testModelID, account)
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event
@@ -1408,7 +1408,7 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 
 // createOpenAITestPayload 构造管理端人工测试使用的 OpenAI Responses 请求体。
 // API Key 和 OAuth 账号都走正式网关 builder，payload 保持接近真实 Codex CLI 的普通请求。
-func createOpenAITestPayload(modelID string, _ bool) map[string]any {
+func createOpenAITestPayload(modelID string, account *Account) map[string]any {
 	promptCacheKey := uuid.NewString()
 	payload := map[string]any{
 		"model": modelID,
@@ -1444,6 +1444,7 @@ func createOpenAITestPayload(modelID string, _ bool) map[string]any {
 
 	// All accounts require instructions for Responses API
 	payload["instructions"] = openai.DefaultInstructions
+	applyCodexCLISimulationClientMetadata(payload, account)
 
 	return payload
 }

@@ -79,25 +79,33 @@ func TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape(t *testin
 	req.Header.Set("version", "0.125.0")
 	req.Header.Set("thread-id", "thread-from-client")
 	body := []byte(`{"prompt_cache_key":"prompt-cache-from-body"}`)
+	account := &Account{
+		ID:          470,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-sharedchat", "base_url": "https://new.sharedchat.cc/codex"},
+	}
 
-	applyOpenAICodexLatestClientHeaders(req, body)
+	applyOpenAICodexLatestClientHeaders(req, body, account)
 
 	require.Equal(t, codexCLIUserAgent(), req.Header.Get("User-Agent"))
 	require.Equal(t, codexCLIOriginator, req.Header.Get("originator"))
-	require.Empty(t, req.Header.Get("OpenAI-Beta"))
-	require.Empty(t, req.Header.Get("version"))
+	require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
+	require.Equal(t, codexCLIVersion(), req.Header.Get("version"))
 	require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
 	require.Equal(t, codexCLIBetaFeatures, req.Header.Get("X-Codex-Beta-Features"))
 	require.Equal(t, "prompt-cache-from-body", req.Header.Get("Session-Id"))
 	require.Equal(t, "thread-from-client", req.Header.Get("Thread-Id"))
 	require.Equal(t, "prompt-cache-from-body", req.Header.Get("X-Client-Request-Id"))
 	require.Equal(t, "prompt-cache-from-body:0", req.Header.Get("X-Codex-Window-Id"))
+	require.Equal(t, resolveCodexSimulationInstallationID(account), req.Header.Get("X-Codex-Installation-Id"))
 
 	var turnMetadata map[string]any
 	require.NoError(t, json.Unmarshal([]byte(req.Header.Get("X-Codex-Turn-Metadata")), &turnMetadata))
 	require.Equal(t, "prompt-cache-from-body", turnMetadata["session_id"])
 	require.Equal(t, "thread-from-client", turnMetadata["thread_id"])
 	require.Equal(t, "prompt-cache-from-body:0", turnMetadata["window_id"])
+	require.Equal(t, resolveCodexSimulationInstallationID(account), turnMetadata["installation_id"])
 	require.Equal(t, "turn", turnMetadata["request_kind"])
 	require.NotEmpty(t, turnMetadata["turn_id"])
 	require.NotZero(t, turnMetadata["turn_started_at_unix_ms"])

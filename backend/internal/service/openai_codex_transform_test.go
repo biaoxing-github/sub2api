@@ -44,6 +44,43 @@ func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
 	require.Equal(t, "fc_1", second["call_id"])
 }
 
+func TestApplyCodexCLISimulationClientMetadata_APIKeyAccountAddsStableInstallationID(t *testing.T) {
+	account := &Account{
+		ID:          470,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-sharedchat", "base_url": "https://new.sharedchat.cc/codex"},
+	}
+	reqBody := map[string]any{
+		"model": "gpt-5.5",
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "hi"},
+		},
+	}
+
+	modified := applyCodexCLISimulationClientMetadata(reqBody, account)
+	require.True(t, modified)
+
+	installationID := firstNonEmptyString(
+		reqBody[codexClientMetadataKey].(map[string]any)[codexClientInstallationIDKey],
+	)
+	require.NotEmpty(t, installationID)
+	require.Equal(t, resolveCodexSimulationInstallationID(account), installationID)
+	turnMetadataRaw := reqBody[codexClientMetadataKey].(map[string]any)[codexClientMetadataTurnMetadataKey]
+	turnMetadata, ok := parseCodexTurnMetadata(turnMetadataRaw)
+	require.True(t, ok)
+	require.Equal(t, installationID, firstNonEmptyString(turnMetadata["installation_id"]))
+
+	secondBody := map[string]any{
+		"model": "gpt-5.5",
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": "hi again"},
+		},
+	}
+	require.True(t, applyCodexCLISimulationClientMetadata(secondBody, account))
+	require.Equal(t, installationID, firstNonEmptyString(secondBody[codexClientMetadataKey].(map[string]any)[codexClientInstallationIDKey]))
+}
+
 func TestApplyCodexOAuthTransform_MessagesBridgePromptCacheKeyIsHeaderOnly(t *testing.T) {
 	reqBody := map[string]any{
 		"model":            "gpt-5.5",

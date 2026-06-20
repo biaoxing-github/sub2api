@@ -1864,27 +1864,37 @@ func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Re
 		ensureOpenAICodexClientMetadataHeaders(req, body, false)
 		return
 	}
-	applyOpenAICodexLatestClientHeaders(req, body)
+	applyOpenAICodexLatestClientHeaders(req, body, account)
 }
 
 // applyOpenAICodexLatestClientHeaders 将账号级模拟请求收敛到真实 Codex Desktop 0.141.0 的请求头形态。
 // 这里主动移除旧实验头，避免人工测试和普通网关请求继续携带过期客户端指纹。
-func applyOpenAICodexLatestClientHeaders(req *http.Request, body []byte) {
+func applyOpenAICodexLatestClientHeaders(req *http.Request, body []byte, account *Account) {
 	if req == nil {
 		return
 	}
-	applyOpenAICodexSyntheticClientHeaders(req, body)
+	applyOpenAICodexSyntheticClientHeaders(req, body, account)
 }
 
 // applyOpenAICodexSyntheticClientHeaders 为非真实 Codex 客户端请求写入统一的模拟客户端指纹。
-func applyOpenAICodexSyntheticClientHeaders(req *http.Request, body []byte) {
+func applyOpenAICodexSyntheticClientHeaders(req *http.Request, body []byte, account *Account) {
 	if req == nil {
 		return
 	}
 	req.Header.Set("user-agent", codexCLIUserAgent())
 	req.Header.Set("originator", codexCLIOriginator)
-	req.Header.Del("OpenAI-Beta")
-	req.Header.Del("version")
+	if account != nil && account.Type == AccountTypeAPIKey {
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
+		req.Header.Set("version", codexCLIVersion())
+		if req.Header.Get("x-codex-installation-id") == "" {
+			if installationID := resolveCodexSimulationInstallationID(account); installationID != "" {
+				req.Header.Set("x-codex-installation-id", installationID)
+			}
+		}
+	} else {
+		req.Header.Del("OpenAI-Beta")
+		req.Header.Del("version")
+	}
 	ensureOpenAICodexClientMetadataHeaders(req, body, true)
 }
 
@@ -1898,17 +1908,46 @@ func ensureOpenAICodexClientMetadataHeaders(req *http.Request, body []byte, forc
 		req.Header.Set("x-codex-beta-features", codexCLIBetaFeatures)
 	}
 
+	bodyTurnMetadata := map[string]any{}
+	bodyTurnMetadataRaw := ""
+	bodySessionID := ""
+	bodyThreadID := ""
+	bodyWindowID := ""
+	bodyInstallationID := ""
+	if len(body) > 0 {
+		bodySessionID = strings.TrimSpace(gjson.GetBytes(body, codexClientMetadataKey+"."+codexClientMetadataSessionIDKey).String())
+		bodyThreadID = strings.TrimSpace(gjson.GetBytes(body, codexClientMetadataKey+"."+codexClientMetadataThreadIDKey).String())
+		bodyWindowID = strings.TrimSpace(gjson.GetBytes(body, codexClientMetadataKey+"."+codexClientMetadataWindowIDKey).String())
+		bodyInstallationID = strings.TrimSpace(gjson.GetBytes(body, codexClientMetadataKey+"."+codexClientInstallationIDKey).String())
+		bodyTurnMetadataRaw = strings.TrimSpace(gjson.GetBytes(body, codexClientMetadataKey+"."+codexClientMetadataTurnMetadataKey).String())
+		if parsed, ok := parseCodexTurnMetadata(bodyTurnMetadataRaw); ok {
+			bodyTurnMetadata = parsed
+		}
+	}
+
 	sessionID := strings.TrimSpace(req.Header.Get("session-id"))
 	if sessionID == "" {
 		sessionID = strings.TrimSpace(req.Header.Get("session_id"))
+	}
+	if sessionID == "" {
+		sessionID = bodySessionID
 	}
 	if sessionID == "" && len(body) > 0 {
 		sessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
 	}
 	if sessionID == "" {
+		sessionID = strings.TrimSpace(firstNonEmptyString(bodyTurnMetadata[codexClientMetadataSessionIDKey]))
+	}
+	if sessionID == "" {
 		sessionID = uuid.NewString()
 	}
 	threadID := strings.TrimSpace(req.Header.Get("thread-id"))
+	if threadID == "" {
+		threadID = bodyThreadID
+	}
+	if threadID == "" {
+		threadID = strings.TrimSpace(firstNonEmptyString(bodyTurnMetadata[codexClientMetadataThreadIDKey]))
+	}
 	if threadID == "" {
 		threadID = sessionID
 	}
@@ -1918,7 +1957,20 @@ func ensureOpenAICodexClientMetadataHeaders(req *http.Request, body []byte, forc
 	}
 	windowID := strings.TrimSpace(req.Header.Get("x-codex-window-id"))
 	if windowID == "" {
+		windowID = bodyWindowID
+	}
+	if windowID == "" {
+		windowID = strings.TrimSpace(firstNonEmptyString(bodyTurnMetadata["window_id"]))
+	}
+	if windowID == "" {
 		windowID = sessionID + ":0"
+	}
+	installationID := strings.TrimSpace(req.Header.Get("x-codex-installation-id"))
+	if installationID == "" {
+		installationID = bodyInstallationID
+	}
+	if installationID == "" {
+		installationID = strings.TrimSpace(firstNonEmptyString(bodyTurnMetadata["installation_id"]))
 	}
 	if req.Header.Get("session-id") == "" {
 		req.Header.Set("session-id", sessionID)
@@ -1932,20 +1984,30 @@ func ensureOpenAICodexClientMetadataHeaders(req *http.Request, body []byte, forc
 	if req.Header.Get("x-codex-window-id") == "" {
 		req.Header.Set("x-codex-window-id", windowID)
 	}
+	if installationID != "" && req.Header.Get("x-codex-installation-id") == "" {
+		req.Header.Set("x-codex-installation-id", installationID)
+	}
 	if req.Header.Get("x-codex-turn-metadata") == "" {
-		// 缺少 turn metadata 时按 Codex 客户端最小必需字段补齐，已有客户端值不覆盖。
-		turnMetadata := map[string]any{
-			"session_id":              sessionID,
-			"thread_id":               threadID,
-			"thread_source":           "user",
-			"turn_id":                 uuid.NewString(),
-			"sandbox":                 "none",
-			"turn_started_at_unix_ms": time.Now().UnixMilli(),
-			"request_kind":            "turn",
-			"window_id":               windowID,
-		}
-		if data, err := json.Marshal(turnMetadata); err == nil {
-			req.Header.Set("x-codex-turn-metadata", string(data))
+		if bodyTurnMetadataRaw != "" {
+			req.Header.Set("x-codex-turn-metadata", bodyTurnMetadataRaw)
+		} else {
+			// 缺少 turn metadata 时按 Codex 客户端最小必需字段补齐，已有客户端值不覆盖。
+			turnMetadata := map[string]any{
+				"session_id":              sessionID,
+				"thread_id":               threadID,
+				"thread_source":           "user",
+				"turn_id":                 uuid.NewString(),
+				"sandbox":                 "none",
+				"turn_started_at_unix_ms": time.Now().UnixMilli(),
+				"request_kind":            "turn",
+				"window_id":               windowID,
+			}
+			if installationID != "" {
+				turnMetadata["installation_id"] = installationID
+			}
+			if data, err := json.Marshal(turnMetadata); err == nil {
+				req.Header.Set("x-codex-turn-metadata", string(data))
+			}
 		}
 	}
 }
@@ -3343,6 +3405,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
+		}
+	}
+
+	if account.Type == AccountTypeAPIKey && s.shouldSimulateOpenAICodexCLI(account) && !account.IsOpenAIPassthroughEnabled() && !isCompactRequest {
+		decoded, decodeErr := ensureReqBody()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		if applyCodexCLISimulationClientMetadata(decoded, account) {
+			markDecodedModified()
+			if promptCacheKey == "" {
+				promptCacheKey = strings.TrimSpace(firstNonEmptyString(decoded["prompt_cache_key"]))
+			}
 		}
 	}
 

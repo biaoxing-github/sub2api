@@ -1284,7 +1284,7 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		req.Header.Set("Accept", "text/event-stream")
 	}
 	if account.IsOpenAICodexCLISimulationEnabled() && payload != nil {
-		applyOpenAICodexSyntheticClientHeaders(req, wireBody)
+		applyOpenAICodexSyntheticClientHeaders(req, wireBody, account)
 	}
 
 	proxyURL := ""

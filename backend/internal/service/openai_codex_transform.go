@@ -3,9 +3,12 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/google/uuid"
 )
 
 var codexModelMap = map[string]string{
@@ -750,6 +753,241 @@ func applyCodexSparkImageUnsupportedInstructions(reqBody map[string]any) bool {
 		return true
 	}
 	reqBody["instructions"] = existing + "\n\n" + codexSparkImageUnsupportedText
+	return true
+}
+
+const (
+	codexClientMetadataKey             = "client_metadata"
+	codexClientMetadataOriginatorKey   = "originator"
+	codexClientMetadataSessionIDKey    = "session_id"
+	codexClientMetadataThreadIDKey     = "thread_id"
+	codexClientMetadataTurnIDKey       = "turn_id"
+	codexClientMetadataWindowIDKey     = "x-codex-window-id"
+	codexClientMetadataTurnMetadataKey = "x-codex-turn-metadata"
+	codexClientMetadataSourceKey       = "x-openai-client-source"
+	codexClientInstallationIDKey       = "x-codex-installation-id"
+)
+
+// applyCodexCLISimulationClientMetadata 补齐 API Key Codex 模拟请求体的客户端元数据。
+func applyCodexCLISimulationClientMetadata(reqBody map[string]any, account *Account) bool {
+	if len(reqBody) == 0 {
+		return false
+	}
+	metadata, modified := normalizeCodexClientMetadataMap(reqBody)
+	turnMetadata, hadTurnMetadata := parseCodexTurnMetadata(metadata[codexClientMetadataTurnMetadataKey])
+
+	promptCacheKey := strings.TrimSpace(firstNonEmptyString(reqBody["prompt_cache_key"]))
+	sessionID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataSessionIDKey], promptCacheKey, turnMetadata[codexClientMetadataSessionIDKey]))
+	if sessionID == "" {
+		sessionID = uuid.NewString()
+	}
+	threadID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataThreadIDKey], turnMetadata[codexClientMetadataThreadIDKey], sessionID))
+	turnID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataTurnIDKey], turnMetadata[codexClientMetadataTurnIDKey]))
+	if turnID == "" {
+		turnID = uuid.NewString()
+	}
+	windowID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataWindowIDKey], turnMetadata["window_id"]))
+	if windowID == "" {
+		windowID = sessionID + ":0"
+	}
+
+	installationID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientInstallationIDKey], turnMetadata["installation_id"]))
+	if installationID == "" && account != nil {
+		installationID = resolveCodexSimulationInstallationID(account)
+	}
+
+	if strings.TrimSpace(firstNonEmptyString(reqBody["prompt_cache_key"])) == "" {
+		reqBody["prompt_cache_key"] = sessionID
+		modified = true
+	}
+	if setCodexMetadataString(metadata, codexClientMetadataOriginatorKey, codexCLIOriginator, true) {
+		modified = true
+	}
+	if setCodexMetadataString(metadata, codexClientMetadataSourceKey, "codex", true) {
+		modified = true
+	}
+	if setCodexMetadataString(metadata, codexClientMetadataSessionIDKey, sessionID, false) {
+		modified = true
+	}
+	if setCodexMetadataString(metadata, codexClientMetadataThreadIDKey, threadID, false) {
+		modified = true
+	}
+	if setCodexMetadataString(metadata, codexClientMetadataTurnIDKey, turnID, false) {
+		modified = true
+	}
+	if setCodexMetadataString(metadata, codexClientMetadataWindowIDKey, windowID, false) {
+		modified = true
+	}
+	if installationID != "" && setCodexMetadataString(metadata, codexClientInstallationIDKey, installationID, false) {
+		modified = true
+	}
+
+	if setCodexTurnMetadataString(turnMetadata, codexClientMetadataSessionIDKey, sessionID, true) {
+		modified = true
+	}
+	if setCodexTurnMetadataString(turnMetadata, codexClientMetadataThreadIDKey, threadID, true) {
+		modified = true
+	}
+	if setCodexTurnMetadataString(turnMetadata, "thread_source", "user", false) {
+		modified = true
+	}
+	if setCodexTurnMetadataString(turnMetadata, codexClientMetadataTurnIDKey, turnID, true) {
+		modified = true
+	}
+	if setCodexTurnMetadataString(turnMetadata, "sandbox", "none", false) {
+		modified = true
+	}
+	if _, ok := turnMetadata["turn_started_at_unix_ms"]; !ok {
+		turnMetadata["turn_started_at_unix_ms"] = time.Now().UnixMilli()
+		modified = true
+	}
+	if setCodexTurnMetadataString(turnMetadata, "request_kind", "turn", false) {
+		modified = true
+	}
+	if setCodexTurnMetadataString(turnMetadata, "window_id", windowID, true) {
+		modified = true
+	}
+	if installationID != "" && setCodexTurnMetadataString(turnMetadata, "installation_id", installationID, false) {
+		modified = true
+	}
+
+	if encoded, err := json.Marshal(turnMetadata); err == nil {
+		encodedString := string(encoded)
+		if strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataTurnMetadataKey])) != encodedString || !hadTurnMetadata {
+			metadata[codexClientMetadataTurnMetadataKey] = encodedString
+			modified = true
+		}
+	}
+	reqBody[codexClientMetadataKey] = metadata
+	return modified
+}
+
+// resolveCodexSimulationInstallationID 为 Codex CLI 模拟链路解析稳定 installation_id。
+// OAuth 账号优先复用真实 device_id；API Key 账号则派生确定性 UUID，避免每次请求都像新设备。
+func resolveCodexSimulationInstallationID(account *Account) string {
+	if account == nil {
+		return ""
+	}
+	if deviceID := strings.TrimSpace(account.GetOpenAIDeviceID()); deviceID != "" {
+		return deviceID
+	}
+
+	seed := buildCodexSimulationInstallationSeed(account)
+	if seed == "" {
+		return ""
+	}
+	return generateSessionUUID(seed)
+}
+
+// buildCodexSimulationInstallationSeed 为 API Key Codex 模拟账号构造稳定安装标识种子。
+func buildCodexSimulationInstallationSeed(account *Account) string {
+	if account == nil {
+		return ""
+	}
+
+	parts := []string{"sub2api-openai-codex-installation"}
+	if account.ID > 0 {
+		parts = append(parts, strconv.FormatInt(account.ID, 10))
+	}
+	if baseURL := strings.ToLower(strings.TrimSpace(account.GetOpenAIBaseURL())); baseURL != "" {
+		parts = append(parts, baseURL)
+	}
+	if len(parts) == 1 {
+		if fallback := codexSimulationInstallationFingerprint(account); fallback != "" {
+			parts = append(parts, fallback)
+		}
+	}
+	if len(parts) == 1 {
+		return ""
+	}
+	return strings.Join(parts, "::")
+}
+
+// codexSimulationInstallationFingerprint 仅在账号缺少稳定主键时使用非敏感 Key 指纹兜底。
+func codexSimulationInstallationFingerprint(account *Account) string {
+	if account == nil || account.Credentials == nil {
+		return ""
+	}
+	if keys := normalizeAPIKeys(account.Credentials["api_keys"]); len(keys) > 0 {
+		return FingerprintAPIKey(keys[0])
+	}
+	return FingerprintAPIKey(strings.TrimSpace(account.GetCredential("api_key")))
+}
+
+func normalizeCodexClientMetadataMap(reqBody map[string]any) (map[string]any, bool) {
+	switch existing := reqBody[codexClientMetadataKey].(type) {
+	case map[string]any:
+		return existing, false
+	case map[string]string:
+		next := make(map[string]any, len(existing))
+		for key, value := range existing {
+			next[key] = value
+		}
+		reqBody[codexClientMetadataKey] = next
+		return next, true
+	case nil:
+		next := map[string]any{}
+		reqBody[codexClientMetadataKey] = next
+		return next, true
+	default:
+		next := map[string]any{}
+		reqBody[codexClientMetadataKey] = next
+		return next, true
+	}
+}
+
+func parseCodexTurnMetadata(raw any) (map[string]any, bool) {
+	switch value := raw.(type) {
+	case string:
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return map[string]any{}, false
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(value), &decoded); err != nil || decoded == nil {
+			return map[string]any{}, false
+		}
+		return decoded, true
+	case map[string]any:
+		next := make(map[string]any, len(value))
+		for key, item := range value {
+			next[key] = item
+		}
+		return next, true
+	default:
+		return map[string]any{}, false
+	}
+}
+
+func setCodexMetadataString(metadata map[string]any, key string, value string, force bool) bool {
+	value = strings.TrimSpace(value)
+	if metadata == nil || key == "" || value == "" {
+		return false
+	}
+	current := strings.TrimSpace(firstNonEmptyString(metadata[key]))
+	if !force && current != "" {
+		return false
+	}
+	if current == value {
+		return false
+	}
+	metadata[key] = value
+	return true
+}
+
+func setCodexTurnMetadataString(metadata map[string]any, key string, value string, force bool) bool {
+	value = strings.TrimSpace(value)
+	if metadata == nil || key == "" || value == "" {
+		return false
+	}
+	current := strings.TrimSpace(firstNonEmptyString(metadata[key]))
+	if !force && current != "" {
+		return false
+	}
+	if current == value {
+		return false
+	}
+	metadata[key] = value
 	return true
 }
 
