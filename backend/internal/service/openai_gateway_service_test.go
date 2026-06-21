@@ -3509,6 +3509,42 @@ func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesOutdatedRealCod
 	require.Equal(t, "window-123", req.Header.Get("X-Codex-Window-Id"))
 }
 
+func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationLearnsDesktopBuildFromRealClientUA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gpt-5.5","prompt_cache_key":"client-session"}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/responses", bytes.NewReader(body))
+	c.Request.Header.Set("User-Agent", "Codex Desktop/0.142.0-alpha.1 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.616.32157)")
+	c.Request.Header.Set("Originator", "codex_app")
+	c.Request.Header.Set("Version", "0.142.0-alpha.1")
+	c.Request.Header.Set("X-Codex-Window-Id", "window-321")
+
+	originalBuild := openai.GetCurrentCodexDesktopAppBuild()
+	t.Cleanup(func() {
+		_ = openai.ObserveCodexDesktopUserAgent("Codex Desktop/0.141.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; " + originalBuild + ")")
+	})
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}}}
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://new.sharedchat.cc/codex",
+		},
+		Extra: map[string]any{
+			OpenAICodexCLISimulationEnabledExtraKey: true,
+		},
+	}
+
+	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator"))
+	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, body, "token", true, "", isCodexCLI)
+	require.NoError(t, err)
+	require.Equal(t, "Codex Desktop/0.141.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.616.32157)", req.Header.Get("User-Agent"))
+	require.Equal(t, "26.616.32157", openai.GetCurrentCodexDesktopAppBuild())
+	require.Equal(t, "window-321", req.Header.Get("X-Codex-Window-Id"))
+}
+
 func TestOpenAIBuildUpstreamRequestLegacyCockpitToolsCompatIsIgnored(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

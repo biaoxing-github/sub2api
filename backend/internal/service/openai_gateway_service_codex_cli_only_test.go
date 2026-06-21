@@ -62,8 +62,7 @@ func TestOpenAIGatewayService_GetCodexClientRestrictionDetector(t *testing.T) {
 
 func TestOpenAICodexCLISimulationUsesLatestClientVersion(t *testing.T) {
 	require.Equal(t, "0.141.0", codexCLIVersion())
-	require.Contains(t, codexCLIUserAgent(), "Codex Desktop/0.141.0 ")
-	require.Contains(t, codexCLIUserAgent(), "(codex_exec; 0.141.0)")
+	require.Equal(t, "Codex Desktop/0.141.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.616.32156)", codexCLIUserAgent())
 	require.NotContains(t, codexCLIUserAgent(), "0.125.0")
 	require.Contains(t, defaultOpenAICodexUserAgent(), "0.141.0")
 	require.NotContains(t, defaultOpenAICodexUserAgent(), "0.125.0")

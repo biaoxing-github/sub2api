@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,10 @@ const (
 	// is unreachable at startup. Keep it aligned with the latest published
 	// @openai/codex release so upstream version gates are satisfied even offline.
 	CodexCLIDefaultVersion = "0.141.0"
+	// CodexDesktopAppBuildFallback is the fallback desktop build suffix used
+	// before the gateway has learned a newer build from a real Codex Desktop
+	// request.
+	CodexDesktopAppBuildFallback = "26.616.32156"
 
 	defaultCodexCLIVersionSyncInterval = 30 * time.Minute
 	// defaultCodexCLIRegistryURL points at the npm "latest" manifest endpoint,
@@ -44,7 +49,11 @@ type npmCodexRegistryResponse struct {
 var (
 	globalCodexCLIVersionFetcher     *CodexCLIVersionFetcher
 	globalCodexCLIVersionFetcherOnce sync.Once
+	codexDesktopBuildMu             sync.RWMutex
+	codexDesktopObservedBuild       = CodexDesktopAppBuildFallback
 )
+
+var codexDesktopBuildPattern = regexp.MustCompile(`(?i)\(Codex Desktop;\s*([^)]+)\)`)
 
 // NewCodexCLIVersionFetcher creates a Codex CLI version fetcher.
 func NewCodexCLIVersionFetcher(fetchInterval time.Duration) *CodexCLIVersionFetcher {
@@ -185,13 +194,52 @@ func GetCurrentCodexCLIDefaultUserAgent() string {
 	return GetGlobalCodexCLIVersionFetcher().GetDefaultUserAgent()
 }
 
+// ExtractCodexDesktopAppBuild extracts the Desktop build suffix from a real
+// Codex Desktop User-Agent, for example:
+// `Codex Desktop/0.142.0-alpha.1 (...) (Codex Desktop; 26.616.32156)`.
+func ExtractCodexDesktopAppBuild(userAgent string) string {
+	ua := strings.TrimSpace(userAgent)
+	if ua == "" {
+		return ""
+	}
+	matches := codexDesktopBuildPattern.FindStringSubmatch(ua)
+	if len(matches) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(matches[1])
+}
+
+// ObserveCodexDesktopUserAgent learns the desktop build suffix from a real
+// Codex Desktop request and caches it for later synthetic simulation.
+func ObserveCodexDesktopUserAgent(userAgent string) bool {
+	build := ExtractCodexDesktopAppBuild(userAgent)
+	if build == "" {
+		return false
+	}
+	codexDesktopBuildMu.Lock()
+	codexDesktopObservedBuild = build
+	codexDesktopBuildMu.Unlock()
+	return true
+}
+
+// GetCurrentCodexDesktopAppBuild returns the latest learned desktop build
+// suffix, or the fallback value when none has been observed yet.
+func GetCurrentCodexDesktopAppBuild() string {
+	codexDesktopBuildMu.RLock()
+	defer codexDesktopBuildMu.RUnlock()
+	if strings.TrimSpace(codexDesktopObservedBuild) == "" {
+		return CodexDesktopAppBuildFallback
+	}
+	return codexDesktopObservedBuild
+}
+
 // CodexCLIUserAgentForVersion builds the upstream Codex Desktop request shape.
 func CodexCLIUserAgentForVersion(version string) string {
 	version = strings.TrimSpace(version)
 	if version == "" {
 		version = CodexCLIDefaultVersion
 	}
-	return fmt.Sprintf("Codex Desktop/%s (Windows 10.0.26200; x86_64) unknown (codex_exec; %s)", version, version)
+	return fmt.Sprintf("Codex Desktop/%s (Windows 10.0.26200; x86_64) unknown (Codex Desktop; %s)", version, GetCurrentCodexDesktopAppBuild())
 }
 
 // CodexCLIDefaultUserAgentForVersion builds the configurable fallback Codex CLI UA.

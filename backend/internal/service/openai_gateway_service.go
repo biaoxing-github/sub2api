@@ -1839,6 +1839,19 @@ func isRealOpenAICodexClientRequest(c *gin.Context) bool {
 	return openai.IsCodexOfficialClientRequest(userAgent)
 }
 
+// observeRealOpenAICodexDesktopUserAgent 从真实桌面客户端请求中学习 build 位，
+// 让后续 API Key 模拟头跟随真实客户端迭代，而不是长期停留在旧快照。
+func observeRealOpenAICodexDesktopUserAgent(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	userAgent := strings.TrimSpace(c.GetHeader("User-Agent"))
+	if userAgent == "" {
+		return
+	}
+	_ = openai.ObserveCodexDesktopUserAgent(userAgent)
+}
+
 // copyOpenAIInboundHeaderIfPresent 将客户端已有的 Codex 指纹头复制到上游请求，空值不覆盖已有兜底值。
 func copyOpenAIInboundHeaderIfPresent(dst http.Header, c *gin.Context, key string) {
 	if dst == nil || c == nil {
@@ -1854,6 +1867,7 @@ func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Re
 		return
 	}
 	if isRealOpenAICodexClientRequest(c) {
+		observeRealOpenAICodexDesktopUserAgent(c)
 		// API Key 模拟必须使用已验证的最新 Codex 指纹，避免旧客户端版本被上游拒绝。
 		applyOpenAICodexSyntheticClientHeaders(req, body, account)
 		copyOpenAIInboundHeaderIfPresent(req.Header, c, "X-Codex-Window-Id")
