@@ -3620,8 +3620,6 @@ export default {
       apiKeyDisabledCount: '冷却次数',
       restoreApiKey: '恢复这个 Key',
       apiKeysAppendMode: '追加新 Key',
-      claudeCliVersion: 'Claude CLI 版本',
-      claudeCliVersionHint: '留空则使用当前全局或自动同步版本；填写后该账号会按此版本拼接 Claude 风格请求头和相关版本字段。',
       apiKeysReplaceMode: '替换全部 Key',
       apiKeysAppendHint: '只填写要新增的 Key；旧 Key 会保留并自动去重。',
       apiKeysReplaceHint: '填写后的列表会替换当前全部 Key。',
@@ -3710,6 +3708,8 @@ export default {
         modelRestrictionDisabledByPassthrough: '已开启自动透传：模型白名单/映射不会生效。',
       },
       anthropic: {
+        claudeCliVersion: 'Claude CLI 版本',
+        claudeCliVersionHint: '留空则使用当前全局或自动同步版本；填写后该账号会按此版本拼接 Claude 风格请求头和相关版本字段。',
         apiKeyPassthrough: '自动透传（仅替换认证）',
         apiKeyPassthroughDesc:
           '仅对 Anthropic API Key 生效。开启后，messages/count_tokens 请求将透传上游并仅替换认证，保留计费/并发/审计及必要安全过滤；关闭即可回滚到现有兼容链路。',

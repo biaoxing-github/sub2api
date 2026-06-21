@@ -3473,8 +3473,6 @@ export default {
       apiKeyDisabledCount: 'Cooldown count',
       restoreApiKey: 'Restore this key',
       apiKeysAppendMode: 'Append keys',
-      claudeCliVersion: 'Claude CLI version',
-      claudeCliVersionHint: 'Leave empty to use the current global or auto-synced version. When set, this account will send Claude-style headers and related version fields with this version.',
       apiKeysReplaceMode: 'Replace all',
       apiKeysAppendHint: 'Enter only new keys; existing keys are kept and de-duplicated.',
       apiKeysReplaceHint: 'The entered list will replace all current keys.',
@@ -3566,6 +3564,8 @@ export default {
         modelRestrictionDisabledByPassthrough: 'Automatic passthrough is enabled: model whitelist/mapping will not take effect.',
       },
       anthropic: {
+        claudeCliVersion: 'Claude CLI version',
+        claudeCliVersionHint: 'Leave empty to use the current global or auto-synced version. When set, this account will send Claude-style headers and related version fields with this version.',
         apiKeyPassthrough: 'Auto passthrough (auth only)',
         apiKeyPassthroughDesc:
           'Only applies to Anthropic API Key accounts. When enabled, messages/count_tokens are forwarded in passthrough mode with auth replacement only, while billing/concurrency/audit and safety filtering are preserved. Disable to roll back immediately.',
