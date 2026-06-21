@@ -3623,3 +3623,19 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN: after cutover, blue 75-second health window stayed healthy; proxy recent problem log hits were 0.
 - Current state: active blue `sub2api:v0.1.136.14`; rollback green `sub2api:v0.1.136.13` remains healthy.
 - Not run: authenticated admin system version API check and real logged-in Anthropic business request, because `ADMIN_PASSWORD` is empty and this slice relied on focused tests plus public boundary smoke.
+
+## 2026-06-21 21:34 +08:00 - release v0.1.136.15 Claude CLI i18n key-level fix
+
+- GREEN: committed fix slice `968843d3409b8b50b808e5cf3874c6dd5a2287e3` (`fix(i18n): 修正 Claude CLI 版本词条层级`).
+- GREEN: `npm --prefix frontend run typecheck` passed before build.
+- GREEN: `docker image inspect sub2api:v0.1.136.15` reported image ID `sha256:a47c9b99947272207e96819bda8f1bf0721742d5c1d628b9b7f12a30fdc8c3a4`, version `v0.1.136.15`, revision `968843d3409b`.
+- GREEN: `docker run --rm sub2api:v0.1.136.15 /app/sub2api -version` reported `Sub2API 0.1.136 (image: v0.1.136.15, commit: 968843d3409b, built: 2026-06-21T05:30:25Z)`.
+- GREEN: only idle `sub2api-green` was recreated with `sub2api:v0.1.136.15`; active blue, PostgreSQL, Redis, and proxy were not restarted during candidate deployment.
+- GREEN: green candidate `18082` health/home/static/unauth admin/unauth `/responses`/unauth `/v1/responses` smoke passed; static asset `/assets/index-CvksB-nV.js` returned 200.
+- GREEN: green candidate 65-second health window stayed healthy.
+- OBSERVE: green candidate log window hit 1 known `openai_request_snapshot` cleanup noise row: `pq: canceling statement due to user request`; no panic/fatal, migration failure, bind conflict, or 502 followed.
+- GREEN: switched `D:\sub2api-deploy\proxy\upstreams\active.conf` from `sub2api-blue:8080` to `sub2api-green:8080`; `docker exec sub2api-proxy nginx -t` passed and reload succeeded.
+- GREEN: post-cutover `8080` and `18081` health/home/unauth admin/unauth responses smoke passed.
+- GREEN: after cutover, green 75-second health window stayed healthy; proxy recent problem log hits were 0.
+- Current state: active green `sub2api:v0.1.136.15`; rollback blue `sub2api:v0.1.136.14` remains healthy.
+- Not run: authenticated admin UI screenshot/version check because `ADMIN_PASSWORD` is empty; verification used static asset, code path, and typecheck evidence.
