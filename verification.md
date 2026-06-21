@@ -3555,3 +3555,47 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN: 切流后 75 秒健康窗口保持 healthy；90 秒 green 关键日志命中 0，proxy 错误日志命中 0。
 - Current state: active green `sub2api:v0.1.136.10`; rollback blue `sub2api:v0.1.136.9` remains healthy.
 - Not run: authenticated admin version/account 470 test, because `D:\sub2api-deploy\.env` has no `ADMIN_PASSWORD`; no JWT/database bypass was used.
+
+## 2026-06-21 11:02:00 +08:00 Devil - release v0.1.136.12 free-rawchat Codex client header fix
+- Commit: `92841900f3570a49082862b2662c33a7f392fd70` (`fix(openai): 强制 Codex 模拟使用最新版客户端头`).
+- GREEN: `go test -tags unit ./internal/service -run TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesOutdatedRealCodexClientHeaders -count=1` passed.
+- GREEN: focused Codex simulation test set passed, covering outdated real Codex client headers, Accept override, Codex provider responses path, bare host `/v1/responses`, API Key passthrough, and latest captured client shape.
+- GREEN: `git diff --check -- backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_test.go` passed.
+- GREEN: `docker image inspect sub2api:v0.1.136.12` reported version/revision `v0.1.136.12` / `92841900f357`.
+- GREEN: `docker run --rm sub2api:v0.1.136.12 /app/sub2api -version` reported `Sub2API 0.1.136 (image: v0.1.136.12, commit: 92841900f357, built: 2026-06-21T02:53:28Z)`.
+- GREEN: only idle `sub2api-blue` was recreated with `sub2api:v0.1.136.12`; active green, PostgreSQL, Redis, and proxy were not restarted during candidate deployment.
+- GREEN: blue candidate `18083` health/home/static/unauth admin/unauth `/responses`/unauth `/v1/responses` smoke passed; 65-second health window stayed healthy and critical log hits were 0.
+- GREEN: switched `D:\sub2api-deploy\proxy\upstreams\active.conf` from `sub2api-green:8080` to `sub2api-blue:8080`; `docker exec sub2api-proxy nginx -t` passed and reload succeeded.
+- GREEN: post-cutover `8080` and `18081` health/home/static/unauth admin/unauth responses smoke passed.
+- GREEN: account `470/free-rawchat` was restored to `status=active`, `schedulable=true`, and empty error/temp-unschedulable fields.
+- GREEN: real public gateway request `request_id=free-rawchat-verify-20260621110046` used old `Codex Desktop/0.140.0` / `Version: 0.140.0` headers against `POST http://127.0.0.1:8080/v1/responses` and returned HTTP 200; access log confirmed `account_id=470`, `status_code=200`, `model=gpt-5.5`; full SSE contained `response.completed` with text `Hi!`.
+- GREEN: after the real request, account 470 remained `active/schedulable=true`; blue recent problem log hits were 0 and proxy recent problem log hits were 0.
+- Current state: active blue `sub2api:v0.1.136.12`; rollback green `sub2api:v0.1.136.10` remains healthy.
+- Not run: authenticated admin system version API check, because `ADMIN_PASSWORD` is empty; version evidence came from image labels, binary `-version`, and running container image.
+
+## 2026-06-21 18:xx:00 +08:00 Devil - Codex Desktop 模拟头对齐
+- GREEN: ackend/internal/pkg/openai/codex_version_fetcher.go 将 Codex Desktop 模拟 UA 尾段从重复 CLI 版本号改为真实桌面 build 26.616.32156。
+- GREEN: go test ./internal/pkg/openai ./internal/service -run "TestCodexCLIVersionFetcherAcceptsNpmLatestEndpoint|TestCodexCLIUserAgentForVersionMatchesCapturedDesktopShape|TestOpenAICodexCLISimulationUsesLatestClientVersion" -count=1 passed.
+- GREEN: go test ./internal/service -run "TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesOutdatedRealCodexClientHeaders|TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationHeaders|TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesGatewayCodexSimulationHeaders|TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationUsesLatestCodexDesktopHeaders|TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationPreservesRealCodexClientHeaders" -count=1 passed.
+- GREEN: API Key Codex 模拟链路、账号测试链路和 WS 头构造都已切到新 Desktop UA 形状；真实客户端透传分支未改。
+- LIMIT: not committed, not built, not deployed.
+
+## 2026-06-21 18:xx:30 +08:00 Devil - Codex Desktop build 位动态学习
+- GREEN: ackend/internal/pkg/openai/codex_version_fetcher.go 新增真实 Desktop UA build 提取、观察和进程内缓存；模拟 UA 改为读取当前已学习 build。
+- GREEN: ackend/internal/service/openai_gateway_service.go 在识别到真实 Codex 客户端请求时先观察其 Desktop UA，再继续 API Key 模拟头构造。
+- GREEN: go test ./internal/pkg/openai ./internal/service -run "TestCodexCLIVersionFetcherAcceptsNpmLatestEndpoint|TestCodexCLIUserAgentForVersionMatchesCapturedDesktopShape|TestObserveCodexDesktopUserAgentUpdatesSyntheticBuildSuffix|TestObserveCodexDesktopUserAgentIgnoresUnsupportedShape|TestOpenAICodexCLISimulationUsesLatestClientVersion" -count=1 passed.
+- GREEN: go test ./internal/service -run "TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationLearnsDesktopBuildFromRealClientUA|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesOutdatedRealCodexClientHeaders|TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape|TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationUsesLatestCodexDesktopHeaders|TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationPreservesRealCodexClientHeaders" -count=1 passed.
+- LIMIT: only process-local cache; not persisted across restart, not committed, not deployed.
+
+## 2026-06-21 20:00:00 +08:00 Devil - release v0.1.136.13 dynamic Codex Desktop build learning
+- Commit:  4e9a2775410bde8cb29e6e2b2404841cb2e8f0d (ix(openai): 动态学习 Codex Desktop build 位).
+- GREEN: go test ./internal/pkg/openai ./internal/service -run "TestCodexCLIVersionFetcherAcceptsNpmLatestEndpoint|TestCodexCLIUserAgentForVersionMatchesCapturedDesktopShape|TestObserveCodexDesktopUserAgentUpdatesSyntheticBuildSuffix|TestObserveCodexDesktopUserAgentIgnoresUnsupportedShape|TestOpenAICodexCLISimulationUsesLatestClientVersion|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationLearnsDesktopBuildFromRealClientUA|TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationOverridesOutdatedRealCodexClientHeaders|TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape|TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationUsesLatestCodexDesktopHeaders|TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationPreservesRealCodexClientHeaders|TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationHeaders|TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesGatewayCodexSimulationHeaders" -count=1 passed.
+- GREEN: go test ./cmd/server -run TestNoSuchTest -count=1 passed.
+- GREEN: docker image inspect sub2api:v0.1.136.13 reported version/revision 0.1.136.13 /  4e9a2775410.
+- GREEN: docker run --rm sub2api:v0.1.136.13 /app/sub2api -version reported Sub2API 0.1.136 (image: v0.1.136.13, commit: 04e9a2775410, built: 2026-06-21T03:54:42Z).
+- GREEN: only idle green was recreated with sub2api:v0.1.136.13; active blue, PostgreSQL, Redis, and proxy were not restarted during candidate deploy.
+- GREEN: candidate green 18082 health/home/static asset/unauth admin/unauth /responses/unauth /v1/responses smoke passed; later 75-second green critical log scan hit 0.
+- GREEN: switched D:\sub2api-deploy\proxy\upstreams\active.conf from sub2api-blue:8080 to sub2api-green:8080; docker exec sub2api-proxy nginx -t passed and reload succeeded.
+- GREEN: post-cutover 8080 and 18081 health/home/unauth admin/unauth responses smoke passed; 75-second green and proxy log scans hit 0.
+- GREEN: D:\sub2api-deploy\.env now points SUB2API_GREEN_IMAGE=sub2api:v0.1.136.13; SUB2API_BLUE_IMAGE=sub2api:v0.1.136.12 remains as rollback.
+- LIMIT: authenticated admin version API not run because ADMIN_PASSWORD is empty; dynamic Desktop build learning is process-local and not persisted across restart.
