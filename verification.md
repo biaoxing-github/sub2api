@@ -3599,3 +3599,27 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN: post-cutover 8080 and 18081 health/home/unauth admin/unauth responses smoke passed; 75-second green and proxy log scans hit 0.
 - GREEN: D:\sub2api-deploy\.env now points SUB2API_GREEN_IMAGE=sub2api:v0.1.136.13; SUB2API_BLUE_IMAGE=sub2api:v0.1.136.12 remains as rollback.
 - LIMIT: authenticated admin version API not run because ADMIN_PASSWORD is empty; dynamic Desktop build learning is process-local and not persisted across restart.
+
+## 2026-06-21 20:32 +08:00 - account-level Claude CLI version override
+
+- GREEN: Added account credential `claude_cli_version` so Anthropic and Antigravity accounts can override Claude CLI version per account; empty or invalid values fall back to the current global CLI version.
+- GREEN: The account override now drives Anthropic account-test headers, session and payload generation, upstream model-sync requests, Claude OAuth default headers, Claude Code mimic headers, billing block `cc_version`, and OAuth metadata `user_id` version formatting.
+- GREEN: Admin create/edit account flows now expose a `Claude CLI version` field and persist it as `credentials.claude_cli_version`.
+- GREEN: `go test ./internal/service -run "TestAccountGetClaudeCLIVersion|TestGenerateSessionStringUsesAccountClaudeCLIVersion|TestAccountTestService_AnthropicAPIKeyUsesAccountClaudeCLIVersionOverride|TestRewriteSystemForNonClaudeCode|TestBuildAnthropicUpstreamModelsRequestUsesAccountClaudeCLIVersionOverride" -count=1` passed.
+- GREEN: `npm --prefix frontend test -- --run AccountAPIKeyCredentialsFields.spec.ts EditAccountModal.spec.ts` passed; Vitest summary was 3 files / 40 tests passed.
+- GREEN: `npm --prefix frontend run typecheck` passed.
+- LIMIT: local code and focused verification only; not committed, not built, not deployed.
+
+## 2026-06-21 20:51 +08:00 - release v0.1.136.14 account-level Claude CLI version override
+
+- GREEN: committed feature slice `ae3e03f6317cdcb1eae6ae16cbfd62fb55692c06` (`feat(account): 支持按账号覆盖 Claude CLI 版本`).
+- GREEN: `docker image inspect sub2api:v0.1.136.14` reported image ID `sha256:4ed310839f242c3a99436ef52d705ef50a50ba40ee73a3f0184fa629d8a7f9d0`, version `v0.1.136.14`, revision `ae3e03f6317c`.
+- GREEN: `docker run --rm sub2api:v0.1.136.14 /app/sub2api -version` reported `Sub2API 0.1.136 (image: v0.1.136.14, commit: ae3e03f6317c, built: 2026-06-21T04:47:20Z)`.
+- GREEN: only idle `sub2api-blue` was recreated with `sub2api:v0.1.136.14`; active green, PostgreSQL, Redis, and proxy were not restarted during candidate deployment.
+- GREEN: blue candidate `18083` health/home/static/unauth admin/unauth `/responses`/unauth `/v1/responses` smoke passed; 65-second health window stayed healthy.
+- OBSERVE: blue candidate log window hit 1 known `openai_request_snapshot` cleanup noise row: `pq: canceling statement due to user request`; no panic/fatal, migration failure, bind conflict, or 502 followed.
+- GREEN: switched `D:\sub2api-deploy\proxy\upstreams\active.conf` from `sub2api-green:8080` to `sub2api-blue:8080`; `docker exec sub2api-proxy nginx -t` passed and reload succeeded.
+- GREEN: post-cutover `8080` and `18081` health/home/unauth admin/unauth responses smoke passed.
+- GREEN: after cutover, blue 75-second health window stayed healthy; proxy recent problem log hits were 0.
+- Current state: active blue `sub2api:v0.1.136.14`; rollback green `sub2api:v0.1.136.13` remains healthy.
+- Not run: authenticated admin system version API check and real logged-in Anthropic business request, because `ADMIN_PASSWORD` is empty and this slice relied on focused tests plus public boundary smoke.
