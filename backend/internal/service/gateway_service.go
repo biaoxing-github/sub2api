@@ -1374,9 +1374,9 @@ func (s *GatewayService) buildOAuthMetadataUserID(parsed *ParsedRequest, account
 	seed := buildStableSessionSeed(account.ID, sessionContextDiscriminator(parsed.SessionContext), firstUserText)
 	sessionID := generateSessionUUID(seed)
 
-	// 根据指纹 UA 版本选择输出格式
-	var uaVersion string
-	if fp != nil {
+	// 根据账号覆盖版本优先选择输出格式；未配置时再退回指纹 UA 版本。
+	uaVersion := account.GetClaudeCLIVersion()
+	if strings.TrimSpace(uaVersion) == "" && fp != nil {
 		uaVersion = ExtractCLIVersion(fp.UserAgent)
 	}
 	accountUUID := strings.TrimSpace(account.GetExtraString("account_uuid"))
@@ -1416,7 +1416,7 @@ func (s *GatewayService) applyClaudeCodeOAuthMimicryToBody(
 
 	systemRewritten := false
 	if !strings.Contains(strings.ToLower(model), "haiku") {
-		body = rewriteSystemForNonClaudeCode(body, normalizeSystemParam(systemRaw))
+		body = rewriteSystemForNonClaudeCode(body, normalizeSystemParam(systemRaw), account.GetClaudeCLIVersion())
 		systemRewritten = true
 	}
 
@@ -1496,8 +1496,8 @@ func (s *GatewayService) buildOAuthMetadataUserIDFromBody(
 	seed := buildStableSessionSeed(account.ID, clientDiscriminator, extractFirstUserText(body))
 	sessionID := generateSessionUUID(seed)
 
-	var uaVersion string
-	if fp != nil {
+	uaVersion := account.GetClaudeCLIVersion()
+	if strings.TrimSpace(uaVersion) == "" && fp != nil {
 		uaVersion = ExtractCLIVersion(fp.UserAgent)
 	}
 	accountUUID := strings.TrimSpace(account.GetExtraString("account_uuid"))
@@ -4355,7 +4355,7 @@ func injectClaudeCodePrompt(body []byte, system any) []byte {
 // Anthropic 基于 system 参数内容检测第三方应用，仅前置追加 Claude Code 提示词
 // 无法通过检测，因为后续内容仍为非 Claude Code 格式。
 // 策略：将原始 system prompt 提取并注入为 user/assistant 消息对，system 仅保留 Claude Code 标识。
-func rewriteSystemForNonClaudeCode(body []byte, system any) []byte {
+func rewriteSystemForNonClaudeCode(body []byte, system any, cliVersion string) []byte {
 	system = normalizeSystemParam(system)
 
 	// 1. 提取原始 system prompt 文本
@@ -4387,7 +4387,7 @@ func rewriteSystemForNonClaudeCode(body []byte, system any) []byte {
 	//    billing block 的 cch=00000 是占位符，会被 buildUpstreamRequest 里的
 	//    signBillingHeaderCCH 替换成 xxhash64 签名。缺失 billing block 的系统 payload
 	//    是 Anthropic 判定第三方的关键信号之一（真实 CLI 每个请求都带）。
-	billingBlock, billingErr := buildBillingAttributionBlockJSON(body, claude.GetCurrentCLIVersion())
+	billingBlock, billingErr := buildBillingAttributionBlockJSON(body, cliVersion)
 	// 身份块不带 cache_control；缓存断点统一落在最后一个静态块（扩充块）上，
 	// 使 billing+身份+扩充 整段静态前缀都被同一断点覆盖，且只消耗 1 个断点配额。
 	ccPromptBlock, ccErr := marshalAnthropicSystemTextBlock(claudeCodeSystemPrompt, false)
@@ -4767,7 +4767,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		systemRewritten := false
 		if !strings.Contains(strings.ToLower(reqModel), "haiku") {
 			systemRaw, _ := parsed.SystemValue()
-			if err := replaceBody(rewriteSystemForNonClaudeCode(body, systemRaw)); err != nil {
+			if err := replaceBody(rewriteSystemForNonClaudeCode(body, systemRaw, account.GetClaudeCLIVersion())); err != nil {
 				return nil, err
 			}
 			systemRewritten = true
@@ -6597,8 +6597,10 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		}
 	}
 
-	// 同步 billing header cc_version 与实际发送的 User-Agent 版本
-	if fingerprint != nil {
+	// 同步 billing header cc_version 与最终账号级 CLI 版本，避免 header/body 裂缝。
+	if account != nil {
+		body = syncBillingHeaderVersion(body, claude.UserAgentForCLIVersion(account.GetClaudeCLIVersion()))
+	} else if fingerprint != nil {
 		body = syncBillingHeaderVersion(body, fingerprint.UserAgent)
 	}
 
@@ -6675,13 +6677,13 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		setHeaderRaw(req.Header, "anthropic-version", "2023-06-01")
 	}
 	if tokenType == "oauth" {
-		applyClaudeOAuthHeaderDefaults(req)
+		applyClaudeOAuthHeaderDefaults(req, account.GetClaudeCLIVersion())
 	}
 
 	// OAuth + mimic Claude Code：强制注入 CLI 指纹相关 header
 	// （user-agent/x-stainless-*/x-app/Accept/x-stainless-helper-method/x-client-request-id）
 	if tokenType == "oauth" && mimicClaudeCode {
-		applyClaudeCodeMimicHeaders(req, reqStream)
+		applyClaudeCodeMimicHeaders(req, reqStream, account.GetClaudeCLIVersion())
 	}
 
 	// 写入最终 anthropic-beta header
@@ -6861,14 +6863,14 @@ func requiredAnthropicAPIKeyBetaTokens(account *Account) []string {
 	return []string{claude.BetaContext1M}
 }
 
-func applyClaudeOAuthHeaderDefaults(req *http.Request) {
+func applyClaudeOAuthHeaderDefaults(req *http.Request, cliVersion string) {
 	if req == nil {
 		return
 	}
 	if getHeaderRaw(req.Header, "Accept") == "" {
 		setHeaderRaw(req.Header, "Accept", "application/json")
 	}
-	for key, value := range claude.DefaultHeadersForCurrentVersion() {
+	for key, value := range claude.HeadersForCLIVersion(cliVersion) {
 		if value == "" {
 			continue
 		}
@@ -7355,15 +7357,15 @@ var defaultDroppedBetasSet = buildBetaTokenSet(claude.DroppedBetas)
 // applyClaudeCodeMimicHeaders forces "Claude Code-like" request headers.
 // This mirrors opencode-anthropic-auth behavior: do not trust downstream
 // headers when using Claude Code-scoped OAuth credentials.
-func applyClaudeCodeMimicHeaders(req *http.Request, isStream bool) {
+func applyClaudeCodeMimicHeaders(req *http.Request, isStream bool, cliVersion string) {
 	if req == nil {
 		return
 	}
 	// Start with the standard defaults (fill missing).
-	applyClaudeOAuthHeaderDefaults(req)
+	applyClaudeOAuthHeaderDefaults(req, cliVersion)
 	// Then force key headers to match Claude Code fingerprint regardless of what the client sent.
 	// 使用 resolveWireCasing 确保 key 与真实 wire format 一致（如 "x-app" 而非 "X-App"）
-	for key, value := range claude.DefaultHeadersForCurrentVersion() {
+	for key, value := range claude.HeadersForCLIVersion(cliVersion) {
 		if value == "" {
 			continue
 		}
@@ -10332,8 +10334,10 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 		}
 	}
 
-	// 同步 billing header cc_version 与实际发送的 User-Agent 版本
-	if ctFingerprint != nil && ctEnableFP {
+	// 同步 billing header cc_version 与最终账号级 CLI 版本，避免 header/body 裂缝。
+	if account != nil {
+		body = syncBillingHeaderVersion(body, claude.UserAgentForCLIVersion(account.GetClaudeCLIVersion()))
+	} else if ctFingerprint != nil && ctEnableFP {
 		body = syncBillingHeaderVersion(body, ctFingerprint.UserAgent)
 	}
 
@@ -10394,12 +10398,12 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 		setHeaderRaw(req.Header, "anthropic-version", "2023-06-01")
 	}
 	if tokenType == "oauth" {
-		applyClaudeOAuthHeaderDefaults(req)
+		applyClaudeOAuthHeaderDefaults(req, account.GetClaudeCLIVersion())
 	}
 
 	// OAuth + mimic Claude Code：强制注入 CLI 指纹 header
 	if tokenType == "oauth" && mimicClaudeCode {
-		applyClaudeCodeMimicHeaders(req, false)
+		applyClaudeCodeMimicHeaders(req, false, account.GetClaudeCLIVersion())
 	}
 
 	// 写入最终 anthropic-beta header（Del 一次避免白名单透传值残留）

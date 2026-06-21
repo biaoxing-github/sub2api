@@ -3473,6 +3473,8 @@ export default {
       apiKeyDisabledCount: 'Cooldown count',
       restoreApiKey: 'Restore this key',
       apiKeysAppendMode: 'Append keys',
+      claudeCliVersion: 'Claude CLI version',
+      claudeCliVersionHint: 'Leave empty to use the current global or auto-synced version. When set, this account will send Claude-style headers and related version fields with this version.',
       apiKeysReplaceMode: 'Replace all',
       apiKeysAppendHint: 'Enter only new keys; existing keys are kept and de-duplicated.',
       apiKeysReplaceHint: 'The entered list will replace all current keys.',

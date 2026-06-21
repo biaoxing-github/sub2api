@@ -124,7 +124,7 @@ describe('AccountAPIKeyCredentialsFields', () => {
     expect(wrapper.text()).toContain('sk-...disabled')
     expect(wrapper.text()).toContain('2 total, 1 disabled')
     expect(wrapper.findAll('textarea')).toHaveLength(2)
-    expect(wrapper.findAll('input')).toHaveLength(2)
+    expect(wrapper.findAll('input')).toHaveLength(3)
 
     await wrapper.get('[data-testid="api-keys-edit-mode"]').setValue('replace')
     await wrapper.get('button[title="admin.accounts.restoreApiKey"]').trigger('click')
@@ -179,5 +179,34 @@ describe('AccountAPIKeyCredentialsFields', () => {
 
     const active = wrapper.get('[data-testid="api-key-state-fp-active"]')
     expect(active.text()).toContain('admin.accounts.apiKeyStatusActive')
+  })
+
+  it('shows anthropic Claude CLI version field and emits updates', async () => {
+    const wrapper = mount(AccountAPIKeyCredentialsFields, {
+      props: {
+        platform: 'anthropic',
+        baseUrl: 'https://api.anthropic.com',
+        requestBaseUrlsText: '',
+        balanceBaseUrl: '',
+        apiKey: '',
+        apiKeysText: '',
+        baseUrlHint: 'base hint',
+        apiKeyHint: 'key hint',
+        claudeCliVersion: '2.1.126',
+        mode: 'edit'
+      },
+      global: {
+        stubs: {
+          Icon: true,
+          Select: SelectStub
+        }
+      }
+    })
+
+    const versionInput = wrapper.get('[data-testid="claude-cli-version-input"]')
+    expect(versionInput.attributes('placeholder')).toBe('2.1.126')
+
+    await versionInput.setValue('2.1.183')
+    expect(wrapper.emitted('update:claudeCliVersion')?.[0]).toEqual(['2.1.183'])
   })
 })

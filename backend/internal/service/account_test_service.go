@@ -217,21 +217,21 @@ func (s *AccountTestService) openAIPathHealth() *OpenAIPathHealthTracker {
 }
 
 // generateSessionString generates a Claude Code style session string.
-// The output format is determined by the current Claude Code CLI version,
+// The output format is determined by the provided Claude Code CLI version,
 // ensuring consistency between the user_id format and the UA sent to upstream.
-func generateSessionString() (string, error) {
+func generateSessionString(cliVersion string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	hex64 := hex.EncodeToString(b)
 	sessionUUID := uuid.New().String()
-	return FormatMetadataUserID(hex64, "", sessionUUID, claude.GetCurrentCLIVersion()), nil
+	return FormatMetadataUserID(hex64, "", sessionUUID, cliVersion), nil
 }
 
 // createTestPayload creates a Claude Code style test request payload
-func createTestPayload(modelID string) (map[string]any, error) {
-	sessionID, err := generateSessionString()
+func createTestPayload(modelID string, cliVersion string) (map[string]any, error) {
+	sessionID, err := generateSessionString(cliVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +410,8 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	c.Writer.Flush()
 
 	// Create Claude Code style payload (same for all account types)
-	payload, err := createTestPayload(testModelID)
+	cliVersion := account.GetClaudeCLIVersion()
+	payload, err := createTestPayload(testModelID, cliVersion)
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}
@@ -429,7 +430,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	// Apply Claude Code client headers
-	for key, value := range claude.DefaultHeadersForCurrentVersion() {
+	for key, value := range claude.HeadersForCLIVersion(cliVersion) {
 		req.Header.Set(key, value)
 	}
 
@@ -484,7 +485,7 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
-	payload, err := createTestPayload(testModelID)
+	payload, err := createTestPayload(testModelID, account.GetClaudeCLIVersion())
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}

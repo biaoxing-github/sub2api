@@ -18,6 +18,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 )
 
 var accountAPIKeyRoundRobin sync.Map // map[int64]*atomic.Uint64
@@ -27,6 +28,8 @@ const (
 	apiKeyFingerprintPrefix   = "sha256:"
 	// AnthropicContext1MEnabledExtraKey 控制单个 Anthropic API Key 账号是否补齐 1M 上下文 beta。
 	AnthropicContext1MEnabledExtraKey = "anthropic_context_1m_enabled"
+	// CredentialClaudeCLIVersion 允许账号覆盖 Anthropic Claude CLI 版本。
+	CredentialClaudeCLIVersion = "claude_cli_version"
 	// OpenAICodexCLISimulationEnabledExtraKey 控制单个 OpenAI 账号是否把上游请求模拟为 Codex CLI。
 	OpenAICodexCLISimulationEnabledExtraKey = "openai_codex_cli_simulation_enabled"
 )
@@ -419,6 +422,37 @@ func (a *Account) GetAPIKey() string {
 	}
 	idx := counter.Add(1) - 1
 	return a.rememberSelectedAPIKey(keys[int(idx%uint64(len(keys)))])
+}
+
+// GetClaudeCLIVersion 返回账号级 Claude CLI 版本覆盖；无效或为空时回退全局版本。
+func (a *Account) GetClaudeCLIVersion() string {
+	version := strings.TrimSpace(a.GetCredential(CredentialClaudeCLIVersion))
+	if isValidClaudeCLIVersion(version) {
+		return version
+	}
+	return claude.GetCurrentCLIVersion()
+}
+
+func isValidClaudeCLIVersion(version string) bool {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return false
+	}
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (a *Account) rememberSelectedAPIKey(apiKey string) string {

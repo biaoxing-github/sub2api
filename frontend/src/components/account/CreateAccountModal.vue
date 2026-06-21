@@ -531,6 +531,7 @@
           v-model:balance-base-url="balanceBaseUrl"
           v-model:api-key="apiKeyValue"
           v-model:api-keys-text="apiKeysText"
+          v-model:claude-cli-version="claudeCliVersion"
           :platform="form.platform"
           :base-url-hint="baseUrlHint"
           :api-key-hint="apiKeyHint"
@@ -2044,6 +2045,7 @@ const requestBaseUrlsText = ref('')
 const balanceBaseUrl = ref('')
 const apiKeyValue = ref('')
 const apiKeysText = ref('')
+const claudeCliVersion = ref('')
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
 const editQuotaWeeklyLimit = ref<number | null>(null)
@@ -2964,6 +2966,7 @@ const resetForm = () => {
   codexCLIOnlyEnabled.value = false
   anthropicPassthroughEnabled.value = false
   anthropicContext1MEnabled.value = false
+  claudeCliVersion.value = ''
   webSearchEmulationMode.value = 'default'
   // Reset quota control state
   windowCostEnabled.value = false
@@ -3351,6 +3354,12 @@ const handleSubmit = async () => {
   }
   if (form.platform === 'openai' || form.platform === 'anthropic') {
     credentials.request_base_urls = requestBaseUrls.length > 0 ? requestBaseUrls : [primaryBaseUrl]
+  }
+  if (form.platform === 'anthropic' || form.platform === 'antigravity') {
+    const normalizedClaudeCliVersion = claudeCliVersion.value.trim()
+    if (normalizedClaudeCliVersion) {
+      credentials.claude_cli_version = normalizedClaudeCliVersion
+    }
   }
   if (form.platform === 'openai') {
     const normalizedBalanceBaseURL = parseBaseURLsText(balanceBaseUrl.value)[0]

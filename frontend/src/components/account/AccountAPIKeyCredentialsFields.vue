@@ -25,6 +25,7 @@ const props = withDefaults(defineProps<{
   balanceBaseUrl: string
   apiKey: string
   apiKeysText: string
+  claudeCliVersion?: string
   baseUrlHint: string
   apiKeyHint?: string
   mode?: 'create' | 'edit'
@@ -53,6 +54,7 @@ const emit = defineEmits<{
   'update:balanceBaseUrl': [value: string]
   'update:apiKey': [value: string]
   'update:apiKeysText': [value: string]
+  'update:claudeCliVersion': [value: string]
   'update:apiKeysEditMode': [value: 'append' | 'replace']
   deleteApiKey: [fingerprint: string]
   restoreApiKey: [fingerprint: string]
@@ -65,6 +67,9 @@ const supportsRequestBaseUrls = computed(
   () => props.platform === 'openai' || props.platform === 'anthropic'
 )
 const supportsBalanceBaseUrl = computed(() => props.platform === 'openai')
+const supportsClaudeCliVersion = computed(
+  () => props.platform === 'anthropic' || props.platform === 'antigravity'
+)
 
 const baseUrlPlaceholder = computed(() => {
   if (props.platform === 'openai') return 'https://api.openai.com'
@@ -160,6 +165,19 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
         @input="emit('update:apiKey', ($event.target as HTMLInputElement).value)"
       />
       <p class="input-hint">{{ singleApiKeyHint }}</p>
+    </div>
+
+    <div v-if="supportsClaudeCliVersion">
+      <label class="input-label">{{ t('admin.accounts.anthropic.claudeCliVersion') }}</label>
+      <input
+        :value="props.claudeCliVersion || ''"
+        type="text"
+        class="input font-mono"
+        data-testid="claude-cli-version-input"
+        placeholder="2.1.126"
+        @input="emit('update:claudeCliVersion', ($event.target as HTMLInputElement).value)"
+      />
+      <p class="input-hint">{{ t('admin.accounts.anthropic.claudeCliVersionHint') }}</p>
     </div>
 
     <div>

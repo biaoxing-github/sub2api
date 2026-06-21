@@ -693,6 +693,29 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('loads and saves anthropic account Claude CLI version override', async () => {
+    const account = buildAnthropicAPIKeyAccount()
+    account.credentials = {
+      ...account.credentials,
+      claude_cli_version: '2.1.126'
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+
+    const versionInput = wrapper.get('[data-testid="claude-cli-version-input"]')
+    expect((versionInput.element as HTMLInputElement).value).toBe('2.1.126')
+
+    await versionInput.setValue('2.1.183')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.claude_cli_version).toBe('2.1.183')
+  })
+
   it('clears OpenAI APIKey Responses override when set back to auto', async () => {
     const account = buildAccount()
     account.extra = {

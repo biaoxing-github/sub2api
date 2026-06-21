@@ -26,6 +26,7 @@
           v-model:balance-base-url="editBalanceBaseUrl"
           v-model:api-key="editApiKey"
           v-model:api-keys-text="editApiKeysText"
+          v-model:claude-cli-version="editClaudeCliVersion"
           v-model:api-keys-edit-mode="apiKeysEditMode"
           :platform="account.platform"
           :base-url-hint="baseUrlHint"
@@ -1127,6 +1128,7 @@ const editRequestBaseUrlsText = ref('')
 const editBalanceBaseUrl = ref('')
 const editApiKey = ref('')
 const editApiKeysText = ref('')
+const editClaudeCliVersion = ref('')
 const apiKeysEditMode = ref<'append' | 'replace'>('append')
 const deletingApiKeyFingerprint = ref<string | null>(null)
 const restoringApiKeyFingerprint = ref<string | null>(null)
@@ -1702,6 +1704,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     )
     editRequestBaseUrlsText.value = requestBaseURLs.length > 0 ? requestBaseURLs.join('\n') : editBaseUrl.value
     editBalanceBaseUrl.value = (credentials.balance_base_url as string) || ''
+    editClaudeCliVersion.value = typeof credentials.claude_cli_version === 'string'
+      ? credentials.claude_cli_version
+      : ''
 
     // Load model mappings and detect mode
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
@@ -1782,6 +1787,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   }
   editApiKey.value = ''
   editApiKeysText.value = ''
+  if (!(newAccount.type === 'apikey' && (newAccount.platform === 'anthropic' || newAccount.platform === 'antigravity'))) {
+    editClaudeCliVersion.value = ''
+  }
   apiKeysEditMode.value = 'append'
   upstreamAuthPassword.value = ''
 }
@@ -2227,6 +2235,14 @@ const handleSubmit = async () => {
       }
       if (props.account.platform === 'openai' || props.account.platform === 'anthropic') {
         newCredentials.request_base_urls = requestBaseUrls.length > 0 ? requestBaseUrls : [newBaseUrl]
+      }
+      if (props.account.platform === 'anthropic' || props.account.platform === 'antigravity') {
+        const normalizedClaudeCliVersion = editClaudeCliVersion.value.trim()
+        if (normalizedClaudeCliVersion) {
+          newCredentials.claude_cli_version = normalizedClaudeCliVersion
+        } else {
+          delete newCredentials.claude_cli_version
+        }
       }
       if (props.account.platform === 'openai') {
         const normalizedBalanceBaseURL = parseBaseURLsText(editBalanceBaseUrl.value)[0]

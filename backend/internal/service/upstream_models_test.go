@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/stretchr/testify/require"
 )
 
@@ -92,6 +93,7 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 	require.Equal(t, "https://anthropic.example.com/v1/models", anthropicReq.URL.String())
 	require.Equal(t, "anthropic-key", anthropicReq.Header.Get("x-api-key"))
 	require.Equal(t, "2023-06-01", anthropicReq.Header.Get("anthropic-version"))
+	require.Equal(t, claude.UserAgentForCLIVersion(claude.GetCurrentCLIVersion()), anthropicReq.Header.Get("User-Agent"))
 
 	openAIReq, err := svc.buildOpenAIUpstreamModelsRequest(ctx, &Account{
 		Platform: PlatformOpenAI,
@@ -128,6 +130,23 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://gateway.example.com/antigravity/v1/models", antigravityReq.URL.String())
 	require.Equal(t, "antigravity-key", antigravityReq.Header.Get("x-api-key"))
+}
+
+func TestBuildAnthropicUpstreamModelsRequestUsesAccountClaudeCLIVersionOverride(t *testing.T) {
+	t.Parallel()
+
+	svc := &AccountTestService{cfg: upstreamModelSyncTestConfig()}
+	req, err := svc.buildAnthropicUpstreamModelsRequest(context.Background(), &Account{
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":            "anthropic-key",
+			"base_url":           "https://anthropic.example.com/v1",
+			"claude_cli_version": "2.1.126",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "claude-cli/2.1.126 (external, cli)", req.Header.Get("User-Agent"))
 }
 
 func TestBuildAntigravityAPIKeyModelsRequestRejectsOfficialCloudCodeBase(t *testing.T) {
