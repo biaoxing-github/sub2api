@@ -3680,3 +3680,20 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN: after a 70-second post-cutover observation window, sub2api-blue and sub2api-green were both healthy; 8080, 18081, and 18083 /health all returned 200; blue/proxy critical log matches were 0.
 - Current state: active blue sub2api:v0.1.136.16; rollback green sub2api:v0.1.136.15 remains healthy.
 - LIMIT: ADMIN_PASSWORD is empty in D:\sub2api-deploy\.env, so authenticated /api/v1/admin/system/version verification was not run. Unauthenticated /api/v1/admin/system/version returned 401 as expected; version evidence came from image labels, binary version output, frontend route availability, and the running container image.
+
+## 2026-06-23 12:14 +08:00 - release v0.1.136.17 scheduler exhaustion stream cap
+
+- PASS: incident evidence shows the 11:24 blank client symptom was scheduler exhaustion for `gpt-5.5`, not a process crash. Active `sub2api-blue:v0.1.136.16` had `RestartCount=0`, and the 11:23:30-11:25:30 log window had no panic/fatal/migration/bind/listen failures.
+- PASS: logs showed `openai.account_select_failed: no available OpenAI accounts supporting model: gpt-5.5`, `openai.scheduler_exhaustion_probe_failed: no available accounts`, and selected-key cooldowns for account `486` after upstream 429. Account `461/free-观澜` was `schedulable=false` with `invalid_api_key` and had no 11:20-11:30 usage rows.
+- PASS: `go test ./internal/handler -run "TestOpenAIScheduler(ExhaustionProbeMode|ProbePendingUsesSSEComment|ProbeClientWaitDeadline)$" -count=1` passed.
+- PASS: `go test ./internal/handler -run "TestOpenAIHandleStreamingAwareError|TestGatewayHandleStreamingAwareError|TestOpenAIRecoverResponsesPanic|TestOpenAIScheduler|TestOpenAIEnsureForwardErrorResponse" -count=1` passed.
+- PASS: `go test ./cmd/server -run TestNoSuchTest -count=1` passed; `git diff --check -- backend/internal/handler/openai_gateway_handler.go backend/internal/handler/openai_gateway_handler_test.go` passed.
+- PASS: image `sub2api:v0.1.136.17` was built from committed HEAD `da3bc79f09a0`; label and binary version checks matched `v0.1.136.17` and commit `da3bc79f09a0`.
+- PASS: only idle `sub2api-green` was recreated with `sub2api:v0.1.136.17`; active blue, PostgreSQL, Redis, and proxy were not restarted during candidate deploy.
+- PASS: candidate green `18082` health/home/static asset/unauth admin/unauth `/responses`/unauth `/v1/responses` checks passed; 60+ second candidate health stayed healthy with `RestartCount=0`.
+- OBSERVE: candidate green log window had one known `openai_request_snapshot` cleanup noise row: `pq: canceling statement due to user request`; no critical panic/fatal/migration/bind/listen pattern followed.
+- PASS: proxy switched from `sub2api-blue:8080` to `sub2api-green:8080`; nginx config test and reload passed.
+- PASS: post-cutover public `8080` and local proxy `18081` smoke checks passed; Codex-style live probe returned HTTP 200 and showed `: scheduler_probe_pending`, keepalives, then `event: response.created`.
+- PASS: 70-second post-cutover observation kept green and blue healthy; `8080`, `18081`, and `18082` `/health` returned 200; green/proxy critical log scans were clean.
+- Current state: active green `sub2api:v0.1.136.17`; rollback blue `sub2api:v0.1.136.16` remains healthy.
+- LIMIT: full repository test suite and authenticated admin version API were not run. This was a focused handler fix verified by targeted tests, image checks, candidate/public smokes, live probe, and runtime log observation.
