@@ -3667,3 +3667,16 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：`corepack pnpm typecheck` 通过；`go test ./internal/service -run '^$' -count=1` service 包编译校验通过。
 - WARN：前端 Vitest 输出仍有既有 `common.time.never` i18n 缺 key 警告和 Browserslist 数据过期提示。
 - LIMIT：`go test ./internal/service -count=1` 完整 service 包测试 124 秒超时，未作为通过证据；本轮未构建镜像、未部署、未切流。
+
+## 2026-06-23 11:35 +08:00 - release v0.1.136.16 per-key manual probe visibility
+
+- GREEN: build source is committed HEAD 6118358ff43a; image sub2api:v0.1.136.16 has ID sha256:624f6ca00c017e58457b417fc23c3e68bb9b7b24268d6f6424f4dce0fa066bcd, label version v0.1.136.16, revision 6118358ff43a.
+- GREEN: binary version check printed Sub2API 0.1.136 (image: v0.1.136.16, commit: 6118358ff43a, built: 2026-06-23T03:07:54Z).
+- GREEN: only idle sub2api-blue was recreated with sub2api:v0.1.136.16; active sub2api-green, PostgreSQL, Redis, and sub2api-proxy were not restarted during candidate deploy.
+- GREEN: candidate blue 18083 health/home/static asset/unauth admin/unauth /responses/unauth /v1/responses smoke passed; static asset /assets/index-DI9h4SpI.js returned 200.
+- GREEN: candidate blue stayed healthy after a 60+ second health window; docker logs sub2api-blue --since 5m had no critical matches for panic/fatal/migration/checksum/pq/bind/listen/rebuild patterns.
+- GREEN: switched D:\sub2api-deploy\proxy\upstreams\active.conf from sub2api-green:8080 to sub2api-blue:8080; docker exec sub2api-proxy nginx -t passed and reload succeeded.
+- GREEN: post-cutover public 8080 and local proxy 18081 health/home/static/unauth admin/unauth /responses/unauth /v1/responses smoke passed.
+- GREEN: after a 70-second post-cutover observation window, sub2api-blue and sub2api-green were both healthy; 8080, 18081, and 18083 /health all returned 200; blue/proxy critical log matches were 0.
+- Current state: active blue sub2api:v0.1.136.16; rollback green sub2api:v0.1.136.15 remains healthy.
+- LIMIT: ADMIN_PASSWORD is empty in D:\sub2api-deploy\.env, so authenticated /api/v1/admin/system/version verification was not run. Unauthenticated /api/v1/admin/system/version returned 401 as expected; version evidence came from image labels, binary version output, frontend route availability, and the running container image.
