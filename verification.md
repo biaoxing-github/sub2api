@@ -3639,3 +3639,31 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - GREEN: after cutover, green 75-second health window stayed healthy; proxy recent problem log hits were 0.
 - Current state: active green `sub2api:v0.1.136.15`; rollback blue `sub2api:v0.1.136.14` remains healthy.
 - Not run: authenticated admin UI screenshot/version check because `ADMIN_PASSWORD` is empty; verification used static asset, code path, and typecheck evidence.
+
+## 2026-06-22 16:12 +08:00 - OpenAI 客户端中断与 free-观澜 调查
+
+- PASS：当前入口代理走 `sub2api-green:8080`，active 容器健康；旧 `sub2api` 重启不在入口链路。
+- PASS：账号 461/free-观澜 在调查窗口没有 `openai.forward_failed`，14 条 `/responses` usage 均完成并计费。
+- PASS：账号 461 在 15:41:56 由管理接口改为不可调度，不是自动失败降级。
+- PASS：实际可见失败集中在账号 483/479 的 `context canceled` 或 `stream usage incomplete: context canceled`，并且 handler 已尝试写 Responses 协议 `response.failed` fallback。
+- PASS：当前主要风险是自用组可调度 OpenAI 账号不足，导致 `scheduler_exhaustion_probe_failed: no available accounts` 后被客户端取消。
+- RISK：缺少用户本机客户端的精确报错时间/request_id；若用户看到的是某条具体 461 请求中断，需要拿该时间或 request_id 再做一对一关联。
+
+## 2026-06-23 10:12 +08:00 - 多 Key 429/余额不足不冻结账号
+
+- PASS：多 Key OpenAI API Key 账号只剩最后一个可用 Key 时，429 现在写入该 Key 的 `api_keys_disabled` 冷却记录，不写账号级 `SetTempUnschedulable`、`SetRateLimited` 或 `SetError`。
+- PASS：多 Key OpenAI API Key 账号只剩最后一个可用 Key 时，403 `insufficient balance` 现在写入该 Key 的 `api_keys_disabled` 冷却记录，不触发账号级临时不可调度规则，也不冻结账号。
+- PASS：相关 selected-key cooldown 聚焦测试通过：`go test -tags unit ./internal/service -run "TestRateLimitService_HandleUpstreamError_OpenAIAPIKey429DisablesLastActiveKeyWithoutFreezingAccount|TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceDisablesLastActiveKeyWithoutFreezingAccount|TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceDisablesSelectedKey|TestHandleUpstreamError429_OpenAIAPIKey(DisablesSelectedKey|WithTempRulesDisablesSelectedKey)|TestAccountTestService_OpenAI(APIKeyInsufficientBalanceDisablesSelectedKey|ChatCompletionsPathDisablesSelectedKey|CompactPathDisablesSelectedKey|ImagePathDisablesSelectedKey)" -count=1`。
+- PASS：`go test ./cmd/server -run TestNoSuchTest -count=1` 编译切片通过。
+- FAIL-UNRELATED：`go test -tags unit ./internal/service -count=1 -timeout 8m` 仍失败，失败点不在本次三文件 diff 范围：`TestAccountDisableAPIKeyWritesDisabledUntilAndCount` 的旧间隔断言不匹配；`TestOpenAIGatewayService_Forward_WSv2ErrorEventUsageLimitPersistsRateLimit` 在账号级调度路径 panic。
+- RISK：本轮未构建镜像、未部署；线上仍需后续按蓝绿发布流程验证真实多 Key 请求行为。
+
+## 2026-06-23 10:29 +08:00 - 人工测试 Key 报错与冷却展示
+
+- PASS：账号 manual-probe JSON 响应现在返回 DTO 账号，包含每个 key 的 `api_key_items.last_error`、`reason`、`disabled_until`，并继续移除原始 `credentials.api_keys`；验证命令 `go test ./internal/handler/admin -run TestAccountHandler_ManualProbeReturnsAPIKeyItemsWithCoolingError -count=1` 通过。
+- PASS：429 与 403 insufficient balance 的 selected-key cooldown 记录会持久化 `last_error`；验证命令分别为 `go test -tags unit ./internal/service -run TestRateLimitService_HandleUpstreamError_OpenAIAPIKey429DisablesLastActiveKeyWithoutFreezingAccount -count=1` 和 `go test -tags unit ./internal/service -run TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceDisablesLastActiveKeyWithoutFreezingAccount -count=1`，均通过。
+- PASS：manual-probe handler 聚焦用例 `go test ./internal/handler/admin -run "TestAccountHandler_ManualProbe" -count=1` 通过。
+- PASS：前端 `AccountTestModal` 会在测试结束后通知列表页刷新账号；调度池 manual probe 失败响应后也会刷新池子；Key 状态组件显示 `last_error`。验证命令 `corepack pnpm vitest run src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts src/components/admin/account/__tests__/AccountTestModal.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts` 通过，4 个文件 49 个测试通过。
+- PASS：`corepack pnpm typecheck` 通过；`go test ./internal/service -run '^$' -count=1` service 包编译校验通过。
+- WARN：前端 Vitest 输出仍有既有 `common.time.never` i18n 缺 key 警告和 Browserslist 数据过期提示。
+- LIMIT：`go test ./internal/service -count=1` 完整 service 包测试 124 秒超时，未作为通过证据；本轮未构建镜像、未部署、未切流。
