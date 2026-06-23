@@ -127,6 +127,9 @@ func (s *RateLimitService) RecordAccountProbeOutcome(ctx context.Context, outcom
 			return nil, err
 		}
 	}
+	if !outcome.Success {
+		s.recordProbeSelectedAPIKeyCooldown(ctx, account, outcome)
+	}
 
 	payload := map[string]any{
 		"level":             nextLevel,
@@ -165,6 +168,29 @@ func (s *RateLimitService) RecordAccountProbeOutcome(ctx context.Context, outcom
 	}
 	account.Extra[AccountProbeHealthExtraKey] = payload
 	return transition, nil
+}
+
+// recordProbeSelectedAPIKeyCooldown 将调度池或账号探测失败归因到样本里记录的 API Key 指纹。
+func (s *RateLimitService) recordProbeSelectedAPIKeyCooldown(ctx context.Context, account *Account, outcome AccountProbeOutcome) {
+	if s == nil || account == nil || account.Type != AccountTypeAPIKey || outcome.HTTPStatus <= 0 {
+		return
+	}
+	fingerprint := strings.TrimSpace(outcome.KeyFingerprint)
+	if fingerprint == "" {
+		return
+	}
+	message := strings.TrimSpace(outcome.ErrorMessage)
+	if message == "" {
+		message = strings.TrimSpace(outcome.Reason)
+	}
+	if message == "" {
+		message = fmt.Sprintf("HTTP %d", outcome.HTTPStatus)
+	}
+	body := []byte(message)
+	if !strings.HasPrefix(message, "{") {
+		body = []byte(fmt.Sprintf(`{"error":{"message":%q}}`, message))
+	}
+	tryDisableAPIKeyFingerprintForTestError(ctx, s.accountRepo, account, fingerprint, outcome.HTTPStatus, body)
 }
 
 func (s *RateLimitService) recordLastAPIKeyDisabledOutcome(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, upstreamMsg string, reason string) bool {

@@ -1369,7 +1369,7 @@ func (h *AccountHandler) ManualProbe(c *gin.Context) {
 	}
 
 	result, testErr := h.accountTestService.TestAccountConnectionWithResultBackground(c.Request.Context(), accountID, req.Model, req.Prompt, req.Mode)
-	if testErr != nil {
+	if testErr != nil && result == nil {
 		response.InternalError(c, "Failed to test account")
 		return
 	}

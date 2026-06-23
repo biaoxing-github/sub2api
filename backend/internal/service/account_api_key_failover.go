@@ -18,8 +18,16 @@ func shouldUseAPIKeyAccountSchedulingCooldown(statusCode int, responseBody []byt
 	case http.StatusForbidden:
 		return isInsufficientBalanceBody(responseBody) || isInvalidAPIKeyBody(responseBody)
 	default:
-		return false
+		return statusCode >= 500 && statusCode != 529
 	}
+}
+
+// shouldRecordAPIKeyTestUpstreamError 判断账号测试和调度池探测里的上游 HTTP 错误是否应记录到对应 Key。
+func shouldRecordAPIKeyTestUpstreamError(statusCode int, responseBody []byte) bool {
+	if shouldUseAPIKeyAccountSchedulingCooldown(statusCode, responseBody) {
+		return true
+	}
+	return statusCode >= http.StatusBadRequest
 }
 
 func apiKeyAccountSchedulingReason(statusCode int, responseBody []byte) string {

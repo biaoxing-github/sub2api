@@ -612,6 +612,94 @@ func TestAccountProbeService_RunRecordsAccountProbeOutcomeFailure(t *testing.T) 
 	require.Equal(t, float64(http.StatusPaymentRequired), health["http_status"])
 }
 
+func TestAccountProbeService_RunRecordsSelectedAPIKeyError(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       131,
+		Name:     "probe-key-error",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://example.test/v1",
+			"api_keys": []any{"sk-probe-503"},
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	probeRepo := &accountProbeRepoStub{}
+	rateRepo := &rateLimitAccountRepoStub{account: account}
+	client := &sequencedAccountProbeHTTPClientStub{
+		responses: []*http.Response{
+			accountProbeJSONResponse(http.StatusServiceUnavailable, `{"error":{"message":"upstream temporarily unavailable"}}`),
+			accountProbeJSONResponse(http.StatusServiceUnavailable, `{"error":{"message":"upstream temporarily unavailable"}}`),
+			accountProbeJSONResponse(http.StatusServiceUnavailable, `{"error":{"message":"upstream temporarily unavailable"}}`),
+		},
+	}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, probeRepo, client, nil)
+	svc.SetRateLimitService(&RateLimitService{accountRepo: rateRepo})
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID: 131,
+		Profile:   AccountProbeProfileQuick,
+		Model:     "gpt-test",
+	})
+
+	require.NoError(t, err)
+	require.NotEqual(t, AccountProbeStatusSuccess, result.Status)
+	require.Equal(t, 1, rateRepo.updateCredentialsCalls)
+	disabled, _ := rateRepo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	record, _ := disabled[FingerprintAPIKey("sk-probe-503")].(map[string]any)
+	require.NotNil(t, record)
+	require.Equal(t, "upstream_error", record["reason"])
+	require.Contains(t, record["last_error"], "API returned 503")
+	require.Contains(t, record["last_error"], "upstream temporarily unavailable")
+	require.NotEmpty(t, record["disabled_until"])
+}
+
+func TestAccountProbeService_RunRecordsAnyUpstreamHTTPErrorOnSelectedKey(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		ID:       132,
+		Name:     "probe-any-key-error",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"base_url": "https://example.test/v1",
+			"api_keys": []any{"sk-probe-418"},
+		},
+		Extra: map[string]any{"openai_api_mode": "responses"},
+	}
+	probeRepo := &accountProbeRepoStub{}
+	rateRepo := &rateLimitAccountRepoStub{account: account}
+	client := &sequencedAccountProbeHTTPClientStub{
+		responses: []*http.Response{
+			accountProbeJSONResponse(http.StatusTeapot, `{"error":{"message":"upstream rejected this key"}}`),
+		},
+	}
+	svc := NewAccountProbeService(&accountProbeAccountRepoStub{account: account}, probeRepo, client, nil)
+	svc.SetRateLimitService(&RateLimitService{accountRepo: rateRepo})
+
+	result, err := svc.Run(context.Background(), AccountProbeRunRequest{
+		AccountID: 132,
+		Profile:   AccountProbeProfileQuick,
+		Model:     "gpt-test",
+	})
+
+	require.NoError(t, err)
+	require.NotEqual(t, AccountProbeStatusSuccess, result.Status)
+	require.Equal(t, 1, rateRepo.updateCredentialsCalls)
+	disabled, _ := rateRepo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	record, _ := disabled[FingerprintAPIKey("sk-probe-418")].(map[string]any)
+	require.NotNil(t, record)
+	require.Equal(t, "upstream_error", record["reason"])
+	require.Contains(t, record["last_error"], "API returned 418")
+	require.Contains(t, record["last_error"], "upstream rejected this key")
+	require.NotEmpty(t, record["disabled_until"])
+}
+
 func TestAccountProbeOutcomeFromRunRepairSchedulingPoolStateUsesManualTestSource(t *testing.T) {
 	t.Parallel()
 

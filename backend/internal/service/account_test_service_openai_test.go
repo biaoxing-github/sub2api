@@ -1100,6 +1100,44 @@ func TestAccountTestService_OpenAIChatCompletionsPathDisablesSelectedKey(t *test
 	require.Equal(t, []string{"key-chat-ok"}, account.GetAPIKeys())
 }
 
+func TestAccountTestService_OpenAIManualTestRecordsAnyUpstreamHTTPErrorOnSelectedKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := newTestContext()
+
+	repo := &openAIAccountTestRepo{}
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		newJSONResponse(529, `{"error":{"message":"upstream overloaded"}}`),
+	}}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          951,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_keys": []any{"key-upstream-529", "key-upstream-ok"},
+			"base_url": "https://compat-upstream.example",
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
+
+	require.Error(t, err)
+	require.NotNil(t, repo.updatedCredentials)
+	disabled, _ := repo.updatedCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	record, _ := disabled[FingerprintAPIKey("key-upstream-529")].(map[string]any)
+	require.NotNil(t, record)
+	require.Equal(t, "upstream_error", record["reason"])
+	require.Contains(t, record["last_error"], "API returned 529")
+	require.Contains(t, record["last_error"], "upstream overloaded")
+	require.NotEmpty(t, record["disabled_until"])
+	require.Equal(t, []string{"key-upstream-ok"}, account.GetAPIKeys())
+}
+
 func TestAccountTestService_OpenAICompactPathDisablesSelectedKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()

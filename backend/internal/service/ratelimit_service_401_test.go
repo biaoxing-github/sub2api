@@ -134,6 +134,37 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey429DisablesLastActiveK
 	require.Equal(t, 0, repo.updateExtraCalls)
 }
 
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey503RecordsSelectedKeyError(t *testing.T) {
+	account := &Account{
+		ID:          62010,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"api_keys": []any{"sk-single"},
+		},
+	}
+	require.Equal(t, "sk-single", account.GetAPIKey())
+	repo := &rateLimitAccountRepoStub{account: account}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+
+	shouldDisable := service.HandleUpstreamError(context.Background(), account, http.StatusServiceUnavailable, http.Header{}, []byte(`{"error":{"message":"upstream temporarily unavailable"}}`))
+
+	require.True(t, shouldDisable)
+	require.Empty(t, account.GetAPIKeys())
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	disabled, _ := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	record, _ := disabled[FingerprintAPIKey("sk-single")].(map[string]any)
+	require.NotNil(t, record)
+	require.Equal(t, "upstream_error", record["reason"])
+	require.Contains(t, record["last_error"], "API returned 503")
+	require.Contains(t, record["last_error"], "upstream temporarily unavailable")
+	require.NotEmpty(t, record["disabled_until"])
+	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, 0, repo.setErrorCalls)
+}
+
 func TestRateLimitService_RecordAccountProbeOutcomeManualFailureWritesHealth(t *testing.T) {
 	account := &Account{
 		ID:          62002,

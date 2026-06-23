@@ -56,6 +56,16 @@ func (r *manualProbeAccountRepo) UpdateExtra(_ context.Context, _ int64, updates
 	return nil
 }
 
+func (r *manualProbeAccountRepo) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {
+	if r.account != nil {
+		r.account.Credentials = make(map[string]any, len(credentials))
+		for key, value := range credentials {
+			r.account.Credentials[key] = value
+		}
+	}
+	return nil
+}
+
 func (r *manualProbeAccountRepo) ClearError(context.Context, int64) error {
 	if r.account != nil {
 		r.account.Status = service.StatusActive
@@ -306,6 +316,70 @@ func TestAccountHandler_ManualProbeReturnsAPIKeyItemsWithCoolingError(t *testing
 		assert.True(t, payload.Account.APIKeyItems[0].Disabled)
 		assert.Equal(t, "invalid_api_key", payload.Account.APIKeyItems[0].Reason)
 		assert.Equal(t, "API returned 401: invalid key", payload.Account.APIKeyItems[0].LastError)
+		assert.NotEmpty(t, payload.Account.APIKeyItems[0].DisabledUntil)
+	}
+	assert.NotContains(t, payload.Account.Credentials, "api_keys")
+}
+
+func TestAccountHandler_ManualProbeReturnsAPIKeyItemsWithUpstream503Error(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	account := service.Account{
+		ID:          47,
+		Name:        "openai-api-key-upstream-503",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeAPIKey,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_keys": []string{"sk-upstream-503"},
+		},
+	}
+	adminSvc := &manualProbeAdminService{stubAdminService: &stubAdminService{}, account: &account}
+	repo := &manualProbeAccountRepo{account: &account}
+	upstream := &manualProbeHTTPUpstream{response: &http.Response{
+		StatusCode: http.StatusServiceUnavailable,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"upstream temporarily unavailable"}}`)),
+	}}
+	handler := &AccountHandler{
+		adminService:       adminSvc,
+		accountTestService: service.NewAccountTestService(repo, nil, nil, nil, upstream, &config.Config{}, nil),
+	}
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/:id/manual-probe", handler.ManualProbe)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/47/manual-probe", strings.NewReader(`{"model":"gpt-5.4"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var payload struct {
+		Success bool `json:"success"`
+		Account struct {
+			APIKeyItems []struct {
+				Fingerprint   string `json:"fingerprint"`
+				Status        string `json:"status"`
+				Disabled      bool   `json:"disabled"`
+				Reason        string `json:"reason"`
+				LastError     string `json:"last_error"`
+				DisabledUntil string `json:"disabled_until"`
+			} `json:"api_key_items"`
+			Credentials map[string]any `json:"credentials"`
+		} `json:"account"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &payload))
+	assert.False(t, payload.Success)
+	if assert.Len(t, payload.Account.APIKeyItems, 1) {
+		assert.Equal(t, service.FingerprintAPIKey("sk-upstream-503"), payload.Account.APIKeyItems[0].Fingerprint)
+		assert.Equal(t, "cooling", payload.Account.APIKeyItems[0].Status)
+		assert.True(t, payload.Account.APIKeyItems[0].Disabled)
+		assert.Equal(t, "upstream_error", payload.Account.APIKeyItems[0].Reason)
+		assert.Contains(t, payload.Account.APIKeyItems[0].LastError, "API returned 503")
+		assert.Contains(t, payload.Account.APIKeyItems[0].LastError, "upstream temporarily unavailable")
 		assert.NotEmpty(t, payload.Account.APIKeyItems[0].DisabledUntil)
 	}
 	assert.NotContains(t, payload.Account.Credentials, "api_keys")

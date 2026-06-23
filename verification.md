@@ -3697,3 +3697,16 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS: 70-second post-cutover observation kept green and blue healthy; `8080`, `18081`, and `18082` `/health` returned 200; green/proxy critical log scans were clean.
 - Current state: active green `sub2api:v0.1.136.17`; rollback blue `sub2api:v0.1.136.16` remains healthy.
 - LIMIT: full repository test suite and authenticated admin version API were not run. This was a focused handler fix verified by targeted tests, image checks, candidate/public smokes, live probe, and runtime log observation.
+
+## 2026-06-23 12:39 +08:00 - 上游错误写入对应 API Key
+
+- PASS：账号人工测试连接收到 OpenAI API Key 上游 503 时，manual-probe JSON 响应返回 DTO 账号，`api_key_items[0].last_error` 包含 `API returned 503` 与上游响应体，且不泄露 `credentials.api_keys`。
+- PASS：账号人工测试连接收到非典型上游 HTTP 错误 529 时，也会把错误写入本次选中 Key 的 `api_keys_disabled` 冷却记录，前端刷新后可在对应 key 行看到 `last_error`、`reason`、`disabled_until`。
+- PASS：调度池/后台账号探测收到上游 503 或非典型 HTTP 错误 418 时，会通过样本里的 key fingerprint 反查对应 Key 并写入 `api_keys_disabled`，用于管理端定位不可用 key。
+- PASS：聚焦验证 `rtk go test -tags unit ./internal/service -run "TestAccountTestService_OpenAIManualTestRecordsAnyUpstreamHTTPErrorOnSelectedKey|TestAccountProbeService_RunRecordsAnyUpstreamHTTPErrorOnSelectedKey|TestAccountProbeService_RunRecordsSelectedAPIKeyError|TestRateLimitService_HandleUpstreamError_OpenAIAPIKey503RecordsSelectedKeyError" -count=1` 通过，4 个测试通过。
+- PASS：manual-probe handler 聚焦验证 `rtk go test ./internal/handler/admin -run "TestAccountHandler_ManualProbeReturnsAPIKeyItemsWithUpstream503Error|TestAccountHandler_ManualProbeReturnsAPIKeyItemsWithCoolingError" -count=1` 通过，2 个测试通过。
+- PASS：更宽 selected-key 回归 `rtk go test -tags unit ./internal/service -run "TestRateLimitService_HandleUpstreamError_OpenAIAPIKey429DisablesLastActiveKeyWithoutFreezingAccount|TestRateLimitService_HandleUpstreamError_OpenAIAPIKey503RecordsSelectedKeyError|TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceDisablesLastActiveKeyWithoutFreezingAccount|TestRateLimitService_HandleUpstreamError_OpenAIAPIKeyForbiddenInvalidKeyUsesSchedulingCooldown|TestHandleUpstreamError429_OpenAIAPIKeySchedulingCooldownUsesSteppedErrorCount|TestAccountProbeService_RunRecordsAccountProbeOutcomeFailure|TestAccountProbeService_RunRecordsSelectedAPIKeyError|TestAccountProbeService_RunRecordsAnyUpstreamHTTPErrorOnSelectedKey|TestAccountTestService_OpenAIManualTestRecordsAnyUpstreamHTTPErrorOnSelectedKey" -count=1` 通过，9 个测试通过。
+- PASS：admin handler 回归 `rtk go test ./internal/handler/admin -run "TestAccountHandler_ManualProbeReturnsAPIKeyItemsWithCoolingError|TestAccountHandler_ManualProbeReturnsAPIKeyItemsWithUpstream503Error|TestAccountHandler_ManualProbeReturnsJSONWithoutSSE|TestAccountHandler_ManualProbeRepairsSchedulingPoolState" -count=1` 通过，4 个测试通过。
+- PASS：`rtk go test ./internal/handler/admin -count=1` 通过，201 个测试通过；`rtk go test ./cmd/server -run TestNoSuchTest -count=1` 完成 server 编译切片；`git diff --check` 通过。
+- WARN：CodeGraph MCP 本轮继续返回 `Transport closed`，`.codegraph/daemon.log` 显示 daemon 监听与 `socket error: write EPIPE`，已按项目规则降级 PowerShell 精确检索。
+- LIMIT：未重跑完整 `go test -tags unit ./internal/service -count=1`，前序该包全量仍有无关历史失败；本轮以聚焦 service/admin、handler 包级和 server 编译切片作为发布前验证。

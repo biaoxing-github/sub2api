@@ -397,6 +397,9 @@ func shouldSkipOpenAIAccountStateMutation(account *Account, statusCode int, upst
 	if account == nil || account.Platform != PlatformOpenAI || customErrorCodesEnabled {
 		return false
 	}
+	if account.Type == AccountTypeAPIKey && shouldUseAPIKeyAccountSchedulingCooldown(statusCode, responseBody) {
+		return false
+	}
 	// 账号显式配置了旧式临时不可调度规则时，用户规则优先于 OpenAI 通用 5xx 跳过策略。
 	if account.IsTempUnschedulableEnabled() && len(account.GetTempUnschedulableRules()) > 0 {
 		return false
@@ -1947,25 +1950,57 @@ func (s *RateLimitService) tryAPIKeyAccountSchedulingCooldown(ctx context.Contex
 }
 
 func tryDisableSelectedAPIKeyForCooldown(ctx context.Context, repo AccountRepository, account *Account, statusCode int, responseBody []byte) bool {
-	if repo == nil || account == nil || account.SavedAPIKeyCount() <= 1 {
+	if repo == nil || account == nil || account.SavedAPIKeyCount() == 0 {
 		return false
 	}
 	selectedKey := strings.TrimSpace(account.LastSelectedAPIKey())
 	if selectedKey == "" {
 		return false
 	}
+	return tryDisableAPIKeyForCooldown(ctx, repo, account, selectedKey, statusCode, responseBody)
+}
+
+// tryDisableAPIKeyFingerprintForCooldown 按指纹定位 Key，并沿用生产调度错误规则写入冷却。
+func tryDisableAPIKeyFingerprintForCooldown(ctx context.Context, repo AccountRepository, account *Account, fingerprint string, statusCode int, responseBody []byte) bool {
+	if repo == nil || account == nil || account.Type != AccountTypeAPIKey || !shouldUseAPIKeyAccountSchedulingCooldown(statusCode, responseBody) || account.SavedAPIKeyCount() == 0 {
+		return false
+	}
+	apiKey := accountAPIKeyByFingerprint(account, fingerprint)
+	if apiKey == "" {
+		return false
+	}
+	return tryDisableAPIKeyForCooldown(ctx, repo, account, apiKey, statusCode, responseBody)
+}
+
+// tryDisableAPIKeyFingerprintForTestError 按指纹定位 Key，并把测试/探测收到的上游 HTTP 错误写入冷却。
+func tryDisableAPIKeyFingerprintForTestError(ctx context.Context, repo AccountRepository, account *Account, fingerprint string, statusCode int, responseBody []byte) bool {
+	if repo == nil || account == nil || account.Type != AccountTypeAPIKey || !shouldRecordAPIKeyTestUpstreamError(statusCode, responseBody) || account.SavedAPIKeyCount() == 0 {
+		return false
+	}
+	apiKey := accountAPIKeyByFingerprint(account, fingerprint)
+	if apiKey == "" {
+		return false
+	}
+	return tryDisableAPIKeyForCooldown(ctx, repo, account, apiKey, statusCode, responseBody)
+}
+
+func tryDisableAPIKeyForCooldown(ctx context.Context, repo AccountRepository, account *Account, apiKey string, statusCode int, responseBody []byte) bool {
+	apiKey = strings.TrimSpace(apiKey)
+	if repo == nil || account == nil || apiKey == "" {
+		return false
+	}
 	reason := apiKeyAccountSchedulingReason(statusCode, responseBody)
 	now := time.Now()
 	lastError := fmt.Sprintf("API returned %d: %s", statusCode, truncateTempUnschedMessage(responseBody, tempUnschedMessageMaxBytes))
-	if !account.DisableAPIKey(selectedKey, reason, now, lastError) {
+	if !account.DisableAPIKey(apiKey, reason, now, lastError) {
 		return false
 	}
 	if err := persistAccountCredentials(ctx, repo, account, account.Credentials); err != nil {
 		slog.Warn("api_key_selected_key_cooldown_failed", "account_id", account.ID, "status_code", statusCode, "reason", reason, "error", err)
-		removeDisabledAPIKeyFingerprint(account.Credentials, FingerprintAPIKey(selectedKey))
+		removeDisabledAPIKeyFingerprint(account.Credentials, FingerprintAPIKey(apiKey))
 		return false
 	}
-	slog.Info("api_key_selected_key_cooldown", "account_id", account.ID, "status_code", statusCode, "reason", reason, "key_fingerprint", FingerprintAPIKey(selectedKey))
+	slog.Info("api_key_selected_key_cooldown", "account_id", account.ID, "status_code", statusCode, "reason", reason, "key_fingerprint", FingerprintAPIKey(apiKey))
 	return true
 }
 

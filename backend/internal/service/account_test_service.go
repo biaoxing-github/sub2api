@@ -963,12 +963,15 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	return nil
 }
 
-// scheduleOpenAIAPIKeyFromTestError 在账号测试旁路中复用账号级临时不可调度，避免写入单 Key 停用列表。
+// scheduleOpenAIAPIKeyFromTestError 将账号测试里拿到的上游错误写到本次选中的 Key。
 func (s *AccountTestService) scheduleOpenAIAPIKeyFromTestError(ctx context.Context, account *Account, statusCode int, body []byte) bool {
-	if account == nil || account.Type != AccountTypeAPIKey || !shouldUseAPIKeyAccountSchedulingCooldown(statusCode, body) {
+	if account == nil || account.Type != AccountTypeAPIKey || !shouldRecordAPIKeyTestUpstreamError(statusCode, body) {
 		return false
 	}
 	rateLimitService := &RateLimitService{accountRepo: s.accountRepo}
+	if tryDisableSelectedAPIKeyForCooldown(ctx, s.accountRepo, account, statusCode, body) {
+		return true
+	}
 	return rateLimitService.tryAPIKeyAccountSchedulingCooldown(ctx, account, statusCode, body)
 }
 

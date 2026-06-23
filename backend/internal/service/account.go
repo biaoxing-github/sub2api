@@ -878,16 +878,24 @@ func (a *Account) RestoreAPIKeyByFingerprint(fingerprint string) (exists bool, r
 
 // hasAPIKeyFingerprint 判断账号凭证中是否仍保存指定 Key 指纹。
 func (a *Account) hasAPIKeyFingerprint(fingerprint string) bool {
-	if a == nil || a.Credentials == nil {
-		return false
+	return accountAPIKeyByFingerprint(a, fingerprint) != ""
+}
+
+func accountAPIKeyByFingerprint(a *Account, fingerprint string) string {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if a == nil || a.Credentials == nil || fingerprint == "" {
+		return ""
 	}
 	for _, key := range normalizeAPIKeys(a.Credentials["api_keys"]) {
 		if FingerprintAPIKey(key) == fingerprint {
-			return true
+			return key
 		}
 	}
 	legacy := strings.TrimSpace(a.GetCredential("api_key"))
-	return legacy != "" && FingerprintAPIKey(legacy) == fingerprint
+	if legacy != "" && FingerprintAPIKey(legacy) == fingerprint {
+		return legacy
+	}
+	return ""
 }
 
 // removeDisabledAPIKeyFingerprint 清除已删除或已恢复 Key 对应的停用记录，避免 DTO 继续暴露陈旧状态。
