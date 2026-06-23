@@ -3710,3 +3710,15 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：`rtk go test ./internal/handler/admin -count=1` 通过，201 个测试通过；`rtk go test ./cmd/server -run TestNoSuchTest -count=1` 完成 server 编译切片；`git diff --check` 通过。
 - WARN：CodeGraph MCP 本轮继续返回 `Transport closed`，`.codegraph/daemon.log` 显示 daemon 监听与 `socket error: write EPIPE`，已按项目规则降级 PowerShell 精确检索。
 - LIMIT：未重跑完整 `go test -tags unit ./internal/service -count=1`，前序该包全量仍有无关历史失败；本轮以聚焦 service/admin、handler 包级和 server 编译切片作为发布前验证。
+
+## 2026-06-23 14:04 +08:00 - release v0.1.136.18 上游错误写入 Key 状态
+
+- PASS：代码提交 `80fdfcbd7a0c` 已构建为不可变镜像 `sub2api:v0.1.136.18`，镜像 ID `sha256:51b104d6589dd6160c47b8fbb1dfb562e884efff01d1e45dbaaef59c8fa46f1a`；镜像标签和二进制版本输出均匹配 commit `80fdfcbd7a0c`。
+- PASS：只重建 idle `sub2api-blue`；发布候选期间 active `sub2api-green`、PostgreSQL、Redis 和 `sub2api-proxy` 未重启。
+- PASS：blue 候选端口 `18083` 的 `/health`、首页、静态资源、未登录 admin 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过，候选 60+ 秒观察保持 `healthy` 且 `RestartCount=0`。
+- OBSERVE：候选日志窗口出现 1 条已知 `openai_request_snapshot` 清理噪声 `pq: canceling statement due to user request`，未伴随 panic、fatal、migration、bind、listen 或 rebuild 失败。
+- PASS：代理 upstream 已从 `sub2api-green:8080` 切到 `sub2api-blue:8080`；`docker exec sub2api-proxy nginx -t` 通过，reload 成功。
+- PASS：切流后公网入口 `8080` 和本机代理入口 `18081` 的健康、首页、静态资源、未登录 admin 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- PASS：2026-06-23 14:04 +08:00 复核 `8080`、`18081`、`18083` 的 `/health` 均返回 200；`sub2api-blue` 运行 `sub2api:v0.1.136.18` 且 `healthy RestartCount=0`，`sub2api-green` 运行 `sub2api:v0.1.136.17` 且 `healthy RestartCount=0`；nginx 配置测试通过。
+- Current state：active blue `sub2api:v0.1.136.18`；rollback green `sub2api:v0.1.136.17`。
+- LIMIT：本轮未执行 authenticated admin version endpoint，因为本地部署自动化路径没有可用 admin password；未重跑完整 `go test -tags unit ./internal/service -count=1`，原因同上方已知无关历史失败。
