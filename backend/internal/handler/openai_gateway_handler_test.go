@@ -485,6 +485,33 @@ func TestOpenAISchedulerExhaustionProbeMode(t *testing.T) {
 	}
 }
 
+func TestOpenAISchedulerProbePendingUsesSSEComment(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/responses", nil)
+
+	h := &OpenAIGatewayHandler{}
+	streamStarted := false
+
+	h.writeOpenAISchedulerProbePending(c, &streamStarted, "scheduler_probe_pending")
+
+	require.True(t, streamStarted)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "text/event-stream", w.Header().Get("Content-Type"))
+	require.Equal(t, ": scheduler_probe_pending\n\n", w.Body.String())
+	require.NotContains(t, w.Body.String(), "data:")
+}
+
+func TestOpenAISchedulerProbeClientWaitDeadline(t *testing.T) {
+	startedAt := time.Date(2026, 6, 23, 11, 24, 0, 0, time.UTC)
+
+	require.False(t, openAISchedulerExhaustionClientWaitExceeded(time.Time{}, startedAt.Add(10*time.Minute)))
+	require.False(t, openAISchedulerExhaustionClientWaitExceeded(startedAt, startedAt.Add(openAISchedulerExhaustionClientWaitMax-time.Nanosecond)))
+	require.True(t, openAISchedulerExhaustionClientWaitExceeded(startedAt, startedAt.Add(openAISchedulerExhaustionClientWaitMax)))
+	require.True(t, openAISchedulerExhaustionClientWaitExceeded(startedAt, startedAt.Add(openAISchedulerExhaustionClientWaitMax+time.Second)))
+}
+
 func TestOpenAIFailoverRetryWindow_SingleCandidate(t *testing.T) {
 	start := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	state := &openAIFailoverRetryWindow{}

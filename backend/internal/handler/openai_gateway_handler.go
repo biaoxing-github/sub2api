@@ -46,6 +46,7 @@ const (
 	openAIFailoverRetryDelay                   = 30 * time.Second
 	openAIFailoverRetryMaxDelay                = 30 * time.Second
 	openAIFailoverRetryMaxWait                 = 30 * time.Second
+	openAISchedulerExhaustionClientWaitMax     = 90 * time.Second
 )
 
 type openAIModelBodyReplaceFunc func([]byte, string) []byte
@@ -140,6 +141,29 @@ func (w *openAIFailoverRetryWindow) nextDelay() time.Duration {
 		}
 	}
 	return delay
+}
+
+func openAISchedulerExhaustionClientWaitExceeded(startedAt, now time.Time) bool {
+	if startedAt.IsZero() {
+		return false
+	}
+	return !now.Before(startedAt.Add(openAISchedulerExhaustionClientWaitMax))
+}
+
+func (h *OpenAIGatewayHandler) writeOpenAISchedulerProbePending(c *gin.Context, streamStarted *bool, reason string) {
+	if c == nil || c.Writer == nil || streamStarted == nil || *streamStarted {
+		return
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = "scheduler_probe_pending"
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Status(http.StatusOK)
+	c.Writer.WriteString(": " + reason + "\n\n")
+	c.Writer.Flush()
+	*streamStarted = true
 }
 
 // openAISchedulerExhaustionProbeMode 决定选号失败后是否进入调度耗尽探测。
@@ -449,6 +473,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
 	probeFailureCount := 0
+	schedulerProbeStartedAt := time.Time{}
 
 	for {
 		// Select account supporting the requested model
@@ -471,15 +496,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			)
 			shouldProbe, infiniteProbe := h.openAISchedulerExhaustionProbeMode(len(failedAccountIDs))
 			if shouldProbe {
-				if !streamStarted {
-					c.Header("Content-Type", "text/event-stream")
-					c.Header("Cache-Control", "no-cache")
-					c.Header("Connection", "keep-alive")
-					c.Status(http.StatusOK)
-					c.Writer.WriteString("data: {\"type\":\"scheduler_probe_pending\"}\n\n")
-					c.Writer.Flush()
-					streamStarted = true
+				if schedulerProbeStartedAt.IsZero() {
+					schedulerProbeStartedAt = time.Now()
 				}
+				h.writeOpenAISchedulerProbePending(c, &streamStarted, "scheduler_probe_pending")
 				recovered, probeErr := h.gatewayService.RecoverOpenAISchedulerExhaustion(
 					c.Request.Context(),
 					service.OpenAISchedulerExhaustionProbeOptions{
@@ -500,6 +520,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					switchCount = 0
 					lastFailoverErr = nil
 					probeFailureCount = 0
+					schedulerProbeStartedAt = time.Time{}
 					continue
 				}
 				probeFailureCount++
@@ -514,7 +535,23 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				}
 				// 无限探测模式：探测失败后继续循环，不终止
 				if infiniteProbe {
+					if openAISchedulerExhaustionClientWaitExceeded(schedulerProbeStartedAt, time.Now()) {
+						reqLog.Warn("openai.scheduler_exhaustion_client_wait_exceeded",
+							zap.Duration("max_wait", openAISchedulerExhaustionClientWaitMax),
+							zap.Int("probe_failure_count", probeFailureCount),
+						)
+						h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available OpenAI accounts, please retry later", streamStarted)
+						return
+					}
 					if !h.sleepWithProbeKeepalive(c, reqLog, probeFailureCount, &streamStarted) {
+						return
+					}
+					if openAISchedulerExhaustionClientWaitExceeded(schedulerProbeStartedAt, time.Now()) {
+						reqLog.Warn("openai.scheduler_exhaustion_client_wait_exceeded",
+							zap.Duration("max_wait", openAISchedulerExhaustionClientWaitMax),
+							zap.Int("probe_failure_count", probeFailureCount),
+						)
+						h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available OpenAI accounts, please retry later", streamStarted)
 						return
 					}
 					continue
@@ -650,16 +687,27 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 								zap.Int("failed_account_count", len(failedAccountIDs)),
 								zap.Int("upstream_status", failoverErr.StatusCode),
 							)
-							if !streamStarted {
-								c.Header("Content-Type", "text/event-stream")
-								c.Header("Cache-Control", "no-cache")
-								c.Header("Connection", "keep-alive")
-								c.Status(http.StatusOK)
-								c.Writer.WriteString("data: {\"type\":\"failover_exhausted_probe_pending\"}\n\n")
-								c.Writer.Flush()
-								streamStarted = true
+							if schedulerProbeStartedAt.IsZero() {
+								schedulerProbeStartedAt = time.Now()
+							}
+							h.writeOpenAISchedulerProbePending(c, &streamStarted, "failover_exhausted_probe_pending")
+							if openAISchedulerExhaustionClientWaitExceeded(schedulerProbeStartedAt, time.Now()) {
+								reqLog.Warn("openai.failover_exhausted_client_wait_exceeded",
+									zap.Duration("max_wait", openAISchedulerExhaustionClientWaitMax),
+									zap.Int("probe_failure_count", probeFailureCount),
+								)
+								h.handleFailoverExhausted(c, failoverErr, streamStarted)
+								return
 							}
 							if !h.sleepWithProbeKeepalive(c, reqLog, probeFailureCount, &streamStarted) {
+								return
+							}
+							if openAISchedulerExhaustionClientWaitExceeded(schedulerProbeStartedAt, time.Now()) {
+								reqLog.Warn("openai.failover_exhausted_client_wait_exceeded",
+									zap.Duration("max_wait", openAISchedulerExhaustionClientWaitMax),
+									zap.Int("probe_failure_count", probeFailureCount),
+								)
+								h.handleFailoverExhausted(c, failoverErr, streamStarted)
 								return
 							}
 							probeFailureCount++
