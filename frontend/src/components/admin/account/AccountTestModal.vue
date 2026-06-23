@@ -290,6 +290,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
+  (e: 'tested'): void
 }>()
 
 const terminalRef = ref<HTMLElement | null>(null)
@@ -590,6 +591,7 @@ const handleEvent = (event: {
         status.value = 'error'
         errorMessage.value = event.error || 'Test failed'
       }
+      emit('tested')
       break
 
     case 'error':
@@ -600,6 +602,7 @@ const handleEvent = (event: {
         streamingContent.value = ''
       }
       resolveTotalLatency(event.latency_ms)
+      emit('tested')
       break
   }
 }

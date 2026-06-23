@@ -362,15 +362,19 @@ async function manualProbe(item: OpenAIAccountSchedulingPoolItem) {
     const result = await manualProbeAccount(accountId, await buildManualProbePayload(item.account))
 
     const probeResult = result.result
+    let nextMessage = ''
+    let nextError = ''
     if (result.success && probeResult?.success) {
-      message.value = t('admin.accountSchedulingPool.probeSuccess', {
+      nextMessage = t('admin.accountSchedulingPool.probeSuccess', {
         name: item.account.name,
         latency: probeResult.latency_ms
       })
-      await loadPool()
     } else {
-      error.value = probeResult?.message || probeResult?.error || t('admin.accountSchedulingPool.probeFailed')
+      nextError = probeResult?.message || probeResult?.error || t('admin.accountSchedulingPool.probeFailed')
     }
+    await loadPool()
+    message.value = nextMessage
+    error.value = nextError
   } catch (err: any) {
     error.value = err?.response?.data?.error || err?.response?.data?.message || err?.message || t('common.error')
   } finally {

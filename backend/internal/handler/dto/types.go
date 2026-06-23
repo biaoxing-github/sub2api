@@ -294,6 +294,7 @@ type APIKeyItem struct {
 	Status        string `json:"status"`
 	Disabled      bool   `json:"disabled,omitempty"`
 	Reason        string `json:"reason,omitempty"`
+	LastError     string `json:"last_error,omitempty"`
 	DisabledAt    string `json:"disabled_at,omitempty"`
 	DisabledUntil string `json:"disabled_until,omitempty"`
 	DisabledCount int    `json:"disabled_count,omitempty"`

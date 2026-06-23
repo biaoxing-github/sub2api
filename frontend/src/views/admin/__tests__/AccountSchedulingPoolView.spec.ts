@@ -343,6 +343,7 @@ describe('AccountSchedulingPoolView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('admin.accountSchedulingPool.probeFailed')
+    expect(listSchedulingPool).toHaveBeenCalledTimes(2)
   })
 
   it('shows manual probe button for anthropic accounts and reuses account page opus default', async () => {

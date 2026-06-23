@@ -7,6 +7,7 @@ const {
   listAccounts,
   listWithEtag,
   getBatchTodayStats,
+  getById,
   batchRefresh,
   batchTestNonAPIKeyAccounts,
   listBatchTestNonAPIKeyRuns,
@@ -19,6 +20,7 @@ const {
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
+  getById: vi.fn(),
   batchRefresh: vi.fn(),
   batchTestNonAPIKeyAccounts: vi.fn(),
   listBatchTestNonAPIKeyRuns: vi.fn(),
@@ -35,6 +37,7 @@ vi.mock('@/api/admin', () => ({
       list: listAccounts,
       listWithEtag,
       getBatchTodayStats,
+      getById,
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh,
@@ -106,7 +109,7 @@ const DataTableStub = {
           <slot :name="'cell-' + column.key" :row="row" :value="row[column.key]" />
         </template>
       </div>
-      <div data-test="data-table">{{ data.map((row) => \`\${row.name}:\${row.status}:\${row.error_message || ""}:\${row.total_account_cost ?? 0}:\${row.total_requests ?? 0}\`).join("|") }}</div>
+      <div data-test="data-table">{{ data.map((row) => \`\${row.name}:\${row.status}:\${row.error_message || ""}:\${row.total_account_cost ?? 0}:\${row.total_requests ?? 0}:\${(row.api_key_items || []).map((item) => item.last_error || "").join(",")}\`).join("|") }}</div>
     </div>
   `
 }
@@ -125,6 +128,18 @@ const AccountBulkActionsBarStub = {
 const BulkEditAccountModalStub = {
   props: ['show', 'target'],
   template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
+}
+
+const AccountActionMenuTestStub = {
+  props: ['account'],
+  emits: ['test'],
+  template: '<button data-test="menu-test-account" @click="$emit(\'test\', account)">test account</button>'
+}
+
+const AccountTestModalEmitStub = {
+  props: ['show', 'account'],
+  emits: ['tested'],
+  template: '<button v-if="show" data-test="account-test-finished" @click="$emit(\'tested\')">{{ account?.name }}</button>'
 }
 
 const DEFAULT_HIDDEN_ACCOUNT_COLUMNS = [
@@ -216,6 +231,7 @@ describe('admin AccountsView bulk edit scope', () => {
     listAccounts.mockReset()
     listWithEtag.mockReset()
     getBatchTodayStats.mockReset()
+    getById.mockReset()
     batchRefresh.mockReset()
     batchTestNonAPIKeyAccounts.mockReset()
     listBatchTestNonAPIKeyRuns.mockReset()
@@ -238,6 +254,7 @@ describe('admin AccountsView bulk edit scope', () => {
       data: null
     })
     getBatchTodayStats.mockResolvedValue({ stats: {} })
+    getById.mockResolvedValue(null)
     batchRefresh.mockResolvedValue({ total: 0, success: 0, failed: 0, errors: [] })
     batchTestNonAPIKeyAccounts.mockResolvedValue({ id: 1, status: 'running', model_id: 'gpt-5.4', concurrency: 2, limit: 500, total: 0, success_count: 0, failed_count: 0, unauthorized_count: 0, created_at: '2026-05-26T10:00:00Z' })
     listBatchTestNonAPIKeyRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 })
@@ -518,6 +535,98 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="data-table"]').text()).toContain('free-one@example.com:error:invalid_grant')
+  })
+
+  it('refreshes the tested account so API key cooldown details appear on the row', async () => {
+    listAccounts.mockResolvedValueOnce({
+      items: [
+        {
+          id: 1,
+          name: 'openai-key@example.com',
+          platform: 'openai',
+          type: 'apikey',
+          status: 'active',
+          schedulable: true,
+          credentials: {},
+          api_key_items: [
+            { fingerprint: 'fp-bad', masked: 'sk-...bad', status: 'active' }
+          ],
+          extra: {},
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+    getById.mockResolvedValue({
+      id: 1,
+      name: 'openai-key@example.com',
+      platform: 'openai',
+      type: 'apikey',
+      status: 'active',
+      schedulable: true,
+      credentials: {},
+      api_key_items: [
+        {
+          fingerprint: 'fp-bad',
+          masked: 'sk-...bad',
+          status: 'cooling',
+          disabled: true,
+          reason: 'invalid_api_key',
+          last_error: 'API returned 401: invalid key',
+          disabled_until: '2026-06-23T10:30:00Z',
+        }
+      ],
+      extra: {},
+    })
+
+    const wrapper = trackWrapper(mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
+          AccountTableFilters: { template: '<div></div>' },
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: AccountActionMenuTestStub,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: AccountTestModalEmitStub,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    }))
+
+    await flushPromises()
+    await wrapper.get('button[title="common.more"]').trigger('click')
+    await wrapper.get('[data-test="menu-test-account"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="account-test-finished"]').trigger('click')
+    await flushPromises()
+
+    expect(getById).toHaveBeenCalledWith(1)
+    expect(wrapper.get('[data-test="data-table"]').text()).toContain('API returned 401: invalid key')
   })
 
   it('runs batch connectivity tests for non-api-key accounts from tools menu', async () => {

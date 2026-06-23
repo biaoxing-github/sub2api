@@ -1324,7 +1324,7 @@ type ManualProbeResultResponse struct {
 type ManualProbeResponse struct {
 	Success bool                       `json:"success"`
 	Result  *ManualProbeResultResponse `json:"result,omitempty"`
-	Account *service.Account           `json:"account,omitempty"`
+	Account *dto.Account               `json:"account,omitempty"`
 }
 
 // manualProbeResultResponseFromService 把账号测试内部结构转换为前端读取的小写字段。
@@ -1401,7 +1401,7 @@ func (h *AccountHandler) ManualProbe(c *gin.Context) {
 	resp := ManualProbeResponse{
 		Success: result.Success,
 		Result:  manualProbeResultResponseFromService(result),
-		Account: updatedAccount,
+		Account: dto.AccountFromService(updatedAccount),
 	}
 
 	c.JSON(http.StatusOK, resp)

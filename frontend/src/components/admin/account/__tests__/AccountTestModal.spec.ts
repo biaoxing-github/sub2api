@@ -253,6 +253,7 @@ describe('AccountTestModal', () => {
 
     expect(wrapper.text()).toContain('first-token-234ms')
     expect(wrapper.text()).toContain('total-latency-1750ms')
+    expect(wrapper.emitted('tested')).toHaveLength(1)
   })
 
   it('free OpenAI accounts default to gpt-5.5 when testing', async () => {

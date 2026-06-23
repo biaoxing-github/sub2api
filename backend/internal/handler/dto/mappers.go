@@ -463,6 +463,7 @@ func APIKeyItemsFromService(a *service.Account) []APIKeyItem {
 			item.Status = detail.Status
 			item.Disabled = detail.Disabled
 			item.Reason = detail.Reason
+			item.LastError = detail.LastError
 			item.DisabledAt = detail.DisabledAt
 			item.DisabledUntil = detail.DisabledUntil
 			item.DisabledCount = detail.DisabledCount

@@ -160,3 +160,53 @@ func TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceDisabl
 	require.Empty(t, blocker.accounts)
 	require.Equal(t, []int64{1}, counter.counts)
 }
+
+func TestRateLimitService_HandleUpstreamError_OpenAI403InsufficientBalanceDisablesLastActiveKeyWithoutFreezingAccount(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	counter := &openAI403CounterCacheStub{counts: []int64{1}}
+	blocker := &runtimeBlockRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetOpenAI403CounterCache(counter)
+	service.SetAccountRuntimeBlocker(blocker)
+	account := &Account{
+		ID:       305,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_keys":                   []any{"cooling-key", "last-key"},
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       403,
+					"keywords":         []any{"insufficient account balance"},
+					"duration_minutes": 10,
+				},
+			},
+		},
+	}
+	require.True(t, account.DisableAPIKey("cooling-key", "insufficient_balance", time.Now()))
+	require.Equal(t, "last-key", account.GetAPIKey())
+
+	shouldDisable := service.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusForbidden,
+		http.Header{},
+		[]byte(`{"error":{"code":"insufficient_quota","message":"insufficient account balance"}}`),
+	)
+
+	require.True(t, shouldDisable)
+	require.Empty(t, account.GetAPIKeys())
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, 0, repo.rateLimitedCalls)
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	require.NotNil(t, repo.lastCredentials)
+	disabled, _ := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	record, _ := disabled[FingerprintAPIKey("last-key")].(map[string]any)
+	require.NotNil(t, record)
+	require.Contains(t, record["last_error"], "API returned 403")
+	require.Contains(t, record["last_error"], "insufficient account balance")
+	require.Empty(t, blocker.accounts)
+	require.Equal(t, []int64{1}, counter.counts)
+}

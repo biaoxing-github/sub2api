@@ -1956,11 +1956,8 @@ func tryDisableSelectedAPIKeyForCooldown(ctx context.Context, repo AccountReposi
 	}
 	reason := apiKeyAccountSchedulingReason(statusCode, responseBody)
 	now := time.Now()
-	if !account.DisableAPIKey(selectedKey, reason, now) {
-		return false
-	}
-	if len(account.GetAPIKeys()) == 0 {
-		removeDisabledAPIKeyFingerprint(account.Credentials, FingerprintAPIKey(selectedKey))
+	lastError := fmt.Sprintf("API returned %d: %s", statusCode, truncateTempUnschedMessage(responseBody, tempUnschedMessageMaxBytes))
+	if !account.DisableAPIKey(selectedKey, reason, now, lastError) {
 		return false
 	}
 	if err := persistAccountCredentials(ctx, repo, account, account.Credentials); err != nil {

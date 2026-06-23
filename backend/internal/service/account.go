@@ -37,6 +37,7 @@ const (
 type APIKeyDisabledDetail struct {
 	Status        string
 	Reason        string
+	LastError     string
 	DisabledAt    string
 	DisabledUntil string
 	DisabledCount int
@@ -600,6 +601,7 @@ func DisabledAPIKeyDetails(credentials map[string]any, now time.Time) map[string
 		detail := APIKeyDisabledDetail{
 			Status:        "active",
 			Reason:        strings.TrimSpace(apiKeyStatusStringFromAny(record["reason"])),
+			LastError:     strings.TrimSpace(apiKeyStatusStringFromAny(record["last_error"])),
 			DisabledAt:    strings.TrimSpace(apiKeyStatusStringFromAny(record["disabled_at"])),
 			DisabledCount: positiveIntFromAny(record["disabled_count"], 0),
 		}
@@ -704,7 +706,7 @@ func FingerprintAPIKey(apiKey string) string {
 	return apiKeyFingerprintPrefix + fmt.Sprintf("%x", sum[:])
 }
 
-func (a *Account) DisableAPIKey(apiKey, reason string, now time.Time) bool {
+func (a *Account) DisableAPIKey(apiKey, reason string, now time.Time, lastError ...string) bool {
 	apiKey = strings.TrimSpace(apiKey)
 	if a == nil || apiKey == "" {
 		return false
@@ -732,13 +734,21 @@ func (a *Account) DisableAPIKey(apiKey, reason string, now time.Time) bool {
 
 	newCount := existingCount + 1
 	interval := disabledAPIKeyRecoveryInterval(reason, newCount)
+	errorText := ""
+	if len(lastError) > 0 {
+		errorText = strings.TrimSpace(lastError[0])
+	}
 
-	disabled[fingerprint] = map[string]any{
+	record := map[string]any{
 		"reason":         reason,
 		"disabled_at":    now.UTC().Format(time.RFC3339),
 		"disabled_until": now.Add(interval).UTC().Format(time.RFC3339),
 		"disabled_count": newCount,
 	}
+	if errorText != "" {
+		record["last_error"] = errorText
+	}
+	disabled[fingerprint] = record
 	a.Credentials[CredentialAPIKeysDisabled] = disabled
 	return true
 }

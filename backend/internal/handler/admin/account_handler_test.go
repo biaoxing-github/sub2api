@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -165,7 +166,7 @@ func TestAccountHandler_ManualProbeReturnsJSONWithoutSSE(t *testing.T) {
 	}}
 	handler := &AccountHandler{
 		adminService:       adminSvc,
-		accountTestService: service.NewAccountTestService(repo, nil, nil, nil, upstream, nil, nil),
+		accountTestService: service.NewAccountTestService(repo, nil, nil, nil, upstream, &config.Config{}, nil),
 	}
 	router := gin.New()
 	router.POST("/api/v1/admin/accounts/:id/manual-probe", handler.ManualProbe)
@@ -216,7 +217,7 @@ func TestAccountHandler_ManualProbeKeepsOpenAIDefaultModel(t *testing.T) {
 	}}
 	handler := &AccountHandler{
 		adminService:       adminSvc,
-		accountTestService: service.NewAccountTestService(repo, nil, nil, nil, upstream, nil, nil),
+		accountTestService: service.NewAccountTestService(repo, nil, nil, nil, upstream, &config.Config{}, nil),
 	}
 	router := gin.New()
 	router.POST("/api/v1/admin/accounts/:id/manual-probe", handler.ManualProbe)
@@ -231,6 +232,83 @@ func TestAccountHandler_ManualProbeKeepsOpenAIDefaultModel(t *testing.T) {
 		assert.Contains(t, upstream.requestBodies[0], openai.DefaultTestModel)
 		assert.NotContains(t, upstream.requestBodies[0], "claude-opus-4-8")
 	}
+}
+
+func TestAccountHandler_ManualProbeReturnsAPIKeyItemsWithCoolingError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	account := service.Account{
+		ID:          46,
+		Name:        "openai-api-key-cooling",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeAPIKey,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_keys": []string{"sk-first", "sk-second"},
+			service.CredentialAPIKeysDisabled: map[string]any{
+				service.FingerprintAPIKey("sk-first"): map[string]any{
+					"reason":         "invalid_api_key",
+					"last_error":     "API returned 401: invalid key",
+					"disabled_at":    time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
+					"disabled_until": time.Now().Add(29 * time.Minute).UTC().Format(time.RFC3339),
+					"disabled_count": 1,
+				},
+			},
+		},
+	}
+	adminSvc := &manualProbeAdminService{stubAdminService: &stubAdminService{}, account: &account}
+	repo := &manualProbeAccountRepo{account: &account}
+	upstream := &manualProbeHTTPUpstream{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"hi"}`,
+			``,
+			`data: {"type":"response.completed"}`,
+			``,
+		}, "\n"))),
+	}}
+	handler := &AccountHandler{
+		adminService:       adminSvc,
+		accountTestService: service.NewAccountTestService(repo, nil, nil, nil, upstream, &config.Config{}, nil),
+	}
+	router := gin.New()
+	router.POST("/api/v1/admin/accounts/:id/manual-probe", handler.ManualProbe)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/46/manual-probe", strings.NewReader(`{"model":"gpt-5.4"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var payload struct {
+		Success bool `json:"success"`
+		Account struct {
+			APIKeyItems []struct {
+				Fingerprint   string `json:"fingerprint"`
+				Status        string `json:"status"`
+				Disabled      bool   `json:"disabled"`
+				Reason        string `json:"reason"`
+				LastError     string `json:"last_error"`
+				DisabledUntil string `json:"disabled_until"`
+			} `json:"api_key_items"`
+			Credentials map[string]any `json:"credentials"`
+		} `json:"account"`
+	}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &payload))
+	assert.True(t, payload.Success)
+	if assert.Len(t, payload.Account.APIKeyItems, 2) {
+		assert.Equal(t, service.FingerprintAPIKey("sk-first"), payload.Account.APIKeyItems[0].Fingerprint)
+		assert.Equal(t, "cooling", payload.Account.APIKeyItems[0].Status)
+		assert.True(t, payload.Account.APIKeyItems[0].Disabled)
+		assert.Equal(t, "invalid_api_key", payload.Account.APIKeyItems[0].Reason)
+		assert.Equal(t, "API returned 401: invalid key", payload.Account.APIKeyItems[0].LastError)
+		assert.NotEmpty(t, payload.Account.APIKeyItems[0].DisabledUntil)
+	}
+	assert.NotContains(t, payload.Account.Credentials, "api_keys")
 }
 
 func TestAccountHandler_ManualProbeRepairsSchedulingPoolState(t *testing.T) {

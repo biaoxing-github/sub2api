@@ -1282,6 +1282,7 @@ export interface Account {
     status?: 'active' | 'cooling' | string
     disabled?: boolean
     reason?: string
+    last_error?: string
     disabled_at?: string
     disabled_until?: string
     disabled_count?: number

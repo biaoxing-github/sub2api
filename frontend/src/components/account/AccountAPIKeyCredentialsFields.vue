@@ -13,6 +13,7 @@ export interface AccountAPIKeyItem {
   status?: string
   disabled?: boolean
   reason?: string
+  last_error?: string
   disabled_at?: string
   disabled_until?: string
   disabled_count?: number
@@ -208,6 +209,7 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
               {{ keyStateLabel(item) }}
             </span>
             <span v-if="item.reason" class="truncate font-sans text-[11px]">{{ item.reason }}</span>
+            <span v-if="item.last_error" class="truncate font-sans text-[11px]">{{ item.last_error }}</span>
             <span v-if="item.disabled_until" class="font-sans text-[11px]">
               {{ t('admin.accounts.apiKeyDisabledUntil') }} {{ item.disabled_until }}
             </span>

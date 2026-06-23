@@ -102,7 +102,7 @@ func (r *rateLimitAccountRepoStub) UpdateExtra(ctx context.Context, id int64, up
 	return nil
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey429UsesAccountScheduling(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey429DisablesLastActiveKeyWithoutFreezingAccount(t *testing.T) {
 	account := &Account{
 		ID:          62001,
 		Platform:    PlatformOpenAI,
@@ -110,9 +110,10 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey429UsesAccountScheduli
 		Status:      StatusActive,
 		Schedulable: true,
 		Credentials: map[string]any{
-			"api_keys": []any{"last-key"},
+			"api_keys": []any{"cooling-key", "last-key"},
 		},
 	}
+	require.True(t, account.DisableAPIKey("cooling-key", "rate_limited", time.Now()))
 	require.Equal(t, "last-key", account.GetAPIKey())
 	repo := &rateLimitAccountRepoStub{account: account}
 	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
@@ -120,12 +121,17 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey429UsesAccountScheduli
 	shouldDisable := service.HandleUpstreamError(context.Background(), account, http.StatusTooManyRequests, http.Header{}, []byte(`{"error":{"code":"rate_limited","message":"too many requests"}}`))
 
 	require.True(t, shouldDisable)
-	require.Equal(t, []string{"last-key"}, account.GetAPIKeys())
-	require.Equal(t, 0, repo.updateCredentialsCalls)
+	require.Empty(t, account.GetAPIKeys())
+	require.Equal(t, 1, repo.updateCredentialsCalls)
+	disabled, _ := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	record, _ := disabled[FingerprintAPIKey("last-key")].(map[string]any)
+	require.NotNil(t, record)
+	require.Contains(t, record["last_error"], "API returned 429")
+	require.Contains(t, record["last_error"], "too many requests")
+	require.Equal(t, 0, repo.setErrorCalls)
 	require.Equal(t, 0, repo.rateLimitedCalls)
-	require.Equal(t, 1, repo.tempCalls)
+	require.Equal(t, 0, repo.tempCalls)
 	require.Equal(t, 0, repo.updateExtraCalls)
-	require.Contains(t, repo.lastTempReason, "rate_limited")
 }
 
 func TestRateLimitService_RecordAccountProbeOutcomeManualFailureWritesHealth(t *testing.T) {

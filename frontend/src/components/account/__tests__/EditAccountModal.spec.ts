@@ -497,6 +497,7 @@ describe('EditAccountModal', () => {
           disabled: true,
           status: 'cooling',
           reason: 'rate_limited',
+          last_error: 'API returned 429: quota exceeded',
           disabled_until: '2026-05-22T00:30:00Z',
           disabled_count: 2
         }
@@ -508,6 +509,7 @@ describe('EditAccountModal', () => {
     const cooling = wrapper.get('[data-testid="api-key-state-fp-cooling"]')
     expect(cooling.text()).toContain('admin.accounts.apiKeyStatusCooling')
     expect(cooling.text()).toContain('rate_limited')
+    expect(cooling.text()).toContain('API returned 429: quota exceeded')
     expect(cooling.text()).toContain('2026-05-22T00:30:00Z')
     expect(cooling.text()).toContain('admin.accounts.apiKeyDisabledCount')
     expect(cooling.text()).toContain('2')
