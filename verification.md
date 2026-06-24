@@ -3722,3 +3722,11 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：2026-06-23 14:04 +08:00 复核 `8080`、`18081`、`18083` 的 `/health` 均返回 200；`sub2api-blue` 运行 `sub2api:v0.1.136.18` 且 `healthy RestartCount=0`，`sub2api-green` 运行 `sub2api:v0.1.136.17` 且 `healthy RestartCount=0`；nginx 配置测试通过。
 - Current state：active blue `sub2api:v0.1.136.18`；rollback green `sub2api:v0.1.136.17`。
 - LIMIT：本轮未执行 authenticated admin version endpoint，因为本地部署自动化路径没有可用 admin password；未重跑完整 `go test -tags unit ./internal/service -count=1`，原因同上方已知无关历史失败。
+
+## 2026-06-24T15:24:54+08:00 - account test upstream busy display normalization
+
+- PASS: go test -tags unit ./internal/service -run 'TestAccountTestService_OpenAIOverloadedMessageUsesFriendlyDisplayError|TestAccountTestService_OpenAI|TestAccountTestService_TestAccountConnectionWithResult|TestAccountTestService_OpenAIAPIKey' -count=1 passed.
+- PASS: go test ./cmd/server -run TestNoSuchTest -count=1 passed, completing the server compile slice.
+- PASS: git diff --check -- backend/internal/service/account_test_service.go backend/internal/service/account_test_service_openai_test.go passed.
+- NOTE: The raw upstream OpenAI overloaded message is still logged as Account test error; account-test SSE display and structured result now use 上游服务繁忙，请稍后重试.
+- LIMIT: No image build or deployment was performed in this turn.

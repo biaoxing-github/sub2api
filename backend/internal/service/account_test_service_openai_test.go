@@ -185,6 +185,22 @@ func TestAccountTestService_OpenAIResponsesStreamEOFAfterOutputCompletes(t *test
 	require.NotContains(t, recorder.Body.String(), "Stream ended before response.completed")
 }
 
+func TestAccountTestService_OpenAIOverloadedMessageUsesFriendlyDisplayError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+
+	stream := strings.NewReader(`data: {"type":"response.failed","response":{"status":"failed","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}}
+
+`)
+	err := svc.processOpenAIStream(ctx, stream)
+
+	require.Error(t, err)
+	require.Equal(t, "上游服务繁忙，请稍后重试", err.Error())
+	require.Contains(t, recorder.Body.String(), `"error":"上游服务繁忙，请稍后重试"`)
+	require.NotContains(t, recorder.Body.String(), "Our servers are currently overloaded")
+}
+
 func TestAccountTestService_OpenAIResponsesStreamDoneAfterOutputCompletes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

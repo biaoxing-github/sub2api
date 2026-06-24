@@ -39,6 +39,9 @@ const (
 	chatgptCodexAPIURL = "https://chatgpt.com/backend-api/codex/responses"
 )
 
+// accountTestUpstreamBusyDisplayError 是测评界面展示给管理员的统一上游繁忙提示。
+const accountTestUpstreamBusyDisplayError = "上游服务繁忙，请稍后重试"
+
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
 	Type         string     `json:"type"`
@@ -1976,8 +1979,28 @@ func (s *AccountTestService) SendTestEvent(c *gin.Context, event TestEvent) {
 // sendErrorAndEnd sends an error event and ends the stream
 func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) error {
 	log.Printf("Account test error: %s", errorMsg)
-	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
-	return fmt.Errorf("%s", errorMsg)
+	displayError := accountTestDisplayError(errorMsg)
+	if displayError != errorMsg {
+		log.Printf("Account test display error normalized: %s", displayError)
+	}
+	s.sendEvent(c, TestEvent{Type: "error", Error: displayError})
+	return fmt.Errorf("%s", displayError)
+}
+
+// accountTestDisplayError 保留内部日志原文，仅归一化测评 SSE 和结构化结果里的展示文案。
+func accountTestDisplayError(errorMsg string) string {
+	msg := strings.TrimSpace(errorMsg)
+	if msg == "" {
+		return msg
+	}
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "our servers are currently overloaded") ||
+		strings.Contains(lower, "server_is_overloaded") ||
+		strings.Contains(lower, "server overloaded") ||
+		strings.Contains(lower, "currently overloaded") {
+		return accountTestUpstreamBusyDisplayError
+	}
+	return msg
 }
 
 // RunTestBackground executes an account test in-memory (no real HTTP client),
