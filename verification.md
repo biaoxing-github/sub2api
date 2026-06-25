@@ -3730,3 +3730,17 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS: git diff --check -- backend/internal/service/account_test_service.go backend/internal/service/account_test_service_openai_test.go passed.
 - NOTE: The raw upstream OpenAI overloaded message is still logged as Account test error; account-test SSE display and structured result now use 上游服务繁忙，请稍后重试.
 - LIMIT: No image build or deployment was performed in this turn.
+
+## 2026-06-24 15:30 +08:00 - release v0.1.136.19 account test overloaded display
+
+- PASS: feature commit `ea62cb19599b` was built into immutable image `sub2api:v0.1.136.19`; image ID `sha256:bc5bca75fe7bc8b70b7050341a02b629c692b1146ee146c5ffa673e2aadb942a`, image label version `v0.1.136.19`, and revision `ea62cb19599b` matched.
+- PASS: binary version check printed `Sub2API 0.1.136 (image: v0.1.136.19, commit: ea62cb19599b, built: 2026-06-24T15:26:17Z)`.
+- PASS: only idle `sub2api-green` was recreated with `sub2api:v0.1.136.19`; active `sub2api-blue`, PostgreSQL, Redis, and `sub2api-proxy` were not restarted during candidate deployment.
+- PASS: candidate green `18082` health, home page, static asset, unauthenticated admin 401, unauthenticated `/responses` 401, and unauthenticated `/v1/responses` 401 checks passed.
+- PASS: candidate green stayed `healthy` with `RestartCount=0` after a 60+ second health window and had no critical release-window log matches.
+- PASS: proxy upstream changed from `sub2api-blue:8080` to `sub2api-green:8080`; `docker exec sub2api-proxy nginx -t` passed and reload succeeded at 2026-06-24 15:30 +08:00.
+- PASS: post-cutover public `8080` and local proxy `18081` health, home page, static asset, unauthenticated admin 401, unauthenticated `/responses` 401, and unauthenticated `/v1/responses` 401 checks passed.
+- PASS: after a 70+ second post-cutover observation window, `sub2api-green` and `sub2api-blue` were both healthy; `8080`, `18081`, and `18082` `/health` all returned 200; green/proxy critical release-window log scans were clean.
+- Current state: active green `sub2api:v0.1.136.19`; rollback blue `sub2api:v0.1.136.18`.
+- OBSERVE: 2026-06-25 08:48 +08:00 continuation recheck still showed active green and rollback blue healthy, with public `8080`, local proxy `18081`, and candidate `18082` `/health` returning 200. Both app containers showed `RestartCount=7`, indicating an overnight external/Docker restart after the release window.
+- LIMIT: authenticated admin version endpoint was not run because `ADMIN_PASSWORD` is empty in the local deployment automation path.
