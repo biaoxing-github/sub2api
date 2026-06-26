@@ -27,6 +27,7 @@
           v-model:api-key="editApiKey"
           v-model:api-keys-text="editApiKeysText"
           v-model:claude-cli-version="editClaudeCliVersion"
+          v-model:openai-codex-cli-user-agent="editOpenAICodexCliUserAgent"
           v-model:api-keys-edit-mode="apiKeysEditMode"
           :platform="account.platform"
           :base-url-hint="baseUrlHint"
@@ -420,6 +421,17 @@
               ]"
             />
           </button>
+        </div>
+        <div v-if="account?.type === 'oauth'" class="mt-3">
+          <label class="input-label">{{ t('admin.accounts.openai.codexCLIUserAgent') }}</label>
+          <input
+            v-model="editOpenAICodexCliUserAgent"
+            type="text"
+            class="input font-mono text-xs"
+            :placeholder="t('admin.accounts.openai.codexCLIUserAgentPlaceholder')"
+            data-testid="edit-openai-codex-cli-user-agent-input"
+          />
+          <p class="input-hint">{{ t('admin.accounts.openai.codexCLIUserAgentHint') }}</p>
         </div>
       </div>
 
@@ -1112,6 +1124,15 @@ function upstreamManualRateGroupNameFrom(
   return typeof legacyCredentialManual === 'string' ? legacyCredentialManual : ''
 }
 
+function applyOpenAICodexCliUserAgentCredentials(credentials: Record<string, unknown>) {
+  const normalizedUserAgent = editOpenAICodexCliUserAgent.value.trim()
+  if (normalizedUserAgent) {
+    credentials.openai_codex_cli_user_agent = normalizedUserAgent
+  } else {
+    delete credentials.openai_codex_cli_user_agent
+  }
+}
+
 const antigravityPresetMappings = computed(() => getPresetMappingsByPlatform('antigravity'))
 const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
 
@@ -1129,6 +1150,7 @@ const editBalanceBaseUrl = ref('')
 const editApiKey = ref('')
 const editApiKeysText = ref('')
 const editClaudeCliVersion = ref('')
+const editOpenAICodexCliUserAgent = ref('')
 const apiKeysEditMode = ref<'append' | 'replace'>('append')
 const deletingApiKeyFingerprint = ref<string | null>(null)
 const restoringApiKeyFingerprint = ref<string | null>(null)
@@ -1517,6 +1539,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
   interceptWarmupRequests.value = credentials?.intercept_warmup_requests === true
   accountErrorHandlingRules.value = loadAccountErrorHandlingRules(credentials)
+  editOpenAICodexCliUserAgent.value =
+    newAccount.platform === 'openai' && typeof credentials?.openai_codex_cli_user_agent === 'string'
+      ? credentials.openai_codex_cli_user_agent
+      : ''
   openAIResponseTextErrorEnabled.value =
     newAccount.platform === 'openai' && credentials?.openai_response_text_error_enabled === true
   openAIResponseTextErrorKeywordsText.value =
@@ -2695,6 +2721,7 @@ const handleSubmit = async () => {
         ((props.account.credentials as Record<string, unknown>) || {})
       const newCredentials: Record<string, unknown> = { ...currentCredentials }
       applyOpenAIResponseTextErrorConfig(newCredentials)
+      applyOpenAICodexCliUserAgentCredentials(newCredentials)
       updatePayload.credentials = newCredentials
     }
 

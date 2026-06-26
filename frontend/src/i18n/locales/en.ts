@@ -3532,6 +3532,11 @@ export default {
         codexCLISimulation: 'Simulate Codex CLI upstream',
         codexCLISimulationDesc:
           'Only applies to this OpenAI account. When enabled, upstream /responses requests use Codex CLI User-Agent, originator, and version headers; when disabled, default routing is preserved.',
+        codexCLIUserAgent: 'Codex CLI User-Agent',
+        codexCLIUserAgentPlaceholder:
+          'Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)',
+        codexCLIUserAgentHint:
+          'Account-level upstream simulation header. Leave empty to use the gateway-generated current Codex Desktop shape; when set, this account sends this User-Agent upstream.',
         codexImageGenerationBridge: 'Codex image-generation bridge',
         codexImageGenerationBridgeDesc:
           'Account policy takes precedence over channel and global settings. Only controls whether Codex requests through the /responses text endpoint receive the image_generation tool; standalone image-generation endpoints are unaffected.',

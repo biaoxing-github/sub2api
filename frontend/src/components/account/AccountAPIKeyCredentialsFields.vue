@@ -27,6 +27,7 @@ const props = withDefaults(defineProps<{
   apiKey: string
   apiKeysText: string
   claudeCliVersion?: string
+  openaiCodexCliUserAgent?: string
   baseUrlHint: string
   apiKeyHint?: string
   mode?: 'create' | 'edit'
@@ -56,6 +57,7 @@ const emit = defineEmits<{
   'update:apiKey': [value: string]
   'update:apiKeysText': [value: string]
   'update:claudeCliVersion': [value: string]
+  'update:openaiCodexCliUserAgent': [value: string]
   'update:apiKeysEditMode': [value: 'append' | 'replace']
   deleteApiKey: [fingerprint: string]
   restoreApiKey: [fingerprint: string]
@@ -71,6 +73,7 @@ const supportsBalanceBaseUrl = computed(() => props.platform === 'openai')
 const supportsClaudeCliVersion = computed(
   () => props.platform === 'anthropic' || props.platform === 'antigravity'
 )
+const supportsOpenAICodexCliUserAgent = computed(() => props.platform === 'openai')
 
 const baseUrlPlaceholder = computed(() => {
   if (props.platform === 'openai') return 'https://api.openai.com'
@@ -179,6 +182,19 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
         @input="emit('update:claudeCliVersion', ($event.target as HTMLInputElement).value)"
       />
       <p class="input-hint">{{ t('admin.accounts.anthropic.claudeCliVersionHint') }}</p>
+    </div>
+
+    <div v-if="supportsOpenAICodexCliUserAgent">
+      <label class="input-label">{{ t('admin.accounts.openai.codexCLIUserAgent') }}</label>
+      <input
+        :value="props.openaiCodexCliUserAgent || ''"
+        type="text"
+        class="input font-mono text-xs"
+        data-testid="openai-codex-cli-user-agent-input"
+        :placeholder="t('admin.accounts.openai.codexCLIUserAgentPlaceholder')"
+        @input="emit('update:openaiCodexCliUserAgent', ($event.target as HTMLInputElement).value)"
+      />
+      <p class="input-hint">{{ t('admin.accounts.openai.codexCLIUserAgentHint') }}</p>
     </div>
 
     <div>

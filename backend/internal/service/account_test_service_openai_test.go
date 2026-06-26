@@ -883,6 +883,51 @@ func TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationH
 	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
 }
 
+func TestAccountTestService_OpenAIAPIKeyResponsesTestUsesConfiguredCodexCLIUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	ctx.Request.Header.Set("User-Agent", "curl/8.0")
+	ctx.Request.Header.Set("originator", "opencode")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"pong"}`,
+			"",
+			`data: {"type":"response.completed"}`,
+			"",
+		}, "\n"))),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	configuredUA := "Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)"
+	account := &Account{
+		ID:          417,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":                         "sk-free6",
+			"base_url":                        "https://new.sharedchat.cc/codex",
+			CredentialOpenAICodexCLIUserAgent: configuredUA,
+		},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesSupported: true,
+			OpenAICodexCLISimulationEnabledExtraKey:  true,
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.5", "ping", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, configuredUA, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, codexCLIOriginator, upstream.lastReq.Header.Get("originator"))
+	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
+}
+
 func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

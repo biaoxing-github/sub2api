@@ -72,6 +72,16 @@ func codexCLIUserAgent() string {
 	return openai.GetCurrentCodexCLIUserAgent()
 }
 
+func openAICodexCLIUserAgentForAccount(account *Account) string {
+	if account == nil {
+		return codexCLIUserAgent()
+	}
+	if ua := account.GetOpenAICodexCLIUserAgent(); ua != "" {
+		return ua
+	}
+	return codexCLIUserAgent()
+}
+
 func codexCLIVersion() string {
 	return openai.GetCurrentCodexCLIVersion()
 }
@@ -1890,7 +1900,7 @@ func applyOpenAICodexSyntheticClientHeaders(req *http.Request, body []byte, acco
 	if req == nil {
 		return
 	}
-	req.Header.Set("user-agent", codexCLIUserAgent())
+	req.Header.Set("user-agent", openAICodexCLIUserAgentForAccount(account))
 	req.Header.Set("originator", codexCLIOriginator)
 	if account != nil && account.Type == AccountTypeAPIKey {
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
@@ -6291,58 +6301,17 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 		lastDownstreamWriteAt = time.Now()
 		return nil
 	}
-	// 上游已有真实输出但缺失终态时补齐 response.completed，避免 Codex 客户端把半截流当成网关失败。
-	writeSyntheticCompletedEvent := func() error {
+	// 上游已有真实输出但缺失终态时补 response.failed，避免客户端把半截输出当成完成。
+	writeMissingTerminalFailedEvent := func() error {
 		if clientDisconnected {
 			return nil
 		}
-		if responseID == "" {
-			responseID = "resp_" + randomHex(12)
-		}
-		output := []apicompat.ResponsesOutput{}
-		if outputJSON, ok := buildResponsesOutputJSON(streamOutputAccumulator, streamImageOutputs); ok {
-			_ = json.Unmarshal(outputJSON, &output)
-		}
-		inputTokens := 0
-		outputTokens := 0
-		if usage != nil && usageObserved {
-			inputTokens = usage.InputTokens
-			outputTokens = usage.OutputTokens
-		}
-		responsesUsage := &apicompat.ResponsesUsage{
-			InputTokens:  inputTokens,
-			OutputTokens: outputTokens,
-			TotalTokens:  inputTokens + outputTokens,
-		}
-		if usage != nil && usageObserved && usage.CacheReadInputTokens > 0 {
-			responsesUsage.InputTokensDetails = &apicompat.ResponsesInputTokensDetails{
-				CachedTokens: usage.CacheReadInputTokens,
-			}
-		}
-		event, err := apicompat.ResponsesEventToSSE(apicompat.ResponsesStreamEvent{
-			Type: "response.completed",
-			Response: &apicompat.ResponsesResponse{
-				ID:     responseID,
-				Object: "response",
-				Model:  originalModel,
-				Status: "completed",
-				Output: output,
-				Usage:  responsesUsage,
-			},
-		})
-		if err != nil {
-			return err
-		}
-		if _, err := bufferedWriter.WriteString(event); err != nil {
-			clientDisconnected = true
-			return err
-		}
-		if err := flushBuffered(); err != nil {
-			clientDisconnected = true
-			return err
-		}
+		err := writeOpenAIResponsesGatewayRetryableFailedSSE(bufferedWriter, flushBuffered, responseID, originalModel)
 		lastDownstreamWriteAt = time.Now()
-		return writeResponsesDoneMarker()
+		if err != nil {
+			clientDisconnected = true
+		}
+		return err
 	}
 	finalizeStream := func() (*openaiStreamingResult, error) {
 		if !sawTerminalEvent {
@@ -6365,10 +6334,10 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			if !clientDisconnected {
 				_ = flushPendingClientLines()
 			}
-			if err := writeSyntheticCompletedEvent(); err != nil {
-				return resultWithUsage(), fmt.Errorf("stream usage incomplete while writing synthetic terminal event: %w", err)
+			if err := writeMissingTerminalFailedEvent(); err != nil {
+				return resultWithUsage(), fmt.Errorf("stream usage incomplete while writing missing-terminal failure: %w", err)
 			}
-			return resultWithUsage(), nil
+			return resultWithUsage(), fmt.Errorf("upstream response failed: missing terminal event")
 		}
 		if sawFailedEvent {
 			if !clientDisconnected {

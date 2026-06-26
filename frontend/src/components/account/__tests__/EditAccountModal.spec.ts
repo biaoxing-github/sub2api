@@ -882,6 +882,36 @@ describe('EditAccountModal', () => {
     expect(credentials?.upstream_common_rate_group_name).toBeUndefined()
   })
 
+  it('loads and saves OpenAI Codex CLI User-Agent credentials', async () => {
+    const account = buildAccount()
+    account.credentials = {
+      ...account.credentials,
+      openai_codex_cli_user_agent:
+        'Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)'
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const userAgentInput = wrapper.get('[data-testid="openai-codex-cli-user-agent-input"]')
+    expect((userAgentInput.element as HTMLInputElement).value).toBe(
+      'Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)'
+    )
+
+    await userAgentInput.setValue(
+      'Codex Desktop/0.150.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.700.10000)'
+    )
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials?.openai_codex_cli_user_agent).toBe(
+      'Codex Desktop/0.150.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.700.10000)'
+    )
+  })
+
   it('blocks apikey save when neither credentials_status nor legacy api_key indicates existence', async () => {
     const account = buildAccount()
     account.credentials = {

@@ -30,6 +30,8 @@ const (
 	AnthropicContext1MEnabledExtraKey = "anthropic_context_1m_enabled"
 	// CredentialClaudeCLIVersion 允许账号覆盖 Anthropic Claude CLI 版本。
 	CredentialClaudeCLIVersion = "claude_cli_version"
+	// CredentialOpenAICodexCLIUserAgent 允许账号覆盖 OpenAI Codex CLI 模拟请求的 User-Agent。
+	CredentialOpenAICodexCLIUserAgent = "openai_codex_cli_user_agent"
 	// OpenAICodexCLISimulationEnabledExtraKey 控制单个 OpenAI 账号是否把上游请求模拟为 Codex CLI。
 	OpenAICodexCLISimulationEnabledExtraKey = "openai_codex_cli_simulation_enabled"
 )
@@ -2174,6 +2176,18 @@ func (a *Account) GetOpenAIUserAgent() string {
 		return ""
 	}
 	return a.GetCredential("user_agent")
+}
+
+// GetOpenAICodexCLIUserAgent 返回账号级 Codex CLI 模拟 User-Agent。
+// 为空时回退当前动态 Codex Desktop 形态，确保未配置账号继续跟随版本学习逻辑。
+func (a *Account) GetOpenAICodexCLIUserAgent() string {
+	if a == nil || !a.IsOpenAI() {
+		return ""
+	}
+	if ua := strings.TrimSpace(a.GetCredential(CredentialOpenAICodexCLIUserAgent)); ua != "" {
+		return ua
+	}
+	return codexCLIUserAgent()
 }
 
 func (a *Account) GetChatGPTAccountID() string {

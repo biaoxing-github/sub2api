@@ -1327,7 +1327,7 @@ func TestOpenAIStreamingReadErrorBeforeOutputReturnsFailover(t *testing.T) {
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
-func TestOpenAIStreamingUnexpectedEOFAfterOutputCompletesAndRecordsPathHealthFailure(t *testing.T) {
+func TestOpenAIStreamingUnexpectedEOFAfterOutputFailsAndRecordsPathHealthFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
@@ -1368,14 +1368,17 @@ func TestOpenAIStreamingUnexpectedEOFAfterOutputCompletesAndRecordsPathHealthFai
 
 	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
 	_ = pr.Close()
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing terminal event")
 	require.NotNil(t, result)
 	require.True(t, result.missingTerminalEvent)
 	require.True(t, c.Writer.Written())
 	body := rec.Body.String()
 	require.Contains(t, body, "response.output_text.delta")
-	require.Contains(t, body, "event: response.completed")
-	require.Contains(t, body, "data: [DONE]")
+	require.Contains(t, body, "event: response.failed")
+	require.Contains(t, body, "upstream_retryable_error")
+	require.NotContains(t, body, "event: response.completed")
+	require.NotContains(t, body, `"status":"completed"`)
 	require.NotContains(t, body, `"type":"error"`)
 
 	accountSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE)))
@@ -1771,6 +1774,49 @@ func TestOpenAIStreamingConfiguredResponseTextAfterOutputWritesGatewayRetryableF
 	require.Equal(t, 1, repo.tempCalls)
 	require.Equal(t, account.ID, repo.lastTempAccountID)
 	require.Equal(t, "openai_response_text_error", gjson.Get(repo.lastTempReason, "matched_keyword").String())
+}
+
+func TestOpenAIStreamingMissingTerminalAfterOutputWritesFailedEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_partial"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial answer"}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-missing-terminal-after-output"}},
+	}
+
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 8, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing terminal event")
+	require.NotNil(t, result)
+	require.True(t, result.missingTerminalEvent)
+	body := rec.Body.String()
+	require.Contains(t, body, "response.output_text.delta")
+	require.Contains(t, body, "partial answer")
+	require.Contains(t, body, "event: response.failed")
+	require.Contains(t, body, "upstream_retryable_error")
+	require.NotContains(t, body, "event: response.completed")
+	require.NotContains(t, body, `"status":"completed"`)
 }
 
 func TestOpenAIStreamingStructuredResponseTextObserveDoesNotModifyFlow(t *testing.T) {
@@ -2290,7 +2336,7 @@ func TestOpenAIStreamingClientDisconnectDrainsUpstreamUsage(t *testing.T) {
 	}
 }
 
-func TestOpenAIStreamingMissingTerminalEventAfterOutputSynthesizesTerminal(t *testing.T) {
+func TestOpenAIStreamingMissingTerminalEventAfterOutputWritesFailedTerminal(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
@@ -2320,16 +2366,17 @@ func TestOpenAIStreamingMissingTerminalEventAfterOutputSynthesizesTerminal(t *te
 
 	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1}, time.Now(), "model", "model")
 	_ = pr.Close()
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing terminal event")
 	require.NotNil(t, result)
 	require.True(t, result.missingTerminalEvent)
 	require.False(t, result.usageObserved)
 	require.Nil(t, result.usage)
 	body := rec.Body.String()
-	require.Contains(t, body, "event: response.completed")
-	require.Contains(t, body, `"status":"completed"`)
-	require.Contains(t, body, `"output"`)
-	require.Contains(t, body, `"usage":{"input_tokens":0`)
+	require.Contains(t, body, "event: response.failed")
+	require.Contains(t, body, "upstream_retryable_error")
+	require.NotContains(t, body, "event: response.completed")
+	require.NotContains(t, body, `"status":"completed"`)
 	require.NotContains(t, body, `"type":"error"`)
 }
 
@@ -2492,10 +2539,12 @@ func TestOpenAIStreamingMissingTerminalEventRecordsPathHealthFailure(t *testing.
 	}
 
 	result, err := svc.handleStreamingResponseWithPolicy(c.Request.Context(), resp, c, account, time.Now(), "model", "model", openAICodexStabilityPolicy{}, "https://selected-terminal.example.com/v1")
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing terminal event")
 	require.NotNil(t, result)
 	require.True(t, result.missingTerminalEvent)
-	require.Contains(t, rec.Body.String(), "event: response.completed")
+	require.Contains(t, rec.Body.String(), "event: response.failed")
+	require.NotContains(t, rec.Body.String(), "event: response.completed")
 
 	accountSnapshot := tracker.Snapshot(OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE)))
 	require.Equal(t, int64(1), accountSnapshot.FailureCount)

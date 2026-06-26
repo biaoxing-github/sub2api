@@ -532,6 +532,7 @@
           v-model:api-key="apiKeyValue"
           v-model:api-keys-text="apiKeysText"
           v-model:claude-cli-version="claudeCliVersion"
+          v-model:openai-codex-cli-user-agent="openAICodexCliUserAgent"
           :platform="form.platform"
           :base-url-hint="baseUrlHint"
           :api-key-hint="apiKeyHint"
@@ -1316,6 +1317,17 @@
             />
           </button>
         </div>
+        <div v-if="accountCategory === 'oauth-based'" class="mt-3">
+          <label class="input-label">{{ t('admin.accounts.openai.codexCLIUserAgent') }}</label>
+          <input
+            v-model="openAICodexCliUserAgent"
+            type="text"
+            class="input font-mono text-xs"
+            :placeholder="t('admin.accounts.openai.codexCLIUserAgentPlaceholder')"
+            data-testid="create-openai-codex-cli-user-agent-input"
+          />
+          <p class="input-hint">{{ t('admin.accounts.openai.codexCLIUserAgentHint') }}</p>
+        </div>
       </div>
 
       <AccountOpenAICompactModeSection
@@ -2046,6 +2058,7 @@ const balanceBaseUrl = ref('')
 const apiKeyValue = ref('')
 const apiKeysText = ref('')
 const claudeCliVersion = ref('')
+const openAICodexCliUserAgent = ref('')
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
 const editQuotaWeeklyLimit = ref<number | null>(null)
@@ -2527,6 +2540,7 @@ watch(
           : 'https://api.anthropic.com'
     requestBaseUrlsText.value = ''
     balanceBaseUrl.value = ''
+    openAICodexCliUserAgent.value = ''
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
@@ -2967,6 +2981,7 @@ const resetForm = () => {
   anthropicPassthroughEnabled.value = false
   anthropicContext1MEnabled.value = false
   claudeCliVersion.value = ''
+  openAICodexCliUserAgent.value = ''
   webSearchEmulationMode.value = 'default'
   // Reset quota control state
   windowCostEnabled.value = false
@@ -3067,6 +3082,15 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   }
 
   return Object.keys(extra).length > 0 ? extra : undefined
+}
+
+const applyOpenAICodexCliUserAgentCredentials = (credentials: Record<string, unknown>) => {
+  const normalizedUserAgent = openAICodexCliUserAgent.value.trim()
+  if (normalizedUserAgent) {
+    credentials.openai_codex_cli_user_agent = normalizedUserAgent
+  } else {
+    delete credentials.openai_codex_cli_user_agent
+  }
 }
 
 const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unknown> | undefined => {
@@ -3373,6 +3397,7 @@ const handleSubmit = async () => {
     credentials.api_key = apiKeyValue.value.trim()
   }
   if (form.platform === 'openai') {
+    applyOpenAICodexCliUserAgentCredentials(credentials)
     if (upstreamAuthUsername.value.trim()) {
       credentials.upstream_auth_username = upstreamAuthUsername.value.trim()
     }
@@ -3583,6 +3608,7 @@ const handleOpenAIExchange = async (authCode: string) => {
       if (compactModelMapping) {
         credentials.compact_model_mapping = compactModelMapping
       }
+      applyOpenAICodexCliUserAgentCredentials(credentials)
     }
 
     // 应用临时不可调度配置
@@ -3639,6 +3665,7 @@ const buildOpenAICodexImportCredentialExtras = (): Record<string, unknown> | nul
   if (compactModelMapping) {
     credentials.compact_model_mapping = compactModelMapping
   }
+  applyOpenAICodexCliUserAgentCredentials(credentials)
 
   if (!applyTempUnschedConfig(credentials)) {
     return null
@@ -3792,6 +3819,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
           if (compactModelMapping) {
             credentials.compact_model_mapping = compactModelMapping
           }
+          applyOpenAICodexCliUserAgentCredentials(credentials)
         }
         if (!applyTempUnschedConfig(credentials)) {
           continue

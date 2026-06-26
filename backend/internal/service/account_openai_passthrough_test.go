@@ -123,6 +123,42 @@ func TestAccount_IsOpenAICodexCLISimulationEnabled(t *testing.T) {
 	})
 }
 
+func TestAccount_GetOpenAICodexCLIUserAgent(t *testing.T) {
+	t.Run("账号配置覆盖 Codex 模拟 UA", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				CredentialOpenAICodexCLIUserAgent: " Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605) ",
+			},
+		}
+
+		require.Equal(t, "Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)", account.GetOpenAICodexCLIUserAgent())
+	})
+
+	t.Run("空配置使用动态默认", func(t *testing.T) {
+		account := &Account{
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{CredentialOpenAICodexCLIUserAgent: " "},
+		}
+
+		require.Equal(t, codexCLIUserAgent(), account.GetOpenAICodexCLIUserAgent())
+	})
+
+	t.Run("非 OpenAI 账号不暴露 Codex 模拟 UA", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformAnthropic,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				CredentialOpenAICodexCLIUserAgent: "Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)",
+			},
+		}
+
+		require.Empty(t, account.GetOpenAICodexCLIUserAgent())
+	})
+}
+
 func TestAccount_IsCodexCLIOnlyEnabled(t *testing.T) {
 	t.Run("OpenAI OAuth 开启", func(t *testing.T) {
 		account := &Account{

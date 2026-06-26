@@ -3744,3 +3744,23 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - Current state: active green `sub2api:v0.1.136.19`; rollback blue `sub2api:v0.1.136.18`.
 - OBSERVE: 2026-06-25 08:48 +08:00 continuation recheck still showed active green and rollback blue healthy, with public `8080`, local proxy `18081`, and candidate `18082` `/health` returning 200. Both app containers showed `RestartCount=7`, indicating an overnight external/Docker restart after the release window.
 - LIMIT: authenticated admin version endpoint was not run because `ADMIN_PASSWORD` is empty in the local deployment automation path.
+
+## 2026-06-26T08:22:00+08:00 - OpenAI Responses 缺失终止事件不再合成完成
+
+- PASS：新增 RED/GREEN 回归 `TestOpenAIStreamingMissingTerminalAfterOutputWritesFailedEvent`，确认上游已有 `response.output_text.delta` 但没有 `response.completed/failed/incomplete/cancelled` 时，服务端写出 `event: response.failed`，不再合成 `response.completed`。
+- PASS：更新旧语义测试 `TestOpenAIStreamingUnexpectedEOFAfterOutputFailsAndRecordsPathHealthFailure`、`TestOpenAIStreamingMissingTerminalEventAfterOutputWritesFailedTerminal`、`TestOpenAIStreamingMissingTerminalEventRecordsPathHealthFailure`，路径健康 EOF 记录仍保留，客户端终止事件改为失败。
+- PASS：`go test -tags unit ./internal/service -run TestOpenAIStreaming -count=1` 通过。
+- PASS：`go test ./internal/handler -run TestOpenAIForwardErrorAlreadyCommunicated -count=1` 通过，服务层已写 `response.failed` 后 handler 不会再补第二个泛化失败事件。
+- PASS：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，完成 server 编译切片。
+- PASS：`git diff --check` 仅提示既有 `.codegraph/daemon.pid` 行尾警告；本轮触达 Go 文件无空白错误。
+- LIMIT：本轮未构建镜像、未部署、未执行真实上游 OpenAI 请求；验证边界为本地聚焦单元测试和编译切片。
+
+## 2026-06-26T09:03:13+08:00 - OpenAI Codex CLI User-Agent 账号级配置
+
+- PASS：新增账号凭据键 `openai_codex_cli_user_agent`；OpenAI Codex CLI 模拟请求优先使用账号配置的 User-Agent，空值继续回退动态 Codex Desktop 形态。
+- PASS：HTTP `/responses` 模拟头与 OpenAI websocket 模拟头都改为读取账号级 User-Agent；账号测评 OpenAI API Key Responses 路径也覆盖了配置化 UA。
+- PASS：管理端创建/编辑 OpenAI 账号时可填写 Codex CLI User-Agent；API Key 账号在凭据区配置，OAuth 账号在 Codex 模拟设置区配置；清空后删除 credentials 字段并恢复动态默认。
+- PASS：`go test -tags unit ./internal/service -run "TestAccount_GetOpenAICodexCLIUserAgent|TestAccountTestService_OpenAIAPIKeyResponsesTestUsesConfiguredCodexCLIUserAgent|TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationHeaders|TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesCodexSimulationHeaders" -count=1` 通过。
+- PASS：`corepack pnpm vitest run src/components/account/__tests__/AccountAPIKeyCredentialsFields.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts` 通过，2 个文件 30 个测试。
+- PASS：`corepack pnpm typecheck`、`go test ./cmd/server -run TestNoSuchTest -count=1`、`git diff --check -- <本轮触达文件>` 均通过。
+- LIMIT：本轮未构建镜像、未部署、未执行真实上游 OpenAI 请求；线上生效需后续走提交、不可变镜像和蓝绿验证流程。

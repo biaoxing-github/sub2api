@@ -369,6 +369,18 @@ func TestOpenAIForwardErrorAlreadyCommunicated_HeartbeatIsNotRealOutput(t *testi
 	require.False(t, openAIForwardErrorAlreadyCommunicated(c, errors.New("upstream response failed: boom")))
 }
 
+func TestOpenAIForwardErrorAlreadyCommunicated_ResponseFailedAfterOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	c.Set("openai_real_client_output_started", true)
+
+	require.True(t, service.OpenAIRealClientOutputStarted(c))
+	require.True(t, openAIForwardErrorAlreadyCommunicated(c, errors.New("upstream response failed: missing terminal event")))
+}
+
 func TestOpenAIResponses_RejectsOversizedUpstreamBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

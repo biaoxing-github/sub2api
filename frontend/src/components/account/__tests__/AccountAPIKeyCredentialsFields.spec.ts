@@ -209,4 +209,40 @@ describe('AccountAPIKeyCredentialsFields', () => {
     await versionInput.setValue('2.1.183')
     expect(wrapper.emitted('update:claudeCliVersion')?.[0]).toEqual(['2.1.183'])
   })
+
+  it('shows OpenAI Codex CLI User-Agent field and emits updates', async () => {
+    const wrapper = mount(AccountAPIKeyCredentialsFields, {
+      props: {
+        platform: 'openai',
+        baseUrl: 'https://api.openai.com',
+        requestBaseUrlsText: '',
+        balanceBaseUrl: '',
+        apiKey: '',
+        apiKeysText: '',
+        baseUrlHint: 'base hint',
+        apiKeyHint: 'key hint',
+        openaiCodexCliUserAgent:
+          'Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)',
+        mode: 'edit'
+      },
+      global: {
+        stubs: {
+          Icon: true,
+          Select: SelectStub
+        }
+      }
+    })
+
+    const userAgentInput = wrapper.get('[data-testid="openai-codex-cli-user-agent-input"]')
+    expect((userAgentInput.element as HTMLInputElement).value).toBe(
+      'Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)'
+    )
+
+    await userAgentInput.setValue(
+      'Codex Desktop/0.150.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.700.10000)'
+    )
+    expect(wrapper.emitted('update:openaiCodexCliUserAgent')?.[0]).toEqual([
+      'Codex Desktop/0.150.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.700.10000)'
+    ])
+  })
 })

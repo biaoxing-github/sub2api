@@ -3676,6 +3676,11 @@ export default {
         codexCLISimulation: '请求上游时模拟 Codex CLI',
         codexCLISimulationDesc:
           '仅对当前 OpenAI 账号生效。开启后发往上游的 /responses 请求会使用 Codex CLI 的 User-Agent、originator 和版本头；关闭后保持默认规则。',
+        codexCLIUserAgent: 'Codex CLI User-Agent',
+        codexCLIUserAgentPlaceholder:
+          'Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)',
+        codexCLIUserAgentHint:
+          '账号级上游模拟请求头。留空使用网关自动生成的当前 Codex Desktop 形态；填写后该账号按此 User-Agent 请求上游。',
         codexImageGenerationBridge: 'Codex 图片生成桥接',
         codexImageGenerationBridgeDesc:
           '账号级策略优先于渠道和全局配置。仅控制 Codex 走 /responses 文本端点时是否注入 image_generation 工具；不影响独立图片生成接口。',

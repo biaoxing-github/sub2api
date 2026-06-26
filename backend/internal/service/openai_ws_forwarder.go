@@ -1199,7 +1199,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			copyOpenAIInboundHeaderIfPresent(headers, c, "Originator")
 			copyOpenAIInboundHeaderIfPresent(headers, c, "Version")
 		} else {
-			headers.Set("user-agent", codexCLIUserAgent())
+			headers.Set("user-agent", openAICodexCLIUserAgentForAccount(account))
 			headers.Set("originator", codexCLIOriginator)
 			headers.Del("version")
 		}
