@@ -3764,3 +3764,16 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：`corepack pnpm vitest run src/components/account/__tests__/AccountAPIKeyCredentialsFields.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts` 通过，2 个文件 30 个测试。
 - PASS：`corepack pnpm typecheck`、`go test ./cmd/server -run TestNoSuchTest -count=1`、`git diff --check -- <本轮触达文件>` 均通过。
 - LIMIT：本轮未构建镜像、未部署、未执行真实上游 OpenAI 请求；线上生效需后续走提交、不可变镜像和蓝绿验证流程。
+
+## 2026-06-26 09:20 +08:00 - release v0.1.136.20 Codex 中断与请求头配置
+
+- PASS：功能提交 `ca57fa228efa` 已构建为不可变镜像 `sub2api:v0.1.136.20`，镜像 ID `sha256:d5873d8dfc4797b1b7432af2432896146552620b0e6bb3fb83735d26ee1e5a84`；镜像标签和二进制版本输出均匹配 commit `ca57fa228efa`。
+- PASS：只重建 idle `sub2api-blue`；候选发布期间 active `sub2api-green`、PostgreSQL、Redis 和 `sub2api-proxy` 未重启。
+- PASS：blue 候选端口 `18083` 的 `/health`、首页、静态资源、未登录 admin 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- PASS：blue 候选 65+ 秒观察保持 `healthy` 且 `RestartCount=0`。
+- OBSERVE：候选日志窗口出现 1 条已知 `openai_request_snapshot` 清理噪声 `pq: canceling statement due to user request`，未伴随 panic、fatal、migration、bind、listen 或 rebuild 失败。
+- PASS：代理 upstream 已从 `sub2api-green:8080` 切到 `sub2api-blue:8080`；`docker exec sub2api-proxy nginx -t` 通过，reload 成功。
+- PASS：切流后公网入口 `8080` 和本机代理入口 `18081` 的健康、首页、静态资源、未登录 admin 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- PASS：75+ 秒切流后观察中 `sub2api-blue` 与 `sub2api-green` 均保持 `healthy`；`8080`、`18081`、`18083` `/health` 全部返回 200；blue/proxy 关键日志扫描干净。
+- Current state：active blue `sub2api:v0.1.136.20`；rollback green `sub2api:v0.1.136.19`。
+- LIMIT：本轮未执行真实上游 OpenAI 请求；authenticated admin version endpoint 未运行，因为本地部署自动化路径 `ADMIN_PASSWORD` 为空。
