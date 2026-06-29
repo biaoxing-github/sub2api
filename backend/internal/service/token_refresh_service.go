@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 )
 
 // tokenRefreshTempUnschedDuration token 刷新重试耗尽后临时不可调度的持续时间
@@ -302,7 +303,7 @@ func (s *TokenRefreshService) refreshWithRetry(ctx context.Context, account *Acc
 
 		// 不可重试错误（invalid_grant/invalid_client 等）直接标记 error 状态并返回
 		if isNonRetryableRefreshError(err) {
-			errorMsg := fmt.Sprintf("Token refresh failed (non-retryable): %v", err)
+			errorMsg := fmt.Sprintf("Token refresh failed (non-retryable): %s", logredact.RedactText(err.Error()))
 			s.notifyAccountSchedulingBlocked(account, time.Time{}, "token_refresh_non_retryable")
 			if setErr := s.accountRepo.SetError(ctx, account.ID, errorMsg); setErr != nil {
 				slog.Error("token_refresh.set_error_status_failed",
@@ -346,7 +347,7 @@ func (s *TokenRefreshService) refreshWithRetry(ctx context.Context, account *Acc
 
 	// 设置临时不可调度 10 分钟（不标记 error，保持 status=active 让下个刷新周期能继续尝试）
 	until := time.Now().Add(tokenRefreshTempUnschedDuration)
-	reason := fmt.Sprintf("token refresh retry exhausted: %v", lastErr)
+	reason := fmt.Sprintf("token refresh retry exhausted: %s", logredact.RedactText(lastErr.Error()))
 	s.notifyAccountSchedulingBlocked(account, until, "token_refresh_retry_exhausted")
 	if setErr := s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, reason); setErr != nil {
 		slog.Warn("token_refresh.set_temp_unschedulable_failed",
@@ -440,12 +441,20 @@ func isNonRetryableRefreshError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	nonRetryable := []string{
-		"invalid_grant",        // refresh_token 已失效
-		"refresh_token_reused", // OpenAI refresh_token 已被使用，必须重新授权
-		"invalid_client",       // 客户端配置错误
-		"unauthorized_client",  // 客户端未授权
-		"access_denied",        // 访问被拒绝
-		"missing_project_id",   // 缺少 project_id
+		"invalid_grant",             // refresh_token 已失效
+		"invalid_refresh_token",     // refresh_token 已失效或被撤销
+		"app_session_terminated",    // OpenAI 会话已终止，必须重新授权
+		"refresh_token_reused",      // OpenAI refresh_token 已被使用，必须重新授权
+		"refresh_token_invalidated", // OpenAI refresh_token 已被主动废弃
+		"entitlement_denied",        // 账号权益不满足刷新条件，继续重试无法恢复
+		"invalid_scope",             // OAuth scope 配置无效
+		"unknown scope",             // OAuth scope 不被上游识别
+		"subscription required",     // 平台订阅缺失，需要用户处理账号状态
+		"no active grok subscription",
+		"invalid_client",      // 客户端配置错误
+		"unauthorized_client", // 客户端未授权
+		"access_denied",       // 访问被拒绝
+		"missing_project_id",  // 缺少 project_id
 		"no refresh token available",
 	}
 	for _, needle := range nonRetryable {

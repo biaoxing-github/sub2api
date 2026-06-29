@@ -639,6 +639,200 @@ func TestOpenAIGatewayServiceForwardImages_OAuthNonStreamModerationBlockedReturn
 	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "safety system")
 }
 
+func TestOpenAIGatewayServiceForwardImages_OAuthNonStreamResponseIncompleteTriggersFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","response_format":"b64_json"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	c.Set("api_key", &APIKey{ID: 42})
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	svc.httpUpstream = &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"text/event-stream"},
+				"X-Request-Id": []string{"req_img_incomplete"},
+			},
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_incomplete\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"server_error\"}}}\n\n" +
+					"data: [DONE]\n\n",
+			)),
+		},
+	}
+
+	account := &Account{
+		ID:       1,
+		Name:     "openai-oauth",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token-123",
+		},
+	}
+
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "response.incomplete")
+	require.Contains(t, string(failoverErr.ResponseBody), "server_error")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Empty(t, rec.Body.String())
+}
+
+func TestOpenAIGatewayServiceForwardImages_OAuthNonStreamContentFilterIncompleteReturnsClient400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw blocked image","response_format":"b64_json"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	c.Set("api_key", &APIKey{ID: 42})
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	svc.httpUpstream = &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"text/event-stream"},
+				"X-Request-Id": []string{"req_img_content_filter"},
+			},
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_filtered\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"content_filter\"}}}\n\n" +
+					"data: [DONE]\n\n",
+			)),
+		},
+	}
+
+	account := &Account{
+		ID:       1,
+		Name:     "openai-oauth",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token-123",
+		},
+	}
+
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.Nil(t, result)
+	var upstreamErr *OpenAIImagesUpstreamError
+	require.ErrorAs(t, err, &upstreamErr)
+	require.Equal(t, http.StatusBadRequest, upstreamErr.StatusCode)
+	require.Equal(t, "content_filter", upstreamErr.Code)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, "content_filter", gjson.Get(rec.Body.String(), "error.code").String())
+}
+
+func TestOpenAIGatewayServiceForwardImages_OAuthNonStreamNoImageOutputTriggersFailoverWithSummary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","response_format":"b64_json"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	c.Set("api_key", &APIKey{ID: 42})
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	svc.httpUpstream = &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"text/event-stream"},
+				"X-Request-Id": []string{"req_img_empty_output"},
+			},
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_empty\",\"created_at\":1710000021,\"status\":\"completed\",\"tool_usage\":{\"image_gen\":{\"images\":0}},\"output\":[]}}\n\n" +
+					"data: [DONE]\n\n",
+			)),
+		},
+	}
+
+	account := &Account{
+		ID:       1,
+		Name:     "openai-oauth",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token-123",
+		},
+	}
+
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "upstream did not return image output")
+	require.Contains(t, string(failoverErr.ResponseBody), "resp_empty")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Empty(t, rec.Body.String())
+}
+
+func TestOpenAIGatewayServiceForwardImages_OAuthServerErrorReturnsFailoverBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","response_format":"b64_json"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+
+	svc := &OpenAIGatewayService{}
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	upstreamBody := `{"error":{"type":"server_error","code":"internal_error","message":"image backend exploded"},"request_id":"req_img_500"}`
+	svc.httpUpstream = &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"X-Request-Id": []string{"req_img_500"},
+			},
+			Body: io.NopCloser(strings.NewReader(upstreamBody)),
+		},
+	}
+
+	account := &Account{
+		ID:       1,
+		Name:     "openai-oauth",
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "token-123",
+		},
+	}
+
+	result, err := svc.ForwardImages(context.Background(), c, account, body, parsed, "")
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusInternalServerError, failoverErr.StatusCode)
+	require.JSONEq(t, upstreamBody, string(failoverErr.ResponseBody))
+	require.Empty(t, rec.Body.String())
+}
+
 func TestOpenAIGatewayServiceForwardImages_APIKeyGenerationUsesConfiguredV1BaseURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","response_format":"b64_json"}`)

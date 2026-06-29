@@ -16,6 +16,13 @@ type SchedulerOutboxEvent struct {
 
 // SchedulerOutboxRepository 提供调度 outbox 的读取接口。
 type SchedulerOutboxRepository interface {
-	ListAfter(ctx context.Context, afterID int64, limit int) ([]SchedulerOutboxEvent, error)
+	ListAfterAndReleaseDedup(ctx context.Context, afterID int64, limit int) ([]SchedulerOutboxEvent, error)
 	MaxID(ctx context.Context) (int64, error)
+	DeleteConsumedUpTo(ctx context.Context, watermark int64, limit int) (int64, error)
+	TryAcquireCleanupLock(ctx context.Context) (SchedulerOutboxCleanupLease, bool, error)
+}
+
+// SchedulerOutboxCleanupLease 表示调度 outbox 清理任务持有的数据库锁。
+type SchedulerOutboxCleanupLease interface {
+	Release()
 }

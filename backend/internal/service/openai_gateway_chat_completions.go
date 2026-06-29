@@ -225,18 +225,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	policy := s.openAICodexStabilityPolicy(isRealOpenAICodexClientRequest(c) || s.shouldSimulateOpenAICodexCLI(account))
 	resp, err := s.doOpenAIUpstreamWithHeaderTimeout(ctx, upstreamReq, proxyURL, account, responsesBody, policy, account.GetOpenAIBaseURL())
 	if err != nil {
-		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
-		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -259,7 +248,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 			)
 			return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 		}
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+		if s.shouldFailoverOpenAIChatCompletionsUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 			upstreamDetail := ""
 			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 				maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
@@ -359,6 +348,43 @@ func openAICompatFailedResponseMessage(resp *apicompat.ResponsesResponse) string
 		return ""
 	}
 	return strings.TrimSpace(resp.Error.Message)
+}
+
+func (s *OpenAIGatewayService) shouldFailoverOpenAIChatCompletionsUpstreamResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	if s.shouldFailoverOpenAIUpstreamResponse(statusCode, upstreamMsg, upstreamBody) {
+		return true
+	}
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+	return openAIChatCompletionsOverloadedError(upstreamMsg, upstreamBody)
+}
+
+func openAIChatCompletionsOverloadedError(upstreamMsg string, upstreamBody []byte) bool {
+	match := func(text string) bool {
+		lower := strings.ToLower(strings.TrimSpace(text))
+		if lower == "" {
+			return false
+		}
+		return strings.Contains(lower, "server_is_overloaded") ||
+			strings.Contains(lower, "slow_down") ||
+			strings.Contains(lower, "our servers are currently overloaded") ||
+			strings.Contains(lower, "server overloaded") ||
+			strings.Contains(lower, "currently overloaded")
+	}
+	if match(upstreamMsg) {
+		return true
+	}
+	if len(upstreamBody) == 0 {
+		return false
+	}
+	if match(gjson.GetBytes(upstreamBody, "error.code").String()) {
+		return true
+	}
+	if match(gjson.GetBytes(upstreamBody, "error.message").String()) {
+		return true
+	}
+	return match(string(upstreamBody))
 }
 
 // handleChatCompletionsErrorResponse reads an upstream error and returns it in

@@ -57,7 +57,11 @@ func TestEnqueueSchedulerOutbox_DeduplicatesIdempotentEvents(t *testing.T) {
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM scheduler_outbox WHERE event_type = $1", service.SchedulerOutboxEventAccountChanged).Scan(&count))
 	require.Equal(t, 1, count)
 
-	time.Sleep(schedulerOutboxDedupWindow + 150*time.Millisecond)
+	outboxRepo := NewSchedulerOutboxRepository(integrationDB)
+	events, err := outboxRepo.ListAfterAndReleaseDedup(ctx, 0, 100)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+
 	require.NoError(t, enqueueSchedulerOutbox(ctx, integrationDB, service.SchedulerOutboxEventAccountChanged, &accountID, nil, nil))
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM scheduler_outbox WHERE event_type = $1", service.SchedulerOutboxEventAccountChanged).Scan(&count))
 	require.Equal(t, 2, count)

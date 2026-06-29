@@ -20,6 +20,8 @@ type tokenRefreshAccountRepo struct {
 	setErrorCalls          int
 	clearTempCalls         int
 	setTempUnschedCalls    int
+	lastErrorMessage       string
+	lastTempUnschedReason  string
 	lastAccount            *Account
 	updateErr              error
 }
@@ -51,6 +53,7 @@ func (r *tokenRefreshAccountRepo) UpdateCredentials(ctx context.Context, id int6
 
 func (r *tokenRefreshAccountRepo) SetError(ctx context.Context, id int64, errorMsg string) error {
 	r.setErrorCalls++
+	r.lastErrorMessage = errorMsg
 	return nil
 }
 
@@ -61,6 +64,7 @@ func (r *tokenRefreshAccountRepo) ClearTempUnschedulable(ctx context.Context, id
 
 func (r *tokenRefreshAccountRepo) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
 	r.setTempUnschedCalls++
+	r.lastTempUnschedReason = reason
 	return nil
 }
 
@@ -532,6 +536,14 @@ func TestIsNonRetryableRefreshError(t *testing.T) {
 		{name: "network_error", err: errors.New("network timeout"), expected: false},
 		{name: "invalid_grant", err: errors.New("invalid_grant"), expected: true},
 		{name: "invalid_client", err: errors.New("invalid_client"), expected: true},
+		{name: "invalid_refresh_token", err: errors.New(`OPENAI_OAUTH_TOKEN_REFRESH_FAILED: token refresh failed: status 401, body: {"error":"invalid_refresh_token"}`), expected: true},
+		{name: "app_session_terminated", err: errors.New(`token refresh failed: {"error":{"code":"app_session_terminated"}}`), expected: true},
+		{name: "refresh_token_invalidated", err: errors.New(`token refresh failed: {"error":{"code":"refresh_token_invalidated"}}`), expected: true},
+		{name: "entitlement_denied", err: errors.New(`token refresh failed: {"error":{"code":"entitlement_denied"}}`), expected: true},
+		{name: "invalid_scope", err: errors.New(`token refresh failed: {"error":"invalid_scope"}`), expected: true},
+		{name: "unknown_scope", err: errors.New(`token refresh failed: unknown scope: openai.api`), expected: true},
+		{name: "subscription_required", err: errors.New(`token refresh failed: subscription required`), expected: true},
+		{name: "no_active_grok_subscription", err: errors.New(`token refresh failed: no active grok subscription`), expected: true},
 		{name: "refresh_token_reused", err: errors.New(`OPENAI_OAUTH_TOKEN_REFRESH_FAILED: token refresh failed: status 401, body: {"error":{"code":"refresh_token_reused"}}`), expected: true},
 		{name: "unauthorized_client", err: errors.New("unauthorized_client"), expected: true},
 		{name: "access_denied", err: errors.New("access_denied"), expected: true},
@@ -546,6 +558,60 @@ func TestIsNonRetryableRefreshError(t *testing.T) {
 			require.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestTokenRefreshService_RefreshWithRetry_RedactsStoredErrorText(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	cfg := &config.Config{
+		TokenRefresh: config.TokenRefreshConfig{
+			MaxRetries:          1,
+			RetryBackoffSeconds: 0,
+		},
+	}
+	service := NewTokenRefreshService(repo, nil, nil, nil, nil, nil, nil, cfg, nil)
+	account := &Account{
+		ID:       19,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+	}
+	refresher := &tokenRefresherStub{
+		err: errors.New(`token refresh failed: {"error":"invalid_refresh_token","refresh_token":"rt-secret-value","access_token":"sk-secret-value"}`),
+	}
+
+	err := service.refreshWithRetry(context.Background(), account, refresher, refresher, time.Hour)
+	require.Error(t, err)
+	require.Equal(t, 1, repo.setErrorCalls)
+	require.NotContains(t, repo.lastErrorMessage, "rt-secret-value")
+	require.NotContains(t, repo.lastErrorMessage, "sk-secret-value")
+	require.Contains(t, repo.lastErrorMessage, `"refresh_token":"***"`)
+	require.Contains(t, repo.lastErrorMessage, `"access_token":"***"`)
+}
+
+func TestTokenRefreshService_RefreshWithRetry_RedactsTempUnschedulableReason(t *testing.T) {
+	repo := &tokenRefreshAccountRepo{}
+	cfg := &config.Config{
+		TokenRefresh: config.TokenRefreshConfig{
+			MaxRetries:          1,
+			RetryBackoffSeconds: 0,
+		},
+	}
+	service := NewTokenRefreshService(repo, nil, nil, nil, nil, nil, nil, cfg, nil)
+	account := &Account{
+		ID:       20,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+	}
+	refresher := &tokenRefresherStub{
+		err: errors.New(`network timeout: access_token=sk-secret-value refresh_token=rt-secret-value`),
+	}
+
+	err := service.refreshWithRetry(context.Background(), account, refresher, refresher, time.Hour)
+	require.Error(t, err)
+	require.Equal(t, 1, repo.setTempUnschedCalls)
+	require.NotContains(t, repo.lastTempUnschedReason, "rt-secret-value")
+	require.NotContains(t, repo.lastTempUnschedReason, "sk-secret-value")
+	require.Contains(t, repo.lastTempUnschedReason, "access_token=***")
+	require.Contains(t, repo.lastTempUnschedReason, "refresh_token=***")
 }
 
 // ========== Path A (refreshAPI) 测试用例 ==========

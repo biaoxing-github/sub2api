@@ -412,10 +412,16 @@ func extractAnthropicTextFromBlocks(blocks []AnthropicContentBlock) string {
 //	high   → high
 //	max    → xhigh
 func mapAnthropicEffortToResponses(effort string) string {
-	if effort == "max" {
+	normalized := strings.ToLower(strings.TrimSpace(effort))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	switch normalized {
+	case "max", "xhigh", "extra_high", "extrahigh":
 		return "xhigh"
+	case "low", "medium", "high":
+		return normalized
+	default:
+		return normalized
 	}
-	return effort // low→low, medium→medium, high→high, unknown→passthrough
 }
 
 // convertAnthropicToolsToResponses maps Anthropic tool definitions to

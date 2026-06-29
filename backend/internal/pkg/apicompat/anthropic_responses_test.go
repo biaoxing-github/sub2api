@@ -1223,6 +1223,52 @@ func TestAnthropicToResponses_OutputConfigMax(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
+func TestAnthropicToResponses_ProviderReasoningEffortCompatibility(t *testing.T) {
+	tests := []struct {
+		name         string
+		thinking     *AnthropicThinking
+		outputConfig *AnthropicOutputConfig
+		wantEffort   string
+	}{
+		{
+			name:         "glm normalizes uppercase high",
+			outputConfig: &AnthropicOutputConfig{Effort: "HIGH"},
+			wantEffort:   "high",
+		},
+		{
+			name:         "glm normalizes extra high alias",
+			outputConfig: &AnthropicOutputConfig{Effort: "extra_high"},
+			wantEffort:   "xhigh",
+		},
+		{
+			name:         "deepseek max maps to xhigh",
+			outputConfig: &AnthropicOutputConfig{Effort: "max"},
+			wantEffort:   "xhigh",
+		},
+		{
+			name:       "thinking enabled defaults to medium",
+			thinking:   &AnthropicThinking{Type: "enabled", BudgetTokens: 8192},
+			wantEffort: "medium",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := AnthropicToResponses(&AnthropicRequest{
+				Model:        "gpt-5.2",
+				MaxTokens:    1024,
+				Messages:     []AnthropicMessage{{Role: "user", Content: json.RawMessage(`"Hello"`)}},
+				Thinking:     tt.thinking,
+				OutputConfig: tt.outputConfig,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, resp.Reasoning)
+			assert.Equal(t, tt.wantEffort, resp.Reasoning.Effort)
+			assert.Equal(t, "auto", resp.Reasoning.Summary)
+		})
+	}
+}
+
 func TestAnthropicToResponses_NoOutputConfig(t *testing.T) {
 	// No output_config → default medium regardless of thinking.type.
 	req := &AnthropicRequest{

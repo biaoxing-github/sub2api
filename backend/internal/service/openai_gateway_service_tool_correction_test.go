@@ -1,8 +1,12 @@
 package service
 
 import (
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // TestOpenAIGatewayService_ToolCorrection 测试 OpenAIGatewayService 中的工具修正集成
@@ -75,6 +79,30 @@ func TestOpenAIGatewayService_ToolCorrection(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCorrectToolCallsInResponseBody_DedupesResponsesFunctionCallArguments(t *testing.T) {
+	service := &OpenAIGatewayService{
+		toolCorrector: NewCodexToolCorrector(),
+	}
+	argument := `{"cmd":"echo ok","nested":{"brace":"}"}}`
+	repeatedArgument := strconv.Quote(argument + argument)
+	mixedArgument := strconv.Quote(`{"cmd":"keep"}{"cmd":"different"}`)
+	input := []byte(`{
+		"type":"response.completed",
+		"response":{
+			"output":[
+				{"type":"function_call","arguments":` + repeatedArgument + `},
+				{"type":"function_call","arguments":` + mixedArgument + `}
+			]
+		}
+	}`)
+
+	result := service.correctToolCallsInResponseBody(input)
+
+	require.Equal(t, argument, gjson.GetBytes(result, "response.output.0.arguments").String())
+	require.Equal(t, `{"cmd":"keep"}{"cmd":"different"}`, gjson.GetBytes(result, "response.output.1.arguments").String())
+	require.NotEqual(t, string(input), string(result))
 }
 
 // TestOpenAIGatewayService_ToolCorrectorInitialization 测试工具修正器是否正确初始化

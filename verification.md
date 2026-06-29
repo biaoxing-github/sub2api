@@ -3777,3 +3777,73 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：75+ 秒切流后观察中 `sub2api-blue` 与 `sub2api-green` 均保持 `healthy`；`8080`、`18081`、`18083` `/health` 全部返回 200；blue/proxy 关键日志扫描干净。
 - Current state：active blue `sub2api:v0.1.136.20`；rollback green `sub2api:v0.1.136.19`。
 - LIMIT：本轮未执行真实上游 OpenAI 请求；authenticated admin version endpoint 未运行，因为本地部署自动化路径 `ADMIN_PASSWORD` 为空。
+
+## 2026-06-29T09:31:16+08:00 - v0.1.137-139 与 juhe-ai 可吸收优化计划
+
+- PASS：`git ls-remote --tags origin refs/tags/v0.1.137 refs/tags/v0.1.138 refs/tags/v0.1.139` 确认远端标签对象分别为 `96e25629cd4a`、`e7a6bd46e3d9`、`a28c29d6902`。
+- PASS：本地已存在并刷新 juhe-ai `feature/20250617` 分支，HEAD 为 `246ebb8d29dafe513e96cbf4f42918285ed9dca2`。
+- PASS：CodeGraph 健康，索引 2190 files / 68929 nodes；已定位 OpenAI gateway、Codex client restriction、scheduler、provider 兼容入口。
+- PASS：已生成计划文档 `docs/SUB2API_V0_1_137_139_JUHE_ABSORPTION_CEO_PLAN_CN.md`，按 D 范围拆分 Phase 1-4。
+- LIMIT：本轮只生成计划文档，未修改运行时代码，未运行 Go/Vitest，未构建镜像，未部署。
+
+## 2026-06-29T12:46:34+08:00 - Phase 1 zstd 上游响应解压
+
+- PASS：保留并完成 Phase 1 第一个功能：`decompressResponseBody` 支持 `Content-Encoding: zstd`，成功解压后移除 `Content-Encoding` / `Content-Length` 并把 `ContentLength` 置为 `-1`。
+- PASS：新增回归测试覆盖 zstd usage JSON 解压、gzip/br/deflate 既有编码保持可用、非法 zstd 与空 zstd 响应记录 `zstd_decompress_failed` 并保留原始响应体。
+- PASS：`go test ./internal/repository -run TestDecompressResponseBody -count=1` 通过。
+- PASS：`go test ./internal/repository -count=1` 通过。
+- PASS：`git diff --check -- backend/internal/repository/http_upstream.go backend/internal/repository/decompress_response_test.go` 通过。
+- LIMIT：本轮只完成 zstd 解压一个功能；未构建镜像、未部署、未执行真实上游请求。
+
+## 2026-06-29 Devil - Phase 1 非 JSON 2xx failover
+
+- 变更范围：ackend/internal/service/openai_gateway_service.go、ackend/internal/service/openai_gateway_service_test.go。
+- RED：go test -tags unit ./internal/service -run "TestOpenAIGatewayService_Forward(NonStream2xxHTMLTriggersFailover|NonStream2xxEmptyBodyTriggersFailover|NonStream2xxJSONStillPasses|Stream2xxHTMLTriggersFailoverBeforeWrite|Stream2xxSSEStillPasses)$" -count=1 首次失败，HTML/空 body 非流式仍是普通 invalid json response，流式 HTML 返回旧的 missing-terminal failover 语义。
+- GREEN：同一命令通过，覆盖 200 text/html、200 empty body、200 normal JSON、200 text/html stream、200 normal SSE。
+- 相关回归：go test -tags unit ./internal/service -run "TestOpenAIStreaming(ResponseFailedBeforeOutputReturnsFailover|ClientDisconnectDrainsUpstreamUsage|TerminalEventWithoutUsageAddsClientTerminalFields)$" -count=1 通过。
+- 相关回归：go test -tags unit ./internal/service -run "TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover$|TestOpenAIGatewayService_APIKeyRequestBaseURLDoesNotFailoverBeforeAccountFailover$" -count=1 通过。
+- 编译切片：go test -tags unit ./internal/service -run '^$' -count=1 通过。
+- Diff 检查：git diff --check -- backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_test.go 通过。
+- 已知非本轮失败：扩大命令 go test -tags unit ./internal/service -run "TestOpenAIGatewayService_Forward|TestOpenAIStreaming(ResponseFailedBeforeOutputReturnsFailover|ResponseFailedAfterOutputSendsRetryableFailedEvent|TerminalEventWithoutUsageAddsClientTerminalFields|ClientDisconnectDrainsUpstreamUsage)$" -count=1 124 秒超时；分段后 TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledReturnsFailoverWhenClientStillConnected 和 TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledDoesNotFailoverWhenClientCanceled 当前失败，返回/断言为既有 context canceled 请求阶段语义，未在本轮修复。
+## 2026-06-29 Devil - Phase 1 SSE event:error 保真与 ops 诊断
+
+- 变更范围：backend/internal/service/openai_gateway_service.go、backend/internal/service/openai_gateway_service_test.go。
+- RED：go test -tags unit ./internal/service -run "TestOpenAIStreamingEventError(BeforeOutputReturnsFailoverWithRawBody|AfterOutputWritesRealFailedEvent)$" -count=1 首次失败；当前代码把 event:error 归入 missing terminal，未返回真实上游 message，也未记录 upstream_response_body。
+- GREEN：同一命令通过；覆盖真实输出前 event:error 返回 UpstreamFailoverError 并保留原始 body，真实输出后写出包含上游 message 的 response.failed 且不再补 missing-terminal 泛化失败。
+- 聚焦回归：go test -tags unit ./internal/service -run "TestOpenAIStreaming(EventErrorBeforeOutputReturnsFailoverWithRawBody|EventErrorAfterOutputWritesRealFailedEvent|ResponseFailedBeforeOutputReturnsFailover|QuotaFailedAfterOutputWritesGatewayRetryableFailure|MissingTerminalAfterOutputWritesFailedEvent|MissingTerminalEventAfterOutputWritesFailedTerminal)$|TestOpenAIGatewayService_Forward(NonStream2xxHTMLTriggersFailover|NonStream2xxEmptyBodyTriggersFailover|NonStream2xxJSONStillPasses|Stream2xxHTMLTriggersFailoverBeforeWrite|Stream2xxSSEStillPasses)$" -count=1 通过。
+- Handler 回归：go test ./internal/handler -run "TestOpenAIForwardErrorAlreadyCommunicated" -count=1 通过，确认 service 已写失败终止后 handler 不追加泛化错误。
+- 编译切片：go test -tags unit ./internal/service -run '^$' -count=1 通过。
+- Diff 检查：git diff --check -- backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_test.go 通过。
+- 边界：本轮覆盖 OpenAI Responses 主流式处理及默认 Chat Completions 转 Responses 路径；APIKey raw chat completions 直转流解析属于独立路径，未在本轮改动。
+
+## 2026-06-29 Devil - Phase 1 并行吸收网关/provider/token/images 剩余内容
+
+- 变更范围：backend/internal/repository/http_upstream.go、backend/internal/repository/decompress_response_test.go、backend/internal/service/openai_gateway_service.go、backend/internal/service/openai_gateway_service_test.go、backend/internal/service/openai_gateway_service_tool_correction_test.go、backend/internal/service/openai_gateway_chat_completions*.go、backend/internal/service/openai_images*.go、backend/internal/service/token_refresh_service*.go、backend/internal/service/vertex_service_account*.go、backend/internal/service/gemini_messages_compat_service*.go、backend/internal/pkg/apicompat/anthropic_to_responses.go、backend/internal/pkg/apicompat/anthropic_responses_test.go。
+- RED：go test -tags unit ./internal/service -run "TestOpenAIStreaming(Passthrough)?DedupesFunctionCallArgumentsBeforeWrite$" -count=1 首次失败，普通流式和 passthrough 流式都会把重复的 Responses function-call arguments 原样写给客户端。
+- GREEN：同一命令通过；普通流式与 passthrough 流式现在写客户端前会把完整重复 JSON arguments 去重。
+- 聚焦回归：go test -tags unit ./internal/service -run "Test(SanitizeOpenAIResponseFailedEventForClient|CorrectToolCallsInResponseBody_DedupesResponsesFunctionCallArguments|OpenAIStreaming.*DedupesFunctionCallArgumentsBeforeWrite)$" -count=1 通过。
+- 聚焦回归：go test -tags unit ./internal/service -run "Test(OpenAIStreamingResponseFailedBeforeOutputReturnsFailover|OpenAIStreamingPassthroughResponseFailedBeforeOutputReturnsFailover|OpenAIStreamingPassthroughQuotaFailedAfterOutputWritesGatewayRetryableFailure|OpenAIStreamingMissingTerminalEventAfterOutputWritesFailedTerminal)$" -count=1 通过。
+- Phase 1 聚合：go test -tags unit ./internal/service -run "Test(OpenAIStreaming|OpenAI2xx|EventError|IsOpenAITransientProcessingError|ForwardAsChatCompletions_TransportErrorReturnsFailover|ForwardAsRawChatCompletions_TransportErrorReturnsFailover|ForwardAsRawChatCompletions_OverloadedAndTransientErrorsFailoverButOrdinary400DoesNot|IsNonRetryableRefreshError|TokenRefreshService_RefreshWithRetry_RedactsStoredErrorText|TokenRefreshService_RefreshWithRetry_RedactsTempUnschedulableReason|SanitizeOpenAIResponseFailedEventForClient|CorrectToolCallsInResponseBody_DedupesResponsesFunctionCallArguments)$" -count=1 通过。
+- Images 聚焦：go test ./internal/service -run "TestOpenAIGatewayServiceForwardImages_OAuth(NonStreamResponseIncompleteTriggersFailover|NonStreamContentFilterIncompleteReturnsClient400|NonStreamNoImageOutputTriggersFailoverWithSummary|ServerErrorReturnsFailoverBody|NonStreamModerationBlockedReturnsClientError)$" -count=1 通过。
+- Images 聚合：go test ./internal/service -run "(TestOpenAIGatewayServiceForwardImages_.*Images|TestOpenAIGatewayServiceForwardImages_.*OAuth|TestCollectOpenAIImagesFromResponsesBody_|TestBuildOpenAIImagesResponsesRequest_)" -count=1 通过。
+- Provider 聚焦：go test ./internal/pkg/apicompat -run TestAnthropicToResponses_ProviderReasoningEffortCompatibility -count=1 通过；go test ./internal/service -run "Test(BuildVertexAnthropicRequestBodyFiltersUnsupportedBeta|NormalizeGeminiRequestForAIStudioCleansUnsupportedSchemaShapes)" -count=1 通过。
+- Repository/handler 回归：go test ./internal/repository -run TestDecompressResponseBody -count=1 通过；go test ./internal/handler -run TestOpenAIForwardErrorAlreadyCommunicated -count=1 通过。
+- Diff 检查：Phase 1 touched backend files scoped git diff --check 通过。
+- 边界：本轮未构建镜像、未部署、未执行真实上游请求；scheduler outbox dedup/cleanup 仍是独立数据库迁移切片，未混入本轮网关/provider/token/images 改动。
+
+## 2026-06-29 Devil - Phase 1 scheduler outbox dedup 与清理
+
+- 变更范围：backend/internal/repository/scheduler_outbox_repo.go、backend/internal/repository/scheduler_outbox_repo_test.go、backend/internal/repository/ops_write_pressure_integration_test.go、backend/internal/service/scheduler_outbox.go、backend/internal/service/scheduler_snapshot_service.go、backend/internal/service/scheduler_snapshot_outbox_test.go、backend/migrations/161_scheduler_outbox_dedup_key.sql、backend/migrations/162_scheduler_outbox_pending_dedup_key_index_notx.sql。
+- RED：go test ./internal/repository -run "Test(EnqueueSchedulerOutbox_UsesPersistentDedupKeyForIdempotentEvents|SchedulerOutboxRepositoryListAfterAndReleaseDedup|SchedulerOutboxRepositoryDeleteConsumedUpTo|SchedulerOutboxDedupKeyIncludesPayload)" -count=1 首次失败；缺少 schedulerOutboxDedupKey、ListAfterAndReleaseDedup、DeleteConsumedUpTo。
+- RED：go test -tags unit ./internal/service -run "TestSchedulerSnapshotPollOutbox" -count=1 首次失败；SchedulerOutboxRepository 仍是旧 ListAfter 接口，未定义 cleanup lease。
+- GREEN：go test ./internal/repository -run "Test(EnqueueSchedulerOutbox_UsesPersistentDedupKeyForIdempotentEvents|EnqueueSchedulerOutbox_DoesNotDedupLastUsedEvents|SchedulerOutboxRepositoryListAfterAndReleaseDedup|SchedulerOutboxRepositoryDeleteConsumedUpTo|SchedulerOutboxDedupKeyIncludesPayload)" -count=1 通过。
+- GREEN：go test -tags unit ./internal/service -run "TestSchedulerSnapshotPollOutbox" -count=1 通过。
+- 聚焦回归：go test ./internal/repository -run "SchedulerOutbox|EnqueueSchedulerOutbox" -count=1 通过。
+- 聚焦回归：go test -tags unit ./internal/service -run "SchedulerSnapshot|Scheduler" -count=1 通过。
+- 包级回归：go test ./internal/repository -count=1 通过。
+- Scheduler 聚焦：go test -tags unit ./internal/service -run "TestSchedulerSnapshotPollOutbox|Test(OpenAISelectAccountWithLoadAwareness_HydratesSelectedAccountFromSchedulerSnapshot|GatewaySelectAccountWithLoadAwareness_HydratesSelectedAccountFromSchedulerSnapshot)" -count=1 通过。
+- Repository 聚焦：go test ./internal/repository -run "Test(EnqueueSchedulerOutbox|SchedulerOutbox|ApplyMigrations)" -count=1 通过。
+- Diff 检查：git diff --check -- backend/internal/repository/scheduler_outbox_repo.go backend/internal/repository/scheduler_outbox_repo_test.go backend/internal/repository/ops_write_pressure_integration_test.go backend/internal/service/scheduler_outbox.go backend/internal/service/scheduler_snapshot_service.go backend/internal/service/scheduler_snapshot_outbox_test.go backend/migrations/161_scheduler_outbox_dedup_key.sql backend/migrations/162_scheduler_outbox_pending_dedup_key_index_notx.sql 通过。
+- 集成测试阻塞：go test -tags integration ./internal/repository -run "Test(EnqueueSchedulerOutbox_DeduplicatesIdempotentEvents|EnqueueSchedulerOutbox_DoesNotDeduplicateLastUsed|SchedulerSnapshotOutboxReplay)$" -count=1 未进入业务测试，原因是 Docker/Testcontainers 拉取 testcontainers/ryuk:0.13.0 时镜像源返回 403 Forbidden。
+- 已知非本轮失败：go test -tags unit ./internal/service -count=1 当前在 scheduler 范围外失败，包括 account API key cooldown 时间断言、image bridge 403 fallback、OAuth passthrough client-cancel、OpenAI passthrough 429/529 failover panic。
+- 边界：本轮未提交、未构建镜像、未部署、未执行真实上游请求。

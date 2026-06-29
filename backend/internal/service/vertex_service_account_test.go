@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,40 @@ func TestBuildVertexAnthropicRequestBody(t *testing.T) {
 	require.Equal(t, vertexAnthropicVersion, gjson.GetBytes(got, "anthropic_version").String())
 	require.Equal(t, int64(64), gjson.GetBytes(got, "max_tokens").Int())
 	require.Equal(t, "hi", gjson.GetBytes(got, "messages.0.content").String())
+}
+
+func TestBuildVertexAnthropicRequestBodyFiltersUnsupportedBeta(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantBeta []string
+	}{
+		{
+			name:     "keeps prompt caching beta",
+			input:    `{"anthropic_beta":["prompt-caching-2024-07-31","computer-use-2024-10-22"],"messages":[{"role":"user","content":"hi"}]}`,
+			wantBeta: []string{"prompt-caching-2024-07-31"},
+		},
+		{
+			name:     "removes empty beta after filtering",
+			input:    `{"anthropic_beta":["computer-use-2024-10-22"],"messages":[{"role":"user","content":"hi"}]}`,
+			wantBeta: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildVertexAnthropicRequestBody([]byte(tt.input))
+			require.NoError(t, err)
+			if tt.wantBeta == nil {
+				require.False(t, gjson.GetBytes(got, "anthropic_beta").Exists())
+				return
+			}
+			require.True(t, gjson.GetBytes(got, "anthropic_beta").Exists())
+			for i, want := range tt.wantBeta {
+				require.Equal(t, want, gjson.GetBytes(got, "anthropic_beta."+strconv.Itoa(i)).String())
+			}
+		})
+	}
 }
 
 func TestBuildVertexGeminiURLRejectsInvalidLocation(t *testing.T) {

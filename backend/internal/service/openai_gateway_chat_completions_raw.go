@@ -166,18 +166,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	policy := s.openAICodexStabilityPolicy(isRealOpenAICodexClientRequest(c) || s.shouldSimulateOpenAICodexCLI(account))
 	resp, err := s.doOpenAIUpstreamWithHeaderTimeout(ctx, upstreamReq, proxyURL, account, upstreamBody, policy, baseURL)
 	if err != nil {
-		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
-		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -189,7 +178,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+		if s.shouldFailoverOpenAIChatCompletionsUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 			upstreamDetail := ""
 			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 				maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes

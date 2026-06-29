@@ -496,6 +496,112 @@ func TestForwardAsRawChatCompletions_UpstreamRequestIgnoresClientCancel(t *testi
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
 
+func TestForwardAsRawChatCompletions_TransportErrorReturnsFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{err: errors.New("read tcp 127.0.0.1:12345->10.0.0.1:443: connection reset by peer")}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Equal(t, OpenAIStreamActionRetryNextAccount, failoverErr.ActionLabel)
+	require.Equal(t, "request", failoverErr.ActionMetadata["phase"])
+	require.Equal(t, "transport_error", failoverErr.ActionMetadata["reason"])
+	require.False(t, c.Writer.Written(), "transport failover must not commit a direct 502 response")
+	require.Empty(t, rec.Body.String())
+}
+
+func TestForwardAsRawChatCompletions_OverloadedAndTransientErrorsFailoverButOrdinary400DoesNot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name         string
+		statusCode   int
+		body         string
+		wantFailover bool
+		wantHTTPCode int
+	}{
+		{
+			name:         "server_is_overloaded",
+			statusCode:   http.StatusBadRequest,
+			body:         `{"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`,
+			wantFailover: true,
+		},
+		{
+			name:         "slow_down",
+			statusCode:   http.StatusBadRequest,
+			body:         `{"error":{"code":"slow_down","message":"slow_down"}}`,
+			wantFailover: true,
+		},
+		{
+			name:         "503 transient processing",
+			statusCode:   http.StatusServiceUnavailable,
+			body:         `{"error":{"message":"The server had an error while processing your request. Sorry about that!"}}`,
+			wantFailover: true,
+		},
+		{
+			name:         "ordinary 400",
+			statusCode:   http.StatusBadRequest,
+			body:         `{"error":{"type":"invalid_request_error","message":"Unsupported parameter: temperature"}}`,
+			wantFailover: false,
+			wantHTTPCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_raw_error"}},
+				Body:       io.NopCloser(strings.NewReader(tt.body)),
+			}}
+			svc := &OpenAIGatewayService{
+				cfg:          rawChatCompletionsTestConfig(),
+				httpUpstream: upstream,
+			}
+
+			result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+
+			if tt.wantFailover {
+				require.Nil(t, result)
+				var failoverErr *UpstreamFailoverError
+				require.True(t, errors.As(err, &failoverErr))
+				require.Equal(t, tt.statusCode, failoverErr.StatusCode)
+				require.JSONEq(t, tt.body, string(failoverErr.ResponseBody))
+				require.False(t, c.Writer.Written(), "failoverable upstream errors must not commit direct chat errors")
+				require.Empty(t, rec.Body.String())
+				return
+			}
+
+			require.Error(t, err)
+			require.Nil(t, result)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(err, &failoverErr))
+			require.Equal(t, tt.wantHTTPCode, rec.Code)
+			require.Contains(t, rec.Body.String(), "Unsupported parameter")
+		})
+	}
+}
+
 func TestForwardAsChatCompletions_UnknownResponsesSupportFallbackUsesVersionedChatURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

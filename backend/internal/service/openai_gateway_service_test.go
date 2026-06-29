@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,37 @@ var codexDesktopUserAgent = codexCLIUserAgent()
 // 编译期接口断言
 var _ AccountRepository = (*stubOpenAIAccountRepo)(nil)
 var _ GatewayCache = (*stubGatewayCache)(nil)
+
+func TestSanitizeOpenAIResponseFailedEventForClient(t *testing.T) {
+	payload := []byte(`{
+		"type":"response.failed",
+		"response":{
+			"id":"resp_1",
+			"status":"failed",
+			"instructions":"large prompt",
+			"output":[{"type":"message","content":[{"type":"output_text","text":"secret"}]}],
+			"usage":{"input_tokens":123,"output_tokens":4},
+			"tools":[{"type":"function","name":"tool"}],
+			"text":{"format":{"type":"text"}},
+			"parallel_tool_calls":true,
+			"error":{"code":"server_is_overloaded","message":"try later"}
+		}
+	}`)
+
+	sanitized, changed := sanitizeOpenAIResponseFailedEventForClient(payload, "response.failed")
+
+	require.True(t, changed)
+	require.Equal(t, "response.failed", gjson.GetBytes(sanitized, "type").String())
+	require.Equal(t, "resp_1", gjson.GetBytes(sanitized, "response.id").String())
+	require.Equal(t, "failed", gjson.GetBytes(sanitized, "response.status").String())
+	require.Equal(t, "server_is_overloaded", gjson.GetBytes(sanitized, "response.error.code").String())
+	require.False(t, gjson.GetBytes(sanitized, "response.instructions").Exists())
+	require.False(t, gjson.GetBytes(sanitized, "response.output").Exists())
+	require.False(t, gjson.GetBytes(sanitized, "response.usage").Exists())
+	require.False(t, gjson.GetBytes(sanitized, "response.tools").Exists())
+	require.False(t, gjson.GetBytes(sanitized, "response.text").Exists())
+	require.False(t, gjson.GetBytes(sanitized, "response.parallel_tool_calls").Exists())
+}
 
 type stubOpenAIAccountRepo struct {
 	AccountRepository
@@ -1611,6 +1643,162 @@ func TestOpenAIGatewayService_APIKeyRequestBaseURLDoesNotFailoverBeforeAccountFa
 	require.Empty(t, rec.Body.String())
 }
 
+// newOpenAIForward2xxProtocolTestContext 构造 OpenAI /responses 转发测试上下文。
+func newOpenAIForward2xxProtocolTestContext(stream bool) (*httptest.ResponseRecorder, *gin.Context, []byte) {
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(fmt.Sprintf(`{"model":"gpt-5.5","stream":%t,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`, stream))
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	return rec, c, body
+}
+
+// newOpenAIForward2xxProtocolTestAccount 返回具备 OAuth 凭据的可调度 OpenAI 测试账号。
+func newOpenAIForward2xxProtocolTestAccount() *Account {
+	return &Account{
+		ID:          123,
+		Name:        "acc",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Status:      StatusActive,
+		Schedulable: true,
+	}
+}
+
+// newOpenAIForward2xxProtocolTestService 把指定上游响应接入 OpenAI 网关测试服务。
+func newOpenAIForward2xxProtocolTestService(resp *http.Response) *OpenAIGatewayService {
+	return &OpenAIGatewayService{
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			OpenAIRequestHeaderTimeoutSeconds: 60,
+			MaxLineSize:                       defaultMaxLineSize,
+		}},
+		httpUpstream: &httpUpstreamRecorder{resp: resp},
+	}
+}
+
+func TestOpenAIGatewayService_ForwardNonStream2xxHTMLTriggersFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec, c, body := newOpenAIForward2xxProtocolTestContext(false)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}, "x-request-id": []string{"rid-html"}},
+		Body:       io.NopCloser(strings.NewReader("<html>temporarily unavailable</html>")),
+	}
+	svc := newOpenAIForward2xxProtocolTestService(resp)
+
+	result, err := svc.Forward(context.Background(), c, newOpenAIForward2xxProtocolTestAccount(), body)
+	require.Error(t, err)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "non-JSON 2xx")
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+}
+
+func TestOpenAIGatewayService_ForwardNonStream2xxEmptyBodyTriggersFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec, c, body := newOpenAIForward2xxProtocolTestContext(false)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-empty"}},
+		Body:       io.NopCloser(strings.NewReader("")),
+	}
+	svc := newOpenAIForward2xxProtocolTestService(resp)
+
+	result, err := svc.Forward(context.Background(), c, newOpenAIForward2xxProtocolTestAccount(), body)
+	require.Error(t, err)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "empty 2xx")
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+}
+
+func TestOpenAIGatewayService_ForwardNonStream2xxJSONStillPasses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec, c, body := newOpenAIForward2xxProtocolTestContext(false)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_ok","model":"gpt-5.5","output":[],"usage":{"input_tokens":1,"output_tokens":2}}`)),
+	}
+	svc := newOpenAIForward2xxProtocolTestService(resp)
+
+	result, err := svc.Forward(context.Background(), c, newOpenAIForward2xxProtocolTestAccount(), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "resp_ok", result.ResponseID)
+	require.Equal(t, 1, result.Usage.InputTokens)
+	require.Equal(t, 2, result.Usage.OutputTokens)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"id":"resp_ok"`)
+}
+
+func TestOpenAIGatewayService_ForwardStream2xxHTMLTriggersFailoverBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec, c, body := newOpenAIForward2xxProtocolTestContext(true)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/html"}, "x-request-id": []string{"rid-stream-html"}},
+		Body:       io.NopCloser(strings.NewReader("<html>temporary proxy page</html>")),
+	}
+	svc := newOpenAIForward2xxProtocolTestService(resp)
+
+	result, err := svc.Forward(context.Background(), c, newOpenAIForward2xxProtocolTestAccount(), body)
+	require.Error(t, err)
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "non-SSE 2xx")
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
+}
+
+func TestOpenAIGatewayService_ForwardStream2xxSSEStillPasses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec, c, body := newOpenAIForward2xxProtocolTestContext(true)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid-stream-ok"}},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_sse"}}`,
+			"",
+			"event: response.completed",
+			`data: {"type":"response.completed","response":{"id":"resp_sse","usage":{"input_tokens":3,"output_tokens":5}}}`,
+			"",
+		}, "\n"))),
+	}
+	svc := newOpenAIForward2xxProtocolTestService(resp)
+
+	result, err := svc.Forward(context.Background(), c, newOpenAIForward2xxProtocolTestAccount(), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "resp_sse", result.ResponseID)
+	require.True(t, result.Stream)
+	require.True(t, result.UsageObserved)
+	require.Equal(t, 3, result.Usage.InputTokens)
+	require.Equal(t, 5, result.Usage.OutputTokens)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "response.completed")
+	require.Contains(t, rec.Body.String(), "data: [DONE]")
+}
+
 func TestOpenAIStreamingResponseFailedBeforeOutputReturnsFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
@@ -1651,6 +1839,160 @@ func TestOpenAIStreamingResponseFailedBeforeOutputReturnsFailover(t *testing.T) 
 	require.True(t, c.Writer.Written())
 	require.Equal(t, ":\n\n", rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
+}
+
+func TestOpenAIStreamingDedupesFunctionCallArgumentsBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	argument := `{"cmd":"echo ok","nested":{"brace":"}"}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_args"}}`,
+			"",
+			"event: response.function_call_arguments.done",
+			`data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":` + strconv.Quote(argument+argument) + `}`,
+			"",
+			"event: response.completed",
+			`data: {"type":"response.completed","response":{"id":"resp_args","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-args-dedupe"}},
+	}
+
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	body := rec.Body.String()
+	require.Contains(t, body, `"arguments":`+strconv.Quote(argument))
+	require.NotContains(t, body, `"arguments":`+strconv.Quote(argument+argument))
+}
+
+func TestOpenAIStreamingEventErrorBeforeOutputReturnsFailoverWithRawBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout:    0,
+			StreamKeepaliveInterval:      0,
+			MaxLineSize:                  defaultMaxLineSize,
+			LogUpstreamErrorBody:         true,
+			LogUpstreamErrorBodyMaxBytes: 2048,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	rawError := `{"error":{"type":"server_error","code":"server_overloaded","message":"backend overloaded with trace id abc123"},"request_id":"req_body_1"}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_event_error"}}`,
+			"",
+			"event: error",
+			"data: " + rawError,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-event-error"}},
+	}
+	account := &Account{ID: 9, Platform: PlatformOpenAI, Name: "acc-event-error"}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "backend overloaded with trace id abc123")
+	require.True(t, c.Writer.Written())
+	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, openAIStreamClientOutputStarted(c, false))
+
+	raw, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := raw.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	require.Equal(t, "failover", events[0].Kind)
+	require.Equal(t, "backend overloaded with trace id abc123", events[0].Message)
+	require.JSONEq(t, rawError, events[0].UpstreamResponseBody)
+	require.Contains(t, events[0].Detail, "backend overloaded with trace id abc123")
+}
+
+func TestOpenAIStreamingEventErrorAfterOutputWritesRealFailedEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout:    0,
+			StreamKeepaliveInterval:      0,
+			MaxLineSize:                  defaultMaxLineSize,
+			LogUpstreamErrorBody:         true,
+			LogUpstreamErrorBodyMaxBytes: 2048,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	rawError := `{"error":{"type":"rate_limit_error","code":"quota_exhausted","message":"quota exhausted after partial output"},"request_id":"req_body_2"}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_event_error_after_output"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial answer"}`,
+			"",
+			"event: error",
+			"data: " + rawError,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-event-error-after-output"}},
+	}
+	account := &Account{ID: 10, Platform: PlatformOpenAI, Name: "acc-event-error-after-output"}
+
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "quota exhausted after partial output")
+	require.NotNil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	body := rec.Body.String()
+	require.Contains(t, body, "response.output_text.delta")
+	require.Contains(t, body, "partial answer")
+	require.Contains(t, body, "event: response.failed")
+	require.Contains(t, body, "quota exhausted after partial output")
+	require.NotContains(t, body, "event: error")
+	require.NotContains(t, body, "missing terminal event")
+	require.True(t, openAIStreamClientOutputStarted(c, false))
+
+	raw, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := raw.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	require.Equal(t, "stream_failure", events[0].Kind)
+	require.Equal(t, "quota exhausted after partial output", events[0].Message)
+	require.JSONEq(t, rawError, events[0].UpstreamResponseBody)
+	require.Contains(t, events[0].Detail, "quota exhausted after partial output")
 }
 
 func TestOpenAIStreamingConfiguredResponseTextReturnsFailoverBeforeOutput(t *testing.T) {
@@ -2621,6 +2963,44 @@ func TestOpenAIStreamingPassthroughResponseFailedBeforeOutputReturnsFailover(t *
 	require.True(t, c.Writer.Written())
 	require.Equal(t, ":\n\n", rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
+}
+
+func TestOpenAIStreamingPassthroughDedupesFunctionCallArgumentsBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			MaxLineSize: defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	argument := `{"cmd":"echo ok","nested":{"brace":"}"}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_passthrough_args"}}`,
+			"",
+			"event: response.function_call_arguments.done",
+			`data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":` + strconv.Quote(argument+argument) + `}`,
+			"",
+			"event: response.completed",
+			`data: {"type":"response.completed","response":{"id":"resp_passthrough_args","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-passthrough-args-dedupe"}},
+	}
+
+	result, err := svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	body := rec.Body.String()
+	require.Contains(t, body, `"arguments":`+strconv.Quote(argument))
+	require.NotContains(t, body, `"arguments":`+strconv.Quote(argument+argument))
 }
 
 func TestOpenAIStreamingPassthroughQuotaFailedAfterOutputWritesGatewayRetryableFailure(t *testing.T) {

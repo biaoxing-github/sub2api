@@ -584,3 +584,42 @@ func TestForwardAsChatCompletions_UpstreamRequestIgnoresClientCancel(t *testing.
 	require.NotNil(t, upstream.lastReq)
 	require.NoError(t, upstream.lastReq.Context().Err())
 }
+
+func TestForwardAsChatCompletions_TransportErrorReturnsFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{err: errors.New("read tcp 127.0.0.1:12345->10.0.0.1:443: connection reset by peer")}
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          1,
+		Name:        "openai-oauth",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Equal(t, OpenAIStreamActionRetryNextAccount, failoverErr.ActionLabel)
+	require.Equal(t, "request", failoverErr.ActionMetadata["phase"])
+	require.Equal(t, "transport_error", failoverErr.ActionMetadata["reason"])
+	require.False(t, c.Writer.Written(), "transport failover must not commit a direct 502 response")
+	require.Empty(t, rec.Body.String())
+}

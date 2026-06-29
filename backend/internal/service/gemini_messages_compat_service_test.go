@@ -16,7 +16,34 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+func TestNormalizeGeminiRequestForAIStudioCleansUnsupportedSchemaShapes(t *testing.T) {
+	input := []byte(`{
+		"tools":[{
+			"functionDeclarations":[{
+				"name":"lookup",
+				"parameters":{
+					"type":"object",
+					"$defs":{"Shared":{"type":["string","null"]}},
+					"definitions":{"Old":{"type":"string"}},
+					"properties":{
+						"name":{"type":["string","null"]},
+						"count":{"type":["integer","null"]}
+					}
+				}
+			}]
+		}]
+	}`)
+
+	got := normalizeGeminiRequestForAIStudio(input)
+
+	require.False(t, gjson.GetBytes(got, `tools.0.functionDeclarations.0.parameters.$defs`).Exists())
+	require.False(t, gjson.GetBytes(got, `tools.0.functionDeclarations.0.parameters.definitions`).Exists())
+	require.Equal(t, "STRING", gjson.GetBytes(got, "tools.0.functionDeclarations.0.parameters.properties.name.type").String())
+	require.Equal(t, "INTEGER", gjson.GetBytes(got, "tools.0.functionDeclarations.0.parameters.properties.count.type").String())
+}
 
 type geminiCompatHTTPUpstreamStub struct {
 	response *http.Response

@@ -14,6 +14,7 @@ import (
 	"math"
 	mathrand "math/rand"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -3342,6 +3343,9 @@ func normalizeGeminiRequestForAIStudio(body []byte) []byte {
 		if !ok {
 			continue
 		}
+		if cleanGeminiFunctionDeclarations(tool) {
+			modified = true
+		}
 		googleSearch, ok := tool["googleSearch"]
 		if !ok {
 			continue
@@ -3363,6 +3367,30 @@ func normalizeGeminiRequestForAIStudio(body []byte) []byte {
 		return body
 	}
 	return normalized
+}
+
+func cleanGeminiFunctionDeclarations(tool map[string]any) bool {
+	rawDecls, ok := tool["functionDeclarations"].([]any)
+	if !ok || len(rawDecls) == 0 {
+		return false
+	}
+	modified := false
+	for _, rawDecl := range rawDecls {
+		decl, ok := rawDecl.(map[string]any)
+		if !ok {
+			continue
+		}
+		params, ok := decl["parameters"]
+		if !ok {
+			continue
+		}
+		cleaned := cleanToolSchema(params)
+		if !reflect.DeepEqual(params, cleaned) {
+			decl["parameters"] = cleaned
+			modified = true
+		}
+	}
+	return modified
 }
 
 func isClaudeWebSearchToolMap(tool map[string]any) bool {
@@ -3392,6 +3420,7 @@ func cleanToolSchema(schema any) any {
 		for key, value := range v {
 			// 跳过不支持的字段
 			if key == "$schema" || key == "$id" || key == "$ref" ||
+				key == "$defs" || key == "definitions" ||
 				key == "additionalProperties" || key == "patternProperties" || key == "minLength" ||
 				key == "maxLength" || key == "minItems" || key == "maxItems" {
 				continue
@@ -3400,7 +3429,13 @@ func cleanToolSchema(schema any) any {
 			cleaned[key] = cleanToolSchema(value)
 		}
 		// 规范化 type 字段为大写
-		if typeVal, ok := cleaned["type"].(string); ok {
+		if typeList, ok := cleaned["type"].([]any); ok {
+			if typeVal := firstNonNullSchemaType(typeList); typeVal != "" {
+				cleaned["type"] = strings.ToUpper(typeVal)
+			} else {
+				delete(cleaned, "type")
+			}
+		} else if typeVal, ok := cleaned["type"].(string); ok {
 			cleaned["type"] = strings.ToUpper(typeVal)
 		}
 		return cleaned
@@ -3413,6 +3448,20 @@ func cleanToolSchema(schema any) any {
 	default:
 		return v
 	}
+}
+
+func firstNonNullSchemaType(values []any) string {
+	for _, value := range values {
+		typeVal, ok := value.(string)
+		if !ok {
+			continue
+		}
+		typeVal = strings.TrimSpace(typeVal)
+		if typeVal != "" && typeVal != "null" {
+			return typeVal
+		}
+	}
+	return ""
 }
 
 func convertClaudeGenerationConfig(req map[string]any) map[string]any {

@@ -374,6 +374,44 @@ func buildVertexAnthropicRequestBody(body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("parse anthropic vertex request body: %w", err)
 	}
 	delete(payload, "model")
+	filterVertexAnthropicBeta(payload)
 	payload["anthropic_version"] = vertexAnthropicVersion
 	return json.Marshal(payload)
+}
+
+func filterVertexAnthropicBeta(payload map[string]any) {
+	raw, ok := payload["anthropic_beta"]
+	if !ok {
+		return
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		delete(payload, "anthropic_beta")
+		return
+	}
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		beta, ok := value.(string)
+		if !ok {
+			continue
+		}
+		beta = strings.TrimSpace(beta)
+		if isVertexAnthropicBetaAllowed(beta) {
+			filtered = append(filtered, beta)
+		}
+	}
+	if len(filtered) == 0 {
+		delete(payload, "anthropic_beta")
+		return
+	}
+	payload["anthropic_beta"] = filtered
+}
+
+func isVertexAnthropicBetaAllowed(beta string) bool {
+	switch beta {
+	case "prompt-caching-2024-07-31":
+		return true
+	default:
+		return false
+	}
 }
