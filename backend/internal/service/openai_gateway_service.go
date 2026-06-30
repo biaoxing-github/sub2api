@@ -1099,6 +1099,7 @@ func logCodexCLIOnlyDetection(ctx context.Context, c *gin.Context, account *Acco
 		zap.Bool("codex_cli_only_enabled", result.Enabled),
 		zap.Bool("codex_official_client_match", result.Matched),
 		zap.String("reject_reason", result.Reason),
+		zap.String("codex_signal_family", codexRestrictionSignalFamily(result)),
 	}
 	if apiKeyID > 0 {
 		fields = append(fields, zap.Int64("api_key_id", apiKeyID))
@@ -1140,11 +1141,182 @@ func appendCodexCLIOnlyRejectedRequestFields(fields []zap.Field, c *gin.Context,
 		fields = append(fields, zap.String("request_prompt_cache_key_sha256", hashSensitiveValueForLog(promptCacheKey)))
 	}
 
+	fields = append(fields, zap.String("codex_fingerprint_profile", codexCLIOnlyFingerprintProfile(req.Header, body)))
+	fields = appendCodexCLIOnlyBodyFingerprintFields(fields, body)
+	fields = appendCodexCLIOnlyHeaderFingerprintFields(fields, req.Header)
+
 	if headers := snapshotCodexCLIOnlyHeaders(req.Header); len(headers) > 0 {
 		fields = append(fields, zap.Any("request_headers", headers))
 	}
 	fields = append(fields, zap.Int("request_body_size", len(body)))
 	return fields
+}
+
+// codexCLIOnlyFingerprintProfile 汇总请求中可见的 Codex 指纹来源，仅用于诊断观测，不参与放行判断。
+func codexCLIOnlyFingerprintProfile(header http.Header, body []byte) string {
+	hasMetadata := codexCLIOnlyBodyHasFingerprint(body)
+	hasHeaders := codexCLIOnlyHeaderHasFingerprint(header)
+	switch {
+	case hasMetadata && hasHeaders:
+		return "metadata_and_headers"
+	case hasMetadata:
+		return "metadata_only"
+	case hasHeaders:
+		return "headers_only"
+	default:
+		return "none"
+	}
+}
+
+func codexCLIOnlyBodyHasFingerprint(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	metadata := gjson.GetBytes(body, codexClientMetadataKey)
+	if !metadata.Exists() {
+		return false
+	}
+	if strings.TrimSpace(metadata.Get(codexClientMetadataOriginatorKey).String()) != "" ||
+		strings.TrimSpace(metadata.Get(codexClientMetadataSourceKey).String()) != "" ||
+		strings.TrimSpace(metadata.Get(codexClientMetadataSessionIDKey).String()) != "" ||
+		strings.TrimSpace(metadata.Get(codexClientMetadataThreadIDKey).String()) != "" ||
+		strings.TrimSpace(metadata.Get(codexClientMetadataTurnIDKey).String()) != "" ||
+		strings.TrimSpace(metadata.Get(codexClientMetadataWindowIDKey).String()) != "" ||
+		strings.TrimSpace(metadata.Get(codexClientInstallationIDKey).String()) != "" ||
+		codexCLIOnlyGJSONValueString(metadata.Get(codexClientMetadataTurnMetadataKey)) != "" {
+		return true
+	}
+	return false
+}
+
+func codexCLIOnlyHeaderHasFingerprint(header http.Header) bool {
+	if len(header) == 0 {
+		return false
+	}
+	keys := []string{
+		"Originator",
+		"Version",
+		"X-OpenAI-Client-Source",
+		"X-Codex-Beta-Features",
+		"X-Client-Request-Id",
+		"Session-Id",
+		"Thread-Id",
+		"X-Codex-Window-Id",
+		"X-Codex-Installation-Id",
+		"X-Codex-Turn-Metadata",
+	}
+	for _, key := range keys {
+		if strings.TrimSpace(header.Get(key)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// appendCodexCLIOnlyBodyFingerprintFields 只为拒绝诊断记录 Codex 客户端元数据指纹，不参与客户端放行判断。
+func appendCodexCLIOnlyBodyFingerprintFields(fields []zap.Field, body []byte) []zap.Field {
+	if len(body) == 0 {
+		return fields
+	}
+	metadata := gjson.GetBytes(body, codexClientMetadataKey)
+	if !metadata.Exists() {
+		return fields
+	}
+
+	fields = appendCodexCLIOnlyLogStringField(fields, "request_client_metadata_originator", metadata.Get(codexClientMetadataOriginatorKey).String())
+	fields = appendCodexCLIOnlyLogStringField(fields, "request_client_metadata_source", metadata.Get(codexClientMetadataSourceKey).String())
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_client_metadata_session_id_sha256", metadata.Get(codexClientMetadataSessionIDKey).String())
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_client_metadata_thread_id_sha256", metadata.Get(codexClientMetadataThreadIDKey).String())
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_client_metadata_turn_id_sha256", metadata.Get(codexClientMetadataTurnIDKey).String())
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_client_metadata_window_id_sha256", metadata.Get(codexClientMetadataWindowIDKey).String())
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_client_metadata_installation_id_sha256", metadata.Get(codexClientInstallationIDKey).String())
+
+	turnMetadataRaw := codexCLIOnlyGJSONValueString(metadata.Get(codexClientMetadataTurnMetadataKey))
+	fields = append(fields, zap.Bool("request_client_metadata_has_turn_metadata", turnMetadataRaw != ""))
+	turnMetadata, ok := parseCodexTurnMetadata(turnMetadataRaw)
+	if !ok {
+		return fields
+	}
+	fields = appendCodexCLIOnlyLogStringField(fields, "request_client_metadata_turn_request_kind", firstNonEmptyString(turnMetadata["request_kind"]))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_client_metadata_turn_session_id_sha256", firstNonEmptyString(turnMetadata[codexClientMetadataSessionIDKey]))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_client_metadata_turn_thread_id_sha256", firstNonEmptyString(turnMetadata[codexClientMetadataThreadIDKey]))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_client_metadata_turn_turn_id_sha256", firstNonEmptyString(turnMetadata[codexClientMetadataTurnIDKey]))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_client_metadata_turn_window_id_sha256", firstNonEmptyString(turnMetadata["window_id"]))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_client_metadata_turn_installation_id_sha256", firstNonEmptyString(turnMetadata["installation_id"]))
+	return fields
+}
+
+// appendCodexCLIOnlyHeaderFingerprintFields 只记录 Codex 请求头中的指纹信号，不参与放行判定。
+func appendCodexCLIOnlyHeaderFingerprintFields(fields []zap.Field, header http.Header) []zap.Field {
+	if len(header) == 0 {
+		return fields
+	}
+
+	fields = appendCodexCLIOnlyLogStringField(fields, "request_header_originator", header.Get("Originator"))
+	fields = appendCodexCLIOnlyLogStringField(fields, "request_header_version", header.Get("Version"))
+	fields = appendCodexCLIOnlyLogStringField(fields, "request_header_x_openai_client_source", header.Get("X-OpenAI-Client-Source"))
+	fields = appendCodexCLIOnlyLogStringField(fields, "request_header_x_codex_beta_features", header.Get("X-Codex-Beta-Features"))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_header_client_request_id_sha256", header.Get("X-Client-Request-Id"))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_header_session_id_sha256", header.Get("Session-Id"))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_header_thread_id_sha256", header.Get("Thread-Id"))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_header_window_id_sha256", header.Get("X-Codex-Window-Id"))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_header_installation_id_sha256", header.Get("X-Codex-Installation-Id"))
+
+	turnMetadataRaw := codexCLIOnlyGJSONValueString(gjson.Parse(header.Get("X-Codex-Turn-Metadata")))
+	fields = append(fields, zap.Bool("request_header_has_turn_metadata", turnMetadataRaw != ""))
+	turnMetadata, ok := parseCodexTurnMetadata(turnMetadataRaw)
+	if !ok {
+		return fields
+	}
+	fields = appendCodexCLIOnlyLogStringField(fields, "request_header_turn_request_kind", firstNonEmptyString(turnMetadata["request_kind"]))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_header_turn_session_id_sha256", firstNonEmptyString(turnMetadata[codexClientMetadataSessionIDKey]))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_header_turn_thread_id_sha256", firstNonEmptyString(turnMetadata[codexClientMetadataThreadIDKey]))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_header_turn_turn_id_sha256", firstNonEmptyString(turnMetadata[codexClientMetadataTurnIDKey]))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_header_turn_window_id_sha256", firstNonEmptyString(turnMetadata["window_id"]))
+	fields = appendCodexCLIOnlyLogHashField(fields, "request_header_turn_installation_id_sha256", firstNonEmptyString(turnMetadata["installation_id"]))
+	return fields
+}
+
+func codexRestrictionSignalFamily(result CodexClientRestrictionDetectionResult) string {
+	switch result.Reason {
+	case CodexClientRestrictionReasonMatchedUA:
+		return "official_ua"
+	case CodexClientRestrictionReasonMatchedOriginator:
+		return "official_originator"
+	case CodexClientRestrictionReasonMatchedAllowedClient:
+		return "account_allowed_client"
+	case CodexClientRestrictionReasonMatchedGlobalAllowedClient:
+		return "global_allowed_client"
+	case CodexClientRestrictionReasonDisabled:
+		return "disabled"
+	default:
+		return "unmatched"
+	}
+}
+
+func appendCodexCLIOnlyLogStringField(fields []zap.Field, key string, raw string) []zap.Field {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return fields
+	}
+	return append(fields, zap.String(key, truncateString(value, codexCLIOnlyHeaderValueMaxBytes)))
+}
+
+func appendCodexCLIOnlyLogHashField(fields []zap.Field, key string, raw string) []zap.Field {
+	if strings.TrimSpace(raw) == "" {
+		return fields
+	}
+	return append(fields, zap.String(key, hashSensitiveValueForLog(raw)))
+}
+
+func codexCLIOnlyGJSONValueString(result gjson.Result) string {
+	if !result.Exists() {
+		return ""
+	}
+	if result.Type == gjson.String {
+		return strings.TrimSpace(result.String())
+	}
+	return strings.TrimSpace(result.Raw)
 }
 
 func snapshotCodexCLIOnlyHeaders(header http.Header) map[string]string {

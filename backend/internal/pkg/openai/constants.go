@@ -48,7 +48,7 @@ const DefaultTestModel = "gpt-5.5"
 //go:embed instructions.txt
 var DefaultInstructions string
 
-// instructionsGPT51 / instructionsGPT52 保存非 codex GPT-5.x 模型对应的真实 Codex CLI base prompt。
+// instructionsGPT51 / instructionsGPT52 / instructionsGPT55 保存非 codex GPT-5.x 模型对应的真实 Codex CLI base prompt。
 //
 //go:embed instructions_gpt5_1.txt
 var instructionsGPT51 string
@@ -56,20 +56,33 @@ var instructionsGPT51 string
 //go:embed instructions_gpt5_2.txt
 var instructionsGPT52 string
 
+//go:embed instructions_gpt5_5.txt
+var instructionsGPT55 string
+
+// latestCodexInstructions 返回当前已知最新版本的 Codex base instructions。
+func latestCodexInstructions() string {
+	if strings.TrimSpace(instructionsGPT55) != "" {
+		return instructionsGPT55
+	}
+	return DefaultInstructions
+}
+
 // CodexBaseInstructionsForModel 按模型选择最贴近真实 Codex CLI 的 base prompt。
 func CodexBaseInstructionsForModel(model string) string {
 	m := strings.ToLower(strings.TrimSpace(model))
 	switch {
 	case strings.Contains(m, "codex"):
 		return DefaultInstructions
+	case strings.HasPrefix(m, "gpt-5.5"):
+		return latestCodexInstructions()
 	case strings.HasPrefix(m, "gpt-5.2"):
 		if strings.TrimSpace(instructionsGPT52) != "" {
 			return instructionsGPT52
 		}
-	case strings.HasPrefix(m, "gpt-5.1"), strings.HasPrefix(m, "gpt-5"):
+	case strings.HasPrefix(m, "gpt-5.1"):
 		if strings.TrimSpace(instructionsGPT51) != "" {
 			return instructionsGPT51
 		}
 	}
-	return DefaultInstructions
+	return latestCodexInstructions()
 }

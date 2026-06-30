@@ -60,6 +60,118 @@ func TestOpenAIGatewayService_GetCodexClientRestrictionDetector(t *testing.T) {
 	})
 }
 
+func TestOpenAIGatewayService_ForwardAsChatCompletions_RejectsCodexCLIOnlyNonOfficialClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", "curl/8.0")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.4","status":"in_progress","output":[]}}`,
+		"",
+		`data: {"type":"response.output_text.delta","delta":"ok"}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.4","status":"completed","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":11,"output_tokens":5,"total_tokens":16}}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          &config.Config{},
+		httpUpstream: upstream,
+		codexDetector: &stubCodexRestrictionDetector{
+			result: CodexClientRestrictionDetectionResult{
+				Enabled: true,
+				Matched: false,
+				Reason:  CodexClientRestrictionReasonNotMatchedUA,
+			},
+		},
+	}
+	account := &Account{
+		ID:          1001,
+		Name:        "openai-oauth-codex-only",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+		Extra: map[string]any{"codex_cli_only": true},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.4")
+
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Contains(t, err.Error(), "codex_cli_only restriction")
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Contains(t, rec.Body.String(), "This account only allows Codex official clients")
+	require.Empty(t, upstream.requests)
+}
+
+func TestOpenAIGatewayService_ForwardAsChatCompletions_AllowsAPIKeyRawChatWhenCodexCLIOnlyExtraIsPresent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", "curl/8.0")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_raw_apikey"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"chatcmpl_api_key","object":"chat.completion","model":"gpt-5.4","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg: &config.Config{
+			Security: config.SecurityConfig{
+				URLAllowlist: config.URLAllowlistConfig{
+					Enabled:           false,
+					AllowInsecureHTTP: true,
+				},
+			},
+		},
+		httpUpstream: upstream,
+	}
+	account := &Account{
+		ID:          1002,
+		Name:        "openai-apikey-raw-chat",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "http://upstream.example",
+		},
+		Extra: map[string]any{
+			"codex_cli_only":             true,
+			"openai_responses_supported": false,
+		},
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"content":"ok"`)
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, "http://upstream.example/v1/chat/completions", upstream.requests[0].URL.String())
+	require.Equal(t, "Bearer sk-test", upstream.requests[0].Header.Get("Authorization"))
+}
+
 func TestOpenAICodexCLISimulationUsesLatestClientVersion(t *testing.T) {
 	require.Equal(t, "0.141.0", codexCLIVersion())
 	require.Equal(t, "Codex Desktop/0.141.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.616.32156)", codexCLIUserAgent())
@@ -185,10 +297,20 @@ func TestLogCodexCLIOnlyDetection_RejectedIncludesRequestDetails(t *testing.T) {
 	c.Request.RemoteAddr = "172.18.0.1:54321"
 	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.98.0 (Windows 10.0.19045; x86_64) unknown")
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("Originator", "codex_cli_rs")
+	c.Request.Header.Set("Version", "0.98.0")
+	c.Request.Header.Set("X-OpenAI-Client-Source", "codex")
+	c.Request.Header.Set("X-Codex-Beta-Features", "compact-history")
+	c.Request.Header.Set("X-Client-Request-Id", "client-req-123")
+	c.Request.Header.Set("Session-Id", "header-session-123")
+	c.Request.Header.Set("Thread-Id", "header-thread-456")
+	c.Request.Header.Set("X-Codex-Window-Id", "header-window-abc")
+	c.Request.Header.Set("X-Codex-Installation-Id", "header-install-secret")
+	c.Request.Header.Set("X-Codex-Turn-Metadata", `{"session_id":"header-turn-session-123","thread_id":"header-turn-thread-456","turn_id":"header-turn-id-789","window_id":"header-turn-window-abc","installation_id":"header-turn-install-secret","request_kind":"turn"}`)
 	c.Request.Header.Set("X-Real-IP", "203.0.113.42")
 	c.Request.Header.Set("OpenAI-Beta", "assistants=v2")
 
-	body := []byte(`{"model":"gpt-5.2","stream":false,"prompt_cache_key":"pc-123","access_token":"secret-token","input":[{"type":"text","text":"hello"}]}`)
+	body := []byte(`{"model":"gpt-5.2","stream":false,"prompt_cache_key":"pc-123","access_token":"secret-token","client_metadata":{"originator":"codex_cli_rs","session_id":"session-123","thread_id":"thread-456","turn_id":"turn-789","x-codex-window-id":"window-abc","x-codex-installation-id":"install-secret","x-openai-client-source":"codex","x-codex-turn-metadata":"{\"session_id\":\"turn-session-123\",\"thread_id\":\"turn-thread-456\",\"turn_id\":\"turn-id-789\",\"window_id\":\"turn-window-abc\",\"installation_id\":\"turn-install-secret\",\"request_kind\":\"turn\"}"},"input":[{"type":"text","text":"hello"}]}`)
 	account := &Account{ID: 1001}
 	logCodexCLIOnlyDetection(context.Background(), c, account, 2002, CodexClientRestrictionDetectionResult{
 		Enabled: true,
@@ -201,10 +323,52 @@ func TestLogCodexCLIOnlyDetection_RejectedIncludesRequestDetails(t *testing.T) {
 	require.True(t, logSink.ContainsFieldValue("request_query", "trace=1"))
 	require.True(t, logSink.ContainsFieldValue("request_client_ip", "203.0.113.42"))
 	require.True(t, logSink.ContainsFieldValue("request_remote_addr", "172.18.0.1:54321"))
+	require.True(t, logSink.ContainsFieldValue("codex_signal_family", "unmatched"))
+	require.True(t, logSink.ContainsFieldValue("codex_fingerprint_profile", "metadata_and_headers"))
 	require.True(t, logSink.ContainsFieldValue("request_prompt_cache_key_sha256", hashSensitiveValueForLog("pc-123")))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_originator", "codex_cli_rs"))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_source", "codex"))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_session_id_sha256", hashSensitiveValueForLog("session-123")))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_thread_id_sha256", hashSensitiveValueForLog("thread-456")))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_turn_id_sha256", hashSensitiveValueForLog("turn-789")))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_window_id_sha256", hashSensitiveValueForLog("window-abc")))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_installation_id_sha256", hashSensitiveValueForLog("install-secret")))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_turn_request_kind", "turn"))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_turn_session_id_sha256", hashSensitiveValueForLog("turn-session-123")))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_turn_thread_id_sha256", hashSensitiveValueForLog("turn-thread-456")))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_turn_turn_id_sha256", hashSensitiveValueForLog("turn-id-789")))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_turn_window_id_sha256", hashSensitiveValueForLog("turn-window-abc")))
+	require.True(t, logSink.ContainsFieldValue("request_client_metadata_turn_installation_id_sha256", hashSensitiveValueForLog("turn-install-secret")))
+	require.True(t, logSink.ContainsFieldValue("request_header_originator", "codex_cli_rs"))
+	require.True(t, logSink.ContainsFieldValue("request_header_version", "0.98.0"))
+	require.True(t, logSink.ContainsFieldValue("request_header_x_openai_client_source", "codex"))
+	require.True(t, logSink.ContainsFieldValue("request_header_x_codex_beta_features", "compact-history"))
+	require.True(t, logSink.ContainsFieldValue("request_header_client_request_id_sha256", hashSensitiveValueForLog("client-req-123")))
+	require.True(t, logSink.ContainsFieldValue("request_header_session_id_sha256", hashSensitiveValueForLog("header-session-123")))
+	require.True(t, logSink.ContainsFieldValue("request_header_thread_id_sha256", hashSensitiveValueForLog("header-thread-456")))
+	require.True(t, logSink.ContainsFieldValue("request_header_window_id_sha256", hashSensitiveValueForLog("header-window-abc")))
+	require.True(t, logSink.ContainsFieldValue("request_header_installation_id_sha256", hashSensitiveValueForLog("header-install-secret")))
+	require.True(t, logSink.ContainsFieldValue("request_header_turn_request_kind", "turn"))
+	require.True(t, logSink.ContainsFieldValue("request_header_turn_session_id_sha256", hashSensitiveValueForLog("header-turn-session-123")))
+	require.True(t, logSink.ContainsFieldValue("request_header_turn_thread_id_sha256", hashSensitiveValueForLog("header-turn-thread-456")))
+	require.True(t, logSink.ContainsFieldValue("request_header_turn_turn_id_sha256", hashSensitiveValueForLog("header-turn-id-789")))
+	require.True(t, logSink.ContainsFieldValue("request_header_turn_window_id_sha256", hashSensitiveValueForLog("header-turn-window-abc")))
+	require.True(t, logSink.ContainsFieldValue("request_header_turn_installation_id_sha256", hashSensitiveValueForLog("header-turn-install-secret")))
 	require.True(t, logSink.ContainsFieldValue("request_headers", "openai-beta"))
 	require.True(t, logSink.ContainsField("request_body_size"))
 	require.False(t, logSink.ContainsField("request_body_preview"))
+}
+
+func TestCodexCLIOnlyFingerprintProfile(t *testing.T) {
+	header := http.Header{}
+	header.Set("X-Codex-Turn-Metadata", `{"session_id":"s1","thread_id":"t1","turn_id":"turn1","window_id":"w1","installation_id":"i1","request_kind":"turn"}`)
+
+	bodyWithMetadata := []byte(`{"client_metadata":{"session_id":"s1","thread_id":"t1","turn_id":"turn1","x-codex-turn-metadata":"{\"session_id\":\"s2\",\"request_kind\":\"turn\"}"}}`)
+
+	require.Equal(t, "metadata_and_headers", codexCLIOnlyFingerprintProfile(header, bodyWithMetadata))
+	require.Equal(t, "metadata_only", codexCLIOnlyFingerprintProfile(http.Header{}, bodyWithMetadata))
+	require.Equal(t, "headers_only", codexCLIOnlyFingerprintProfile(header, []byte(`{"model":"gpt-5.5"}`)))
+	require.Equal(t, "none", codexCLIOnlyFingerprintProfile(http.Header{}, []byte(`{"model":"gpt-5.5"}`)))
 }
 
 func TestLogOpenAIInstructionsRequiredDebug_LogsRequestDetails(t *testing.T) {

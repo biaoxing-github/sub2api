@@ -3847,3 +3847,28 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 集成测试阻塞：go test -tags integration ./internal/repository -run "Test(EnqueueSchedulerOutbox_DeduplicatesIdempotentEvents|EnqueueSchedulerOutbox_DoesNotDeduplicateLastUsed|SchedulerSnapshotOutboxReplay)$" -count=1 未进入业务测试，原因是 Docker/Testcontainers 拉取 testcontainers/ryuk:0.13.0 时镜像源返回 403 Forbidden。
 - 已知非本轮失败：go test -tags unit ./internal/service -count=1 当前在 scheduler 范围外失败，包括 account API key cooldown 时间断言、image bridge 403 fallback、OAuth passthrough client-cancel、OpenAI passthrough 429/529 failover panic。
 - 边界：本轮未提交、未构建镜像、未部署、未执行真实上游请求。
+
+## 2026-06-30 Devil - Phase 2 codex_cli_only chat/completions 覆盖与指纹诊断
+
+- 变更范围：backend/internal/service/openai_gateway_chat_completions.go、backend/internal/service/openai_gateway_service.go、backend/internal/service/openai_gateway_service_codex_cli_only_test.go。
+- RED：go test ./internal/service -run '^TestCodexCLIOnlyFingerprintProfile$|^TestLogCodexCLIOnlyDetection_RejectedIncludesRequestDetails$' -count=1 首次失败，缺少 codexCLIOnlyFingerprintProfile。
+- GREEN：同一命令通过，覆盖 metadata/header 指纹来源摘要和拒绝日志字段。
+- 聚焦回归：go test ./internal/service -run 'TestOpenAIGatewayService_ForwardAsChatCompletions_RejectsCodexCLIOnlyNonOfficialClient|TestOpenAIGatewayService_ForwardAsChatCompletions_AllowsAPIKeyRawChatWhenCodexCLIOnlyExtraIsPresent|TestLogCodexCLIOnlyDetection_RejectedIncludesRequestDetails|TestLogCodexCLIOnlyDetection_OnlyLogsRejected|TestOpenAICodexClientRestrictionDetector_Detect' -count=1 通过。
+- gofmt 后聚焦回归：go test ./internal/service -run 'TestCodexCLIOnlyFingerprintProfile|TestOpenAIGatewayService_ForwardAsChatCompletions_RejectsCodexCLIOnlyNonOfficialClient|TestOpenAIGatewayService_ForwardAsChatCompletions_AllowsAPIKeyRawChatWhenCodexCLIOnlyExtraIsPresent|TestLogCodexCLIOnlyDetection_RejectedIncludesRequestDetails|TestLogCodexCLIOnlyDetection_OnlyLogsRejected|TestOpenAICodexClientRestrictionDetector_Detect' -count=1 通过。
+- 编译切片：go test ./cmd/server -run TestNoSuchTest -count=1 通过。
+- Diff 检查：git diff --check -- backend/internal/service/openai_gateway_chat_completions.go backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_codex_cli_only_test.go 通过。
+- JSONL 审计：docs/feature_list.jsonl 与 docs/process_list.jsonl 尾部 8 行 ConvertFrom-Json 解析通过；同时修复上一条记录缺少换行导致的尾部粘连。
+- 已知非本轮失败：go test ./internal/service -count=1 仍在本切片外失败，包括 account API key cooldown 时间断言、OAuth passthrough client-cancel、passthrough legacy originator 预期和 OpenAI passthrough failover nil repo 路径。
+- 边界：本轮未提交、未构建镜像、未部署、未执行真实上游请求。
+
+## 2026-06-30 Devil - Phase 2 GPT-5.5 Codex instructions 与 Claude Code terminal 模板
+
+- 取舍：本地 sub2api 不新增全局白名单/黑名单准入系统；PAT auth 是 Personal Access Token 上游认证适配，本轮按用户要求跳过。
+- 变更范围：backend/internal/pkg/openai/constants.go、backend/internal/pkg/openai/constants_test.go、backend/internal/pkg/openai/instructions_gpt5_5.txt、frontend/src/components/keys/UseKeyModal.vue、frontend/src/components/keys/__tests__/UseKeyModal.spec.ts、frontend/src/utils/ccswitchImport.ts、frontend/src/utils/__tests__/ccswitchImport.spec.ts、docs/SUB2API_V0_1_137_139_JUHE_ABSORPTION_CEO_PLAN_CN.md。
+- RED：go test ./internal/pkg/openai -run TestCodexBaseInstructionsForModel -count=1 首次失败，gpt-5.5/gpt-5.4/gpt-5 仍回退到 GPT-5.1 或旧 Codex prompt。
+- RED：corepack pnpm vitest run src/components/keys/__tests__/UseKeyModal.spec.ts 首次失败，OpenAI Codex config 仍为 gpt-5.4，Claude Code terminal snippet 缺少 CLAUDE_CODE_ATTRIBUTION_HEADER=0。
+- GREEN：corepack pnpm vitest run src/components/keys/__tests__/UseKeyModal.spec.ts src/utils/__tests__/ccswitchImport.spec.ts 通过，覆盖 Codex 模板默认 gpt-5.5、goals feature、CC Switch 默认 gpt-5.5 和 Claude Code attribution env。
+- GREEN：go test ./internal/pkg/openai -run 'TestDefaultTestModelUsesGPT55|TestCodexBaseInstructionsForModel' -count=1 通过。
+- Phase 2 回归：go test ./internal/service -run 'TestCodexCLIOnlyFingerprintProfile|TestOpenAIGatewayService_ForwardAsChatCompletions_RejectsCodexCLIOnlyNonOfficialClient|TestOpenAIGatewayService_ForwardAsChatCompletions_AllowsAPIKeyRawChatWhenCodexCLIOnlyExtraIsPresent|TestLogCodexCLIOnlyDetection_RejectedIncludesRequestDetails|TestLogCodexCLIOnlyDetection_OnlyLogsRejected|TestOpenAICodexClientRestrictionDetector_Detect' -count=1 通过。
+- Diff 检查：git diff --check -- Phase 2 touched backend/frontend files 通过。
+- 边界：本轮未提交、未构建镜像、未部署、未执行真实上游请求。
