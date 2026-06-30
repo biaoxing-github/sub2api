@@ -3872,3 +3872,17 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - Phase 2 回归：go test ./internal/service -run 'TestCodexCLIOnlyFingerprintProfile|TestOpenAIGatewayService_ForwardAsChatCompletions_RejectsCodexCLIOnlyNonOfficialClient|TestOpenAIGatewayService_ForwardAsChatCompletions_AllowsAPIKeyRawChatWhenCodexCLIOnlyExtraIsPresent|TestLogCodexCLIOnlyDetection_RejectedIncludesRequestDetails|TestLogCodexCLIOnlyDetection_OnlyLogsRejected|TestOpenAICodexClientRestrictionDetector_Detect' -count=1 通过。
 - Diff 检查：git diff --check -- Phase 2 touched backend/frontend files 通过。
 - 边界：本轮未提交、未构建镜像、未部署、未执行真实上游请求。
+
+## 2026-06-30 14:39 +08:00 - release v0.1.139.1 Codex 二期增强
+
+- PASS：功能提交 `16caf15094b5` 已构建为不可变镜像 `sub2api:v0.1.139.1`，镜像 ID `sha256:673cc9c9c41ea9d79b55d2ee04b4b0546604f3d6caa96a4e9000c93894694068`；镜像 label `version=v0.1.139`、`revision=16caf15094b5` 与提交匹配。
+- PASS：二进制版本输出为 `Sub2API v0.1.139 (image: v0.1.139.1, commit: 16caf15094b5, built: 2026-06-30T06:26:33Z)`。
+- PASS：只重建 idle `sub2api-blue`；候选发布期间 active `sub2api-green`、PostgreSQL、Redis 和 `sub2api-proxy` 未重启。
+- PASS：blue 候选端口 `18083` 的 `/health`、首页、静态资源、未登录 `GET /api/v1/admin/users` 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- PASS：blue 候选观察超过 300 秒后仍为 `healthy` 且 `RestartCount=0`；最终候选日志窗口没有 panic、fatal、migration、checksum、bind、listen 或 rebuild 失败。
+- OBSERVE：候选启动早期出现 1 条已知 `openai_request_snapshot` 清理噪声 `pq: canceling statement due to user request`，最终候选与切流后窗口未重复出现。
+- PASS：代理 upstream 已从 `sub2api-green:8080` 切到 `sub2api-blue:8080`；`docker exec sub2api-proxy nginx -t` 通过，reload 于 2026-06-30 14:35:04 +08:00 成功。
+- PASS：切流后公网入口 `8080` 和本机代理入口 `18081` 的健康、首页、静态资源、未登录 `GET /api/v1/admin/users` 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- PASS：65+ 秒切流后观察中 `8080`、`18081`、`18083` `/health` 全部返回 200；`sub2api-blue` 运行 `sub2api:v0.1.139.1` 且 `healthy RestartCount=0`；blue 关键日志扫描干净。
+- Current state：active blue `sub2api:v0.1.139.1`；rollback green `sub2api:v0.1.136.21`。
+- LIMIT：未执行真实上游 OpenAI 请求；authenticated `/api/v1/admin/system/version` 未运行，因为本地部署自动化路径 `ADMIN_PASSWORD` 为空，版本小号通过代码/前端测试和二进制输出验证。
