@@ -159,6 +159,28 @@ func TestOpenAIImageOutputCounterCountsImagesAPIStreamShapes(t *testing.T) {
 	require.Equal(t, 3, dataCounter.Count())
 }
 
+func TestOpenAIImageOutputCounterSkipsTextOnlyDataArrays(t *testing.T) {
+	body := []byte(`{
+		"id":"resp_text",
+		"object":"response",
+		"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],
+		"data":[{"id":"not_image","status":"completed"}],
+		"usage":{"input_tokens":1,"output_tokens":1}
+	}`)
+
+	require.Equal(t, 0, countOpenAIResponseImageOutputsFromJSONBytes(body))
+	require.Nil(t, collectOpenAIResponseImageOutputSizesFromJSONBytes(body))
+}
+
+func TestOpenAIImageOutputCounterRequiresCompletedImageResult(t *testing.T) {
+	counter := newOpenAIImageOutputCounter()
+
+	// 上游可能发出 image_generation.completed 状态事件；没有 url/b64_json/result 时不能计为图片产物。
+	counter.AddSSEData([]byte(`{"type":"image_generation.completed","id":"ig_empty","usage":{"input_tokens":1}}`))
+
+	require.Equal(t, 0, counter.Count())
+}
+
 func TestOpenAIImageOutputCounterCountsMultilineSSEDataPayload(t *testing.T) {
 	counter := newOpenAIImageOutputCounter()
 	counter.AddSSEData([]byte("{\"type\":\"image_generation.completed\",\n\"b64_json\":\"final-a\"}"))

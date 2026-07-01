@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -145,9 +146,10 @@ var ErrModelPricingUnavailable = errors.New("pricing not found")
 
 // BillingService 计费服务
 type BillingService struct {
-	cfg            *config.Config
-	pricingService *PricingService
-	fallbackPrices map[string]*ModelPricing // 硬编码回退价格
+	cfg              *config.Config
+	pricingService   *PricingService
+	fallbackPrices   map[string]*ModelPricing // 硬编码回退价格
+	fallbackWarnSeen sync.Map                 // 按模型去重 fallback 定价告警，避免热路径重复刷日志。
 }
 
 // NewBillingService 创建计费服务实例
@@ -234,6 +236,20 @@ func (s *BillingService) initFallbackPricing() {
 		CacheCreationPricePerToken: 2e-6,   // $2 per MTok
 		CacheReadPricePerToken:     0.2e-6, // $0.20 per MTok
 		SupportsCacheBreakdown:     false,
+	}
+
+	// 智谱 GLM 公开 USD 口径兜底定价；glm-5.2 暂按 GLM-5 系列价格计费，避免动态价格源缺项时中断计费。
+	s.fallbackPrices["glm-5"] = &ModelPricing{
+		InputPricePerToken:     1e-6, // $1.00 per MTok
+		OutputPricePerToken:    3.2e-6,
+		CacheReadPricePerToken: 0.2e-6,
+		SupportsCacheBreakdown: false,
+	}
+	s.fallbackPrices["glm-4.6"] = &ModelPricing{
+		InputPricePerToken:     0.6e-6,
+		OutputPricePerToken:    2.2e-6,
+		CacheReadPricePerToken: 0.11e-6,
+		SupportsCacheBreakdown: false,
 	}
 
 	// OpenAI GPT-5.4（业务指定价格）
@@ -325,6 +341,12 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	if strings.Contains(modelLower, "gemini-3.1-pro") || strings.Contains(modelLower, "gemini-3-1-pro") {
 		return s.fallbackPrices["gemini-3.1-pro"]
 	}
+	if strings.Contains(modelLower, "glm-5") {
+		return s.fallbackPrices["glm-5"]
+	}
+	if strings.Contains(modelLower, "glm-4.6") {
+		return s.fallbackPrices["glm-4.6"]
+	}
 
 	// OpenAI 仅匹配已知 GPT-5/Codex 族，避免未知 OpenAI 型号误计价。
 	if normalized := normalizeKnownOpenAICodexModel(modelLower); normalized != "" {
@@ -384,7 +406,9 @@ func (s *BillingService) GetModelPricing(model string) (*ModelPricing, error) {
 	// 2. 使用硬编码回退价格
 	fallback := s.getFallbackPricing(model)
 	if fallback != nil {
-		log.Printf("[Billing] Using fallback pricing for model: %s", model)
+		if _, seen := s.fallbackWarnSeen.LoadOrStore(model, struct{}{}); !seen {
+			log.Printf("[Billing] Using fallback pricing for model: %s", model)
+		}
 		return s.applyModelSpecificPricingPolicy(model, fallback), nil
 	}
 

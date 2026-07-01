@@ -50,6 +50,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorForModel(ctx cont
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
 
+	if isOpenAIContextWindowError("", responseBody) {
+		return false
+	}
 	if s.handleOpenAIModelNotFoundCooldown(stateCtx, account, statusCode, responseBody, requestedModel) {
 		return false
 	}

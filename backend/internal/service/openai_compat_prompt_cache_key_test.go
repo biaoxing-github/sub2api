@@ -49,6 +49,35 @@ func TestDeriveCompatPromptCacheKey_StableAcrossLaterTurns(t *testing.T) {
 	require.NotEmpty(t, k1)
 }
 
+func TestDeriveCompatPromptCacheKey_UsesDeveloperRole(t *testing.T) {
+	base := &apicompat.ChatCompletionsRequest{
+		Model: "gpt-5.5",
+		Messages: []apicompat.ChatMessage{
+			{Role: "developer", Content: mustRawJSON(t, `"Follow repo instructions."`)},
+			{Role: "user", Content: mustRawJSON(t, `"Open repo"`)}},
+	}
+	extended := &apicompat.ChatCompletionsRequest{
+		Model: "gpt-5.5",
+		Messages: []apicompat.ChatMessage{
+			{Role: "developer", Content: mustRawJSON(t, `"Follow repo instructions."`)},
+			{Role: "user", Content: mustRawJSON(t, `"Open repo"`)},
+			{Role: "assistant", Content: mustRawJSON(t, `"Opened."`)},
+			{Role: "user", Content: mustRawJSON(t, `"Run tests"`)}},
+	}
+	withoutDeveloper := &apicompat.ChatCompletionsRequest{
+		Model: "gpt-5.5",
+		Messages: []apicompat.ChatMessage{
+			{Role: "user", Content: mustRawJSON(t, `"Open repo"`)}},
+	}
+
+	k1 := deriveCompatPromptCacheKey(base, "gpt-5.5")
+	k2 := deriveCompatPromptCacheKey(extended, "gpt-5.5")
+	k3 := deriveCompatPromptCacheKey(withoutDeveloper, "gpt-5.5")
+	require.NotEmpty(t, k1)
+	require.Equal(t, k1, k2, "later turns should not perturb a stable cache prefix")
+	require.NotEqual(t, k1, k3, "developer instructions must participate in the cache seed")
+}
+
 func TestDeriveCompatPromptCacheKey_DiffersAcrossSessions(t *testing.T) {
 	req1 := &apicompat.ChatCompletionsRequest{
 		Model: "gpt-5.4",

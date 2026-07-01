@@ -160,7 +160,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		}
 		responsesReq.Model = upstreamModel
 		normalizeResponsesRequestServiceTier(responsesReq)
-		responsesBody, err = json.Marshal(responsesReq)
+		responsesBody, err = marshalOpenAIUpstreamJSON(responsesReq)
 		if err != nil {
 			return nil, fmt.Errorf("marshal responses request: %w", err)
 		}
@@ -187,7 +187,12 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
 		}
-		codexResult := applyCodexOAuthTransform(reqBody, false, false)
+		codexResult := applyCodexOAuthTransformWithOptions(reqBody, codexOAuthTransformOptions{
+			SkipDefaultInstructions: !isResponsesShape,
+		})
+		if !isResponsesShape {
+			ensureCodexOAuthInstructionsField(reqBody)
+		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
 		}
@@ -196,7 +201,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		} else if promptCacheKey != "" {
 			reqBody["prompt_cache_key"] = promptCacheKey
 		}
-		responsesBody, err = json.Marshal(reqBody)
+		responsesBody, err = marshalOpenAIUpstreamJSON(reqBody)
 		if err != nil {
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
 		}
@@ -228,7 +233,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	}
 
 	if promptCacheKey != "" {
-		upstreamReq.Header.Set("session_id", generateSessionUUID(promptCacheKey))
+		upstreamReq.Header.Set("session_id", generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey)))
 	}
 
 	// 7. Send request
@@ -237,7 +242,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		proxyURL = account.Proxy.URL()
 	}
 	policy := s.openAICodexStabilityPolicy(isRealOpenAICodexClientRequest(c) || s.shouldSimulateOpenAICodexCLI(account))
-	resp, err := s.doOpenAIUpstreamWithHeaderTimeout(ctx, upstreamReq, proxyURL, account, responsesBody, policy, account.GetOpenAIBaseURL())
+	resp, err := s.doOpenAIUpstreamWithHeaderTimeout(upstreamCtx, upstreamReq, proxyURL, account, responsesBody, policy, account.GetOpenAIBaseURL())
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
@@ -445,7 +450,15 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	}
 	if strings.TrimSpace(finalResponse.Status) == "failed" {
 		payload, _ := json.Marshal(gin.H{"type": "response.failed", "response": finalResponse})
-		return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, payload, openAICompatFailedResponseMessage(finalResponse))
+		message := openAICompatFailedResponseMessage(finalResponse)
+		if !openAIStreamFailedEventShouldFailover(payload, message) {
+			if message == "" {
+				message = "Upstream stream failed"
+			}
+			writeChatCompletionsError(c, http.StatusBadGateway, "api_error", message)
+			return nil, fmt.Errorf("upstream response failed: %s", message)
+		}
+		return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, payload, message)
 	}
 
 	// When the terminal event has an empty output array, reconstruct from
@@ -513,6 +526,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	pendingSSE := make([]string, 0, 4)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
+	var streamNonFailoverErr error
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -573,6 +587,35 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if strings.TrimSpace(event.Type) == "response.failed" {
 			payloadBytes := []byte(payload)
 			message := extractOpenAISSEErrorMessage(payloadBytes)
+			if !openAIStreamFailedEventShouldFailover(payloadBytes, message) {
+				if message == "" {
+					message = "Upstream stream failed"
+				}
+				if !clientOutputStarted && c != nil && c.Writer != nil && !c.Writer.Written() {
+					writeChatCompletionsError(c, http.StatusBadGateway, "api_error", message)
+				} else if !clientDisconnected {
+					writeStreamHeaders()
+					reason := "stop"
+					sse, err := apicompat.ChatChunkToSSE(apicompat.ChatCompletionsChunk{
+						ID:      state.ID,
+						Object:  "chat.completion.chunk",
+						Created: time.Now().Unix(),
+						Model:   originalModel,
+						Choices: []apicompat.ChatChunkChoice{
+							{
+								Index:        0,
+								Delta:        apicompat.ChatDelta{},
+								FinishReason: &reason,
+							},
+						},
+					})
+					if err == nil {
+						_, _ = fmt.Fprint(c.Writer, sse)
+					}
+				}
+				streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", message)
+				return true
+			}
 			streamFailoverErr = s.newOpenAIStreamFailoverError(c, account, false, requestID, payloadBytes, message)
 			return true
 		}
@@ -626,6 +669,12 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 
 	finalizeStream := func() (*OpenAIForwardResult, error) {
+		if streamNonFailoverErr != nil {
+			if !clientDisconnected && clientOutputStarted {
+				c.Writer.Flush()
+			}
+			return resultWithUsage(), streamNonFailoverErr
+		}
 		if streamFailoverErr != nil {
 			if c == nil || c.Writer == nil || !c.Writer.Written() {
 				return nil, streamFailoverErr

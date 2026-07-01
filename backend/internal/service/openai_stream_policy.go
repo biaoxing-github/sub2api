@@ -219,6 +219,20 @@ var openAIStreamInterceptBuiltInRules = []openAIStreamInterceptRule{
 
 // openAIClassifyStreamInterceptDecision 优先匹配内置流规则，未命中时回落到统一错误策略。
 func openAIClassifyStreamInterceptDecision(payload []byte, message string) openAIStreamInterceptDecision {
+	if isOpenAIContextWindowError(message, payload) {
+		return openAIStreamInterceptDecision{
+			RuleID:               "openai_stream_context_window",
+			Priority:             5,
+			DescriptionKey:       "contextWindow",
+			ActionLabel:          OpenAIStreamActionRetryNoAvoidance,
+			MatchField:           "response.error.message",
+			MatchValue:           strings.TrimSpace(firstNonEmptyString(message, extractOpenAISSEErrorMessage(payload))),
+			ReasonCategory:       UpstreamErrorCategoryRequestTooLarge,
+			FailoverBeforeOutput: false,
+			DropOriginalEvent:    false,
+		}
+	}
+
 	for _, rule := range openAIStreamInterceptBuiltInRules {
 		value := strings.TrimSpace(gjson.GetBytes(payload, rule.JSONPath).String())
 		if value == "" {

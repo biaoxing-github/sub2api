@@ -11,6 +11,11 @@ const statusClientClosedRequest = 499
 
 // concurrencyErrorResponse 将并发槽位获取错误映射为客户端可理解的状态码。
 func concurrencyErrorResponse(err error, slotType string) (int, string, string) {
+	var waitQueueErr *WaitQueueFullError
+	if errors.As(err, &waitQueueErr) {
+		return http.StatusTooManyRequests, "rate_limit_error", waitQueueErr.Error()
+	}
+
 	var concurrencyErr *ConcurrencyError
 	if errors.As(err, &concurrencyErr) {
 		if concurrencyErr.SlotType != "" {

@@ -286,6 +286,43 @@ func TestForwardAsAnthropic_InjectsPromptCacheKeyForAPIKeyMessagesDispatch(t *te
 	require.Equal(t, 3, result.Usage.CacheReadInputTokens)
 }
 
+func TestForwardAsAnthropic_APIKeyPromptCacheInjectionDoesNotHTMLEscapeBody(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	body := []byte(`{"model":"claude-sonnet-4-5","max_tokens":16,"messages":[{"role":"user","content":"hello <tag>&value"}],"stream":false}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: openAICompatSSECompletedResponse("resp_no_html_escape", "gpt-5.3-codex")}
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          1,
+		Name:        "openai-apikey",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://api.openai.com/v1",
+		},
+	}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "stable-cache-key", "gpt-5.3-codex")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	bodyText := string(upstream.lastBody)
+	require.Contains(t, bodyText, "<tag>&value")
+	require.NotContains(t, bodyText, `\u003c`)
+	require.NotContains(t, bodyText, `\u003e`)
+	require.NotContains(t, bodyText, `\u0026`)
+}
+
 func TestForwardAsAnthropic_AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSessionID(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)

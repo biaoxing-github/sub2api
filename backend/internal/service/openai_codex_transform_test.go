@@ -737,6 +737,44 @@ func TestApplyCodexImageGenerationBridgeInstructions_SkipsWithoutImageTool(t *te
 	require.Equal(t, "existing instructions", reqBody["instructions"])
 }
 
+func TestEnsureOpenAIResponsesImageGenerationToolChoiceAuto(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.4",
+		"tools": []any{map[string]any{"type": "image_generation"}},
+	}
+
+	modified := ensureOpenAIResponsesImageGenerationToolChoiceAuto(reqBody)
+
+	require.True(t, modified)
+	require.Equal(t, "auto", reqBody["tool_choice"])
+}
+
+func TestEnsureOpenAIResponsesImageGenerationToolChoiceAutoPreservesExistingChoice(t *testing.T) {
+	existing := map[string]any{"type": "image_generation"}
+	reqBody := map[string]any{
+		"model":       "gpt-5.4",
+		"tools":       []any{map[string]any{"type": "image_generation"}},
+		"tool_choice": existing,
+	}
+
+	modified := ensureOpenAIResponsesImageGenerationToolChoiceAuto(reqBody)
+
+	require.False(t, modified)
+	require.Equal(t, existing, reqBody["tool_choice"])
+}
+
+func TestEnsureOpenAIResponsesImageGenerationToolChoiceAutoSkipsSpark(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.3-codex-spark",
+		"tools": []any{map[string]any{"type": "image_generation"}},
+	}
+
+	modified := ensureOpenAIResponsesImageGenerationToolChoiceAuto(reqBody)
+
+	require.False(t, modified)
+	require.NotContains(t, reqBody, "tool_choice")
+}
+
 func TestValidateCodexSparkInputRejectsInputImage(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "gpt-5.3-codex-spark",

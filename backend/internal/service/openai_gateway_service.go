@@ -3289,10 +3289,57 @@ func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool 
 }
 
 func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
+		return false
+	}
 	if s.shouldFailoverUpstreamError(statusCode) {
 		return true
 	}
 	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
+}
+
+func isOpenAIContextWindowError(upstreamMsg string, upstreamBody []byte) bool {
+	matches := func(text string) bool {
+		lower := strings.ToLower(strings.TrimSpace(text))
+		if lower == "" {
+			return false
+		}
+		switch {
+		case strings.Contains(lower, "context_too_large"),
+			strings.Contains(lower, "context_length_exceeded"),
+			strings.Contains(lower, "maximum context length"),
+			strings.Contains(lower, "max context length"):
+			return true
+		case strings.Contains(lower, "context window"):
+			return strings.Contains(lower, "exceed") || strings.Contains(lower, "too large") || strings.Contains(lower, "too long")
+		case strings.Contains(lower, "context length"):
+			return strings.Contains(lower, "exceed") || strings.Contains(lower, "too large") || strings.Contains(lower, "too long")
+		case strings.Contains(lower, "token limit") && strings.Contains(lower, "context"):
+			return strings.Contains(lower, "exceed") || strings.Contains(lower, "too large") || strings.Contains(lower, "too long")
+		default:
+			return false
+		}
+	}
+
+	if matches(upstreamMsg) {
+		return true
+	}
+	if len(upstreamBody) == 0 {
+		return false
+	}
+	for _, path := range []string{
+		"error.message",
+		"response.error.message",
+		"message",
+		"error.code",
+		"response.error.code",
+		"code",
+	} {
+		if matches(gjson.GetBytes(upstreamBody, path).String()) {
+			return true
+		}
+	}
+	return matches(string(upstreamBody))
 }
 
 func marshalOpenAIUpstreamJSON(v any) ([]byte, error) {
@@ -3529,6 +3576,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if codexImageGenerationBridgeEnabled && ensureOpenAIResponsesImageGenerationTool(decoded) {
 			markDecodedModified()
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Injected /responses image_generation tool for Codex client")
+		}
+		if codexImageGenerationBridgeEnabled && ensureOpenAIResponsesImageGenerationToolChoiceAuto(decoded) {
+			markDecodedModified()
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Set /responses tool_choice=auto for Codex image_generation bridge")
 		}
 		if normalizeOpenAIResponsesImageGenerationTools(decoded) {
 			markDecodedModified()
@@ -6197,6 +6248,11 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		statusCode = http.StatusBadGateway
 		errType = "upstream_error"
 		errMsg = "Upstream request failed"
+	}
+	if isOpenAIContextWindowError(upstreamMsg, body) && upstreamMsg != "" {
+		statusCode = http.StatusBadGateway
+		errType = "upstream_error"
+		errMsg = upstreamMsg
 	}
 
 	c.JSON(statusCode, gin.H{

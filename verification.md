@@ -3886,3 +3886,45 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：65+ 秒切流后观察中 `8080`、`18081`、`18083` `/health` 全部返回 200；`sub2api-blue` 运行 `sub2api:v0.1.139.1` 且 `healthy RestartCount=0`；blue 关键日志扫描干净。
 - Current state：active blue `sub2api:v0.1.139.1`；rollback green `sub2api:v0.1.136.21`。
 - LIMIT：未执行真实上游 OpenAI 请求；authenticated `/api/v1/admin/system/version` 未运行，因为本地部署自动化路径 `ADMIN_PASSWORD` 为空，版本小号通过代码/前端测试和二进制输出验证。
+
+## 2026-06-30 Devil - 稳定性/性能/缓存命中吸收与发布自动化收敛
+
+- 变更范围：`backend/internal/handler/concurrency_error_response.go`、`backend/internal/handler/gateway_helper.go`、Gateway/Chat/Responses/Gemini/OpenAI handler 用户槽位路径、`backend/internal/service/openai_gateway_chat_completions.go`、`deploy/release-bluegreen.ps1`、`docs/SUB2API_V0_1_137_139_JUHE_ABSORPTION_CEO_PLAN_CN.md`。
+- RED/GREEN：`go test ./internal/handler -run 'TestAcquireUserSlotWithWait_' -count=1` 通过，覆盖立即获取跳过 wait counter、等待成功释放、超时释放、请求取消释放。
+- RED/GREEN：`go test ./internal/service -run 'TestForwardAsChatCompletions_OAuthDoesNotInjectDefaultInstructions' -count=1` 通过，覆盖 OAuth Chat Completions 桥接不再注入默认 Codex instructions，仅保留空 `instructions` 字段。
+- 聚焦回归：`go test ./internal/handler -run 'Test(WaitForSlotWithPingTimeout|AcquireUserSlotWithWait|ConcurrencyErrorResponse)' -count=1` 通过。
+- 聚焦回归：`go test ./internal/service -run 'TestForwardAsChatCompletions_(OAuthDoesNotInjectDefaultInstructions|.*TransportError|.*ClientDisconnect|.*Terminal|.*Event)' -count=1` 通过。
+- 编译切片：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- 编译切片：`go test ./internal/handler -run TestNoSuchTest -count=1` 通过。
+- 编译切片：`go test ./internal/service -run TestNoSuchTest -count=1` 通过。
+- 发布脚本 dry-run：`powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\release-bluegreen.ps1 -ImageVersion v0.1.139.2` 通过，只打印计划，未构建、未部署、未切流；识别当前 active blue、idle green。
+- 发布脚本 cutover dry-run：`powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\release-bluegreen.ps1 -ImageVersion v0.1.139.2 -Cutover` 通过，只打印切流计划，确认 upstream 将指向 `sub2api-green:8080`，未写入 `active.conf`。
+- Diff 检查：scoped `git diff --check` 通过；`deploy/release-bluegreen.ps1` 尾随空白检查通过。
+- JSONL 审计：`docs/feature_list.jsonl` 尾部 4 行、`docs/process_list.jsonl` 尾部 3 行 `ConvertFrom-Json` 解析通过。
+- 边界：本轮未执行 `-Execute`，因此没有构建新镜像、没有重建容器、没有变更 `D:\sub2api-deploy\.env` 或 `active.conf`、没有线上切流。
+
+## 2026-07-01 Devil - 缓存命中第一/第二优先级
+
+- 变更范围：`backend/internal/service/openai_compat_prompt_cache_key.go`、`backend/internal/service/openai_gateway_chat_completions.go`、`backend/internal/service/openai_gateway_messages.go` 及对应测试。
+- RED：`go test ./internal/service -run 'TestDeriveCompatPromptCacheKey_UsesDeveloperRole|TestForwardAsChatCompletions_OAuthDoesNotInjectDefaultInstructions|TestForwardAsChatCompletions_ResponsesShapeDoesNotHTMLEscapeOAuthBody|TestForwardAsAnthropic_APIKeyPromptCacheInjectionDoesNotHTMLEscapeBody' -count=1` 首次失败，确认 Chat developer role 未进入自动 `prompt_cache_key` 种子、Chat `session_id` 使用未隔离 key、Chat/Messages upstream JSON 仍 HTML escape。
+- GREEN：同一命令通过，确认 developer instructions 参与 key、后续 turns 不扰动 key、Chat session_id 使用 `generateSessionUUID(isolateOpenAISessionID(apiKeyID, promptCacheKey))`、Chat/Messages upstream body 保留 `<tag>&value` 而不是 `\u003c/\u003e/\u0026`。
+- 聚焦回归：`go test ./internal/service -run 'Test(DeriveCompatPromptCacheKey|DeriveAnthropicCompatPromptCacheKey|DeriveOpenAIContentSessionSeed|ShouldAutoInjectPromptCacheKeyForCompat)' -count=1` 通过。
+- 聚焦回归：`go test ./internal/service -run 'TestForwardAsChatCompletions_(OAuthDoesNotInjectDefaultInstructions|ResponsesShapeDoesNotHTMLEscapeOAuthBody|.*TransportError|.*ClientDisconnect|.*Terminal|.*Event)' -count=1` 通过。
+- 聚焦回归：`go test ./internal/service -run 'TestForwardAsAnthropic_(InjectsPromptCacheKeyForAPIKeyMessagesDispatch|APIKeyPromptCacheInjectionDoesNotHTMLEscapeBody|AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSessionID|DoesNotAutoDerivePromptCacheKeyForNonCodexModel|OAuthCompatKeepsFullReplayForCacheGrowth|OAuthKeepsSystemAsDeveloperInput|OAuthAddsTodoGuardAfterSystemDeveloperInstruction|OAuthToolCallsKeepOriginalCallIDs)' -count=1` 通过。
+- 编译切片：`go test ./internal/service -run TestNoSuchTest -count=1` 通过；`go test ./cmd/server -run TestNoSuchTest -count=1` 通过。
+- Diff 检查：scoped `git diff --check -- backend/internal/service/openai_compat_prompt_cache_key.go backend/internal/service/openai_compat_prompt_cache_key_test.go backend/internal/service/openai_gateway_chat_completions.go backend/internal/service/openai_gateway_chat_completions_test.go backend/internal/service/openai_gateway_messages.go backend/internal/service/openai_compat_model_test.go` 通过。
+- 边界：本轮未提交、未构建镜像、未部署、未执行真实上游请求；工作树仍包含前序未提交改动和既有无关 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json`。
+
+## 2026-07-01 Devil - v0.1.140 稳定性/计费/上下文窗口补充吸收
+
+- 来源：`git fetch --tags origin` 后确认 `v0.1.140` 存在；`git log --oneline --reverse v0.1.139..v0.1.140` 显示本版包含图片计费、fallback pricing 日志、Codex image bridge tool choice、上下文窗口不切号等提交。本轮只选择低冲突后端优化，不整 tag 合并。
+- 变更范围：`backend/internal/service/image_output_accounting.go`、`backend/internal/service/image_generation_intent_test.go`、`backend/internal/service/openai_codex_transform.go`、`backend/internal/service/openai_codex_transform_test.go`、`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/openai_gateway_service_test.go`、`backend/internal/service/openai_ws_forwarder.go`、`backend/internal/service/openai_ws_forwarder_success_test.go`、`backend/internal/service/billing_service.go`、`backend/internal/service/billing_service_test.go`、`backend/internal/service/openai_account_runtime_block_fastpath.go`、`backend/internal/service/openai_stream_policy.go`、`backend/internal/service/openai_gateway_chat_completions.go`、`backend/internal/service/openai_gateway_chat_completions_test.go`。
+- RED/GREEN：`go test ./internal/service -run 'Test(EnsureOpenAIResponsesImageGenerationToolChoiceAuto|OpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability|OpenAIGatewayServiceForward_ChannelBridgeOverrideEnablesCodexInjection|OpenAIGatewayServiceForward_CodexBridgePreservesExistingToolChoice|OpenAIGatewayService_Forward_WSv2_ImageGenerationCountsOutputs)' -count=1` 首次失败在 WS 图片桥接测试，原因是测试未打开 `Gateway.CodexImageGenerationBridgeEnabled`，上游收到的 payload 没有 `tool_choice`；补齐测试配置后通过。
+- 聚焦回归：`go test ./internal/service -run 'TestOpenAIImageOutputCounter(SkipsTextOnlyDataArrays|RequiresCompletedImageResult)' -count=1` 通过。
+- 聚焦回归：`go test ./internal/service -run 'Test(EnsureOpenAIResponsesImageGenerationToolChoiceAuto|OpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability|OpenAIGatewayServiceForward_ChannelBridgeOverrideEnablesCodexInjection|OpenAIGatewayServiceForward_CodexBridgePreservesExistingToolChoice|OpenAIGatewayService_Forward_WSv2_ImageGenerationCountsOutputs)' -count=1` 通过。
+- 聚焦回归：`go test ./internal/service -run 'Test(IsOpenAIContextWindowError|ShouldFailoverOpenAIUpstreamResponseContextWindow502|OpenAIHandleErrorResponse_ContextWindow502KeepsMessageWithoutFailover|ForwardAsChatCompletions_.*ContextWindow|OpenAIStreamingContextWindowResponseFailedBeforeOutputPassesThrough)' -count=1` 通过。
+- 聚焦回归：`go test -tags unit ./internal/service -run 'TestGetModelPricing_(FallbackWarnLoggedOncePerModel|FallbackWarnPerModelNotGlobal|GLM52FallsBackToGLM5Price)' -count=1` 通过。
+- 编译切片：`go test ./internal/service -run 'TestNoSuchTest' -count=1` 通过。
+- 编译切片：`go test ./cmd/server -run 'TestNoSuchTest' -count=1` 通过。
+- Diff 检查：scoped `git diff --check` 对 v0.1.140 吸收触达文件通过。
+- 边界：本轮未提交、未构建镜像、未部署、未执行真实上游请求；工作树仍含前序未提交缓存命中/发布脚本改动和既有无关 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json`。

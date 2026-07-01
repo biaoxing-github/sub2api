@@ -191,6 +191,10 @@ func TestOpenAIGatewayService_Forward_WSv2_ImageGenerationCountsOutputs(t *testi
 			t.Errorf("read ws request failed: %v", err)
 			return
 		}
+		if got, _ := request["tool_choice"].(string); got != "auto" {
+			t.Errorf("expected ws image bridge tool_choice auto, got %#v", request["tool_choice"])
+			return
+		}
 
 		if err := conn.WriteJSON(map[string]any{
 			"type": "response.output_item.done",
@@ -230,6 +234,7 @@ func TestOpenAIGatewayService_Forward_WSv2_ImageGenerationCountsOutputs(t *testi
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "codex_cli_rs/0.98.0")
 	groupID := int64(1010)
 	c.Set("api_key", &APIKey{
 		GroupID: &groupID,
@@ -253,6 +258,7 @@ func TestOpenAIGatewayService_Forward_WSv2_ImageGenerationCountsOutputs(t *testi
 	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 5
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	cfg.Gateway.CodexImageGenerationBridgeEnabled = true
 
 	svc := &OpenAIGatewayService{
 		cfg:              cfg,
@@ -279,7 +285,7 @@ func TestOpenAIGatewayService_Forward_WSv2_ImageGenerationCountsOutputs(t *testi
 		},
 	}
 
-	body := []byte(`{"model":"gpt-5.4","stream":false,"input":"draw","tools":[{"type":"image_generation","model":"gpt-image-2","size":"1024x1024"}],"tool_choice":{"type":"image_generation"}}`)
+	body := []byte(`{"model":"gpt-5.4","stream":false,"input":"draw","tools":[{"type":"image_generation","model":"gpt-image-2","size":"1024x1024"}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)

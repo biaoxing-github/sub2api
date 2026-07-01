@@ -32,6 +32,7 @@
 - Phase 2 已完成 `/v1/chat/completions` 的 `codex_cli_only` 覆盖、Codex 指纹拒绝诊断、GPT-5.5 Codex instructions、Codex 用户模板默认 GPT-5.5 和 Claude Code terminal `CLAUDE_CODE_ATTRIBUTION_HEADER=0`。
 - 本地 sub2api 不需要额外全局白名单/黑名单准入系统；该方向跳过，只保留账号级开关和诊断增强。
 - PAT auth 是 Personal Access Token 形态的上游认证适配，涉及认证链路；当前本地 sub2api 不需要，暂不吸收。
+- Phase 3 已按 2026-06-30 反馈重定义为“稳定性、性能、缓存命中率、发布自动化收敛”。juhe-ai 的路由、协议矩阵、hybrid smart routing 等产品面设计暂不作为阶段任务；执行清单见下方“Phase 3 重定义”。
 
 ## 第一阶段已完成清单
 
@@ -197,7 +198,42 @@
 - 风险：低。
 - 建议：可作为 Phase 2 的低风险尾项。
 
-## Phase 3：juhe-ai 设计吸收
+## Phase 3 重定义：稳定性、性能与缓存命中（当前执行）
+
+第三阶段不继续做 juhe-ai 的产品面路由/协议矩阵/hybrid smart routing。当前只做能直接服务本地 sub2api 的稳定性、性能、缓存命中率和发布收敛。
+
+### 本轮已吸收
+
+1. 用户等待队列计数移出热路径
+   - 来源：`b0579c489 fix: move user wait queue accounting off hot path`
+   - 行为：用户槽位立即可获取时不再写 Redis wait counter；只有真实进入等待队列时才 increment，并在成功、超时、取消时统一 decrement。
+   - 价值：高并发真实请求少一次 Redis increment/decrement 往返，降低热路径写压力。
+   - 验证：`go test ./internal/handler -run 'Test(WaitForSlotWithPingTimeout|AcquireUserSlotWithWait|ConcurrencyErrorResponse)' -count=1` 通过。
+
+2. Chat Completions 桥接请求体保持稳定
+   - 来源：`dbdbfb112 fix: avoid default codex instructions for chat bridge` / `50c3e527`
+   - 行为：OAuth Chat Completions 转 Codex Responses 时，普通 chat 请求不再注入整段默认 Codex instructions，只保留空 `instructions` 字段。
+   - 价值：请求体更小、更稳定；相同用户消息不会因为默认系统 prompt 被反复拼入而污染上游输入，有利于 OpenAI 侧 prompt/request cache 命中。
+   - 验证：`go test ./internal/service -run 'TestForwardAsChatCompletions_(OAuthDoesNotInjectDefaultInstructions|.*TransportError|.*ClientDisconnect|.*Terminal|.*Event)' -count=1` 通过。
+
+3. 发布自动化收敛为手动触发脚本
+   - 落点：`deploy/release-bluegreen.ps1`
+   - 行为：默认 dry-run，只读取 active/idle 并打印构建、部署、候选验证和可选切流计划；必须显式 `-Execute` 才会构建和部署 idle，必须同时显式 `-Cutover` 才会切代理 upstream。
+   - 价值：把重复发布命令收敛到一个脚本，但不做自动触发、定时触发、git hook 或监听式发版。
+   - 验证：`powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\release-bluegreen.ps1 -ImageVersion v0.1.139.2` 与带 `-Cutover` 的 dry-run 均通过，未构建、未部署、未切流。
+
+### 继续可吸收候选
+
+- `8b698ff4c fix account list parameter limit`：账号列表大批量 ID 查询分批与去重，适合作为后台管理性能切片单独做。
+- `510adf703 feat(scheduling): add opt-in "prefer soonest reset" account selection`：账号都受限时优先最快重置账号，必须 opt-in，先用真实账号池快照 A/B。
+- `cc7612bdb Detect OpenAI overloaded error codes`：本地已有多处 overloaded 文案与 529/503 处理，下一步先补 OpenAI stream/non-stream/chat transport 分类测试矩阵，缺口再合并到统一上游错误分类。
+- juhe-ai `b49f5f1` Redis Streams 日志队列：只借鉴“日志写入移出请求路径”的设计，等 usage/ops 写入成为瓶颈再按 Go 分层实现。
+- juhe-ai `00d8380` 搜索性能优化：可转为本项目 repository 聚焦测试和索引审计，不搬迁移脚本。
+- juhe-ai `c2d05cd` runtime cache/high performance：提交面过大，只保留“读多写少配置缓存 + 明确失效”的方向。
+
+## Phase 3：juhe-ai 设计吸收（历史候选，暂不执行）
+
+2026-06-30 复盘后，本节不再作为第三阶段执行清单。当前第三阶段改为稳定性、性能、缓存命中率和手动发布自动化收敛；juhe-ai 内容只保留为历史候选，后续必须有明确业务场景才重新评估。
 
 juhe-ai 是 TypeScript/Nest 风格，不能直接复制到 Go/Vue。这里吸收的是产品与算法设计。
 
@@ -325,3 +361,27 @@ juhe-ai 是 TypeScript/Nest 风格，不能直接复制到 Go/Vue。这里吸收
 - 已用 CodeGraph 确认当前分支的 OpenAI gateway、Codex client restriction、scheduler/provider 相关入口。
 - 已用 PowerShell 定向抽样当前代码和上游 diff。
 - 本次只生成计划文档，未改运行时代码，未运行 Go/Vitest。
+
+## 2026-07-01 v0.1.140 补充吸收记录
+
+执行者：Devil。
+
+本次按用户要求继续查看 `v0.1.140`，不做整 tag 合并，只吸收与本地目标一致、冲突低、偏稳定性/性能/缓存友好的后端切片。`v0.1.140` 中支付、前端表格、ops 日志筛选、风险控制、Grok CLI compat、README 和版本同步等内容暂不吸收，原因是它们不是当前缓存命中/稳定性主线，且容易和本地已完成的阶段内容混在一起。
+
+已吸收切片：
+
+- 图片输出计费误判修正：`backend/internal/service/image_output_accounting.go` 只把 `data[]` 中带 `url` 或 `b64_json` 的对象计为图片产物；`image_generation.completed` 没有 `result`、`url`、`b64_json` 时不再计费。对应测试在 `backend/internal/service/image_generation_intent_test.go`。
+- Codex 图片桥接 `tool_choice=auto`：`backend/internal/service/openai_codex_transform.go` 增加 `ensureOpenAIResponsesImageGenerationToolChoiceAuto`；HTTP `/responses` 路径和 WS v2 入站路径都会在 Codex image bridge 启用且未显式传入 `tool_choice` 时补 `auto`，保留用户已有选择并跳过 Spark 模型。对应测试在 `openai_codex_transform_test.go`、`openai_gateway_service_test.go`、`openai_ws_forwarder_success_test.go`。
+- OpenAI 上下文窗口错误不切号：`backend/internal/service/openai_gateway_service.go` 增加 `isOpenAIContextWindowError`，让 502/stream `response.failed` 中的 context window/context length/token limit 类错误作为用户请求过大透传，不触发账号 failover、runtime block 或 stream failover。对应测试覆盖普通错误响应、Chat Completions buffered/streaming 和 Responses streaming。
+- fallback 定价告警去重与 GLM 兜底：`backend/internal/service/billing_service.go` 用 `sync.Map` 按模型去重 fallback pricing 日志，避免热路径重复刷日志；补入 `glm-5` / `glm-4.6` 兜底定价，`glm-5.2` 归入 GLM-5。对应单元测试使用 `-tags unit`。
+
+验证结果：
+
+- `go test ./internal/service -run 'TestOpenAIImageOutputCounter(SkipsTextOnlyDataArrays|RequiresCompletedImageResult)' -count=1` 通过。
+- `go test ./internal/service -run 'Test(EnsureOpenAIResponsesImageGenerationToolChoiceAuto|OpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability|OpenAIGatewayServiceForward_ChannelBridgeOverrideEnablesCodexInjection|OpenAIGatewayServiceForward_CodexBridgePreservesExistingToolChoice|OpenAIGatewayService_Forward_WSv2_ImageGenerationCountsOutputs)' -count=1` 通过。
+- `go test ./internal/service -run 'Test(IsOpenAIContextWindowError|ShouldFailoverOpenAIUpstreamResponseContextWindow502|OpenAIHandleErrorResponse_ContextWindow502KeepsMessageWithoutFailover|ForwardAsChatCompletions_.*ContextWindow|OpenAIStreamingContextWindowResponseFailedBeforeOutputPassesThrough)' -count=1` 通过。
+- `go test -tags unit ./internal/service -run 'TestGetModelPricing_(FallbackWarnLoggedOncePerModel|FallbackWarnPerModelNotGlobal|GLM52FallsBackToGLM5Price)' -count=1` 通过。
+- `go test ./internal/service -run 'TestNoSuchTest' -count=1` 与 `go test ./cmd/server -run 'TestNoSuchTest' -count=1` 通过。
+- scoped `git diff --check` 通过。
+
+边界：本轮未提交、未构建镜像、未部署、未执行真实上游请求。下一次如果进入发布，需要把大版本和镜像小版本一起提升到用户指定的版本线，并按蓝绿发布规则构建 committed HEAD。

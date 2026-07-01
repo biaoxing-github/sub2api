@@ -264,7 +264,48 @@ func resolveOpenAIResponsesImageBillingConfigFromBody(body []byte, fallbackModel
 
 func resolveOpenAIResponsesImageBillingConfigDetailedFromBody(body []byte, fallbackModel string) (OpenAIResponsesImageBillingConfig, error) {
 	reqBody := cloneRequestMapForImageIntent(body)
-	return resolveOpenAIResponsesImageBillingConfigDetailed(reqBody, fallbackModel)
+	if reqBody != nil {
+		return resolveOpenAIResponsesImageBillingConfigDetailed(reqBody, fallbackModel)
+	}
+	return resolveOpenAIResponsesImageBillingConfigDetailedFromRawBody(body, fallbackModel), nil
+}
+
+func resolveOpenAIResponsesImageBillingConfigDetailedFromRawBody(body []byte, fallbackModel string) OpenAIResponsesImageBillingConfig {
+	imageModel := ""
+	imageSize := ""
+	hasImageTool := false
+	if len(body) > 0 && gjson.ValidBytes(body) {
+		root := gjson.ParseBytes(body)
+		root.Get("tools").ForEach(func(_, item gjson.Result) bool {
+			if strings.TrimSpace(item.Get("type").String()) != "image_generation" {
+				return true
+			}
+			hasImageTool = true
+			imageModel = strings.TrimSpace(item.Get("model").String())
+			imageSize = strings.TrimSpace(item.Get("size").String())
+			return false
+		})
+		if imageSize == "" {
+			imageSize = strings.TrimSpace(root.Get("size").String())
+		}
+		if imageModel == "" {
+			bodyModel := strings.TrimSpace(root.Get("model").String())
+			if isOpenAIImageBillingModelAlias(bodyModel) || !hasImageTool {
+				imageModel = bodyModel
+			}
+		}
+	}
+	if imageModel == "" && hasImageTool {
+		imageModel = "gpt-image-2"
+	}
+	if imageModel == "" {
+		imageModel = strings.TrimSpace(fallbackModel)
+	}
+	return OpenAIResponsesImageBillingConfig{
+		Model:     imageModel,
+		SizeTier:  normalizeOpenAIImageSizeTier(imageSize),
+		InputSize: imageSize,
+	}
 }
 
 func isOpenAIImageBillingModelAlias(model string) bool {

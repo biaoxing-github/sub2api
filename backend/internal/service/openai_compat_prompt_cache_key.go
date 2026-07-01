@@ -56,7 +56,7 @@ func deriveCompatPromptCacheKey(req *apicompat.ChatCompletionsRequest, mappedMod
 	firstUserCaptured := false
 	for _, msg := range req.Messages {
 		switch strings.TrimSpace(msg.Role) {
-		case "system":
+		case "system", "developer":
 			seedParts = append(seedParts, "system="+normalizeCompatSeedJSON(msg.Content))
 		case "user":
 			if !firstUserCaptured {
