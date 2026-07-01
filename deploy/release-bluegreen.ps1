@@ -382,12 +382,12 @@ function Assert-StaticAsset {
         return
     }
 
-    $home = Invoke-WebRequest -Uri "$BaseUrl/" -Method GET -UseBasicParsing -TimeoutSec 10
-    if ([int]$home.StatusCode -ne 200) {
+    $homeResponse = Invoke-WebRequest -Uri "$BaseUrl/" -Method GET -UseBasicParsing -TimeoutSec 10
+    if ([int]$homeResponse.StatusCode -ne 200) {
         throw "Home page did not return 200 from $BaseUrl/"
     }
 
-    $match = [regex]::Match($home.Content, "/assets/[^`"'\s>]+\.(?:js|css)")
+    $match = [regex]::Match($homeResponse.Content, "/assets/[^`"'\s>]+\.(?:js|css)")
     if (-not $match.Success) {
         throw "No static asset path found in $BaseUrl/"
     }

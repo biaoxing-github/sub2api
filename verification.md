@@ -3928,3 +3928,16 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 编译切片：`go test ./cmd/server -run 'TestNoSuchTest' -count=1` 通过。
 - Diff 检查：scoped `git diff --check` 对 v0.1.140 吸收触达文件通过。
 - 边界：本轮未提交、未构建镜像、未部署、未执行真实上游请求；工作树仍含前序未提交缓存命中/发布脚本改动和既有无关 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json`。
+
+## 2026-07-01 13:51 +08:00 - release v0.1.140.1 缓存与稳定性吸收
+
+- PASS：主版本已更新为 `v0.1.140`，不可变镜像为 `sub2api:v0.1.140.1`；镜像 ID `sha256:aa039bf83691c588318129d80355e831ceb783d700a9c24f4d63d0dae1760d0d`。
+- PASS：镜像 label 为 `org.opencontainers.image.version=v0.1.140`、`org.opencontainers.image.revision=2b37b941016c`；二进制版本输出为 `Sub2API v0.1.140 (image: v0.1.140.1, commit: 2b37b941016c, built: 2026-07-01T05:25:46Z)`。
+- PASS：部署只重建 idle `sub2api-green`；发布期间保留 active `sub2api-blue`、PostgreSQL、Redis 和 `sub2api-proxy`，未对数据库或 Redis 执行重启。
+- PASS：green 候选端口 `18082` 的 `/health`、首页、静态资源、未登录管理 API 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- OBSERVE：候选启动早期出现 1 条 `openai_request_snapshot cleanup expired request snapshots failed err=pq: canceling statement due to user request`；重新观察 120 秒后关键日志窗口干净。
+- PASS：代理 upstream 已从 `sub2api-blue:8080` 切到 `sub2api-green:8080`；`docker exec sub2api-proxy nginx -t` 通过，`docker exec sub2api-proxy nginx -s reload` 于 2026-07-01 13:32:18 +08:00 成功。
+- PASS：切流后公网入口 `8080` 与本机代理入口 `18081` 的 `/health`、首页、静态资源、未登录管理 API 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- PASS：75 秒切流后观察中 `sub2api-green` 运行 `sub2api:v0.1.140.1`，状态为 `healthy Status=running RestartCount=0`；最近 120 秒 app/proxy 日志未命中 panic、fatal、migration、checksum、bind、listen、rebuild 等发布关键错误。
+- Current state：active green `sub2api:v0.1.140.1`；rollback blue `sub2api:v0.1.139.1`。
+- LIMIT：未执行真实上游 OpenAI 请求；authenticated `/api/v1/admin/system/version` 未运行，因为本地部署自动化路径没有可用管理端密码。
