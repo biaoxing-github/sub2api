@@ -3949,3 +3949,17 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - 修复：体检专用 `buildOpenAIResponsesProbePayload` 不再发送 `max_output_tokens`；保留 `model`、列表形态 `input`、`stream`、`store=false`、`instructions`，避免 zz1cc 这类兼容上游因未知参数误报失败。
 - GREEN：账号体检与 API Key 体检聚焦测试均通过；`go test -tags unit ./internal/service -run 'Test(AccountProbe|APIKeyProbe|HTTPAPIKeyProbeRunner)' -count=1` 通过。
 - LIMIT：本轮未提交、未构建镜像、未部署、未执行真实 zz1cc 上游请求。
+
+## 2026-07-01 19:03 +08:00 - release v0.1.140.2 上游体检兼容修复
+
+- PASS：功能提交 `06dfb66318d1` 已作为构建源；镜像 `sub2api:v0.1.140.2` 构建完成，镜像 ID `sha256:f279c27978740d6c1f52dfaa340a236281bb282264c8f0a9b1b5f9e185376dd0`。
+- PASS：镜像 label 为 `org.opencontainers.image.version=v0.1.140`、`org.opencontainers.image.revision=06dfb66318d1`；二进制版本输出为 `Sub2API v0.1.140 (image: v0.1.140.2, commit: 06dfb66318d1, built: 2026-07-01T10:56:06Z)`。
+- OBSERVE：首次脚本构建因 TUNA Alpine v3.23 包索引 403 失败；阿里源构建时出现一次 runtime `zstd-libs` layer I/O error；最终用中科大 Alpine 源成功构建同一 committed HEAD 和同一未存在的不可变 tag。
+- PASS：部署只重建 idle `sub2api-blue`；发布期间保留 active `sub2api-green`、PostgreSQL、Redis 和 `sub2api-proxy`，未对数据库或 Redis 执行重启。
+- PASS：blue 候选端口 `18083` 的 `/health`、首页、静态资源、未登录管理 API 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- OBSERVE：候选启动早期出现 1 条已知 `openai_request_snapshot cleanup expired request snapshots failed err=pq: canceling statement due to user request`；重新观察 75 秒后关键日志窗口干净。
+- PASS：代理 upstream 已从 `sub2api-green:8080` 切到 `sub2api-blue:8080`；`docker exec sub2api-proxy nginx -t` 通过，`docker exec sub2api-proxy nginx -s reload` 于 2026-07-01 19:00:31 +08:00 成功。
+- PASS：切流后公网入口 `8080` 与本机代理入口 `18081` 的 `/health`、首页、静态资源、未登录管理 API 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- PASS：75 秒切流后观察中 `sub2api-blue` 运行 `sub2api:v0.1.140.2`，状态为 `healthy Status=running Restart=0`；最近 75 秒 app/proxy 日志未命中 panic、fatal、migration、checksum、bind、listen、rebuild 等发布关键错误。
+- Current state：active blue `sub2api:v0.1.140.2`；rollback green `sub2api:v0.1.140.1`。
+- LIMIT：未执行真实 zz1cc 上游请求；authenticated `/api/v1/admin/system/version` 未运行，因为本地部署自动化路径没有可用管理端密码。
