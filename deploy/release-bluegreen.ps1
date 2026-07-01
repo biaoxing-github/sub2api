@@ -255,23 +255,41 @@ function Invoke-ImageBuild {
         [string]$Commit
     )
 
-    $display = "git -C `"$RepoRoot`" archive --format=tar HEAD | docker build --pull=false -t $ImageTag --label org.opencontainers.image.version=$MajorVersion --label org.opencontainers.image.revision=$Commit --build-arg VERSION=$MajorVersion --build-arg IMAGE_VERSION=$ImageVersion --build-arg COMMIT=$Commit -"
+    $display = "git -C `"$RepoRoot`" archive --format=tar HEAD -> temp context; docker build --pull=false -t $ImageTag --label org.opencontainers.image.version=$MajorVersion --label org.opencontainers.image.revision=$Commit --build-arg VERSION=$MajorVersion --build-arg IMAGE_VERSION=$ImageVersion --build-arg COMMIT=$Commit <temp-context>"
     if (-not $Execute) {
         Write-Host "PLAN> $display"
         return
     }
 
     Write-Host "RUN> $display"
-    git -C $RepoRoot archive --format=tar HEAD | docker build --pull=false `
-        -t $ImageTag `
-        --label "org.opencontainers.image.version=$MajorVersion" `
-        --label "org.opencontainers.image.revision=$Commit" `
-        --build-arg "VERSION=$MajorVersion" `
-        --build-arg "IMAGE_VERSION=$ImageVersion" `
-        --build-arg "COMMIT=$Commit" `
-        -
-    if ($LASTEXITCODE -ne 0) {
-        throw "Docker build failed for $ImageTag"
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sub2api-release-" + [System.Guid]::NewGuid().ToString("N"))
+    $archivePath = Join-Path $tempRoot 'source.tar'
+    $contextDir = Join-Path $tempRoot 'context'
+    New-Item -ItemType Directory -Path $contextDir -Force | Out-Null
+    try {
+        Invoke-External -File 'git' -Arguments @('-C', $RepoRoot, 'archive', '--format=tar', "--output=$archivePath", 'HEAD') | Out-Null
+        Invoke-External -File 'tar' -Arguments @('-xf', $archivePath, '-C', $contextDir) | Out-Null
+        Invoke-External -File 'docker' -Arguments @(
+            'build',
+            '--pull=false',
+            '-t',
+            $ImageTag,
+            '--label',
+            "org.opencontainers.image.version=$MajorVersion",
+            '--label',
+            "org.opencontainers.image.revision=$Commit",
+            '--build-arg',
+            "VERSION=$MajorVersion",
+            '--build-arg',
+            "IMAGE_VERSION=$ImageVersion",
+            '--build-arg',
+            "COMMIT=$Commit",
+            $contextDir
+        ) | Out-Null
+    } finally {
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
     }
 }
 
