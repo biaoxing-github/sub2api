@@ -78,9 +78,15 @@ function Invoke-External {
 
     Write-Host "RUN> $display"
     if ($IgnoreExitCode) {
-        $output = & $File @Arguments 2>&1 | Out-String
-        $exitCode = $LASTEXITCODE
-        $global:LASTEXITCODE = 0
+        $previousErrorAction = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $output = & $File @Arguments 2>&1 | Out-String
+            $exitCode = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+        } finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
         return [pscustomobject]@{ ExitCode = $exitCode; Output = $output.Trim() }
     }
 
