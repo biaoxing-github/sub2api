@@ -1372,7 +1372,10 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 //
 // 部分 OpenAI 兼容上游只接受列表形态 input，并且要求 instructions 字段；
 // 这里保持和手动账号测试链路一致，避免探测时误报 “Input must be a list”。
-func buildOpenAIResponsesProbePayload(model, prompt string, stream bool, maxOutputTokens int) map[string]any {
+//
+// 不发送 max_output_tokens：该字段对体检不是必要约束，部分兼容上游会直接
+// 拒绝未知参数，导致健康账号被误判为不可用。
+func buildOpenAIResponsesProbePayload(model, prompt string, stream bool) map[string]any {
 	return map[string]any{
 		"model": model,
 		"input": []map[string]any{
@@ -1386,15 +1389,14 @@ func buildOpenAIResponsesProbePayload(model, prompt string, stream bool, maxOutp
 				},
 			},
 		},
-		"stream":            stream,
-		"store":             false,
-		"max_output_tokens": maxOutputTokens,
-		"instructions":      openai.DefaultInstructions,
+		"stream":       stream,
+		"store":        false,
+		"instructions": openai.DefaultInstructions,
 	}
 }
 
 func buildOpenAIResponsesProbePayloadForSample(model string, sample APIKeyProbePlannedSample, stream bool) map[string]any {
-	payload := buildOpenAIResponsesProbePayload(model, sample.Prompt, stream, sample.MaxOutputTokens)
+	payload := buildOpenAIResponsesProbePayload(model, sample.Prompt, stream)
 	payload["instructions"] = "You are a model capability checker. Follow the requested output exactly."
 	if sample.Structured {
 		payload["text"] = map[string]any{

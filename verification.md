@@ -3941,3 +3941,11 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：75 秒切流后观察中 `sub2api-green` 运行 `sub2api:v0.1.140.1`，状态为 `healthy Status=running RestartCount=0`；最近 120 秒 app/proxy 日志未命中 panic、fatal、migration、checksum、bind、listen、rebuild 等发布关键错误。
 - Current state：active green `sub2api:v0.1.140.1`；rollback blue `sub2api:v0.1.139.1`。
 - LIMIT：未执行真实上游 OpenAI 请求；authenticated `/api/v1/admin/system/version` 未运行，因为本地部署自动化路径没有可用管理端密码。
+
+## 2026-07-01 18:02 +08:00 - 上游体检 max_output_tokens 兼容修复
+
+- 变更范围：`backend/internal/service/account_probe.go`、`backend/internal/service/account_probe_test.go`、`backend/internal/service/api_key_probe.go`、`backend/internal/service/api_key_probe_test.go`。
+- RED：`go test -tags unit ./internal/service -run TestBuildOpenAIResponsesProbePayloadForSampleOmitsMaxOutputTokens -count=1` 首次失败，确认账号体检 Responses payload 会发送 `"max_output_tokens":16`。
+- 修复：体检专用 `buildOpenAIResponsesProbePayload` 不再发送 `max_output_tokens`；保留 `model`、列表形态 `input`、`stream`、`store=false`、`instructions`，避免 zz1cc 这类兼容上游因未知参数误报失败。
+- GREEN：账号体检与 API Key 体检聚焦测试均通过；`go test -tags unit ./internal/service -run 'Test(AccountProbe|APIKeyProbe|HTTPAPIKeyProbeRunner)' -count=1` 通过。
+- LIMIT：本轮未提交、未构建镜像、未部署、未执行真实 zz1cc 上游请求。

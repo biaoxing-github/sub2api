@@ -527,6 +527,22 @@ func TestAccountProbeService_RunOpenAIAPIKeyPersistsSamples(t *testing.T) {
 	require.NotContains(t, repo.samples[0].APIKeyMasked, "sk-one")
 }
 
+func TestBuildOpenAIResponsesProbePayloadForSampleOmitsMaxOutputTokens(t *testing.T) {
+	t.Parallel()
+
+	sample := APIKeyProbePlannedSample{
+		Prompt:          "Reply with exactly: OK",
+		MaxOutputTokens: 16,
+	}
+
+	payload := buildOpenAIResponsesProbePayloadForSample("gpt-test", sample, false)
+
+	require.Equal(t, "gpt-test", payload["model"])
+	require.Equal(t, false, payload["stream"])
+	require.NotContains(t, payload, "max_output_tokens")
+	require.NotEmpty(t, payload["instructions"])
+}
+
 func TestAccountProbeService_RunOpenAIAPIKeyCodexSimulationUsesCodexHeaders(t *testing.T) {
 	t.Parallel()
 

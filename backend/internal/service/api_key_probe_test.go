@@ -234,6 +234,7 @@ func TestHTTPAPIKeyProbeRunner_RunSampleUsesResponsesListInput(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "input_text", textPart["type"])
 	require.Equal(t, "hi", textPart["text"])
+	require.NotContains(t, payload, "max_output_tokens")
 	require.NotEmpty(t, payload["instructions"])
 }
 

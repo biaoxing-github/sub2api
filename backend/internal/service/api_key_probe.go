@@ -435,7 +435,7 @@ func (r *HTTPAPIKeyProbeRunner) RunSample(ctx context.Context, req APIKeyProbeSa
 	sampleCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	body := buildOpenAIResponsesProbePayload(req.Model, req.Sample.Prompt, false, req.Sample.MaxOutputTokens)
+	body := buildOpenAIResponsesProbePayload(req.Model, req.Sample.Prompt, false)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return APIKeyProbeSampleResult{}, err
