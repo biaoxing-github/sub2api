@@ -66,20 +66,29 @@ function Format-CommandLine {
 function Invoke-External {
     param(
         [string]$File,
-        [string[]]$Arguments
+        [string[]]$Arguments,
+        [switch]$IgnoreExitCode
     )
 
     $display = Format-CommandLine -File $File -Arguments $Arguments
     if (-not $Execute) {
         Write-Host "PLAN> $display"
-        return
+        return [pscustomobject]@{ ExitCode = 0; Output = '' }
     }
 
     Write-Host "RUN> $display"
+    if ($IgnoreExitCode) {
+        $output = & $File @Arguments 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+        $global:LASTEXITCODE = 0
+        return [pscustomobject]@{ ExitCode = $exitCode; Output = $output.Trim() }
+    }
+
     & $File @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "Command failed with exit code $LASTEXITCODE`: $display"
     }
+    return [pscustomobject]@{ ExitCode = 0; Output = '' }
 }
 
 function Invoke-ExternalOutput {
