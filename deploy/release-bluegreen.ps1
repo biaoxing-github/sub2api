@@ -222,11 +222,13 @@ function Assert-ImageTagAvailable {
         return
     }
 
-    & docker image inspect $ImageTag *> $null
-    if ($LASTEXITCODE -eq 0) {
+    $inspect = Invoke-External -File 'docker' -Arguments @('image', 'inspect', $ImageTag) -IgnoreExitCode
+    if ($inspect.ExitCode -eq 0) {
         throw "Immutable image tag already exists locally and will not be overwritten: $ImageTag"
     }
-    $global:LASTEXITCODE = 0
+    if ($inspect.Output -notmatch 'No such image') {
+        throw "Failed to inspect local image tag $ImageTag. Output: $($inspect.Output)"
+    }
 }
 
 function Invoke-ImageBuild {
