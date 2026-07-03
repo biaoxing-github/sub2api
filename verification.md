@@ -3993,3 +3993,26 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - Current state：active green `sub2api:v0.1.143.1`；rollback blue `sub2api:v0.1.140.2`。
 - LIMIT：`ADMIN_PASSWORD` 为空，未执行 authenticated `/api/v1/admin/system/version`；未执行真实上游 OpenAI 请求。
 - BLOCKED：`git push -u origin codex/merge-v0.1.134-updates` 被 GitHub 403 拒绝，错误为 `Permission to Wei-Shaw/sub2api.git denied to biaoxing-github`。
+
+## 2026-07-03 17:20 +08:00 - P1 v0.1.142/v0.1.143 bugfix and metadata absorption
+
+- 变更范围：`backend/internal/repository/account_repo.go`、`backend/internal/repository/account_repo_integration_test.go`、`backend/internal/service/openai_oauth_service.go`、`backend/internal/service/openai_subscription_test.go`、`frontend/src/composables/useOpenAIOAuth.ts`、`frontend/src/composables/__tests__/useOpenAIOAuth.spec.ts`。
+- RED：`go test -tags integration ./internal/repository -run "TestAccountRepoSuite/TestListWithFilters_CountDoesNotPolluteListQuerySoftDeletePredicate" -count=1 -timeout 3m` 先失败，捕获列表 SQL 中 `"deleted_at" is null` 出现 2 次。
+- GREEN：账号分页 Count 改为 `q.Clone().Count(ctx)` 后，`go test -tags integration ./internal/repository -run "TestAccountRepoSuite/(TestList|TestListWithFilters|TestPreload_And_VirtualFields)" -count=1 -timeout 3m` 通过。
+- RED：`go test -tags unit ./internal/service -run "TestShouldApplyChatGPTAccountInfoPlanType" -count=1 -timeout 3m` 先因 `shouldApplyChatGPTAccountInfoPlanType` 未定义失败。
+- GREEN：OpenAI OAuth `accounts/check` plan type 只在本地为空时补全；`go test -tags unit ./internal/service -run "TestShouldApplyChatGPTAccountInfoPlanType"` 和 OAuth 相邻切片通过。
+- RED：`npm run test:run -- src/composables/__tests__/useOpenAIOAuth.spec.ts` 先失败，确认前端 `buildCredentials` 未透传 `subscription_expires_at`。
+- GREEN：前端 OAuth credentials 透传 `subscription_expires_at` 后，同一 Vitest spec 4 tests 通过。
+- PASS：确认 compact bridge 本地已有覆盖，`TestOpenAIGatewayServiceForward_CodexImageInjectionSkipsCompactRequest` 和 group capability 注入测试通过。
+- PASS：`npm run typecheck` 通过；`go test ./cmd/server -run TestNoSuchTest -count=1` 通过；scoped `git diff --check` 通过。
+- LIMIT：本轮未提交、未构建镜像、未部署、未执行真实上游请求；无关 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json` 未触碰。
+
+## 2026-07-03 17:31 +08:00 - P1 continue verification refresh
+
+- PASS：重新执行 `go test -tags integration ./internal/repository -run "TestAccountRepoSuite/(TestList|TestListWithFilters|TestPreload_And_VirtualFields)" -count=1 -timeout 3m`，输出 `ok github.com/Wei-Shaw/sub2api/internal/repository 8.545s`。
+- PASS：重新执行 `go test -tags unit ./internal/service -run "TestShouldApplyChatGPTAccountInfoPlanType|TestOpenAITokenProvider|TestOpenAI.*OAuth|TestAccountTestService_OpenAI429SyncsObservedPlanType|TestHandle429_OpenAISyncsObservedPlanType|TestOpenAIGatewayServiceForward_CodexImageInjectionSkipsCompactRequest|TestOpenAIGatewayServiceForward_CodexImageInjectionRespectsGroupCapability" -count=1 -timeout 3m`，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 1.441s`。
+- PASS：重新执行 `npm run test:run -- src/composables/__tests__/useOpenAIOAuth.spec.ts`，Vitest 输出 1 个文件、4 个测试全部通过。
+- PASS：重新执行 `npm run typecheck`，`vue-tsc --noEmit` 通过。
+- PASS：重新执行 `go test ./cmd/server -run TestNoSuchTest -count=1`，输出 `ok github.com/Wei-Shaw/sub2api/cmd/server 0.046s [no tests to run]`。
+- PASS：scoped `git diff --check` 覆盖 P1 触达文件和记录文件，通过；仅提示 `docs/feature_list.jsonl`、`docs/process_list.jsonl` 下次 Git 触碰时 LF 会替换为 CRLF。
+- LIMIT：本轮继续验证仍未提交、未构建镜像、未部署、未执行真实上游请求；无关 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json` 未触碰。

@@ -588,7 +588,8 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 		}))
 	}
 
-	total, err := q.Count(ctx)
+	// Count 会触发软删除拦截器写入谓词，先 Clone 避免污染后续列表查询。
+	total, err := q.Clone().Count(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

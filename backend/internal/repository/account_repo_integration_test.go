@@ -4,9 +4,13 @@ package repository
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/accountgroup"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -517,14 +521,58 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 
 			tt.setup(client)
 
-			accounts, _, err := repo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, tt.platform, tt.accType, tt.status, tt.search, tt.groupID, tt.privacyMode, tt.planType)
+			accounts, page, err := repo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, tt.platform, tt.accType, tt.status, tt.search, tt.groupID, tt.privacyMode, tt.planType)
 			s.Require().NoError(err)
 			s.Require().Len(accounts, tt.wantCount)
+			// 单页完整命中时 total 必须等于返回条数，防止 Count 污染后续列表查询。
+			s.Require().NotNil(page)
+			s.Require().Equal(int64(tt.wantCount), page.Total)
 			if tt.validate != nil {
 				tt.validate(accounts)
 			}
 		})
 	}
+}
+
+func (s *AccountRepoSuite) TestListWithFilters_CountDoesNotPolluteListQuerySoftDeletePredicate() {
+	var queryLogs []string
+	debugClient := dbent.NewClient(
+		dbent.Driver(entsql.OpenDB(dialect.Postgres, integrationDB)),
+		dbent.Debug(),
+		dbent.Log(func(args ...any) {
+			queryLogs = append(queryLogs, fmt.Sprint(args...))
+		}),
+	)
+	tx, err := debugClient.Tx(context.Background())
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		_ = tx.Rollback()
+	})
+
+	client := tx.Client()
+	repo := newAccountRepositoryWithSQL(client, tx, nil)
+	mustCreateAccount(s.T(), client, &service.Account{Name: "sql-shape-1", Platform: service.PlatformOpenAI})
+	mustCreateAccount(s.T(), client, &service.Account{Name: "sql-shape-2", Platform: service.PlatformOpenAI})
+
+	queryLogs = nil
+	accounts, page, err := repo.ListWithFilters(context.Background(), pagination.PaginationParams{Page: 1, PageSize: 10}, service.PlatformOpenAI, "", "", "", 0, "", "")
+	s.Require().NoError(err)
+	s.Require().Len(accounts, 2)
+	s.Require().Equal(int64(2), page.Total)
+
+	var listQuery string
+	for _, entry := range queryLogs {
+		normalized := strings.ToLower(entry)
+		if strings.Contains(normalized, `from "accounts"`) &&
+			strings.Contains(normalized, "order by") &&
+			strings.Contains(normalized, "limit") {
+			listQuery = normalized
+			break
+		}
+	}
+	s.Require().NotEmpty(listQuery, "expected to capture account list query")
+	// Count 和列表查询必须互不污染，否则软删除谓词会被重复追加到同一个列表查询。
+	s.Require().Equal(1, strings.Count(listQuery, `"deleted_at" is null`), listQuery)
 }
 
 // --- ListByGroup / ListActive / ListByPlatform ---
