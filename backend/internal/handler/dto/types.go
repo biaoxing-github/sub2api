@@ -291,6 +291,7 @@ type AccountDerivedHealth struct {
 type APIKeyItem struct {
 	Fingerprint   string `json:"fingerprint"`
 	Masked        string `json:"masked"`
+	Suffix        string `json:"suffix,omitempty"`
 	Status        string `json:"status"`
 	Disabled      bool   `json:"disabled,omitempty"`
 	Reason        string `json:"reason,omitempty"`

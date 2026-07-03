@@ -4032,3 +4032,30 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：最近 120 秒 `sub2api-blue` 与 `sub2api-proxy` 日志未命中 panic、fatal、migration、checksum、pq、bind、listen、rebuild 等发布关键错误。
 - Current state：active blue `sub2api:v0.1.143.2`；rollback green `sub2api:v0.1.143.1`。
 - LIMIT：`ADMIN_PASSWORD` 为空，未执行 authenticated `/api/v1/admin/system/version`；未执行真实上游 OpenAI 请求。
+
+## 2026-07-03 19:11 +08:00 - P2 v0.1.142/v0.1.143 polish absorption
+
+- 变更范围：`backend/internal/service/openai_gateway_service.go`、`gateway_forward_as_chat_completions.go`、`gateway_forward_as_responses.go`、`response_header_filter.go`、`backend/internal/handler/dto/*`、`frontend/src/types/index.ts` 及对应测试。
+- RED：非流式 JSON 响应头测试先失败，确认上游 `text/event-stream` 或自定义 Content-Type 会残留到聚合 JSON 响应上。
+- GREEN：复制上游响应头后统一调用 `forceJSONContentType` 覆盖聚合 JSON 响应；保留没有最终 JSON 的 SSE 原样返回分支。
+- RED：账号 DTO JSON 先缺少 API Key `suffix`；GREEN 后 `api_key_items` 同时暴露 `fingerprint`、`masked` 和末 4 位 `suffix`，且原始 key 仍不出现在响应 JSON 中。
+- RED：过期 5h 窗口仍保留旧 `resets_at`，Setup Token 过期 session window 仍显示旧使用率；GREEN 后过期窗口清零并清除旧 reset 时间。
+- PASS：`go test ./internal/handler/dto -count=1`。
+- PASS：`go test ./internal/service -run 'TestOpenAINonStreamingContentTypeForcesJSON|TestOpenAINonStreamingContentTypeDefault|TestHandleSSEToJSON_CompletedEventReturnsJSON|TestHandlePassthroughSSEToJSON_CompletedEventReturnsJSONContentType|TestHandleNonStreamingResponse_APIKeyFallsBackToSSEBodyWhenContentTypeIsWrong|TestHandleSSEToJSON_NoFinalResponseKeepsSSEBody|TestForwardAsChatCompletions_BufferedTerminalWithoutUpstreamCloseReturns|TestBuildCodexUsageProgressFromExtra_ZerosExpiredWindow|TestAccountUsageService_EstimateSetupTokenUsageZerosExpiredSessionWindow' -count=1`。
+- PASS：`go test -tags unit ./internal/service -run 'TestHandleCCBufferedFromAnthropic_PreservesMessageStartCacheUsageAndReasoning|TestHandleResponsesBufferedStreamingResponse_PreservesMessageStartCacheUsage' -count=1`。
+- PASS：`go test ./internal/service -run '^$'` 与 `go test ./cmd/server -run '^$'` 编译切片通过。
+- PASS：`npm run typecheck` 通过。
+- PASS：scoped `git diff --check` 覆盖 P2 触达文件，通过。
+- LIMIT：本轮未提交、未构建镜像、未部署、未执行真实上游请求；无关 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json` 未触碰。
+
+## 2026-07-03 19:21 +08:00 - P2 completion verification refresh
+
+- PASS：CodeGraph `codegraph_status` 返回健康，当前索引包含 2195 个文件、69170 个节点、181922 条边。
+- PASS：`go test ./internal/handler/dto -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/handler/dto 0.050s`。
+- PASS：P2 精确 service 测试通过：`go test ./internal/service -run '^(TestBuildCodexUsageProgressFromExtra_ZerosExpiredWindow|TestAccountUsageService_EstimateSetupTokenUsageZerosExpiredSessionWindow|TestOpenAINonStreamingContentTypeForcesJSON|TestOpenAINonStreamingContentTypeDefault|TestHandleSSEToJSON_CompletedEventReturnsJSON|TestHandlePassthroughSSEToJSON_CompletedEventReturnsJSONContentType|TestHandleNonStreamingResponse_APIKeyFallsBackToSSEBodyWhenContentTypeIsWrong)$' -count=1`，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 0.048s`。
+- PASS：P2 Anthropic bridge/Chat Completions 精确测试通过：`go test ./internal/service -run '^(TestHandleCCBufferedFromAnthropic_PreservesMessageStartCacheUsageAndReasoning|TestHandleResponsesBufferedStreamingResponse_PreservesMessageStartCacheUsage|TestForwardAsChatCompletions_BufferedTerminalWithoutUpstreamCloseReturns)$' -count=1`，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 0.045s`。
+- PASS：`go test -tags unit ./internal/service -run 'TestGatewayForwardAs(ChatCompletions|Responses)|TestAnthropic|TestBuffered' -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 0.106s`。
+- PASS：`go test ./internal/service -run '^$'` 和 `go test ./cmd/server -run '^$'` 编译切片通过。
+- PASS：`npm run typecheck` 通过，输出 `vue-tsc --noEmit` 无错误。
+- OBSERVE：一次宽正则 service 测试命令误包含 WebSocket/限流历史用例并返回失败；随后改为锚定 P2 测试名后全部通过，因此该失败不作为 P2 缺陷。
+- LIMIT：本轮仍未提交、未构建镜像、未部署、未执行真实上游请求；无关 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json` 保持未处理。

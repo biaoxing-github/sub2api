@@ -3443,7 +3443,7 @@ func TestOpenAIStreamingTooLong(t *testing.T) {
 	}
 }
 
-func TestOpenAINonStreamingContentTypePassThrough(t *testing.T) {
+func TestOpenAINonStreamingContentTypeForcesJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Security: config.SecurityConfig{
@@ -3468,8 +3468,8 @@ func TestOpenAINonStreamingContentTypePassThrough(t *testing.T) {
 		t.Fatalf("handleNonStreamingResponse error: %v", err)
 	}
 
-	if !strings.Contains(rec.Header().Get("Content-Type"), "application/vnd.test+json") {
-		t.Fatalf("expected Content-Type passthrough, got %q", rec.Header().Get("Content-Type"))
+	if !strings.Contains(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("expected JSON Content-Type, got %q", rec.Header().Get("Content-Type"))
 	}
 }
 
@@ -4497,10 +4497,38 @@ func TestHandleSSEToJSON_CompletedEventReturnsJSON(t *testing.T) {
 	require.Equal(t, 7, usage.InputTokens)
 	require.Equal(t, 9, usage.OutputTokens)
 	require.Equal(t, 1, usage.CacheReadInputTokens)
-	// Header 可能由上游 Content-Type 透传；关键是 body 已转换为最终 JSON 响应。
+	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
 	require.NotContains(t, rec.Body.String(), "event:")
 	require.Contains(t, rec.Body.String(), `"id":"resp_2"`)
 	require.NotContains(t, rec.Body.String(), "data:")
+}
+
+func TestHandlePassthroughSSEToJSON_CompletedEventReturnsJSONContentType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+	body := []byte(strings.Join([]string{
+		`data: {"type":"response.in_progress","response":{"id":"resp_passthrough"}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_passthrough","model":"gpt-5.4","usage":{"input_tokens":5,"output_tokens":6,"input_tokens_details":{"cached_tokens":2}}}}`,
+		`data: [DONE]`,
+	}, "\n"))
+
+	usage, err := svc.handlePassthroughSSEToJSON(resp, c, body, "gpt-5.4", "gpt-5.4")
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	require.Equal(t, 5, usage.InputTokens)
+	require.Equal(t, 6, usage.OutputTokens)
+	require.Equal(t, 2, usage.CacheReadInputTokens)
+	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+	require.NotContains(t, rec.Body.String(), "data:")
+	require.Equal(t, "resp_passthrough", gjson.Get(rec.Body.String(), "id").String())
 }
 
 func TestHandleNonStreamingResponse_APIKeyFallsBackToSSEBodyWhenContentTypeIsWrong(t *testing.T) {

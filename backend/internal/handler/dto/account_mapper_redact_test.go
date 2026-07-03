@@ -97,6 +97,7 @@ func TestAccountFromServiceShallow_ExposesMaskedAPIKeyItems(t *testing.T) {
 	require.NotContains(t, string(raw), keyB)
 	require.Contains(t, string(raw), "api_key_items")
 	require.Contains(t, string(raw), "sk-pro...wxyz")
+	require.Contains(t, string(raw), `"suffix":"wxyz"`)
 }
 
 func TestAccountFromServiceShallow_ExpiredAPIKeyCooldownIsActiveAgain(t *testing.T) {

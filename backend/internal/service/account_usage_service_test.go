@@ -215,6 +215,9 @@ func TestBuildCodexUsageProgressFromExtra_ZerosExpiredWindow(t *testing.T) {
 		if progress.RemainingSeconds != 0 {
 			t.Fatalf("expected RemainingSeconds=0, got %v", progress.RemainingSeconds)
 		}
+		if progress.ResetsAt != nil {
+			t.Fatalf("expected expired ResetsAt to be cleared, got %v", progress.ResetsAt)
+		}
 	})
 
 	t.Run("active 5h window keeps utilization", func(t *testing.T) {
@@ -245,4 +248,32 @@ func TestBuildCodexUsageProgressFromExtra_ZerosExpiredWindow(t *testing.T) {
 			t.Fatalf("expected Utilization=0 for expired 7d window, got %v", progress.Utilization)
 		}
 	})
+}
+
+func TestAccountUsageService_EstimateSetupTokenUsageZerosExpiredSessionWindow(t *testing.T) {
+	t.Parallel()
+
+	expiredEnd := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	account := &Account{
+		Type:             AccountTypeSetupToken,
+		SessionWindowEnd: &expiredEnd,
+		Extra: map[string]any{
+			"session_window_utilization": 0.72,
+		},
+	}
+
+	usage := (&AccountUsageService{}).estimateSetupTokenUsage(account)
+
+	if usage == nil || usage.FiveHour == nil {
+		t.Fatal("expected setup token 5h usage progress")
+	}
+	if usage.FiveHour.Utilization != 0 {
+		t.Fatalf("expected expired setup token 5h utilization to be zero, got %v", usage.FiveHour.Utilization)
+	}
+	if usage.FiveHour.RemainingSeconds != 0 {
+		t.Fatalf("expected expired setup token remaining seconds to be zero, got %v", usage.FiveHour.RemainingSeconds)
+	}
+	if usage.FiveHour.ResetsAt != nil {
+		t.Fatalf("expected expired setup token ResetsAt to be cleared, got %v", usage.FiveHour.ResetsAt)
+	}
 }

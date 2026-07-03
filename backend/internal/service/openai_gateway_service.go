@@ -5926,15 +5926,12 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	}
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	forceJSONContentType(c.Writer.Header())
 
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/json"
-	}
 	if originalModel != "" && mappedModel != "" && originalModel != mappedModel {
 		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 	}
-	c.Data(resp.StatusCode, contentType, body)
+	c.Data(resp.StatusCode, jsonContentTypeUTF8, body)
 	return &openaiNonStreamingResultPassthrough{
 		OpenAIUsage:      usage,
 		usage:            usage,
@@ -5990,12 +5987,14 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 
-	contentType := "application/json; charset=utf-8"
+	contentType := jsonContentTypeUTF8
 	if !ok {
 		contentType = resp.Header.Get("Content-Type")
 		if contentType == "" {
 			contentType = "text/event-stream"
 		}
+	} else {
+		forceJSONContentType(c.Writer.Header())
 	}
 	c.Data(resp.StatusCode, contentType, body)
 
@@ -7560,15 +7559,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	forceJSONContentType(c.Writer.Header())
 
-	contentType := "application/json"
-	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
-		if upstreamType := resp.Header.Get("Content-Type"); upstreamType != "" {
-			contentType = upstreamType
-		}
-	}
-
-	c.Data(resp.StatusCode, contentType, body)
+	c.Data(resp.StatusCode, jsonContentTypeUTF8, body)
 
 	return &openaiNonStreamingResult{
 		OpenAIUsage:      usage,
@@ -7627,12 +7620,14 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 
-	contentType := "application/json; charset=utf-8"
+	contentType := jsonContentTypeUTF8
 	if !ok {
 		contentType = resp.Header.Get("Content-Type")
 		if contentType == "" {
 			contentType = "text/event-stream"
 		}
+	} else {
+		forceJSONContentType(c.Writer.Header())
 	}
 	c.Data(resp.StatusCode, contentType, body)
 

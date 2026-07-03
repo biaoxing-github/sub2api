@@ -457,6 +457,7 @@ func APIKeyItemsFromService(a *service.Account) []APIKeyItem {
 		item := APIKeyItem{
 			Fingerprint: fingerprint,
 			Masked:      maskAPIKey(key),
+			Suffix:      apiKeySuffix(key),
 			Status:      "active",
 		}
 		if detail, ok := disabled[fingerprint]; ok {
@@ -519,6 +520,14 @@ func maskAPIKey(value string) string {
 		prefixLen = len(value)
 	}
 	return value[:prefixLen] + "..." + value[len(value)-4:]
+}
+
+func apiKeySuffix(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 4 {
+		return value
+	}
+	return value[len(value)-4:]
 }
 
 func AccountFromService(a *service.Account) *Account {

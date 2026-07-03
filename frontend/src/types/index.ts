@@ -1279,6 +1279,7 @@ export interface Account {
   api_key_items?: Array<{
     fingerprint: string
     masked: string
+    suffix?: string
     status?: 'active' | 'cooling' | string
     disabled?: boolean
     reason?: string

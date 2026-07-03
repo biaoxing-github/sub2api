@@ -1121,6 +1121,8 @@ func buildCodexUsageProgressFromExtra(extra map[string]any, window string, now t
 	// 窗口已过期（resetAt 在 now 之前）→ 额度已重置，归零
 	if progress.ResetsAt != nil && !now.Before(*progress.ResetsAt) {
 		progress.Utilization = 0
+		progress.RemainingSeconds = 0
+		progress.ResetsAt = nil
 	}
 
 	return progress
@@ -1268,7 +1270,10 @@ func (s *AccountUsageService) estimateSetupTokenUsage(account *Account) *UsageIn
 
 	// 如果有session_window信息
 	if account.SessionWindowEnd != nil {
-		remaining := int(time.Until(*account.SessionWindowEnd).Seconds())
+		now := time.Now()
+		sessionWindowEnd := account.SessionWindowEnd
+		expired := !now.Before(*sessionWindowEnd)
+		remaining := int(sessionWindowEnd.Sub(now).Seconds())
 		if remaining < 0 {
 			remaining = 0
 		}
@@ -1298,10 +1303,14 @@ func (s *AccountUsageService) estimateSetupTokenUsage(account *Account) *UsageIn
 				utilization = 80.0
 			}
 		}
+		if expired {
+			utilization = 0
+			sessionWindowEnd = nil
+		}
 
 		info.FiveHour = &UsageProgress{
 			Utilization:      utilization,
-			ResetsAt:         account.SessionWindowEnd,
+			ResetsAt:         sessionWindowEnd,
 			RemainingSeconds: remaining,
 		}
 	} else {
