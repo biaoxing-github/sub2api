@@ -4075,7 +4075,7 @@ func TestOpenAIPassthroughLegacyCockpitToolsCompatIsIgnored(t *testing.T) {
 	require.Equal(t, chatgptCodexURL+"/compact", req.URL.String())
 	require.Equal(t, "application/json", req.Header.Get("Accept"))
 	require.Equal(t, codexCLIUserAgent(), req.Header.Get("User-Agent"))
-	require.Equal(t, "codex_cli_rs", req.Header.Get("Originator"))
+	require.Equal(t, "Codex Desktop", req.Header.Get("Originator"))
 	require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
 	require.NotEmpty(t, req.Header.Get("Session_id"))
 	require.Empty(t, req.Header.Get("Connection"))

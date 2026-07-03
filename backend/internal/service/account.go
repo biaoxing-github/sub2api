@@ -809,11 +809,11 @@ func apiKeyStatusStringFromAny(value any) string {
 }
 
 // disabledAPIKeyRecoveryInterval 按禁用原因和累计次数计算自动恢复间隔。
-// rate_limited 走分级阶梯，其他严重错误走 30min→60min。
+// rate_limited 走更短的单 Key 冷却阶梯，探测器仍保留原本 30s 起步的退避。
 func disabledAPIKeyRecoveryInterval(reason string, count int) time.Duration {
 	switch reason {
 	case "rate_limited":
-		return probeIntervalFromErrorCount(count)
+		return disabledAPIKeyRateLimitRecoveryInterval(count)
 	case "invalid_api_key", "payment_required", "insufficient_balance":
 		if count <= 1 {
 			return 30 * time.Minute
@@ -821,6 +821,27 @@ func disabledAPIKeyRecoveryInterval(reason string, count int) time.Duration {
 		return 60 * time.Minute
 	default:
 		return probeIntervalFromErrorCount(count)
+	}
+}
+
+// disabledAPIKeyRateLimitRecoveryInterval 给单个 OpenAI API Key 的 429 冷却使用。
+// 账号级探测退避需要避免过快重试，但单 Key 轮换要尽快释放偶发限流的健康 key。
+func disabledAPIKeyRateLimitRecoveryInterval(count int) time.Duration {
+	switch {
+	case count <= 1:
+		return time.Second
+	case count <= 3:
+		return 10 * time.Second
+	case count <= 4:
+		return 30 * time.Second
+	case count == 5:
+		return time.Minute
+	case count == 6:
+		return 5 * time.Minute
+	case count == 7:
+		return 30 * time.Minute
+	default:
+		return 60 * time.Minute
 	}
 }
 

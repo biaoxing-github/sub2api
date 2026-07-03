@@ -376,6 +376,30 @@ func TestBuildGenerationConfig_ThinkingDynamicBudget(t *testing.T) {
 	}
 }
 
+func TestBuildGenerationConfig_GeminiReasoningOmitsUnsupportedParameters(t *testing.T) {
+	temperature := 0.7
+	topP := 0.8
+	topK := 40
+	req := &ClaudeRequest{
+		Model:       "gemini-3.1-pro-high",
+		MaxTokens:   24576,
+		Temperature: &temperature,
+		TopP:        &topP,
+		TopK:        &topK,
+		Thinking:    &ThinkingConfig{Type: "enabled", BudgetTokens: 24576},
+	}
+
+	cfg := buildGenerationConfig(req)
+
+	require.NotNil(t, cfg)
+	require.Empty(t, cfg.StopSequences)
+	require.Nil(t, cfg.Temperature)
+	require.Nil(t, cfg.TopP)
+	require.Nil(t, cfg.TopK)
+	require.NotNil(t, cfg.ThinkingConfig)
+	require.Greater(t, cfg.MaxOutputTokens, cfg.ThinkingConfig.ThinkingBudget)
+}
+
 func TestTransformClaudeToGeminiWithOptions_PreservesBillingHeaderSystemBlock(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -455,4 +479,23 @@ func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions
 	require.Len(t, req.Request.Tools[0].FunctionDeclarations, 1)
 	require.Equal(t, "get_weather", req.Request.Tools[0].FunctionDeclarations[0].Name)
 	require.NotNil(t, req.Request.Tools[1].GoogleSearch)
+}
+
+func TestTransformClaudeToGeminiWithOptions_GeminiReasoningOmitsEmptyToolConfig(t *testing.T) {
+	claudeReq := &ClaudeRequest{
+		Model: "gemini-3.1-pro-high",
+		Messages: []ClaudeMessage{
+			{
+				Role:    "user",
+				Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+			},
+		},
+	}
+
+	body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "gemini-3.1-pro-high", DefaultTransformOptions())
+	require.NoError(t, err)
+
+	var req V1InternalRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+	require.Nil(t, req.Request.ToolConfig)
 }

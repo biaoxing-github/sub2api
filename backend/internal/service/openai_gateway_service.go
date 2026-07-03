@@ -773,6 +773,67 @@ func classifyOpenAIWSReconnectReason(err error) (string, bool) {
 	}
 }
 
+// openAIWSPreWriteFailoverError 将 WS 写客户端前的关键失败转成上层调度可识别的 failover。
+// 这里不能回退同账号 HTTP，但必须让 handler 有机会切换到其他账号或健康 API Key。
+func (s *OpenAIGatewayService) openAIWSPreWriteFailoverError(ctx context.Context, account *Account, err error) *UpstreamFailoverError {
+	var fallbackErr *openAIWSFallbackError
+	if !errors.As(err, &fallbackErr) || fallbackErr == nil {
+		return nil
+	}
+	reason := strings.TrimSpace(fallbackErr.Reason)
+	reason = strings.TrimPrefix(reason, "prewarm_")
+	statusCode := 0
+	errType := "upstream_error"
+	message := ""
+	responseHeaders := http.Header(nil)
+	if status, resolvedType, clientMessage, upstreamMessage, ok := resolveOpenAIWSFallbackErrorResponse(err); ok {
+		statusCode = status
+		if resolvedType != "" {
+			errType = resolvedType
+		}
+		message = firstNonEmptyString(upstreamMessage, clientMessage)
+	}
+	var dialErr *openAIWSDialError
+	if fallbackErr.Err != nil && errors.As(fallbackErr.Err, &dialErr) && dialErr != nil {
+		responseHeaders = cloneHeader(dialErr.ResponseHeaders)
+	}
+
+	switch reason {
+	case "upstream_rate_limited":
+		if statusCode == 0 {
+			statusCode = http.StatusTooManyRequests
+		}
+		errType = "rate_limit_error"
+	case "auth_failed":
+		if statusCode == 0 {
+			statusCode = http.StatusUnauthorized
+		}
+		if s != nil && account != nil {
+			s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, responseHeaders, []byte(`{"error":{"type":"authentication_error","message":"upstream authentication failed"}}`))
+		}
+	case "read_event", "dial_failed", "acquire_conn", "acquire_timeout", "conn_queue_full", "upstream_5xx", "event_error", "error_event", "upstream_error_event", "missing_final_response":
+		if statusCode == 0 {
+			statusCode = http.StatusBadGateway
+		}
+	default:
+		return nil
+	}
+	if message == "" {
+		message = http.StatusText(statusCode)
+	}
+	if fallbackErr.Err != nil {
+		if raw := strings.TrimSpace(fallbackErr.Err.Error()); raw != "" {
+			message = raw
+		}
+	}
+	body := []byte(fmt.Sprintf(`{"error":{"type":%q,"message":%q}}`, errType, sanitizeUpstreamErrorMessage(message)))
+	return &UpstreamFailoverError{
+		StatusCode:      statusCode,
+		ResponseBody:    body,
+		ResponseHeaders: responseHeaders,
+	}
+}
+
 func resolveOpenAIWSFallbackErrorResponse(err error) (statusCode int, errType string, clientMessage string, upstreamMessage string, ok bool) {
 	if err == nil {
 		return 0, "", "", "", false
@@ -1626,8 +1687,13 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 		accountConcurrency = account.Concurrency
 	}
 
+	reqBaseCtx := req.Context()
+	if reqBaseCtx == nil {
+		reqBaseCtx = context.Background()
+	}
 	attempt := &HTTPUpstreamAttemptInfo{RequestBaseURL: strings.TrimSpace(requestBaseURL)}
-	reqCtx := WithHTTPUpstreamProfile(ctx, HTTPUpstreamProfileOpenAI)
+	// reqBaseCtx 可能是 detachUpstreamContext 产物，必须保留其取消语义。
+	reqCtx := WithHTTPUpstreamProfile(reqBaseCtx, HTTPUpstreamProfileOpenAI)
 	reqCtx = WithHTTPUpstreamAttemptInfo(reqCtx, attempt)
 	req = req.WithContext(reqCtx)
 
@@ -1670,9 +1736,9 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamWithHeaderTimeout(
 	case <-timer.C:
 		cancel()
 		return nil, fmt.Errorf("timed out waiting for OpenAI upstream response headers after %s", timeout)
-	case <-ctx.Done():
+	case <-reqCtx.Done():
 		cancel()
-		return nil, ctx.Err()
+		return nil, reqCtx.Err()
 	}
 }
 
@@ -3511,7 +3577,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if apiKey != nil {
 		imageGenerationAllowed = GroupAllowsImageGeneration(apiKey.Group)
 	}
-	codexImageGenerationBridgeEnabled := isCodexCLI && imageGenerationAllowed && s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
 	imageIntent := IsImageGenerationIntent(openAIResponsesEndpoint, reqModel, body)
 	if imageIntent && !imageGenerationAllowed {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
@@ -3533,6 +3598,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	upstreamModel := billingModel
 	isCompactRequest := isOpenAIResponsesCompactPath(c)
+	codexImageGenerationBridgeEnabled := isCodexCLI && imageGenerationAllowed && !isCompactRequest && s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
 	compactMapped := false
 	if isCompactRequest {
 		compactMappedModel := resolveOpenAICompactForwardModel(account, billingModel)
@@ -3568,10 +3634,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("image generation disabled for group")
 	}
 
+	codexImageGenerationBridgeRetryBody := []byte(nil)
+	codexImageGenerationBridgeRetryTried := false
 	if imageGenerationAllowed && (codexImageGenerationBridgeEnabled || isOpenAIImageGenerationModel(requestView.Model) || openAIRequestBodyImageGenerationToolNeedsNormalization(body) || isOpenAIImageGenerationModel(upstreamModel)) {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
 			return nil, decodeErr
+		}
+		if codexImageGenerationBridgeEnabled && !hasOpenAIImageGenerationTool(decoded) {
+			if retryBody, marshalErr := marshalOpenAIUpstreamJSON(decoded); marshalErr == nil {
+				codexImageGenerationBridgeRetryBody = retryBody
+			}
 		}
 		if codexImageGenerationBridgeEnabled && ensureOpenAIResponsesImageGenerationTool(decoded) {
 			markDecodedModified()
@@ -3911,7 +3984,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			if retryable && attempt < maxAttempts {
 				backoff := s.openAIWSRetryBackoff(attempt)
-				if retryBudget > 0 && time.Since(retryStartedAt)+backoff > retryBudget {
+				if retryBudget <= 0 || time.Since(retryStartedAt)+backoff > retryBudget {
 					s.recordOpenAIWSRetryExhausted()
 					logOpenAIWSModeInfo(
 						"reconnect_budget_exhausted account_id=%d attempts=%d max_retries=%d reason=%s elapsed_ms=%d budget_ms=%d",
@@ -3994,6 +4067,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			return wsResult, nil
 		}
+		if failoverErr := s.openAIWSPreWriteFailoverError(ctx, account, wsErr); failoverErr != nil {
+			return nil, failoverErr
+		}
 		s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
 		return nil, wsErr
 	}
@@ -4045,6 +4121,20 @@ httpRetryLoop:
 				upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 				upstreamCode := extractUpstreamErrorCode(respBody)
+				if !codexImageGenerationBridgeRetryTried && len(codexImageGenerationBridgeRetryBody) > 0 && IsOpenAIImageGenerationNotEnabledError(resp.StatusCode, upstreamMsg, respBody) {
+					codexImageGenerationBridgeRetryTried = true
+					codexImageGenerationBridgeEnabled = false
+					body = append([]byte(nil), codexImageGenerationBridgeRetryBody...)
+					requestView = newOpenAIRequestView(body)
+					reqBody = nil
+					imageIntent = false
+					imageBillingModel = ""
+					imageSizeTier = ""
+					imageInputSize = ""
+					s.disableCodexImageGenerationBridgeForAccount(ctx, account, "upstream_image_generation_not_enabled")
+					logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying request once without Codex image_generation bridge (account: %s)", account.Name)
+					continue httpRetryLoop
+				}
 				if !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && upstreamCode == "invalid_encrypted_content" {
 					decoded, decodeErr := ensureReqBody()
 					if decodeErr != nil {
@@ -6138,6 +6228,11 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		)
 	}
 
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		writeOpenAIRequestTooLargeError(c)
+		return nil, fmt.Errorf("upstream error: %d request body too large", resp.StatusCode)
+	}
+
 	if status, errType, errMsg, matched := applyErrorPassthroughRule(
 		c,
 		PlatformOpenAI,
@@ -6268,6 +6363,15 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 }
 
+func writeOpenAIRequestTooLargeError(c *gin.Context) {
+	c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+		"error": gin.H{
+			"type":    "invalid_request_error",
+			"message": "Request body is too large for upstream OpenAI API",
+		},
+	})
+}
+
 // compatErrorWriter is the signature for format-specific error writers used by
 // the compat paths (Chat Completions and Anthropic Messages).
 type compatErrorWriter func(c *gin.Context, statusCode int, errType, message string)
@@ -6301,6 +6405,11 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		upstreamDetail = truncateString(string(body), maxBytes)
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
+
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		writeError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", "Request body is too large for upstream OpenAI API")
+		return nil, fmt.Errorf("upstream error: %d request body too large", resp.StatusCode)
+	}
 
 	// Apply error passthrough rules
 	if status, errType, errMsg, matched := applyErrorPassthroughRule(
@@ -8592,6 +8701,12 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+		if resetAt := codexSnapshotRateLimitResetAt(updates, time.Now()); resetAt != nil {
+			account, err := s.accountRepo.GetByID(updateCtx, accountID)
+			if err == nil && codexSnapshotShouldLimitAccount(account) {
+				_ = s.accountRepo.SetRateLimited(updateCtx, accountID, *resetAt)
+			}
+		}
 	}()
 }
 

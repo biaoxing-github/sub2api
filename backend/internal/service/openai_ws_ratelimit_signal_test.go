@@ -19,10 +19,12 @@ import (
 
 type openAIWSRateLimitSignalRepo struct {
 	stubOpenAIAccountRepo
-	rateLimitCalls []time.Time
-	updateExtra    []map[string]any
-	setErrorCalls  int
-	lastErrorMsg   string
+	rateLimitCalls        []time.Time
+	updateExtra           []map[string]any
+	setErrorCalls         int
+	lastErrorMsg          string
+	updateCredentialsCall int
+	lastCredentials       map[string]any
 }
 
 type openAICodexSnapshotAsyncRepo struct {
@@ -54,6 +56,29 @@ func (r *openAIWSRateLimitSignalRepo) UpdateExtra(_ context.Context, _ int64, up
 	}
 	r.updateExtra = append(r.updateExtra, copied)
 	return nil
+}
+
+func (r *openAIWSRateLimitSignalRepo) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {
+	r.updateCredentialsCall++
+	r.lastCredentials = cloneCredentials(credentials)
+	return nil
+}
+
+func requireWSRateLimitSelectedAPIKeyCooldown(t *testing.T, repo *openAIWSRateLimitSignalRepo, apiKey string) {
+	requireWSSelectedAPIKeyCooldown(t, repo, apiKey, "rate_limited")
+}
+
+func requireWSSelectedAPIKeyCooldown(t *testing.T, repo *openAIWSRateLimitSignalRepo, apiKey string, reason string) {
+	t.Helper()
+	require.Empty(t, repo.rateLimitCalls)
+	require.Equal(t, 1, repo.updateCredentialsCall)
+	disabled, ok := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+	require.True(t, ok)
+	record, ok := disabled[FingerprintAPIKey(apiKey)].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, reason, record["reason"])
+	require.Equal(t, 1, positiveIntFromAny(record["disabled_count"], 0))
+	require.NotEmpty(t, record["disabled_until"])
 }
 
 func (r *openAICodexSnapshotAsyncRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
@@ -188,8 +213,7 @@ func TestOpenAIGatewayService_Forward_WSv2ErrorEventUsageLimitPersistsRateLimit(
 	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Nil(t, upstream.lastReq, "WS 限流 error event 不应回退到同账号 HTTP")
-	require.Len(t, repo.rateLimitCalls, 1)
-	require.WithinDuration(t, time.Unix(resetAt, 0), repo.rateLimitCalls[0], 2*time.Second)
+	requireWSRateLimitSelectedAPIKeyCooldown(t, repo, "sk-test")
 }
 
 func TestOpenAIGatewayService_Forward_WSv2Handshake429PersistsRateLimit(t *testing.T) {
@@ -261,7 +285,7 @@ func TestOpenAIGatewayService_Forward_WSv2Handshake429PersistsRateLimit(t *testi
 	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Nil(t, upstream.lastReq, "WS 握手 429 不应回退到同账号 HTTP")
-	require.Len(t, repo.rateLimitCalls, 1)
+	requireWSRateLimitSelectedAPIKeyCooldown(t, repo, "sk-test")
 	require.NotEmpty(t, repo.updateExtra, "握手 429 的 x-codex 头应立即落库")
 	require.Contains(t, repo.updateExtra[0], "codex_usage_updated_at")
 }
@@ -321,7 +345,7 @@ func TestOpenAIGatewayService_Forward_WSv2Handshake429ReturnsFailover(t *testing
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 	require.False(t, rec.Result().Header.Get("Content-Type") != "" || rec.Code != http.StatusOK, "failover path must not write client response before handler can switch accounts")
-	require.Len(t, repo.rateLimitCalls, 1)
+	requireWSRateLimitSelectedAPIKeyCooldown(t, repo, "sk-test")
 }
 
 func TestOpenAIGatewayService_Forward_WSv2Handshake401ReturnsFailoverBeforeWrite(t *testing.T) {
@@ -378,8 +402,8 @@ func TestOpenAIGatewayService_Forward_WSv2Handshake401ReturnsFailoverBeforeWrite
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusUnauthorized, failoverErr.StatusCode)
 	require.False(t, rec.Result().Header.Get("Content-Type") != "" || rec.Code != http.StatusOK, "WS 401 应交给 handler 切账号，不能提前写客户端响应")
-	require.Equal(t, 1, repo.setErrorCalls)
-	require.Contains(t, strings.ToLower(repo.lastErrorMsg), "authentication")
+	requireWSSelectedAPIKeyCooldown(t, repo, "sk-test", "invalid_api_key")
+	require.Equal(t, 0, repo.setErrorCalls)
 }
 
 func TestOpenAIGatewayService_Forward_WSv2EarlyReadEOFReturnsFailoverBeforeWrite(t *testing.T) {
@@ -515,7 +539,7 @@ func TestOpenAIGatewayService_Forward_WSv2UsageLimitEventReturnsFailoverBeforeWr
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 	require.False(t, rec.Result().Header.Get("Content-Type") != "" || rec.Code != http.StatusOK, "failover path must not write client response before handler can switch accounts")
-	require.Len(t, repo.rateLimitCalls, 1)
+	requireWSRateLimitSelectedAPIKeyCooldown(t, repo, "sk-test")
 }
 
 func TestOpenAIGatewayService_Forward_WSv2CodexRateLimitsEventReturnsFailoverBeforeWrite(t *testing.T) {
@@ -601,7 +625,7 @@ func TestOpenAIGatewayService_Forward_WSv2CodexRateLimitsEventReturnsFailoverBef
 	require.False(t, rec.Result().Header.Get("Content-Type") != "" || rec.Code != http.StatusOK, "failover path must not write client response before handler can switch accounts")
 	require.NotEmpty(t, repo.updateExtra, "codex.rate_limits 事件应落库额度快照")
 	require.Contains(t, repo.updateExtra[0], "codex_usage_updated_at")
-	require.Len(t, repo.rateLimitCalls, 1)
+	requireWSRateLimitSelectedAPIKeyCooldown(t, repo, "sk-test")
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ErrorEventUsageLimitPersistsRateLimit(t *testing.T) {
@@ -703,8 +727,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ErrorEventUsageL
 	select {
 	case serverErr := <-serverErrCh:
 		require.Error(t, serverErr)
-		require.Len(t, repo.rateLimitCalls, 1)
-		require.WithinDuration(t, time.Unix(resetAt, 0), repo.rateLimitCalls[0], 2*time.Second)
+		requireWSRateLimitSelectedAPIKeyCooldown(t, repo, "sk-test")
 	case <-time.After(5 * time.Second):
 		t.Fatal("等待 ingress websocket 结束超时")
 	}

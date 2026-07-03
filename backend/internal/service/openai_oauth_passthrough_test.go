@@ -217,10 +217,12 @@ func TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstruction
 
 type openAIPassthroughFailoverRepo struct {
 	stubOpenAIAccountRepo
-	rateLimitCalls []time.Time
-	overloadCalls  []time.Time
-	tempCalls      []time.Time
-	tempReasons    []string
+	rateLimitCalls        []time.Time
+	overloadCalls         []time.Time
+	tempCalls             []time.Time
+	tempReasons           []string
+	updateCredentialsCall int
+	lastCredentials       map[string]any
 }
 
 func (r *openAIPassthroughFailoverRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
@@ -236,6 +238,12 @@ func (r *openAIPassthroughFailoverRepo) SetOverloaded(_ context.Context, _ int64
 func (r *openAIPassthroughFailoverRepo) SetTempUnschedulable(_ context.Context, _ int64, until time.Time, reason string) error {
 	r.tempCalls = append(r.tempCalls, until)
 	r.tempReasons = append(r.tempReasons, reason)
+	return nil
+}
+
+func (r *openAIPassthroughFailoverRepo) UpdateCredentials(_ context.Context, _ int64, credentials map[string]any) error {
+	r.updateCredentialsCall++
+	r.lastCredentials = cloneCredentials(credentials)
 	return nil
 }
 
@@ -1030,9 +1038,17 @@ func TestOpenAIGatewayService_OpenAIPassthrough_429And529TriggerFailover(t *test
 			assertRepo: func(t *testing.T, repo *openAIPassthroughFailoverRepo, start time.Time) {
 				require.Empty(t, repo.rateLimitCalls)
 				require.Empty(t, repo.overloadCalls)
-				require.Len(t, repo.tempCalls, 1)
-				require.WithinDuration(t, start.Add(probeIntervalFromErrorCount(1)), repo.tempCalls[0], 2*time.Second)
-				require.Contains(t, repo.tempReasons[0], "rate_limited")
+				require.Empty(t, repo.tempCalls)
+				require.Equal(t, 1, repo.updateCredentialsCall)
+				disabled, ok := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
+				require.True(t, ok)
+				record, ok := disabled[FingerprintAPIKey("sk-test")].(map[string]any)
+				require.True(t, ok)
+				require.Equal(t, "rate_limited", record["reason"])
+				require.Equal(t, 1, positiveIntFromAny(record["disabled_count"], 0))
+				until, err := time.Parse(time.RFC3339, record["disabled_until"].(string))
+				require.NoError(t, err)
+				require.WithinDuration(t, start.Add(disabledAPIKeyRecoveryInterval("rate_limited", 1)), until, 2*time.Second)
 			},
 		},
 		{

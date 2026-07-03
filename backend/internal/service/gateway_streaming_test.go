@@ -198,6 +198,109 @@ func TestHandleStreamingResponse_EmptyStream(t *testing.T) {
 	require.True(t, failoverErr.RetryableOnSameAccount)
 }
 
+func TestHandleStreamingResponse_ClaudeCodeNewCLISendsNoopDeltaKeepalive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name       string
+		startEvent string
+		deltaEvent string
+		want       string
+	}{
+		{
+			name:       "text",
+			startEvent: `data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			deltaEvent: `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`,
+			want:       `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":""}}`,
+		},
+		{
+			name:       "tool_use",
+			startEvent: `data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_1","name":"Bash","input":{}}}`,
+			deltaEvent: `data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\""}}`,
+			want:       `data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}}`,
+		},
+		{
+			name:       "thinking",
+			startEvent: `data: {"type":"content_block_start","index":2,"content_block":{"type":"thinking","thinking":""}}`,
+			deltaEvent: `data: {"type":"content_block_delta","index":2,"delta":{"type":"thinking_delta","thinking":"plan"}}`,
+			want:       `data: {"type":"content_block_delta","index":2,"delta":{"type":"thinking_delta","thinking":""}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newMinimalGatewayService()
+			svc.cfg.Gateway.StreamKeepaliveInterval = 1
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			c.Request.Header.Set("User-Agent", "claude-cli/2.1.193 (external, cli)")
+
+			pr, pw := io.Pipe()
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: pr}
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n"))
+				_, _ = pw.Write([]byte(tt.startEvent + "\n\n"))
+				_, _ = pw.Write([]byte(tt.deltaEvent + "\n\n"))
+				time.Sleep(1200 * time.Millisecond)
+				_, _ = pw.Write([]byte(`data: {"type":"content_block_stop","index":0}` + "\n\n"))
+				_, _ = pw.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":1}}\n\n"))
+				_, _ = pw.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+				_ = pw.Close()
+			}()
+
+			result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+			_ = pr.Close()
+			<-done
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			body := rec.Body.String()
+			require.Contains(t, body, tt.want)
+			require.NotContains(t, body, "event: ping")
+		})
+	}
+}
+
+func TestHandleStreamingResponse_OldClaudeCodeKeepsPingKeepalive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newMinimalGatewayService()
+	svc.cfg.Gateway.StreamKeepaliveInterval = 1
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("User-Agent", "claude-cli/2.1.192 (external, cli)")
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: pr}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = pw.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5}}}\n\n"))
+		_, _ = pw.Write([]byte(`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n"))
+		_, _ = pw.Write([]byte(`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}` + "\n\n"))
+		time.Sleep(1200 * time.Millisecond)
+		_, _ = pw.Write([]byte(`data: {"type":"content_block_stop","index":0}` + "\n\n"))
+		_, _ = pw.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":1}}\n\n"))
+		_, _ = pw.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+		_ = pw.Close()
+	}()
+
+	result, err := svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+	_ = pr.Close()
+	<-done
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, rec.Body.String(), "event: ping\ndata: {\"type\": \"ping\"}\n\n")
+}
+
 func TestHandleStreamingResponse_MissingTerminalBeforeOutput_TriggersFailover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newMinimalGatewayService()

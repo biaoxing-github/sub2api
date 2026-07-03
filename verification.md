@@ -3963,3 +3963,18 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：75 秒切流后观察中 `sub2api-blue` 运行 `sub2api:v0.1.140.2`，状态为 `healthy Status=running Restart=0`；最近 75 秒 app/proxy 日志未命中 panic、fatal、migration、checksum、bind、listen、rebuild 等发布关键错误。
 - Current state：active blue `sub2api:v0.1.140.2`；rollback green `sub2api:v0.1.140.1`。
 - LIMIT：未执行真实 zz1cc 上游请求；authenticated `/api/v1/admin/system/version` 未运行，因为本地部署自动化路径没有可用管理端密码。
+
+## 2026-07-03 14:20 +08:00 - P0 v0.1.142/v0.1.143 稳定性吸收
+
+- 变更范围：`backend/internal/service/gateway_service.go`、`backend/internal/service/openai_gateway_service.go`、`backend/internal/service/openai_ws_forwarder.go`、`backend/internal/service/account.go`、`backend/internal/service/billing_service.go`、`backend/internal/service/openai_codex_transform.go`、`backend/internal/pkg/antigravity/*`、`backend/internal/repository/claude_oauth_service.go` 及对应测试。
+- 修复/增强：Anthropic 流式在 thinking disabled 时抑制 thinking block；Claude Code CLI `>=2.1.193` 使用 noop `content_block_delta` keepalive；OpenAI HTTP 413 直接回 413 且不触发切号；WS 写客户端前的 429/401/read/dial/acquire/event/missing-final 失败转为 failover；WS retry budget `<=0` 立即耗尽；WS 首帧前延迟写 header；`codex.rate_limits` WS 事件解析并持久化，耗尽时设置账号运行时限流；APIKey WS ingress 记录 selected key，使 429/401 进入单 key 冷却；OpenAI OAuth `count_tokens` 不支持时返回本地估算；Antigravity reasoning model 请求减少不兼容参数。
+- PASS：`gofmt` 覆盖本轮 Go 改动和新增 `gateway_count_tokens_test.go`。
+- PASS：P0 focused service tests 通过：`go test -tags unit ./internal/service -run '<P0 focused Anthropic/OpenAI/WS/count_tokens tests>' -count=1 -timeout 3m`，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 7.301s`。
+- PASS：`go test ./internal/pkg/antigravity -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/pkg/antigravity 0.054s`。
+- PASS：`go test ./internal/repository -run 'TestClaudeOAuth' -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/repository 0.079s`。
+- PASS：`go test ./cmd/server -run TestNoSuchTest -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/cmd/server 0.046s [no tests to run]`。
+- PASS：JSONL tail parse check 通过。
+- PASS：scoped `git diff --check` 覆盖本轮 P0 touched files 通过。
+- FAIL（宽单测既有风险）：`go test -tags unit ./internal/service -count=1 -timeout 5m` 返回 `ExitCode=1`，失败项为 `TestGatewayService_GroupResolution_ReusesContextGroup`、`TestGatewayService_GroupResolution_IgnoresInvalidContextGroup`、`TestGatewayService_GroupResolution_FallbackUsesLiteOnce`、`TestOpenAISelectAccountWithLoadAwareness_FiltersUnschedulable`、`TestOpenAISelectAccountWithLoadAwareness_FiltersUnschedulableWhenNoConcurrencyService`、`TestOpenAISelectAccountWithLoadAwareness_DoesNotPrecheckRealtimeBalance`、`TestOpenAISelectAccountWithLoadAwareness_AllowsOnlyAPIKeyWhenRealtimeBalanceUnknown`、`TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledReturnsFailoverWhenClientStillConnected`、`TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledDoesNotFailoverWhenClientCanceled`。
+- OBSERVE：CodeGraph 本轮 `codegraph_status` 仍返回 `Transport closed`，`.codegraph/daemon.log` 最近记录包含多次 `socket error: write EPIPE`，因此按项目规则降级为 PowerShell 本地检索和 Go 测试验证。
+- LIMIT：本轮提交前未构建镜像、未部署、未执行真实上游请求；`.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json` 为无关脏文件，未纳入 P0。

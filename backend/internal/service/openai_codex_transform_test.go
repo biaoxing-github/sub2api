@@ -2,7 +2,6 @@ package service
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -112,6 +111,45 @@ func TestApplyCodexOAuthTransform_MessagesBridgePromptCacheKeyIsHeaderOnly(t *te
 	require.Equal(t, "anthropic-metadata-session-1", result.PromptCacheKey)
 	require.True(t, result.Modified)
 	require.NotContains(t, reqBody, "prompt_cache_key")
+}
+
+func TestApplyCodexOAuthTransform_PreservesEncryptedReasoningItems(t *testing.T) {
+	reqBody := map[string]any{
+		"model": "gpt-5.4",
+		"input": []any{
+			map[string]any{
+				"type":              "reasoning",
+				"id":                "rs_123",
+				"encrypted_content": "enc_payload",
+				"content":           []any{map[string]any{"type": "reasoning_text", "text": "hidden"}},
+			},
+			map[string]any{
+				"type":              "reasoning",
+				"id":                "rs_456",
+				"encrypted_content": "enc_payload_2",
+				"summary":           []any{"kept"},
+			},
+		},
+	}
+
+	applyCodexOAuthTransform(reqBody, true, false)
+
+	input, ok := reqBody["input"].([]any)
+	require.True(t, ok)
+	require.Len(t, input, 2)
+
+	first := input[0].(map[string]any)
+	require.Equal(t, "reasoning", first["type"])
+	require.Equal(t, "enc_payload", first["encrypted_content"])
+	require.Contains(t, first, "content")
+	require.NotContains(t, first, "id")
+	require.Equal(t, []any{}, first["summary"])
+
+	second := input[1].(map[string]any)
+	require.Equal(t, "reasoning", second["type"])
+	require.Equal(t, "enc_payload_2", second["encrypted_content"])
+	require.Equal(t, []any{"kept"}, second["summary"])
+	require.NotContains(t, second, "id")
 }
 
 func TestApplyCodexOAuthTransform_ToolContinuationPreservesNativeMessageAndReasoningIDs(t *testing.T) {
@@ -1309,20 +1347,14 @@ func TestIsInstructionsEmpty(t *testing.T) {
 	}
 }
 
-func TestFilterCodexInput_DropsReasoningItemsRegardlessOfPreserveReferences(t *testing.T) {
-	// Reasoning items in input[] reference rs_* IDs that were emitted by
-	// chatgpt.com under store=false (forced by applyCodexOAuthTransform).
-	// They are never persisted upstream, so forwarding them produces a
-	// guaranteed 404 ("Item with id 'rs_...' not found"). Drop them
-	// regardless of preserveReferences. See: Wei-Shaw/sub2api issue #1957.
-
+func TestFilterCodexInput_PreservesEncryptedReasoningItemsWithoutIDs(t *testing.T) {
 	build := func() []any {
 		return []any{
 			map[string]any{"type": "message", "id": "msg_0", "role": "user", "content": "hi"},
 			map[string]any{
-				"type":    "reasoning",
-				"id":      "rs_0672f12450da0b9c0169f07220a6c08198b68c2455ced99344",
-				"summary": []any{},
+				"type":              "reasoning",
+				"id":                "rs_0672f12450da0b9c0169f07220a6c08198b68c2455ced99344",
+				"encrypted_content": "enc_payload",
 			},
 			map[string]any{"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "tool"},
 			map[string]any{"type": "function_call_output", "call_id": "call_1", "output": "{}"},
@@ -1334,16 +1366,19 @@ func TestFilterCodexInput_DropsReasoningItemsRegardlessOfPreserveReferences(t *t
 		t.Run(fmt.Sprintf("preserveReferences=%v", preserve), func(t *testing.T) {
 			filtered := filterCodexInput(build(), preserve)
 
+			foundReasoning := false
 			for _, raw := range filtered {
 				item, ok := raw.(map[string]any)
 				require.True(t, ok)
-				require.NotEqual(t, "reasoning", item["type"],
-					"reasoning items must be dropped from input on the OAuth path")
-				if id, ok := item["id"].(string); ok {
-					require.False(t, strings.HasPrefix(id, "rs_"),
-						"no item carrying an rs_* id should survive the filter")
+				if item["type"] == "reasoning" {
+					foundReasoning = true
+					require.Equal(t, "enc_payload", item["encrypted_content"])
+					require.Equal(t, []any{}, item["summary"])
+					require.NotContains(t, item, "id")
+					require.NotContains(t, item, "call_id")
 				}
 			}
+			require.True(t, foundReasoning, "encrypted reasoning items should survive without replaying rs_* ids")
 
 			// Sanity check: the non-reasoning items should still be present.
 			gotTypes := make(map[string]int)
@@ -1357,7 +1392,7 @@ func TestFilterCodexInput_DropsReasoningItemsRegardlessOfPreserveReferences(t *t
 			require.Equal(t, 1, gotTypes["message"])
 			require.Equal(t, 1, gotTypes["function_call"])
 			require.Equal(t, 1, gotTypes["function_call_output"])
-			require.Equal(t, 0, gotTypes["reasoning"])
+			require.Equal(t, 1, gotTypes["reasoning"])
 		})
 	}
 }

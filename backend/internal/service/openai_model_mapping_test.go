@@ -95,6 +95,15 @@ func TestResolveOpenAIForwardModel(t *testing.T) {
 			expectedModel:      "gpt-5.5",
 		},
 		{
+			name: "preserves gpt-5.5-pro instead of group default",
+			account: &Account{
+				Credentials: map[string]any{},
+			},
+			requestedModel:     "gpt-5.5-pro",
+			defaultMappedModel: "gpt-5.4",
+			expectedModel:      "gpt-5.5-pro",
+		},
+		{
 			name: "preserves compact-spelled gpt5.5 instead of group default",
 			account: &Account{
 				Credentials: map[string]any{},
@@ -222,6 +231,8 @@ func TestNormalizeCodexModel(t *testing.T) {
 		"gpt-5.3-codex-spark-high":  "gpt-5.3-codex-spark",
 		"gpt-5.3-codex-spark-xhigh": "gpt-5.3-codex-spark",
 		"gpt-5.3":                   "gpt-5.3-codex",
+		"gpt-5.5-pro":               "gpt-5.5-pro",
+		"gpt-5.5-pro-high":          "gpt-5.5-pro",
 		"gpt-image-2":               "gpt-image-2",
 		"gpt-5.4-nano":              "gpt-5.4-nano",
 		"gpt-5.4-nano-high":         "gpt-5.4-nano",

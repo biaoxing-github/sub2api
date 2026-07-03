@@ -81,6 +81,8 @@ const (
 	claudeMimicDebugInfoKey = "claude_mimic_debug_info"
 )
 
+const claudeCodeNoopDeltaKeepaliveMinVersion = "2.1.193"
+
 const (
 	cacheTTLTarget5m = "5m"
 	cacheTTLTarget1h = "1h"
@@ -5742,6 +5744,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
+	useNoopDeltaKeepalive := shouldUseClaudeCodeNoopDeltaKeepalive(c)
+	openContentBlockIndex := -1
+	openContentBlockType := ""
 	// outputStarted: 客户端是否已经收到真实模型输出。写前缓冲前导帧（message_start/
 	// content_block_start 等），仅当出现真实内容增量或非零 output_tokens 时才 flush。
 	outputStarted := false
@@ -5924,6 +5929,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					ms := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &ms
 				}
+				updateAnthropicStreamContentBlockState(trimmed, &openContentBlockIndex, &openContentBlockType)
 				s.parseSSEUsagePassthrough(data, usage)
 				if !outputStarted && (usage.OutputTokens > 0 || anthropicStreamLineStartsRealOutput(trimmed)) {
 					outputStarted = true
@@ -5975,6 +5981,19 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			if time.Since(lastDataAt) < keepaliveInterval {
 				continue
 			}
+			if useNoopDeltaKeepalive && outputStarted && openContentBlockIndex >= 0 {
+				block := buildClaudeCodeNoopDeltaKeepalive(openContentBlockIndex, openContentBlockType)
+				if block != "" {
+					if _, err := fmt.Fprint(w, block); err != nil {
+						clientDisconnected = true
+						logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during Claude Code noop keepalive, continue draining upstream for usage: account=%d", account.ID)
+						continue
+					}
+					flusher.Flush()
+					lastDataAt = time.Now()
+					continue
+				}
+			}
 			if _, err := fmt.Fprint(w, "event: ping\ndata: {\"type\": \"ping\"}\n\n"); err != nil {
 				clientDisconnected = true
 				logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during keepalive ping, continue draining upstream for usage: account=%d", account.ID)
@@ -5998,6 +6017,46 @@ func extractAnthropicSSEDataLine(line string) (string, bool) {
 		start++
 	}
 	return line[start:], true
+}
+
+func updateAnthropicStreamContentBlockState(data string, openIndex *int, openType *string) {
+	if openIndex == nil || openType == nil || data == "" || data == "[DONE]" {
+		return
+	}
+	parsed := gjson.Parse(data)
+	switch parsed.Get("type").String() {
+	case "content_block_start":
+		*openIndex = int(parsed.Get("index").Int())
+		blockType := strings.TrimSpace(parsed.Get("content_block.type").String())
+		if blockType == "" {
+			blockType = "text"
+		}
+		*openType = blockType
+	case "content_block_delta":
+		if parsed.Get("index").Exists() {
+			*openIndex = int(parsed.Get("index").Int())
+		}
+		switch parsed.Get("delta.type").String() {
+		case "input_json_delta":
+			*openType = "tool_use"
+		case "thinking_delta", "signature_delta":
+			*openType = "thinking"
+		case "text_delta":
+			*openType = "text"
+		}
+	case "content_block_stop":
+		idx := -1
+		if parsed.Get("index").Exists() {
+			idx = int(parsed.Get("index").Int())
+		}
+		if idx < 0 || idx == *openIndex {
+			*openIndex = -1
+			*openType = ""
+		}
+	case "message_stop":
+		*openIndex = -1
+		*openType = ""
+	}
 }
 
 func (s *GatewayService) parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
@@ -7991,6 +8050,94 @@ type streamingResult struct {
 	clientDisconnect bool // 客户端是否在流式传输过程中断开
 }
 
+func shouldUseClaudeCodeNoopDeltaKeepalive(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	version := ExtractCLIVersion(c.GetHeader("User-Agent"))
+	return version != "" && CompareVersions(version, claudeCodeNoopDeltaKeepaliveMinVersion) >= 0
+}
+
+func sseEventIndex(event map[string]any) int {
+	if event == nil {
+		return -1
+	}
+	switch v := event["index"].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case json.Number:
+		if n, err := strconv.Atoi(v.String()); err == nil {
+			return n
+		}
+	}
+	return -1
+}
+
+func claudeCodeKeepaliveDeltaTypeForContentBlock(blockType string) string {
+	switch blockType {
+	case "tool_use":
+		return "input_json_delta"
+	case "thinking":
+		return "thinking_delta"
+	default:
+		return "text_delta"
+	}
+}
+
+func claudeCodeKeepaliveFieldForDeltaType(deltaType string) string {
+	switch deltaType {
+	case "input_json_delta":
+		return "partial_json"
+	case "thinking_delta":
+		return "thinking"
+	default:
+		return "text"
+	}
+}
+
+func buildClaudeCodeNoopDeltaKeepalive(index int, blockType string) string {
+	deltaType := claudeCodeKeepaliveDeltaTypeForContentBlock(blockType)
+	type textDelta struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	type inputJSONDelta struct {
+		Type        string `json:"type"`
+		PartialJSON string `json:"partial_json"`
+	}
+	type thinkingDelta struct {
+		Type     string `json:"type"`
+		Thinking string `json:"thinking"`
+	}
+	type payload struct {
+		Type  string `json:"type"`
+		Index int    `json:"index"`
+		Delta any    `json:"delta"`
+	}
+
+	var delta any
+	switch deltaType {
+	case "input_json_delta":
+		delta = inputJSONDelta{Type: deltaType}
+	case "thinking_delta":
+		delta = thinkingDelta{Type: deltaType}
+	default:
+		delta = textDelta{Type: deltaType}
+	}
+
+	data, err := json.Marshal(payload{
+		Type:  "content_block_delta",
+		Index: index,
+		Delta: delta,
+	})
+	if err != nil {
+		return ""
+	}
+	return "event: content_block_delta\ndata: " + string(data) + "\n\n"
+}
+
 func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string, mimicClaudeCode bool) (*streamingResult, error) {
 	// 更新5h窗口状态
 	s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
@@ -8079,16 +8226,28 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
 	}
-	var keepaliveTicker *time.Ticker
+	var keepaliveTimer *time.Timer
 	if keepaliveInterval > 0 {
-		keepaliveTicker = time.NewTicker(keepaliveInterval)
-		defer keepaliveTicker.Stop()
+		keepaliveTimer = time.NewTimer(keepaliveInterval)
+		defer keepaliveTimer.Stop()
 	}
 	var keepaliveCh <-chan time.Time
-	if keepaliveTicker != nil {
-		keepaliveCh = keepaliveTicker.C
+	if keepaliveTimer != nil {
+		keepaliveCh = keepaliveTimer.C
 	}
 	lastDataAt := time.Now()
+	resetKeepaliveTimer := func() {
+		if keepaliveTimer == nil {
+			return
+		}
+		if !keepaliveTimer.Stop() {
+			select {
+			case <-keepaliveTimer.C:
+			default:
+			}
+		}
+		keepaliveTimer.Reset(keepaliveInterval)
+	}
 
 	// 仅发送一次错误事件，避免多次写入导致协议混乱（写失败时尽力通知客户端）。
 	// 事件格式遵循 Anthropic SSE 标准：{"type":"error","error":{"type":<reason>,"message":<message>}}
@@ -8121,6 +8280,14 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	needModelReplace := originalModel != mappedModel
 	clientDisconnected := false // 客户端断开标志，断开后继续读取上游以获取完整usage
 	sawTerminalEvent := false
+	useNoopDeltaKeepalive := shouldUseClaudeCodeNoopDeltaKeepalive(c)
+	openContentBlockIndex := -1
+	openContentBlockType := ""
+	suppressThinkingOutput := false
+	if thinkingEnabled, ok := ThinkingEnabledFromContext(ctx); ok && !thinkingEnabled {
+		suppressThinkingOutput = true
+	}
+	suppressedThinkingBlocks := make(map[int]struct{})
 
 	pendingEventLines := make([]string, 0, 4)
 	// realOutputStarted: 是否已确认真实输出（非零 token 或内容增量）。写前缓冲输出块，
@@ -8180,6 +8347,77 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			eventName = eventType
 		}
 		eventChanged := false
+
+		if suppressThinkingOutput {
+			switch eventType {
+			case "content_block_start":
+				idx := sseEventIndex(event)
+				if block, ok := event["content_block"].(map[string]any); ok {
+					if typ, ok := block["type"].(string); ok && (typ == "thinking" || typ == "redacted_thinking") {
+						if idx >= 0 {
+							suppressedThinkingBlocks[idx] = struct{}{}
+						}
+						return nil, "", nil, nil
+					}
+				}
+			case "content_block_delta":
+				idx := sseEventIndex(event)
+				_, suppressed := suppressedThinkingBlocks[idx]
+				if delta, ok := event["delta"].(map[string]any); ok {
+					if typ, ok := delta["type"].(string); ok && (typ == "thinking_delta" || typ == "signature_delta") {
+						suppressed = true
+						if idx >= 0 {
+							suppressedThinkingBlocks[idx] = struct{}{}
+						}
+					}
+				}
+				if suppressed {
+					return nil, "", nil, nil
+				}
+			case "content_block_stop":
+				idx := sseEventIndex(event)
+				if _, suppressed := suppressedThinkingBlocks[idx]; suppressed {
+					delete(suppressedThinkingBlocks, idx)
+					return nil, "", nil, nil
+				}
+			}
+		}
+
+		switch eventType {
+		case "content_block_start":
+			openContentBlockIndex = sseEventIndex(event)
+			openContentBlockType = "text"
+			if block, ok := event["content_block"].(map[string]any); ok {
+				if typ, ok := block["type"].(string); ok && strings.TrimSpace(typ) != "" {
+					openContentBlockType = strings.TrimSpace(typ)
+				}
+			}
+		case "content_block_delta":
+			if idx := sseEventIndex(event); idx >= 0 {
+				openContentBlockIndex = idx
+			}
+			if delta, ok := event["delta"].(map[string]any); ok {
+				if typ, ok := delta["type"].(string); ok {
+					switch typ {
+					case "input_json_delta":
+						openContentBlockType = "tool_use"
+					case "thinking_delta", "signature_delta":
+						openContentBlockType = "thinking"
+					case "text_delta":
+						openContentBlockType = "text"
+					}
+				}
+			}
+		case "content_block_stop":
+			idx := sseEventIndex(event)
+			if idx < 0 || idx == openContentBlockIndex {
+				openContentBlockIndex = -1
+				openContentBlockType = ""
+			}
+		case "message_stop":
+			openContentBlockIndex = -1
+			openContentBlockType = ""
+		}
 
 		// 兼容 Kimi cached_tokens → cache_read_input_tokens
 		if eventType == "message_start" {
@@ -8265,6 +8503,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 		flusher.Flush()
 		lastDataAt = time.Now()
+		resetKeepaliveTimer()
 		return true
 	}
 	flushPendingOutputBlocks := func() {
@@ -8466,7 +8705,22 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				continue
 			}
 			if time.Since(lastDataAt) < keepaliveInterval {
+				resetKeepaliveTimer()
 				continue
+			}
+			if useNoopDeltaKeepalive && realOutputStarted && openContentBlockIndex >= 0 {
+				block := buildClaudeCodeNoopDeltaKeepalive(openContentBlockIndex, openContentBlockType)
+				if block != "" {
+					if _, werr := fmt.Fprint(w, block); werr != nil {
+						clientDisconnected = true
+						logger.LegacyPrintf("service.gateway", "Client disconnected during Claude Code noop keepalive, continuing to drain upstream for billing")
+						continue
+					}
+					flusher.Flush()
+					lastDataAt = time.Now()
+					resetKeepaliveTimer()
+					continue
+				}
 			}
 			// SSE ping 事件：Anthropic 原生格式，客户端会正确处理，
 			// 同时保持连接活跃防止 Cloudflare Tunnel 等代理断开
@@ -8476,6 +8730,8 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				continue
 			}
 			flusher.Flush()
+			lastDataAt = time.Now()
+			resetKeepaliveTimer()
 		}
 	}
 
@@ -10037,6 +10293,13 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 
 	// 处理错误响应
 	if resp.StatusCode >= 400 {
+		if isOpenAIOAuthUnsupportedCountTokensError(account, resp.StatusCode, respBody) {
+			inputTokens := estimateLocalCountTokensInputTokens(body)
+			logger.LegacyPrintf("service.gateway", "count_tokens unsupported by OpenAI OAuth upstream, using local input_tokens fallback (account=%d model=%s status=%d input_tokens=%d)", account.ID, reqModel, resp.StatusCode, inputTokens)
+			c.JSON(http.StatusOK, gin.H{"input_tokens": inputTokens})
+			return nil
+		}
+
 		// 标记账号状态（429/529等）
 		s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 		s.TempUnscheduleRetryableError(ctx, account.ID, &UpstreamFailoverError{
@@ -10448,6 +10711,67 @@ func sanitizeCountTokensRequestBody(body []byte) []byte {
 		}
 	}
 	return out
+}
+
+func isOpenAIOAuthUnsupportedCountTokensError(account *Account, statusCode int, body []byte) bool {
+	if account == nil || account.Platform != PlatformOpenAI || !account.IsOAuth() {
+		return false
+	}
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+	default:
+		return false
+	}
+
+	raw := strings.ToLower(string(body))
+	msg := strings.ToLower(extractUpstreamErrorMessage(body))
+	combined := raw + " " + msg
+	if (strings.Contains(combined, "missing_scope") || strings.Contains(combined, "missing scopes") || strings.Contains(combined, "insufficient_scope")) &&
+		strings.Contains(combined, "api.responses.write") {
+		return true
+	}
+	if !(strings.Contains(combined, "count_tokens") || strings.Contains(combined, "input_tokens")) {
+		return false
+	}
+	return strings.Contains(combined, "unsupported") ||
+		strings.Contains(combined, "not supported") ||
+		strings.Contains(combined, "not found") ||
+		strings.Contains(combined, "unknown endpoint")
+}
+
+func estimateLocalCountTokensInputTokens(body []byte) int {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return 1
+	}
+	var decoded any
+	if err := json.Unmarshal(trimmed, &decoded); err == nil {
+		if chars := countJSONValueTextChars(decoded); chars > 0 {
+			return max(1, (chars+3)/4)
+		}
+	}
+	return max(1, (len(trimmed)+3)/4)
+}
+
+func countJSONValueTextChars(v any) int {
+	switch x := v.(type) {
+	case string:
+		return len([]rune(x))
+	case []any:
+		total := 0
+		for _, item := range x {
+			total += countJSONValueTextChars(item)
+		}
+		return total
+	case map[string]any:
+		total := 0
+		for _, value := range x {
+			total += countJSONValueTextChars(value)
+		}
+		return total
+	default:
+		return 0
+	}
 }
 
 // countTokensError 返回 count_tokens 错误响应

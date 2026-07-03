@@ -408,6 +408,45 @@ func parseOpenAIWSEventEnvelope(message []byte) (eventType string, responseID st
 	return eventType, responseID, values[3]
 }
 
+func parseOpenAIWSCodexRateLimitsEventSnapshot(message []byte) *OpenAICodexUsageSnapshot {
+	if len(message) == 0 || strings.TrimSpace(gjson.GetBytes(message, "type").String()) != "codex.rate_limits" {
+		return nil
+	}
+	readFloat := func(path string) *float64 {
+		value := gjson.GetBytes(message, path)
+		if !value.Exists() {
+			return nil
+		}
+		parsed := value.Float()
+		return &parsed
+	}
+	readInt := func(path string) *int {
+		value := gjson.GetBytes(message, path)
+		if !value.Exists() {
+			return nil
+		}
+		parsed := int(value.Int())
+		return &parsed
+	}
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:         readFloat("rate_limits.primary.used_percent"),
+		PrimaryResetAfterSeconds:   readInt("rate_limits.primary.reset_after_seconds"),
+		PrimaryWindowMinutes:       readInt("rate_limits.primary.window_minutes"),
+		SecondaryUsedPercent:       readFloat("rate_limits.secondary.used_percent"),
+		SecondaryResetAfterSeconds: readInt("rate_limits.secondary.reset_after_seconds"),
+		SecondaryWindowMinutes:     readInt("rate_limits.secondary.window_minutes"),
+	}
+	if snapshot.PrimaryUsedPercent == nil &&
+		snapshot.PrimaryResetAfterSeconds == nil &&
+		snapshot.PrimaryWindowMinutes == nil &&
+		snapshot.SecondaryUsedPercent == nil &&
+		snapshot.SecondaryResetAfterSeconds == nil &&
+		snapshot.SecondaryWindowMinutes == nil {
+		return nil
+	}
+	return snapshot
+}
+
 func openAIWSMessageLikelyContainsToolCalls(message []byte) bool {
 	if len(message) == 0 {
 		return false
@@ -2099,13 +2138,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 	var flusher http.Flusher
 	if reqStream {
-		if s.responseHeaderFilter != nil {
-			responseheaders.WriteFilteredHeaders(c.Writer.Header(), http.Header{}, s.responseHeaderFilter)
-		}
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Header("X-Accel-Buffering", "no")
 		f, ok := c.Writer.(http.Flusher)
 		if !ok {
 			lease.MarkBroken()
@@ -2119,6 +2151,20 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	flushInterval := s.openAIWSEventFlushInterval()
 	pendingFlushEvents := 0
 	lastFlushAt := time.Now()
+	streamHeadersWritten := false
+	writeStreamHeaders := func() {
+		if streamHeadersWritten {
+			return
+		}
+		if s.responseHeaderFilter != nil {
+			responseheaders.WriteFilteredHeaders(c.Writer.Header(), http.Header{}, s.responseHeaderFilter)
+		}
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+		streamHeadersWritten = true
+	}
 	flushStreamWriter := func(force bool) {
 		if clientDisconnected || flusher == nil || pendingFlushEvents <= 0 {
 			return
@@ -2140,6 +2186,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		frame = append(frame, "data: "...)
 		frame = append(frame, message...)
 		frame = append(frame, '\n', '\n')
+		writeStreamHeaders()
 		_, wErr := c.Writer.Write(frame)
 		if wErr == nil {
 			wroteDownstream = true
@@ -2262,6 +2309,19 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 		imageCounter.AddSSEData(message)
 
+		if eventType == "codex.rate_limits" {
+			if snapshot := parseOpenAIWSCodexRateLimitsEventSnapshot(message); snapshot != nil {
+				s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
+				updates := buildCodexUsageExtraUpdates(snapshot, time.Now())
+				if !wroteDownstream && codexSnapshotRateLimitResetAt(updates, time.Now()) != nil {
+					lease.MarkBroken()
+					body := []byte(`{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"codex rate limit reached"}}`)
+					s.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, lease.HandshakeHeaders(), body)
+					return nil, wrapOpenAIWSFallback("upstream_rate_limited", errors.New("codex rate limits exhausted"))
+				}
+			}
+		}
+
 		if eventType == "error" {
 			errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(message)
 			s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), message, errCodeRaw, errTypeRaw, errMsgRaw)
@@ -2310,7 +2370,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			}
 			// error 事件后连接不再可复用，避免回池后污染下一请求。
 			lease.MarkBroken()
-			if !wroteDownstream && canFallback {
+			if !wroteDownstream && (canFallback || fallbackReason == "upstream_rate_limited") {
 				return nil, wrapOpenAIWSFallback(fallbackReason, errors.New(errMsg))
 			}
 			statusCode := openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
@@ -2470,6 +2530,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is empty")
+	}
+	if account.Type == AccountTypeAPIKey {
+		account.rememberSelectedAPIKey(token)
 	}
 
 	// 预取一次 OpenAI Fast Policy settings，绑定到 ctx，让该 WS session

@@ -226,6 +226,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// API Key 列表账号命中可归因到 Key 的上游错误时，优先冷却本次报错 Key；
 	// 单 Key 或无法定位具体 Key 时，再退回账号级临时不可调度。
 	if s.tryAPIKeyAccountSchedulingCooldown(ctx, account, statusCode, responseBody) {
+		if statusCode == http.StatusTooManyRequests && account.Platform == PlatformOpenAI {
+			persistOpenAI429PlanType(ctx, s.accountRepo, account, responseBody)
+			s.persistOpenAICodexSnapshot(ctx, account, headers)
+		}
 		return true
 	}
 

@@ -137,12 +137,6 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 	// 5. 构建内部请求
 	innerRequest := GeminiRequest{
 		Contents: contents,
-		// 总是设置 toolConfig，与官方客户端一致
-		ToolConfig: &GeminiToolConfig{
-			FunctionCallingConfig: &GeminiFunctionCallingConfig{
-				Mode: "VALIDATED",
-			},
-		},
 		// 总是生成 sessionId，基于用户消息内容
 		SessionID: generateStableSessionID(contents),
 	}
@@ -155,6 +149,13 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 	}
 	if len(tools) > 0 {
 		innerRequest.Tools = tools
+	}
+	if !IsGeminiReasoningModel(targetModel) || len(tools) > 0 {
+		innerRequest.ToolConfig = &GeminiToolConfig{
+			FunctionCallingConfig: &GeminiFunctionCallingConfig{
+				Mode: "VALIDATED",
+			},
+		}
 	}
 
 	// 如果提供了 metadata.user_id，优先使用
@@ -594,7 +595,10 @@ func buildGenerationConfig(req *ClaudeRequest) *GeminiGenerationConfig {
 	maxLimit := maxOutputTokensLimit(req.Model)
 	config := &GeminiGenerationConfig{
 		MaxOutputTokens: defaultMaxOutputTokens, // 默认最大输出
-		StopSequences:   DefaultStopSequences,
+	}
+	reasoningModel := IsGeminiReasoningModel(req.Model)
+	if !reasoningModel {
+		config.StopSequences = DefaultStopSequences
 	}
 
 	// 如果请求中指定了 MaxTokens，使用请求值
@@ -638,15 +642,21 @@ func buildGenerationConfig(req *ClaudeRequest) *GeminiGenerationConfig {
 	if config.MaxOutputTokens > maxLimit {
 		config.MaxOutputTokens = maxLimit
 	}
+	if config.ThinkingConfig != nil && config.ThinkingConfig.ThinkingBudget > 0 && config.ThinkingConfig.ThinkingBudget >= config.MaxOutputTokens {
+		if config.MaxOutputTokens <= 1 {
+			config.MaxOutputTokens = 2
+		}
+		config.ThinkingConfig.ThinkingBudget = config.MaxOutputTokens - 1
+	}
 
 	// 其他参数
-	if req.Temperature != nil {
+	if !reasoningModel && req.Temperature != nil {
 		config.Temperature = req.Temperature
 	}
-	if req.TopP != nil {
+	if !reasoningModel && req.TopP != nil {
 		config.TopP = req.TopP
 	}
-	if req.TopK != nil {
+	if !reasoningModel && req.TopK != nil {
 		config.TopK = req.TopK
 	}
 
