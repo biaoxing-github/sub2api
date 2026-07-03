@@ -3978,3 +3978,18 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - FAIL（宽单测既有风险）：`go test -tags unit ./internal/service -count=1 -timeout 5m` 返回 `ExitCode=1`，失败项为 `TestGatewayService_GroupResolution_ReusesContextGroup`、`TestGatewayService_GroupResolution_IgnoresInvalidContextGroup`、`TestGatewayService_GroupResolution_FallbackUsesLiteOnce`、`TestOpenAISelectAccountWithLoadAwareness_FiltersUnschedulable`、`TestOpenAISelectAccountWithLoadAwareness_FiltersUnschedulableWhenNoConcurrencyService`、`TestOpenAISelectAccountWithLoadAwareness_DoesNotPrecheckRealtimeBalance`、`TestOpenAISelectAccountWithLoadAwareness_AllowsOnlyAPIKeyWhenRealtimeBalanceUnknown`、`TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledReturnsFailoverWhenClientStillConnected`、`TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledDoesNotFailoverWhenClientCanceled`。
 - OBSERVE：CodeGraph 本轮 `codegraph_status` 仍返回 `Transport closed`，`.codegraph/daemon.log` 最近记录包含多次 `socket error: write EPIPE`，因此按项目规则降级为 PowerShell 本地检索和 Go 测试验证。
 - LIMIT：本轮提交前未构建镜像、未部署、未执行真实上游请求；`.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json` 为无关脏文件，未纳入 P0。
+
+## 2026-07-03 16:51 +08:00 - release v0.1.143.1 P0 稳定性吸收
+
+- PASS：功能提交 `522de1755b1f` 已作为构建源；镜像 `sub2api:v0.1.143.1` 构建完成，镜像 ID `sha256:aaa17f5ff13c55a0b4b1e054c241c95d9a62de0d66aa877ed3a76c500b0e11ba`。
+- PASS：镜像 label 为 `org.opencontainers.image.version=v0.1.143`、`org.opencontainers.image.revision=522de1755b1f`；二进制版本输出为 `Sub2API v0.1.143 (image: v0.1.143.1, commit: 522de1755b1f, built: 2026-07-03T08:43:57Z)`。
+- PASS：使用 committed HEAD 归档构建临时上下文，显式传入 `ALPINE_APK_REPOSITORY=https://mirrors.ustc.edu.cn/alpine`；构建未使用未提交工作树。
+- PASS：部署只重建 idle `sub2api-green`；发布期间保留 active `sub2api-blue`、PostgreSQL、Redis 和 `sub2api-proxy`，未对数据库或 Redis 执行重启。
+- PASS：green 候选端口 `18082` 的 `/health`、首页、静态资源、未登录管理 API 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- PASS：75 秒候选观察中 `sub2api-green` 运行 `sub2api:v0.1.143.1`，状态为 `healthy Status=running Restart=0`；最近 120 秒 app 日志关键错误命中 0。
+- PASS：代理 upstream 已从 `sub2api-blue:8080` 切到 `sub2api-green:8080`；`docker exec sub2api-proxy nginx -t` 通过，`docker exec sub2api-proxy nginx -s reload` 于 2026-07-03 16:48:45 +08:00 成功。
+- PASS：切流后公网入口 `8080` 与本机代理入口 `18081` 的 `/health`、首页、静态资源、未登录管理 API 401、未登录 `/responses` 401、未登录 `/v1/responses` 401 均通过。
+- PASS：65 秒切流后观察中 `8080`、`18081`、`18082` `/health` 全部返回 200；green 应用和 proxy 最近 120 秒关键错误日志命中 0。
+- Current state：active green `sub2api:v0.1.143.1`；rollback blue `sub2api:v0.1.140.2`。
+- LIMIT：`ADMIN_PASSWORD` 为空，未执行 authenticated `/api/v1/admin/system/version`；未执行真实上游 OpenAI 请求。
+- BLOCKED：`git push -u origin codex/merge-v0.1.134-updates` 被 GitHub 403 拒绝，错误为 `Permission to Wei-Shaw/sub2api.git denied to biaoxing-github`。
