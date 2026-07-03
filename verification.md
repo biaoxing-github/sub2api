@@ -4016,3 +4016,19 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：重新执行 `go test ./cmd/server -run TestNoSuchTest -count=1`，输出 `ok github.com/Wei-Shaw/sub2api/cmd/server 0.046s [no tests to run]`。
 - PASS：scoped `git diff --check` 覆盖 P1 触达文件和记录文件，通过；仅提示 `docs/feature_list.jsonl`、`docs/process_list.jsonl` 下次 Git 触碰时 LF 会替换为 CRLF。
 - LIMIT：本轮继续验证仍未提交、未构建镜像、未部署、未执行真实上游请求；无关 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json` 未触碰。
+
+## 2026-07-03 17:59 +08:00 - release v0.1.143.2 P1 bugfix absorption
+
+- PASS：功能提交 `b89f51f07159` 已创建；提交范围只包含 P1 代码、测试和记录，未包含 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json`。
+- BLOCKED：`git push -u origin codex/merge-v0.1.134-updates` 被 GitHub 403 拒绝，错误为 `Permission to Wei-Shaw/sub2api.git denied to biaoxing-github`。
+- PASS：发布脚本 dry-run 确认 active 为 green、idle 为 blue、候选端口为 `18083`、构建源为 committed HEAD `b89f51f07159`。
+- PASS：`powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\release-bluegreen.ps1 -ImageVersion v0.1.143.2 -Execute -Cutover -AllowDirty` 构建不可变镜像 `sub2api:v0.1.143.2`，镜像 ID 为 `sha256:d3fc3024126f29e938a212eb5e2c4482cd27abbe5098d78f2508f55fa1f3fae4`。
+- PASS：镜像 label 为 `org.opencontainers.image.version=v0.1.143`、`org.opencontainers.image.revision=b89f51f07159`；二进制版本输出为 `Sub2API v0.1.143 (image: v0.1.143.2, commit: b89f51f07159, built: 2026-07-03T09:51:37Z)`。
+- OBSERVE：发布脚本在候选日志扫描阶段因 PowerShell 将 `docker logs` stderr 启动 WARN 视作 native command error 而提前停止；此时构建、blue 部署、候选 smoke、容器 healthy 已完成，尚未切流。
+- PASS：手动复核 `sub2api-blue` 最近 180 秒日志，发布关键错误命中 0；手动复核候选 `18083` 的 `/health`、首页静态资源、未登录 admin、未登录 `/responses`、未登录 `/v1/responses` 全部符合预期。
+- PASS：手动将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`docker exec sub2api-proxy nginx -t` 通过，`docker exec sub2api-proxy nginx -s reload` 于 2026-07-03 17:57:11 +08:00 成功。
+- PASS：切流后 `8080`、`18081`、`18083` 两轮 smoke 均通过：`/health` 200、首页静态资源 200、未登录 admin 401、未登录 `/responses` 401、未登录 `/v1/responses` 401。
+- PASS：65 秒观察后，blue 运行 `sub2api:v0.1.143.2` 且 `healthy Status=running Restart=0`；green 回滚容器运行 `sub2api:v0.1.143.1` 且 `healthy Status=running Restart=0`。
+- PASS：最近 120 秒 `sub2api-blue` 与 `sub2api-proxy` 日志未命中 panic、fatal、migration、checksum、pq、bind、listen、rebuild 等发布关键错误。
+- Current state：active blue `sub2api:v0.1.143.2`；rollback green `sub2api:v0.1.143.1`。
+- LIMIT：`ADMIN_PASSWORD` 为空，未执行 authenticated `/api/v1/admin/system/version`；未执行真实上游 OpenAI 请求。
