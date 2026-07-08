@@ -1,5 +1,7 @@
 export type LegacyToolCleanup = () => void
 
+export type LegacyToolServiceMap = Record<string, unknown>
+
 export interface LegacyDocumentFacade {
   getElementById(elementId: string): HTMLElement | null
   querySelector<E extends Element = Element>(selectors: string): E | null
@@ -28,6 +30,7 @@ export interface LegacyWindowFacade {
 export interface LegacyToolScope {
   document: LegacyDocumentFacade
   window: LegacyWindowFacade
+  services: LegacyToolServiceMap
   localStorage: Storage
   fetch: typeof fetch
   Headers: typeof Headers
@@ -39,6 +42,7 @@ export interface LegacyToolScope {
 
 export interface LegacyToolScopeOptions {
   onNavigate?: (target: string) => boolean | void
+  services?: LegacyToolServiceMap
 }
 
 // 为旧单页工具创建局部浏览器环境，确保 DOM 查询、定时器和全局事件都收束在当前工具实例里。
@@ -154,6 +158,7 @@ export function createLegacyToolScope(root: ShadowRoot, options: LegacyToolScope
   return {
     document: scopedDocument,
     window: scopedWindow,
+    services: options.services ?? {},
     localStorage: window.localStorage,
     fetch: window.fetch.bind(window),
     Headers: window.Headers,

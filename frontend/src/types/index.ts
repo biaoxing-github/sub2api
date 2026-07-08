@@ -22,6 +22,89 @@ export interface FetchOptions {
   signal?: AbortSignal
 }
 
+// ==================== Token Cost Calculator Types ====================
+
+export interface TokenCostPlatform {
+  /** 平台唯一标识，用于编辑表定位和排序保留。 */
+  id: string
+  /** 平台显示名称。 */
+  name: string
+  /** 账面余额，单位 USD。 */
+  balanceUsd: number
+  /** 购买力折算余额；为空时使用账面余额。 */
+  calcBalanceUsd: number | null
+  /** 购买该余额花费的人民币数量。 */
+  rateR: number
+  /** rateR 对应换得的 USD 数量。 */
+  rateUsd: number
+  /** Plus 池倍率；为空表示该平台不参与 Plus 排行。 */
+  plus: number | null
+  /** Pro 池最低倍率；为空表示该平台不参与 Pro 排行。 */
+  proMin: number | null
+  /** Pro 池最高倍率；为空表示使用 proMin 单点倍率。 */
+  proMax: number | null
+  /** 平台备注。 */
+  note: string
+}
+
+export interface TokenCostHistoryEntry {
+  /** 记录时间文本，由用户在页面中编辑。 */
+  at: string
+  /** 本次历史快照摘要。 */
+  summary: string
+  /** 记录时总余额。 */
+  totalBalance: number
+  /** 记录时 Pro 最小购买力。 */
+  proMin: number | null
+  /** 记录时 Pro 最大购买力。 */
+  proMax: number | null
+  /** 记录时 Plus 购买力。 */
+  plus: number | null
+}
+
+export interface TokenCostEvent {
+  /** 事件发生时间文本。 */
+  at: string
+  /** 事件标题。 */
+  title: string
+  /** 事件详情。 */
+  detail: string
+}
+
+export interface TokenCostState {
+  /** 状态结构版本。 */
+  version: number
+  /** 最后更新时间。 */
+  updatedAt: string
+  /** 当前排行榜口径。 */
+  rankMode: 'plus' | 'pro' | string
+  /** 个人充值总价，单位 r。 */
+  personalRechargeR: number
+  /** 平台余额与倍率配置。 */
+  platforms: TokenCostPlatform[]
+  /** 历史快照列表。 */
+  history: TokenCostHistoryEntry[]
+  /** 页面编辑事件列表。 */
+  events: TokenCostEvent[]
+}
+
+export interface TokenCostHealth {
+  ok: boolean
+  state: string
+  storage: string
+}
+
+export interface TokenCostStateResponse {
+  ok: boolean
+  state: TokenCostState
+}
+
+export interface TokenCostSaveStateResponse {
+  ok: boolean
+  state: TokenCostState
+  storage: string
+}
+
 // ==================== Notification Types ====================
 
 /** Notification email entry with enable/disable and verification state.

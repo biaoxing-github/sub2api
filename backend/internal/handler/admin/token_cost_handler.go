@@ -62,12 +62,13 @@ func (h *TokenCostHandler) SaveState(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "Invalid request: " + err.Error()})
 		return
 	}
-	if _, err := h.tokenCostService.SaveState(c.Request.Context(), req.State); err != nil {
+	state, err := h.tokenCostService.SaveState(c.Request.Context(), req.State)
+	if err != nil {
 		respondTokenCostError(c, err)
 		return
 	}
 	health := h.tokenCostService.Health()
-	c.JSON(http.StatusOK, gin.H{"ok": true, "state": health.State, "storage": health.Storage})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "state": state, "storage": health.Storage})
 }
 
 func respondTokenCostError(c *gin.Context, err error) {

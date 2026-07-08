@@ -954,7 +954,7 @@
               <div class="panel-meta">管理端服务把数据写入数据库。</div>
             </div>
           </div>
-          <div class="status" id="statusBox">已加载默认数据，正在检测管理端服务。</div>
+          <div class="status" id="statusBox">正在从数据库加载最新数据。</div>
         </section>
       </aside>
     </section>
@@ -1011,55 +1011,52 @@
     </section>
   </div>
   <script>
-    const STORAGE_KEY = "token-api-cost-live-calculator:v1";
-    const REPORT_FILE = "token-api-cost-live-calculator.html";
-    const DEFAULT_PERSONAL_RECHARGE_R = 333;
+    const TOKEN_COST_STATE_PATH = "/api/v1/admin/token-cost/state";
+    const TOKEN_COST_HEALTH_PATH = "/api/v1/admin/token-cost/health";
+    const AUTH_REFRESH_PATH = "/api/v1/auth/refresh";
+    const DEFAULT_PERSONAL_RECHARGE_R = 400;
     const PLATFORM_PAGE_SIZE = 6;
 
-    const defaultState = {
-      version: 1,
-      updatedAt: "2026-06-28T00:00:00+08:00",
-      rankMode: "plus",
-      personalRechargeR: DEFAULT_PERSONAL_RECHARGE_R,
-      platforms: [
-        { id: "torchai", name: "torchai", balanceUsd: 180, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: null, proMin: 0.3, proMax: null, note: "当前 pro 口径，已涨到 0.3" },
-        { id: "okcodex", name: "okcodex", balanceUsd: 58.82, calcBalanceUsd: null, rateR: 7, rateUsd: 100, plus: 0.1, proMin: 0.21, proMax: null, note: "余额 58.82$，plus 0.1 / pro 0.21" },
-        { id: "encore", name: "encore", balanceUsd: 1055, calcBalanceUsd: null, rateR: 1, rateUsd: 10, plus: 1.15, proMin: 2.38, proMax: null, note: "encore plus/pro 双池" },
-        { id: "qingflow", name: "qingflow", balanceUsd: 12, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.09, proMin: 0.11, proMax: null, note: "余额已降到 12$" },
-        { id: "devpool", name: "devpool", balanceUsd: 143.57, calcBalanceUsd: null, rateR: 1, rateUsd: 10, plus: null, proMin: 1.5, proMax: null, note: "" },
-        { id: "zz1cc", name: "zz1cc", balanceUsd: 397, calcBalanceUsd: null, rateR: 36, rateUsd: 550, plus: null, proMin: 2.8, proMax: null, note: "涨价到 2.8 倍" },
-        { id: "aisz", name: "aisz", balanceUsd: 64, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.1, proMin: 0.2, proMax: null, note: "plus/pro 双池" },
-        { id: "dawclaude", name: "dawclaude", balanceUsd: 5.49, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.3, proMin: 0.35, proMax: 0.5, note: "pro 为区间倍率" },
-        { id: "eirouter", name: "eirouter", balanceUsd: 60, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: null, proMin: 0.4, proMax: null, note: "" },
-        { id: "tuling", name: "tuling", balanceUsd: 10.4, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.35, proMin: 0.45, proMax: null, note: "新增平台" },
-        { id: "qianxing", name: "乾行", balanceUsd: 45, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.16, proMin: 0.3, proMax: null, note: "plus 0.16 / pro 0.3" },
-        { id: "5yuan", name: "5yuan", balanceUsd: 10.91, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.08, proMin: 0.16, proMax: null, note: "" },
-        { id: "xiaobai-code", name: "小白code", balanceUsd: 14.6, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.13, proMin: 0.18, proMax: null, note: "" },
-        { id: "mikuapi", name: "mikuapi", balanceUsd: 20.17, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.3, proMin: 0.5, proMax: null, note: "" },
-        { id: "superapi", name: "superapi", balanceUsd: 28, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.08, proMin: 0.22, proMax: null, note: "新增平台" },
-        { id: "tokeness", name: "tokeness", balanceUsd: 75, calcBalanceUsd: 10.7142857143, rateR: 1, rateUsd: 1, plus: 0.03, proMin: 0.1, proMax: null, note: "75$ 原始余额；5m 输入或 30m 输出折算为 10.71$ 后计算购买力" }
-      ],
-      history: [
-        { at: "2026-06-24", summary: "初始核算", totalBalance: 2758.64, proMin: 3600.27, proMax: 3600.27, plus: null },
-        { at: "2026-06-24", summary: "torchai 调到 0.2 倍率", totalBalance: 2758.64, proMin: 3985.98, proMax: 3985.98, plus: null },
-        { at: "2026-06-25", summary: "zz1cc 调到 2.8 倍率，torchai 恢复 0.35 倍率", totalBalance: 2758.64, proMin: 3493.93, proMax: 3493.93, plus: null },
-        { at: "2026-06-26", summary: "encore/okcodex 涨倍率，qingflow 余额调整，foyeapi/funny 用完，eirouter/aisz 余额更新，乾行到 24.71$", totalBalance: 2755.45, proMin: 2874.02, proMax: 2874.02, plus: null },
-        { at: "2026-06-26", summary: "aisz 调到 0.2 倍率，5yuan 调到 0.16 倍率", totalBalance: 2755.45, proMin: 2803.93, proMax: 2803.93, plus: null },
-        { at: "2026-06-26", summary: "乾行调到 0.16 倍率且余额到 38$，torchai 降到 0.28 倍率", totalBalance: 2768.74, proMin: 2964.09, proMax: 2964.09, plus: null },
-        { at: "2026-06-26", summary: "加入 plus/pro 双池口径，okcodex/qingflow/aisz 区分 plus，乾行 45$，eirouter 60$，新增 tuling", totalBalance: 2782.14, proMin: 3063.37, proMax: 3063.37, plus: null },
-        { at: "2026-06-27", summary: "encore 改为 plus=1.15/pro=2.38，新增 superapi 与 tokeness，删除余额为 0 的平台展示", totalBalance: 2810.14, proMin: 2852.44, proMax: 2852.44, plus: null },
-        { at: "2026-06-27", summary: "tokeness 加入 plus/pro 口径，更新 dawcode、mikuapi、乾行、5yuan、小白 的 plus/pro 倍率", totalBalance: 2885.14, proMin: 3408.39, proMax: 3413.1, plus: null },
-        { at: "2026-06-27", summary: "tokeness 改为先按 5m/30m 折算 10.71$ 再套 plus/pro 倍率", totalBalance: 2885.14, proMin: 2765.53, proMax: 2770.24, plus: 3630.74 },
-        { at: "2026-07-03", summary: "okcodex 余额调整为 58.82$，plus=0.1，pro=0.21", totalBalance: 2179.96, proMin: 2790.96, proMax: 2795.67, plus: 3631.25 },
-        { at: "2026-07-03", summary: "torchai pro 倍率涨到 0.3", totalBalance: 2294.01, proMin: 2991.54, proMax: 3073.43, plus: 4030.52 }
-      ],
-      events: [
-        { at: "2026/7/3 09:11:35", title: "编辑平台", detail: "okcodex：余额 764 -> 58.82，plus 1.3 -> 0.1，pro 3 -> 0.21" },
-        { at: "2026/7/3 12:11:12", title: "编辑平台", detail: "torchai 的 proMin：0.25 -> 0.3" }
-      ]
+    const tokenCostService = {
+      async loadState() {
+        const response = await requestJson(`${TOKEN_COST_STATE_PATH}?_=${Date.now()}`, { method: "GET" });
+        if (!response.ok || !response.data?.state) {
+          throw new Error(response.data?.error || "读取数据库状态失败");
+        }
+        return response.data.state;
+      },
+      async saveState(nextState) {
+        const response = await requestJson(TOKEN_COST_STATE_PATH, {
+          method: "POST",
+          body: { state: nextState }
+        });
+        if (!response.ok || !response.data?.ok || !response.data?.state) {
+          throw new Error(response.data?.error || "保存失败");
+        }
+        return response.data.state;
+      },
+      async health() {
+        const response = await requestJson(`${TOKEN_COST_HEALTH_PATH}?_=${Date.now()}`, { method: "GET" });
+        if (!response.ok || !response.data?.ok) {
+          throw new Error(response.data?.error || "管理端服务未就绪");
+        }
+        return response.data;
+      }
     };
 
-    let state = loadState();
+    function createEmptyState() {
+      return {
+        version: 1,
+        updatedAt: "",
+        rankMode: "plus",
+        personalRechargeR: DEFAULT_PERSONAL_RECHARGE_R,
+        platforms: [],
+        history: [],
+        events: []
+      };
+    }
+
+    let state = createEmptyState();
     let filterText = "";
     let visibility = "active";
     let serverAvailable = false;
@@ -1097,29 +1094,16 @@
 
     let activeView = "t";
 
-    function loadState() {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        return structuredClone(defaultState);
-      }
-      try {
-        const parsed = JSON.parse(raw);
-        return normalizeState(parsed);
-      } catch (error) {
-        console.warn("读取本地数据失败，改用默认值", error);
-        return structuredClone(defaultState);
-      }
-    }
-
-    function normalizeState(source) {
+    function normalizeState(source = {}) {
+      const sourceState = source && typeof source === "object" ? source : {};
       const merged = {
-        ...structuredClone(defaultState),
-        ...source
+        ...createEmptyState(),
+        ...sourceState
       };
-      merged.platforms = Array.isArray(source.platforms) ? source.platforms.map(normalizePlatform) : structuredClone(defaultState.platforms);
-      merged.history = Array.isArray(source.history) ? source.history : structuredClone(defaultState.history);
-      merged.events = Array.isArray(source.events) ? source.events : [];
-      merged.personalRechargeR = toPositive(source.personalRechargeR, DEFAULT_PERSONAL_RECHARGE_R);
+      merged.platforms = Array.isArray(sourceState.platforms) ? sourceState.platforms.map(normalizePlatform) : [];
+      merged.history = Array.isArray(sourceState.history) ? sourceState.history : [];
+      merged.events = Array.isArray(sourceState.events) ? sourceState.events : [];
+      merged.personalRechargeR = toPositive(sourceState.personalRechargeR, DEFAULT_PERSONAL_RECHARGE_R);
       return merged;
     }
 
@@ -1140,7 +1124,6 @@
 
     function saveState(message, type = "ok", syncRemote = false) {
       state.updatedAt = new Date().toISOString();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       setStatus(message, type);
       if (syncRemote) {
         scheduleRemoteSave();
@@ -1153,36 +1136,23 @@
     }
 
     async function checkServer() {
-      if (window.location.protocol === "file:") {
-        setStatus("当前是 file:// 打开，只能本地计算；请用 scripts/token_cost_editor_server.py 启动动态服务后再保存数据。", "warn");
-        return;
-      }
       try {
-        serverAvailable = await probeServer();
-        if (serverAvailable) {
-          await loadStateFromServer();
-        } else {
-          setStatus("管理端服务未就绪。", "warn");
-        }
+        await tokenCostService.health();
+        serverAvailable = true;
+        await loadStateFromServer(false);
       } catch (error) {
         serverAvailable = false;
-        setStatus("管理端服务未连接，页面仍可计算但不会保存到数据库。", "warn");
+        setStatus(`读取数据库失败：${error.message || error}`, "warn");
       }
     }
 
-    async function loadStateFromServer() {
-      const response = await requestJson("/api/v1/admin/token-cost/state?view=page", { method: "GET" });
-      if (!response.ok) {
-        throw new Error("读取数据库状态失败");
-      }
-      if (response.data) {
-        state = normalizeState(response.data);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-        render();
-        setStatus("已从数据库载入数据，后续编辑会自动保存。", "ok");
-        return;
-      }
-      setStatus("管理端服务已连接；当前数据库暂无状态，首次修改后会自动创建。", "ok");
+    async function loadStateFromServer(manual = false) {
+      const latestState = await tokenCostService.loadState();
+      state = normalizeState(latestState);
+      serverAvailable = true;
+      render();
+      setStatus(manual ? "已从数据库重新载入最新数据。" : `已从数据库载入最新数据：${state.platforms.length} 个平台。`, "ok");
+      pulseStats();
     }
 
     function scheduleRemoteSave() {
@@ -1192,19 +1162,15 @@
 
     async function saveDataToServer(manual) {
       try {
-        const response = await requestJson("/api/v1/admin/token-cost/state", {
-          method: "POST",
-          body: { state }
-        });
-        if (!response.ok || !response.data.ok) {
-          throw new Error(response.data.error || "保存失败");
-        }
+        const savedState = await tokenCostService.saveState(normalizeState(state));
+        state = normalizeState(savedState);
         serverAvailable = true;
+        render();
         setStatus(manual ? "已保存到数据库。" : "已自动保存到数据库。", "ok");
         pulseStats();
       } catch (error) {
         serverAvailable = false;
-        setStatus(`保存失败：${error.message}`, "warn");
+        setStatus(`保存失败：${error.message || error}`, "warn");
       }
     }
 
@@ -1912,14 +1878,11 @@
       setStatus("当前版本不再提供 Markdown 复制。", "warn");
     }
 
-    function resetToDefault() {
-      if (!window.confirm("确认恢复默认数据？当前浏览器里的动态改动会被覆盖。")) {
+    async function resetToDefault() {
+      if (!window.confirm("确认从数据库重新载入最新数据？当前页面未保存的动态改动会被覆盖。")) {
         return;
       }
-      state = structuredClone(defaultState);
-      addEvent("恢复默认", "已恢复为 2026-06-28 初始动态页数据");
-      saveState("已恢复默认数据。", "warn", true);
-      render();
+      await loadStateFromServer(true);
     }
 
     function escapeHtml(value) {
@@ -1982,9 +1945,7 @@
     elements.personalRechargeInput.addEventListener("blur", () => syncPersonalRechargeInput());
     document.querySelector("#recordHistoryBtn").addEventListener("click", recordHistory);
     document.querySelector("#saveDataBtn").addEventListener("click", () => saveDataToServer(true));
-    document.querySelector("#openReportBtn").addEventListener("click", () => {
-      window.location.href = REPORT_FILE;
-    });
+    document.querySelector("#openReportBtn").addEventListener("click", () => loadStateFromServer(true));
     document.querySelector("#resetBtn").addEventListener("click", resetToDefault);
     document.querySelector("#copyMarkdownBtn").addEventListener("click", copyMarkdown);
     elements.openAddPlatformBtn.addEventListener("click", openAddPlatformModal);

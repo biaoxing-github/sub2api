@@ -63,13 +63,15 @@ func TestTokenCostHandlerPostStateSavesRawStatePayload(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, postRecorder.Code)
 	var postPayload struct {
-		OK      bool   `json:"ok"`
-		State   string `json:"state"`
-		Storage string `json:"storage"`
+		OK      bool                   `json:"ok"`
+		State   service.TokenCostState `json:"state"`
+		Storage string                 `json:"storage"`
 	}
 	require.NoError(t, json.Unmarshal(postRecorder.Body.Bytes(), &postPayload))
 	require.True(t, postPayload.OK)
 	require.Equal(t, "sql:token-cost", postPayload.Storage)
+	require.Len(t, postPayload.State.Platforms, 1)
+	require.Equal(t, "小白code", postPayload.State.Platforms[0].Name)
 
 	getRecorder := httptest.NewRecorder()
 	router.ServeHTTP(getRecorder, httptest.NewRequest(http.MethodGet, "/state", nil))

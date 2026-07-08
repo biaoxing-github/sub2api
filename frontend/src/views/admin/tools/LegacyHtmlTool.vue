@@ -4,7 +4,12 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createLegacyToolScope, type LegacyToolCleanup, type LegacyToolScope } from './legacyToolRuntime'
+import {
+  createLegacyToolScope,
+  type LegacyToolCleanup,
+  type LegacyToolScope,
+  type LegacyToolServiceMap
+} from './legacyToolRuntime'
 
 interface Props {
   toolKey: string
@@ -13,6 +18,7 @@ interface Props {
   styles: string
   bodyHtml: string
   mountTool: (scope: LegacyToolScope) => LegacyToolCleanup
+  services?: LegacyToolServiceMap
 }
 
 const props = defineProps<Props>()
@@ -87,7 +93,8 @@ async function mountLegacyTool() {
   `
 
   const scope = createLegacyToolScope(shadowRoot, {
-    onNavigate: renderNavigationNotice
+    onNavigate: renderNavigationNotice,
+    services: props.services
   })
 
   try {
@@ -104,7 +111,7 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.toolKey, props.headHtml, props.styles, props.bodyHtml, props.mountTool],
+  () => [props.toolKey, props.headHtml, props.styles, props.bodyHtml, props.mountTool, props.services],
   () => {
     mountLegacyTool()
   }
