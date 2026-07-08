@@ -169,6 +169,102 @@ func TestNewAPICheckinRefreshAccountBalanceUsesNewApiHeaders(t *testing.T) {
 	require.Contains(t, seen, "GET /api/user/self Bearer key-a 1001")
 }
 
+func TestNewAPICheckinStartFullCheckinJobDetachesFromRequestContext(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_display_type":"USD","quota_per_unit":500000}}`))
+		case r.URL.Path == "/api/user/checkin" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"success":true,"message":"签到成功","data":{"quota_awarded":50000,"checkin_date":"2026-07-08"}}`))
+		case r.URL.Path == "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"username":"demo-user","display_name":"Demo User","quota":250000,"used_quota":10000}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"delay_between_checkins_sec": 1,
+		"sites": []map[string]any{
+			{
+				"name":     "demo",
+				"enabled":  true,
+				"base_url": upstream.URL,
+				"accounts": []map[string]any{
+					{"name": "alpha", "user_id": "1001", "access_key": "key-a"},
+					{"name": "beta", "user_id": "1002", "access_key": "key-b"},
+				},
+			},
+		},
+	})
+
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+	reqCtx, cancel := context.WithCancel(context.Background())
+	start := svc.StartFullCheckinJob(reqCtx)
+	require.True(t, start.Started)
+	cancel()
+
+	require.Eventually(t, func() bool {
+		job := svc.CheckinJobStatus()
+		return !job.Running && job.ExitCode != nil
+	}, 3*time.Second, 10*time.Millisecond)
+
+	job := svc.CheckinJobStatus()
+	require.NotNil(t, job.ExitCode)
+	require.Equal(t, 0, *job.ExitCode)
+	require.Empty(t, job.Stderr)
+	require.Equal(t, "全量签到完成", job.Message)
+	require.Equal(t, 2, job.Report.TaskCount)
+	require.Equal(t, 2, job.Report.SuccessCount)
+}
+
+func TestNewAPICheckinStartMonthlySyncJobDetachesFromRequestContext(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/user/checkin" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"success":true,"data":{"stats":{"records":[{"checkin_date":"2026-07-08","quota_awarded":50000}]}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	baseRepo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{
+			{
+				"name":     "demo",
+				"enabled":  true,
+				"base_url": upstream.URL,
+				"accounts": []map[string]any{
+					{"name": "alpha", "user_id": "1001", "access_key": "key-a"},
+				},
+			},
+		},
+	})
+	repo := &contextAwareMonthlyNewAPICheckinRepository{memoryNewAPICheckinRepository: baseRepo}
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	start := svc.StartMonthlySyncJob(reqCtx, "2026-07", "", "")
+	require.True(t, start.Started)
+	cancel()
+
+	require.Eventually(t, func() bool {
+		state := svc.MonthlySyncStatus()
+		return !state.Running && state.EndedAt != ""
+	}, 3*time.Second, 10*time.Millisecond)
+
+	state := svc.MonthlySyncStatus()
+	require.Empty(t, state.Error)
+	require.Equal(t, "2026-07 同步完成", state.Message)
+	require.Equal(t, 1, state.Total)
+	require.Equal(t, 1, state.Processed)
+	require.Len(t, repo.monthly, 1)
+}
+
 type memoryNewAPICheckinRepository struct {
 	config  NewAPICheckinConfig
 	report  NewAPICheckinReport
@@ -239,3 +335,16 @@ func (r *memoryNewAPICheckinRepository) StorageLabel() string {
 }
 
 var _ NewAPICheckinRepository = (*memoryNewAPICheckinRepository)(nil)
+
+type contextAwareMonthlyNewAPICheckinRepository struct {
+	*memoryNewAPICheckinRepository
+}
+
+func (r *contextAwareMonthlyNewAPICheckinRepository) SaveMonthlyRecords(ctx context.Context, records []NewAPICheckinMonthlyRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return r.memoryNewAPICheckinRepository.SaveMonthlyRecords(ctx, records)
+}
+
+var _ NewAPICheckinRepository = (*contextAwareMonthlyNewAPICheckinRepository)(nil)

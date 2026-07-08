@@ -1250,8 +1250,9 @@ func (s *NewAPICheckinService) StartFullCheckinJob(ctx context.Context) NewAPICh
 	job := s.checkinJobState
 	s.mu.Unlock()
 
+	jobCtx := context.WithoutCancel(ctx)
 	go func() {
-		report, err := s.RunFullCheckin(ctx)
+		report, err := s.RunFullCheckin(jobCtx)
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		exitCode := 0
@@ -1369,8 +1370,9 @@ func (s *NewAPICheckinService) StartMonthlySyncJob(ctx context.Context, month, s
 	state := s.monthlySyncState
 	s.mu.Unlock()
 
+	jobCtx := context.WithoutCancel(ctx)
 	go func() {
-		_, err := s.syncMonthlyRecordsForScope(ctx, month, siteName, userID, newAPICheckinMonthlySourceSync)
+		_, err := s.syncMonthlyRecordsForScope(jobCtx, month, siteName, userID, newAPICheckinMonthlySourceSync)
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.monthlySyncState.Running = false
