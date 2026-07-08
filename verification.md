@@ -4266,3 +4266,27 @@ Post-cutover verification:
 - Public AdminTools chunk is assets/AdminToolsView-DrvtKGhj.js and contains /api/v1/auth/refresh plus 401 retry and token-cost state page loading path.
 - SQL token_cost_platforms count remains 21.
 - Fresh 30-second post-cutover green log window had no panic/fatal/migration failure/checksum/pq/bind/listen/rebuild-failed matches.
+
+## TokenCost dynamic API release - 2026-07-08T13:25:00+08:00
+
+Actor: Devil
+
+Release:
+- Commit: 201ae65fd661 fix(admin): 动态加载 Token 成本数据
+- Image: sub2api:v0.1.146.1
+- ImageID: sha256:5e147cf4542b4df70303d05d4a81700e6495aef742df1b236d1cfa2c07f6d617
+- Active after cutover: sub2api-blue:8080
+- Rollback: sub2api-green sub2api:v0.1.143.9
+
+Verification:
+- Frontend focused tests, typecheck, backend TokenCost tests, and npm build passed before release.
+- /health on 8080, 18081 and 18083 returned 200 after cutover.
+- /, /assets/index-DkZDqoJb.js, protected admin APIs, /responses and /v1/responses smoke checks passed.
+- /api/v1/admin/token-cost/state returned 401 without login, confirming the protected dynamic route is online.
+- PostgreSQL counts are token_cost_platforms=21, token_cost_history=16, token_cost_events=37, token_cost_state=1.
+- Source state file C:\Users\27404\Documents\Playground\docs\token-api-cost-state.json also has platforms=21, history=16, events=37.
+- Public standalone token-cost page contains /api/v1/admin/token-cost/state and no longer contains STORAGE_KEY or token-api-cost-state.
+- Fresh 75-second post-cutover blue log window had no panic/fatal/migration failure/checksum/bind/listen/rebuild-failed matches.
+
+Limit:
+- Noninteractive authenticated admin state read could not run because deploy .env has no readable ADMIN_PASSWORD value; no password or access token was printed.
