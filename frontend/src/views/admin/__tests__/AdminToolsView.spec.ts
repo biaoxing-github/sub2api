@@ -28,30 +28,36 @@ describe('AdminToolsView', () => {
     replace.mockReset()
   })
 
-  it('defaults to the NewApi checkin iframe', () => {
+  it('defaults to the native NewApi checkin tool', () => {
     const wrapper = mount(AdminToolsView, {
       global: {
         stubs: {
-          AppLayout: { template: '<main><slot /></main>' }
+          AppLayout: { template: '<main><slot /></main>' },
+          NewApiCheckinTool: { template: '<section data-testid="newapi-tool" />' },
+          TokenCostTool: { template: '<section data-testid="token-cost-tool" />' }
         }
       }
     })
 
     expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('admin.tools.tabs.newapi')
-    expect(wrapper.get('iframe').attributes('src')).toBe('/newapi-checkin/index.html')
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="newapi-tool"]').exists()).toBe(true)
   })
 
-  it('selects the token cost iframe from query and updates query on click', async () => {
+  it('selects the native token cost tool from query and updates query on click', async () => {
     routeState.query = { tab: 'token-cost' }
     const wrapper = mount(AdminToolsView, {
       global: {
         stubs: {
-          AppLayout: { template: '<main><slot /></main>' }
+          AppLayout: { template: '<main><slot /></main>' },
+          NewApiCheckinTool: { template: '<section data-testid="newapi-tool" />' },
+          TokenCostTool: { template: '<section data-testid="token-cost-tool" />' }
         }
       }
     })
 
-    expect(wrapper.get('iframe').attributes('src')).toBe('/token-cost/index.html')
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="token-cost-tool"]').exists()).toBe(true)
 
     await wrapper.get('#admin-tools-tab-newapi').trigger('click')
     expect(replace).toHaveBeenCalledWith({

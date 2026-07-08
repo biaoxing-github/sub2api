@@ -18,23 +18,26 @@
         </button>
       </div>
 
-      <div id="admin-tools-panel" class="admin-tools__frame" role="tabpanel" :aria-labelledby="`admin-tools-tab-${activeTab.key}`">
-        <iframe
-          :key="activeTab.key"
-          :title="t(activeTab.titleKey)"
-          :src="activeTab.src"
-          class="admin-tools__iframe"
-        ></iframe>
+      <div
+        id="admin-tools-panel"
+        class="admin-tools__frame"
+        role="tabpanel"
+        :aria-labelledby="`admin-tools-tab-${activeTab.key}`"
+        :aria-label="t(activeTab.titleKey)"
+      >
+        <component :is="activeTab.component" :key="activeTab.key" class="admin-tools__embedded" />
       </div>
     </section>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import NewApiCheckinTool from './tools/NewApiCheckinTool.vue'
+import TokenCostTool from './tools/TokenCostTool.vue'
 
 type AdminToolTabKey = 'newapi' | 'token-cost'
 
@@ -42,7 +45,7 @@ interface AdminToolTab {
   key: AdminToolTabKey
   labelKey: string
   titleKey: string
-  src: string
+  component: Component
 }
 
 const toolTabs: AdminToolTab[] = [
@@ -50,13 +53,13 @@ const toolTabs: AdminToolTab[] = [
     key: 'newapi',
     labelKey: 'admin.tools.tabs.newapi',
     titleKey: 'admin.tools.frames.newapi',
-    src: '/newapi-checkin/index.html'
+    component: NewApiCheckinTool
   },
   {
     key: 'token-cost',
     labelKey: 'admin.tools.tabs.tokenCost',
     titleKey: 'admin.tools.frames.tokenCost',
-    src: '/token-cost/index.html'
+    component: TokenCostTool
   }
 ]
 
@@ -147,7 +150,7 @@ function selectTab(key: AdminToolTabKey) {
 .admin-tools__frame {
   min-height: 0;
   flex: 1 1 auto;
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid rgb(226 232 240);
   border-radius: 8px;
   background: #f8fafc;
@@ -158,11 +161,10 @@ function selectTab(key: AdminToolTabKey) {
   background: rgb(15 23 42);
 }
 
-.admin-tools__iframe {
+.admin-tools__embedded {
   display: block;
   width: 100%;
   min-height: calc(100vh - 148px);
-  border: 0;
   background: #f8fafc;
 }
 </style>
