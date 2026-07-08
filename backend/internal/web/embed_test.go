@@ -541,6 +541,40 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "image/png")
 	})
+
+	t.Run("serves_standalone_tool_pages_before_spa_fallback", func(t *testing.T) {
+		provider := &mockSettingsProvider{
+			settings: map[string]string{"test": "value"},
+		}
+
+		server, err := NewFrontendServer(provider)
+		require.NoError(t, err)
+
+		router := gin.New()
+		router.Use(server.Middleware())
+
+		cases := []struct {
+			path  string
+			title string
+		}{
+			{path: "/newapi-checkin/index.html", title: "NewApi Checkin Dashboard"},
+			{path: "/token-cost/index.html", title: "API Token 余额动态计算器"},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.path, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+				router.ServeHTTP(w, req)
+
+				assert.Equal(t, http.StatusOK, w.Code)
+				assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
+				assert.Contains(t, w.Body.String(), "<title>"+tc.title+"</title>")
+				assert.NotContains(t, w.Body.String(), "Sub2API - AI API Gateway")
+				assert.NotContains(t, w.Body.String(), "window.__APP_CONFIG__")
+			})
+		}
+	})
 }
 
 func TestNewFrontendServer(t *testing.T) {

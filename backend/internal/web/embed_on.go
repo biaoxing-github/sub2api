@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -109,8 +110,10 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 		}
 
 		// Serve static files normally
-		s.fileServer.ServeHTTP(c.Writer, c.Request)
-		c.Abort()
+		if serveEmbeddedStaticFile(c, s.distFS, cleanPath) {
+			return
+		}
+		s.serveIndexHTML(c)
 	}
 }
 
@@ -250,7 +253,6 @@ func ServeEmbeddedFrontend() gin.HandlerFunc {
 	if err != nil {
 		panic("failed to get dist subdirectory: " + err.Error())
 	}
-	fileServer := http.FileServer(http.FS(distFS))
 	overrideDir := filepath.Join("data", "public")
 
 	return func(c *gin.Context) {
@@ -272,13 +274,57 @@ func ServeEmbeddedFrontend() gin.HandlerFunc {
 			if tryServeOverrideFile(c, overrideDir, cleanPath) {
 				return
 			}
-			fileServer.ServeHTTP(c.Writer, c.Request)
-			c.Abort()
+			if serveEmbeddedStaticFile(c, distFS, cleanPath) {
+				return
+			}
 			return
 		}
 
 		serveIndexHTML(c, distFS)
 	}
+}
+
+// serveEmbeddedStaticFile 直接返回嵌入式静态文件，避免 http.FileServer 对目录 index 产生跳转并落入 SPA fallback。
+func serveEmbeddedStaticFile(c *gin.Context, fsys fs.FS, cleanPath string) bool {
+	target := strings.TrimPrefix(cleanPath, "/")
+	if target == "" {
+		target = "index.html"
+	}
+
+	info, err := fs.Stat(fsys, target)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		target = pathpkg.Join(target, "index.html")
+		info, err = fs.Stat(fsys, target)
+		if err != nil {
+			return false
+		}
+		if info.IsDir() {
+			c.String(http.StatusNotFound, "Frontend file not found")
+			c.Abort()
+			return true
+		}
+	}
+
+	file, err := fsys.Open(target)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to open frontend file")
+		c.Abort()
+		return true
+	}
+	defer func() { _ = file.Close() }()
+
+	content, err := io.ReadAll(file)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to read frontend file")
+		c.Abort()
+		return true
+	}
+	http.ServeContent(c.Writer, c.Request, pathpkg.Base(target), info.ModTime(), bytes.NewReader(content))
+	c.Abort()
+	return true
 }
 
 // tryServeOverrideFile is a standalone version of tryServeOverride for legacy usage.

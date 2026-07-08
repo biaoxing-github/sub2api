@@ -19,6 +19,8 @@ ARG ALPINE_APK_REPOSITORY=https://mirrors.tuna.tsinghua.edu.cn/alpine
 # -----------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS frontend-builder
 
+ARG COMMIT=docker
+
 WORKDIR /app/frontend
 
 # Install pnpm (pinned to v9 to match CI and keep builds reproducible)
@@ -30,7 +32,8 @@ RUN pnpm install --frozen-lockfile
 
 # Copy frontend source and build
 COPY frontend/ ./
-RUN pnpm run build
+# 前端构建绑定提交号，避免 Docker 复用旧 dist 导致新 public 工具页未进入 embedded 产物。
+RUN echo "frontend build commit=${COMMIT}" >/tmp/sub2api-frontend-build-commit && pnpm run build
 
 # -----------------------------------------------------------------------------
 # Stage 2: Backend Builder
