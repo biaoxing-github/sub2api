@@ -4204,3 +4204,29 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：编译切片 `go test -tags unit ./cmd/server -run TestNonExistent -count=0` 与 `go test -tags unit ./internal/repository -run TestNonExistent -count=0` 均通过。
 - PASS：`git diff --check` exit 0；仅提示 `.codegraph/daemon.pid`、`backend/cmd/server/VERSION`、`docs/feature_list.jsonl`、`docs/process_list.jsonl` 的 LF/CRLF warning。
 - LIMIT：本轮未提交、未构建镜像、未部署、未推送、未执行真实 Anthropic/OpenAI 上游请求。
+
+## Toolbox SQL data import - 2026-07-08T11:33:25+08:00
+
+Actor: Devil
+
+Sources:
+- NewApi config: C:\Users\27404\Documents\Playground\scripts\newapi_checkin_config.json
+- NewApi balances: C:\Users\27404\Documents\Playground\output\newapi_checkin_balances.json
+- NewApi latest run: C:\Users\27404\Documents\Playground\output\newapi_checkin_latest.json
+- NewApi monthly/balance history: C:\Users\27404\Documents\Playground\output\newapi_checkin.sqlite
+- Token cost state: C:\Users\27404\Documents\Playground\docs\token-api-cost-state.json
+
+Actions:
+- Ran .codex/import_toolbox_data.ps1 -DryRun through PostgreSQL transaction and ROLLBACK; SQL mapping produced expected row counts.
+- Ran .codex/import_toolbox_data.ps1 and COMMIT; replaced toolbox SQL data from latest local JSON/SQLite sources.
+
+Verification:
+- NewApi SQL counts: sites=4, accounts=31, balances=31, latest_run_results=24, history=246, monthly=332.
+- Token cost SQL counts: platforms=21, history=16, events=37, total_balance=2699.13, plus_count=17, pro_count=18.
+- HTTP smoke: /health 200, /admin/tools 200, protected admin APIs returned 401 without login as expected.
+- Active runtime: sub2api-blue image sub2api:v0.1.143.8 healthy; sub2api-green rollback image sub2api:v0.1.143.7 healthy.
+- Fresh active logs: no panic/fatal/migration failure/checksum/pq/bind/listen/rebuild-failed matches in the last 10 minutes.
+
+Risk / notes:
+- No application rebuild or container restart was required because NewApi and TokenCost services load state from SQL repositories on each admin request.
+- Access keys were imported into SQL from the provided config source but were not written into tracked repository files or logs.
