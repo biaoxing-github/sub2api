@@ -95,8 +95,50 @@ func RegisterAdminRoutes(
 		// 风控中心
 		registerContentModerationRoutes(admin, h)
 
+		// NewApi 多站点签到
+		registerNewAPICheckinRoutes(admin, h)
+
+		// Token 成本计算器
+		registerTokenCostRoutes(admin, h)
+
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
+	}
+}
+
+func registerNewAPICheckinRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	checkin := admin.Group("/newapi-checkin")
+	{
+		checkin.GET("/config", h.Admin.NewAPICheckin.GetConfig)
+		checkin.GET("/last-run", h.Admin.NewAPICheckin.GetLastRun)
+		checkin.GET("/balances", h.Admin.NewAPICheckin.GetBalances)
+		checkin.GET("/history", h.Admin.NewAPICheckin.GetHistory)
+		checkin.GET("/balance-history", h.Admin.NewAPICheckin.GetBalanceHistory)
+		checkin.GET("/monthly", h.Admin.NewAPICheckin.GetMonthly)
+		checkin.GET("/monthly-sync-status", h.Admin.NewAPICheckin.GetMonthlySyncStatus)
+		checkin.GET("/checkin-job-status", h.Admin.NewAPICheckin.GetCheckinJobStatus)
+
+		checkin.POST("/sync-usernames", h.Admin.NewAPICheckin.SyncUsernames)
+		checkin.POST("/config-site", h.Admin.NewAPICheckin.AddOrMergeSite)
+		checkin.POST("/delete-site", h.Admin.NewAPICheckin.DeleteSite)
+		checkin.POST("/delete-account", h.Admin.NewAPICheckin.DeleteAccount)
+		checkin.POST("/site-enabled", h.Admin.NewAPICheckin.SetSiteEnabled)
+		checkin.POST("/refresh-site-balances", h.Admin.NewAPICheckin.RefreshSiteBalances)
+		checkin.POST("/refresh-account-balance", h.Admin.NewAPICheckin.RefreshAccountBalance)
+		checkin.POST("/sync-site-names", h.Admin.NewAPICheckin.SyncSiteNames)
+		checkin.POST("/sync-account-name", h.Admin.NewAPICheckin.SyncAccountName)
+		checkin.POST("/sync-monthly", h.Admin.NewAPICheckin.SyncMonthly)
+		checkin.POST("/run-full-checkin", h.Admin.NewAPICheckin.RunFullCheckin)
+		checkin.POST("/checkin-single", h.Admin.NewAPICheckin.CheckinSingle)
+	}
+}
+
+func registerTokenCostRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	tokenCost := admin.Group("/token-cost")
+	{
+		tokenCost.GET("/health", h.Admin.TokenCost.Health)
+		tokenCost.GET("/state", h.Admin.TokenCost.GetState)
+		tokenCost.POST("/state", h.Admin.TokenCost.SaveState)
 	}
 }
 

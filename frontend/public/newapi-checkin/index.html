@@ -1,0 +1,3285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NewApi Checkin Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #F8FAFC;
+      --bg-2: #F1F5F9;
+      --surface: #FFFFFF;
+      --surface-2: #F8FAFC;
+      --surface-3: #E2E8F0;
+      --ink: #0F172A;
+      --muted: #64748B;
+      --line: #E2E8F0;
+      --line-strong: #CBD5E1;
+      --accent: #0891B2;
+      --accent-strong: #0E7490;
+      --accent-soft: #CFFAFE;
+      --ok: #16A34A;
+      --ok-soft: #DCFCE7;
+      --warn: #D97706;
+      --warn-soft: #FEF3C7;
+      --danger: #DC2626;
+      --danger-soft: #FEE2E2;
+      --shadow: 0 12px 32px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.02);
+      --radius: 4px;
+      --radius-lg: 6px;
+      --content: 1620px;
+
+      /* Overdrive: Spring Physics & Motion */
+      --spring-bouncy: linear(0, 0.009, 0.035 2.1%, 0.141, 0.281 6.7%, 0.723 12.9%, 0.938 16.7%, 1.017, 1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.8%, 1.051 39.6%, 1.017 43.1%, 0.991, 0.977 51%, 0.974 53.8%, 0.975 57.1%, 0.997 69.8%, 1.003 76.9%, 1.004 83.8%, 1);
+      --spring-smooth: cubic-bezier(0.175, 0.885, 0.32, 1.1);
+      --spring-stiff: cubic-bezier(0.1, 0.7, 0.1, 1);
+      --motion-fast: 300ms;
+      --motion-normal: 500ms;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    /* Staggered Entry Animations */
+    @keyframes slideFadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(16px) scale(0.98);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .metric-card, .overview-card, .feed-item, .panel {
+      animation: slideFadeIn var(--motion-normal) var(--spring-bouncy) both;
+    }
+
+    .metric-card:nth-child(1) { animation-delay: 0ms; }
+    .metric-card:nth-child(2) { animation-delay: 60ms; }
+    .metric-card:nth-child(3) { animation-delay: 120ms; }
+    .metric-card:nth-child(4) { animation-delay: 180ms; }
+    .metric-card:nth-child(5) { animation-delay: 240ms; }
+    .metric-card:nth-child(6) { animation-delay: 300ms; }
+
+    .feed-item:nth-child(1) { animation-delay: 0ms; }
+    .feed-item:nth-child(2) { animation-delay: 50ms; }
+    .feed-item:nth-child(3) { animation-delay: 100ms; }
+    .feed-item:nth-child(4) { animation-delay: 150ms; }
+    .feed-item:nth-child(5) { animation-delay: 200ms; }
+
+    @starting-style {
+      .metric-card, .overview-card, .feed-item, .panel {
+        opacity: 0;
+        transform: translateY(16px) scale(0.98);
+      }
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Fira Sans", "Microsoft YaHei", sans-serif;
+      line-height: 1.45;
+    }
+
+    button,
+    select,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    code {
+      padding: 0 4px;
+      border-radius: 4px;
+      background: color-mix(in oklab, var(--surface-3) 88%, white);
+      font-size: 12px;
+      color: var(--accent-strong);
+    }
+
+    .shell {
+      max-width: var(--content);
+      margin: 0 auto;
+      padding: 32px 32px 48px;
+    }
+
+    .header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 18px;
+      align-items: end;
+      margin-bottom: 16px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 28px;
+      padding: 0 11px;
+      border: 1px solid color-mix(in oklab, var(--accent) 16%, white);
+      border-radius: 999px;
+      background: color-mix(in oklab, var(--accent-soft) 74%, white);
+      color: var(--accent-strong);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    h1 {
+      margin: 10px 0 0;
+      font-family: "Fira Sans", "Microsoft YaHei", sans-serif; font-weight: 600;
+      font-size: clamp(2.25rem, 4vw, 3.45rem);
+      line-height: 0.96;
+      letter-spacing: 0;
+    }
+
+    .header-copy {
+      max-width: 860px;
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    button,
+    select,
+    input,
+    textarea {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--ink);
+    }
+
+    button {
+      padding: 8px 14px;
+      transition:
+        background-color var(--motion-fast) var(--spring-stiff),
+        border-color var(--motion-fast) var(--spring-stiff),
+        transform var(--motion-fast) var(--spring-bouncy),
+        box-shadow var(--motion-fast) var(--spring-bouncy);
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-2px) scale(1.02);
+      border-color: var(--line-strong);
+      background: color-mix(in oklab, var(--surface) 90%, white);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    }
+
+    button:active:not(:disabled) {
+      transform: translateY(1px) scale(0.96);
+      transition-duration: 100ms;
+    }
+
+    button:disabled {
+      opacity: 0.58;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    button.primary {
+      border-color: var(--accent-strong);
+      background: var(--accent);
+      color: white;
+    }
+
+    button.secondary {
+      background: color-mix(in oklab, var(--surface-2) 90%, white);
+    }
+
+    button.ghost {
+      background: transparent;
+    }
+
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .metric-card {
+      min-height: 110px;
+      padding: 20px 24px;
+      border: none;
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      transition: transform var(--motion-fast) var(--spring-bouncy), box-shadow var(--motion-fast) var(--spring-bouncy);
+    }
+
+    .metric-card:hover {
+      transform: translateY(-4px) scale(1.01);
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.06), 0 8px 16px rgba(15, 23, 42, 0.03);
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      margin-top: 16px;
+      font-family: "Fira Code", monospace;
+      font-weight: 600;
+      font-size: clamp(1.8rem, 2.5vw, 2.8rem);
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric-note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(308px, 348px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 16px;
+      padding: 24px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .sidebar-section {
+      display: grid;
+      gap: 12px;
+    }
+
+    .panel {
+      position: static;
+      padding: 24px;
+      display: grid;
+      gap: 14px;
+      overflow: hidden;
+    }
+
+    .panel + .panel {
+      margin-top: 14px;
+    }
+
+    .panel-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: end;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .panel-head > :first-child {
+      min-width: 0;
+      display: grid;
+      gap: 6px;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-family: "Fira Sans", "Microsoft YaHei", sans-serif; font-weight: 600;
+      font-size: 19px;
+      line-height: 1.12;
+    }
+
+    .panel-meta {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    @keyframes pulseBackground {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    .status-box {
+      min-height: 48px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in oklab, var(--surface-2) 84%, white);
+      color: var(--muted);
+      font-size: 13px;
+      transition: all var(--motion-fast) var(--spring-smooth);
+    }
+
+    .status-box[data-tone="busy"] {
+      border-color: color-mix(in oklab, var(--accent) 26%, var(--line));
+      background: linear-gradient(90deg,
+        color-mix(in oklab, var(--accent-soft) 42%, white) 0%,
+        color-mix(in oklab, var(--accent-soft) 80%, white) 50%,
+        color-mix(in oklab, var(--accent-soft) 42%, white) 100%);
+      background-size: 200% 200%;
+      animation: pulseBackground 2s ease infinite;
+      color: var(--accent-strong);
+    }
+
+    .status-box[data-tone="error"] {
+      border-color: color-mix(in oklab, var(--danger) 30%, var(--line));
+      background: color-mix(in oklab, var(--danger-soft) 72%, white);
+      color: var(--danger);
+    }
+
+    .status-box[data-tone="ok"] {
+      border-color: color-mix(in oklab, var(--ok) 24%, var(--line));
+      background: color-mix(in oklab, var(--ok-soft) 72%, white);
+      color: var(--ok);
+    }
+
+    .status-box.is-pending {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .status-box.is-pending::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 48%, transparent 100%);
+      transform: translateX(-120%);
+      animation: sweep 1.1s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    @keyframes sweep {
+      to {
+        transform: translateX(120%);
+      }
+    }
+
+    .control-grid,
+    .field-stack,
+    .note-list,
+    .view-stack,
+    .overview-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .toolbar button[data-busy="true"],
+    .site-actions button[data-busy="true"],
+    .action-cluster button[data-busy="true"] {
+      position: relative;
+      pointer-events: none;
+      opacity: 0.78;
+      overflow: hidden;
+    }
+
+    .toolbar button[data-busy="true"]::after,
+    .site-actions button[data-busy="true"]::after,
+    .action-cluster button[data-busy="true"]::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%);
+      transform: translateX(-120%);
+      animation: sweep 1.1s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .status-row .status-mini {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .row-pending td {
+      background: color-mix(in oklab, var(--accent-soft) 26%, white);
+    }
+
+    .row-done td {
+      background: color-mix(in oklab, var(--ok-soft) 22%, white);
+    }
+
+    .row-error td {
+      background: color-mix(in oklab, var(--danger-soft) 24%, white);
+    }
+
+    .action-cluster {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .action-cluster .quick-action {
+      width: 100%;
+      min-width: 0;
+      padding-inline: 8px;
+      white-space: nowrap;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    select,
+    input,
+    textarea {
+      width: 100%;
+      padding: 9px 11px;
+    }
+
+    select:focus,
+    input:focus,
+    textarea:focus,
+    button:focus {
+      outline: 2px solid color-mix(in oklab, var(--accent) 46%, white);
+      outline-offset: 2px;
+    }
+
+    .target-card {
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in oklab, var(--surface-2) 88%, white);
+      display: grid;
+      gap: 8px;
+    }
+
+    .target-title {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .target-main {
+      display: grid;
+      gap: 4px;
+    }
+
+    .target-main strong {
+      font-size: 18px;
+      font-family: "Fira Sans", "Microsoft YaHei", sans-serif; font-weight: 600;
+      line-height: 1;
+    }
+
+    .target-meta {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    details {
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+
+    summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 13px;
+      user-select: none;
+    }
+
+    pre {
+      margin: 10px 0 0;
+      min-height: 120px;
+      padding: 14px;
+      border-radius: var(--radius);
+      background: oklch(0.212 0.018 255);
+      color: oklch(0.962 0.012 226);
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .note-list {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .main {
+      display: grid;
+      gap: 14px;
+    }
+
+    .viewbar {
+      border: none;
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 18px 24px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .tab-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tab-button {
+      min-height: 38px;
+      padding: 8px 13px;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      transition: all var(--motion-fast) var(--spring-bouncy);
+      border: 1px solid transparent;
+    }
+
+    .tab-button:hover {
+      background: var(--surface-2);
+      transform: scale(1.05);
+    }
+
+    .tab-button:active {
+      transform: scale(0.95);
+    }
+
+    .tab-button[aria-selected="true"] {
+      border-color: color-mix(in oklab, var(--accent) 24%, var(--line));
+      background: color-mix(in oklab, var(--accent-soft) 78%, white);
+      color: var(--accent-strong);
+      transform: scale(1.05);
+    }
+
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .site-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+      padding-top: 2px;
+    }
+
+    .site-actions button {
+      min-width: 0;
+      width: 100%;
+      white-space: nowrap;
+    }
+
+    .filter-pill {
+      min-height: 34px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .filter-pill.active {
+      border-color: color-mix(in oklab, var(--accent) 24%, var(--line));
+      background: color-mix(in oklab, var(--accent-soft) 80%, white);
+      color: var(--accent-strong);
+    }
+
+    .filter-meta {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .view-panel[hidden] {
+      display: none;
+    }
+
+    .view-grid-2 {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 14px;
+    }
+
+    .overview-site-grid,
+    .overview-balance-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .overview-card {
+      padding: 24px;
+      border: none;
+      box-shadow: var(--shadow);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      display: grid;
+      gap: 12px;
+      min-height: 140px;
+      transition: transform var(--motion-fast) var(--spring-bouncy), box-shadow var(--motion-fast) var(--spring-bouncy);
+    }
+
+    .overview-card:hover {
+      transform: translateY(-4px) scale(1.01);
+      box-shadow: 0 20px 40px rgba(15, 23, 42, 0.06), 0 8px 16px rgba(15, 23, 42, 0.03);
+    }
+
+    .overview-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .overview-site {
+      display: grid;
+      gap: 4px;
+    }
+
+    .overview-site strong {
+      font-size: 17px;
+      font-family: "Fira Sans", "Microsoft YaHei", sans-serif; font-weight: 600;
+      line-height: 1;
+    }
+
+    .overview-sub {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .chip-row,
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip,
+    .badge {
+      font-family: "Fira Code", monospace;
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .chip.ok,
+    .badge.ok {
+      background: var(--ok-soft);
+      color: var(--ok);
+    }
+
+    .chip.warn,
+    .badge.warn {
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+
+    .chip.danger,
+    .badge.danger {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .chip.neutral,
+    .badge.neutral {
+      background: color-mix(in oklab, var(--surface-3) 88%, white);
+      color: var(--ink);
+      border-color: color-mix(in oklab, var(--line) 82%, white);
+    }
+
+    .overview-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: auto;
+    }
+
+    .overview-metric {
+      padding-top: 8px;
+      border-top: 1px solid color-mix(in oklab, var(--line) 78%, white);
+    }
+
+    .overview-metric-label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .overview-metric-value {
+      font-family: "Fira Code", monospace;
+      margin-top: 4px;
+      font-size: 18px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+    }
+
+    .feed-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .feed-item {
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in oklab, var(--surface-2) 88%, white);
+      display: grid;
+      gap: 4px;
+    }
+
+    .feed-item-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .feed-item strong {
+      font-size: 14px;
+    }
+
+    .feed-item .dim {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .feed-item-body {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: none;
+      box-shadow: var(--shadow);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+    }
+
+    .config-editor {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .json-input {
+      min-height: 220px;
+      resize: vertical;
+      font-family: "Fira Code", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre;
+    }
+
+    .editor-aside {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: color-mix(in oklab, var(--surface-2) 82%, white);
+    }
+
+    .chart-shell {
+      display: grid;
+      gap: 12px;
+    }
+
+    .trend-chart {
+      min-height: 280px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.82), rgba(248,250,252,0.92)),
+        repeating-linear-gradient(0deg, transparent 0 45px, color-mix(in oklab, var(--line) 60%, transparent) 46px 47px);
+      overflow: hidden;
+    }
+
+    .trend-chart svg {
+      display: block;
+      width: 100%;
+      min-height: 280px;
+    }
+
+    .trend-line {
+      fill: none;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .trend-line.award {
+      stroke: var(--accent);
+    }
+
+    .trend-line.balance {
+      stroke: var(--ok);
+    }
+
+    .trend-dot {
+      stroke: white;
+      stroke-width: 2;
+    }
+
+    .chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-swatch {
+      width: 22px;
+      height: 3px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+
+    .legend-swatch.balance {
+      background: var(--ok);
+    }
+
+    table {
+      font-family: "Fira Code", monospace;
+      width: 100%;
+      min-width: 760px;
+      border-collapse: collapse;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th,
+    td {
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: color-mix(in oklab, var(--surface) 86%, var(--surface-3));
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tbody tr:hover td {
+      background: var(--surface-2);
+    }
+
+    .table-wrap.catalog-wrap table {
+      font-family: "Fira Code", monospace;
+      min-width: 980px;
+    }
+
+    .catalog-row td {
+      padding-top: 13px;
+      padding-bottom: 13px;
+    }
+
+    .catalog-row.site-start td {
+      border-top: 1px solid color-mix(in oklab, var(--line-strong) 72%, white);
+    }
+
+    .site-block {
+      min-width: 190px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .site-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .site-top strong {
+      font-family: "Fira Sans", "Microsoft YaHei", sans-serif; font-weight: 600;
+      font-size: 17px;
+      line-height: 1;
+    }
+
+    .site-url {
+      color: var(--muted);
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    .site-note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .site-repeat {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .identity {
+      display: grid;
+      gap: 3px;
+    }
+
+    .identity strong {
+      font-weight: 700;
+      line-height: 1.15;
+    }
+
+    .identity .subline,
+    .dim {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .route-badge {
+      display: inline-flex;
+      min-height: 26px;
+      align-items: center;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: color-mix(in oklab, var(--surface-3) 90%, white);
+      color: var(--ink);
+      border: 1px solid color-mix(in oklab, var(--line) 82%, white);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .quick-action {
+      min-height: 34px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      background: color-mix(in oklab, var(--accent-soft) 66%, white);
+      border-color: color-mix(in oklab, var(--accent) 22%, var(--line));
+      color: var(--accent-strong);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .quick-action.secondary {
+      background: color-mix(in oklab, var(--surface-2) 88%, white);
+      border-color: var(--line);
+      color: var(--ink);
+    }
+
+    .quick-action.danger {
+      background: color-mix(in oklab, var(--danger-soft) 76%, white);
+      border-color: color-mix(in oklab, var(--danger) 28%, var(--line));
+      color: var(--danger);
+    }
+
+    .action-cluster {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .table-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .empty {
+      padding: 18px 14px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .inline-note {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 1400px) {
+      .summary-strip {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .view-grid-2 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      .site-actions,
+      .action-cluster {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 1240px) {
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: static;
+      }
+
+      .overview-site-grid,
+      .overview-balance-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .config-editor {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 820px) {
+      .shell {
+        padding: 18px 14px 24px;
+      }
+
+      .header {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar {
+        justify-content: stretch;
+      }
+
+      .toolbar button {
+        flex: 1 1 auto;
+      }
+
+      .summary-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .overview-metrics {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .site-actions,
+      .action-cluster {
+        grid-template-columns: 1fr;
+      }
+
+      .summary-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .overview-metrics {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="header">
+      <div>
+        <div class="eyebrow"><span class="eyebrow-dot"></span> Personal Operations Console</div>
+        <h1>NewApi Checkin Dashboard</h1>
+        <p class="header-copy">页面默认只读 sub2api SQL 存储；需要更新远端数据时，按站点或账号手动刷新。这样打开很快，也尽量减少同一站点的连续请求。</p>
+      </div>
+    </header>
+
+    <section class="summary-strip" id="statsGrid">
+      <div class="metric-card">
+        <div class="metric-label">启用站点</div>
+        <div class="metric-value">-</div>
+        <div class="metric-note">当前配置</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">启用账号</div>
+        <div class="metric-value">-</div>
+        <div class="metric-note">今日轮询范围</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">最近成功</div>
+        <div class="metric-value">-</div>
+        <div class="metric-note">上次收口结果</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">今日已签</div>
+        <div class="metric-value">-</div>
+        <div class="metric-note">无需补跑</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">最近奖励</div>
+        <div class="metric-value">-</div>
+        <div class="metric-note">上次累计奖励</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">运行状态</div>
+        <div class="metric-value" id="statusInline">-</div>
+        <div class="metric-note" id="statusSubline">等待加载</div>
+      </div>
+    </section>
+
+    <div class="workspace">
+      <aside class="sidebar">
+        <section class="sidebar-section">
+          <div class="panel-head" style="margin-bottom: 0;">
+            <div>
+              <h2 class="panel-title">控制台</h2>
+              <div class="panel-meta">补签动作和页面状态</div>
+            </div>
+          </div>
+          <div class="status-box" id="appStatus" data-tone="normal">准备加载…</div>
+        </section>
+
+        <section class="sidebar-section">
+          <div class="field-stack">
+            <label>
+              站点
+              <select id="siteSelect"></select>
+            </label>
+            <label>
+              账号
+              <select id="accountSelect"></select>
+            </label>
+          </div>
+          <div class="toolbar">
+            <button class="primary" id="singleRunBtn">执行单账号签到</button>
+            <button class="secondary" id="fullRunBtn">后台完整签到</button>
+          </div>
+          <div class="target-card" id="selectedTargetCard">
+            <div class="target-title">当前补签目标</div>
+            <div class="target-main">
+              <strong>-</strong>
+              <div class="target-meta">等待选择账号</div>
+            </div>
+          </div>
+          <div class="status-box" id="singleRunStatus" data-tone="normal">等待执行。</div>
+          <div class="status-box" id="fullRunStatus" data-tone="normal">完整签到等待触发。</div>
+        </section>
+
+        <details open>
+          <summary>查看单账号脚本输出</summary>
+          <pre id="singleRunOutput"></pre>
+        </details>
+
+        <section class="note-list">
+          <div>名称同步会把站点返回的 <code>display_name</code>、<code>username</code> 写回配置，同时把展示名称一起更新。</div>
+          <div>“最近一次签到”区域展示的是本地最终收口结果；如果做过补跑，结果会按补跑后的最新状态呈现。</div>
+          <div>余额默认来自 sub2api SQL 存储；只有点击站点或账号级刷新按钮时，才会请求远端并写回余额与签到状态。</div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <section class="viewbar">
+          <div class="tab-row" id="tabRow">
+            <button class="tab-button" type="button" data-tab="overview" aria-selected="true">总览</button>
+            <button class="tab-button" type="button" data-tab="config" aria-selected="false">平台目录</button>
+            <button class="tab-button" type="button" data-tab="history" aria-selected="false">签到记录</button>
+            <button class="tab-button" type="button" data-tab="balances" aria-selected="false">实时余额</button>
+            <button class="tab-button" type="button" data-tab="monthly" aria-selected="false">月度历史</button>
+          </div>
+          <div class="filter-row">
+            <div class="filter-row" id="siteFilterRow"></div>
+            <div class="filter-meta" id="activeFilterMeta">按全部站点查看</div>
+          </div>
+          <div class="site-actions">
+            <button class="secondary" id="reloadLocalBtn">读取 SQL 数据</button>
+            <button class="primary" id="refreshSiteBalanceBtn">刷新当前站点余额/签到</button>
+            <button class="secondary" id="syncSiteNamesBtn">同步当前站点名称</button>
+          </div>
+        </section>
+
+        <section class="view-panel" data-tab-panel="overview">
+          <div class="view-grid-2">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title">今日签到收口</h2>
+                  <div class="panel-meta" id="overviewRunMeta">等待最近一次结果</div>
+                </div>
+                <div class="panel-meta">按站点看执行强弱</div>
+              </div>
+              <div class="overview-site-grid" id="overviewRunGrid"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title">平台余额总览</h2>
+                  <div class="panel-meta" id="overviewBalanceMeta">等待实时余额</div>
+                </div>
+                <div class="panel-meta">来自 sub2api SQL 存储</div>
+              </div>
+              <div class="overview-balance-grid" id="overviewBalanceGrid"></div>
+            </section>
+          </div>
+
+          <div class="view-grid-2">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title">关注项</h2>
+                  <div class="panel-meta">失败、已签和补跑相关提示</div>
+                </div>
+              </div>
+              <div class="feed-list" id="overviewFeed"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title">当前筛选摘要</h2>
+                  <div class="panel-meta">站点切换后，这里会跟着收窄</div>
+                </div>
+              </div>
+              <div class="feed-list" id="overviewContextFeed"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view-panel" data-tab-panel="config" hidden>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">新增平台 / 账号</h2>
+                  <div class="panel-meta">粘贴平台或账号 JSON 配置片段；同名平台会按 user_id 合并账号</div>
+              </div>
+              <button class="primary" id="saveConfigJsonBtn" type="button">写入配置</button>
+            </div>
+            <div class="config-editor">
+              <textarea class="json-input" id="configJsonInput" spellcheck="false"></textarea>
+              <div class="editor-aside">
+                <div class="badge-row">
+                  <span class="badge neutral">JSON</span>
+                  <span class="badge neutral">明文 key</span>
+                </div>
+                <div class="inline-note">可以粘贴单个平台对象，也可以粘贴 <code>{"sites":[...]}</code>。字段格式沿用 NewApi 签到配置。</div>
+                <div class="status-box" id="configJsonStatus" data-tone="normal">等待输入。</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">平台目录</h2>
+                <div class="panel-meta" id="configMeta">等待配置</div>
+              </div>
+              <div class="panel-meta">按站点分组，随时把任意账号设为补签目标</div>
+            </div>
+            <div class="table-summary" id="configSummaryBadges"></div>
+            <div class="table-wrap catalog-wrap" id="configTableWrap"></div>
+          </section>
+        </section>
+
+        <section class="view-panel" data-tab-panel="history" hidden>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">最近一次全量签到</h2>
+                <div class="panel-meta" id="lastRunMeta">尚未读取</div>
+              </div>
+              <div class="panel-meta">执行结果与当时余额快照</div>
+            </div>
+            <div class="badge-row" id="lastRunBadges"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">站点汇总</h2>
+                <div class="panel-meta">成功、已签、失败和奖励折算</div>
+              </div>
+            </div>
+            <div class="table-wrap" id="lastRunSiteTable"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">账号结果</h2>
+                <div class="panel-meta">按当前站点筛选展示</div>
+              </div>
+            </div>
+            <div class="table-wrap" id="lastRunAccountTable"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">原始摘要</h2>
+                <div class="panel-meta">保留脚本输出文本，方便复制</div>
+              </div>
+            </div>
+            <pre id="lastRunSummaryText"></pre>
+          </section>
+        </section>
+
+        <section class="view-panel" data-tab-panel="balances" hidden>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">实时余额与额度</h2>
+                <div class="panel-meta" id="balanceMeta">尚未读取 SQL 存储</div>
+              </div>
+              <div class="panel-meta">手动刷新后写回 SQL</div>
+            </div>
+            <div class="badge-row" id="balanceOverallBadges"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">每日变化趋势</h2>
+                <div class="panel-meta" id="trendMeta">等待本地历史</div>
+              </div>
+              <div class="field-stack" style="min-width: 260px; max-width: 420px;">
+                <label>
+                  趋势范围
+                  <select id="trendScopeSelect"></select>
+                </label>
+                <div class="chart-legend">
+                  <span class="legend-item"><span class="legend-swatch"></span>每日签到新增</span>
+                  <span class="legend-item"><span class="legend-swatch balance"></span>当日总余额</span>
+                </div>
+              </div>
+            </div>
+            <div class="chart-shell">
+              <div class="trend-chart" id="trendChart"></div>
+              <div class="table-wrap" id="trendTable"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">站点额度汇总</h2>
+                <div class="panel-meta">适合先看平台层面的总余额</div>
+              </div>
+            </div>
+            <div class="table-wrap" id="balanceSiteTable"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">账号余额明细</h2>
+                <div class="panel-meta">按当前站点筛选展示</div>
+              </div>
+            </div>
+            <div class="table-wrap" id="balanceAccountTable"></div>
+          </section>
+        </section>
+
+        <section class="view-panel" data-tab-panel="monthly" hidden>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">月度签到缓存</h2>
+                <div class="panel-meta" id="monthlyMeta">读取 sub2api SQL 存储，不主动请求远端</div>
+              </div>
+              <div class="field-stack" style="min-width: 260px; max-width: 460px;">
+                <label>
+                  历史月份
+                  <input id="monthlyMonthInput" type="month">
+                </label>
+                <label>
+                  签到趋势范围
+                  <select id="monthlyTrendScopeSelect"></select>
+                </label>
+              </div>
+            </div>
+            <div class="site-actions">
+              <button class="secondary" id="loadMonthlyBtn">读取本地月份</button>
+              <button class="primary" id="syncMonthlySiteBtn">同步当前站点月份</button>
+              <button class="secondary" id="syncMonthlyAccountBtn">同步当前账号月份</button>
+            </div>
+            <div class="status-box" id="monthlySyncStatus" data-tone="normal">等待读取月度缓存。</div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">每日签到奖励趋势</h2>
+                <div class="panel-meta" id="monthlyTrendMeta">按 SQL 月度记录统计每日签到奖励</div>
+              </div>
+              <div class="chart-legend">
+                <span class="legend-item"><span class="legend-swatch"></span>每日签到奖励($)</span>
+              </div>
+            </div>
+            <div class="chart-shell">
+              <div class="trend-chart" id="monthlyTrendChart"></div>
+              <div class="table-wrap" id="monthlyTrendTable"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">平台月度汇总</h2>
+                <div class="panel-meta">按站点统计当月已缓存签到奖励</div>
+              </div>
+            </div>
+            <div class="table-wrap" id="monthlySiteTable"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">账号月度汇总</h2>
+                <div class="panel-meta">按账号统计当月签到天数和奖励</div>
+              </div>
+            </div>
+            <div class="table-wrap" id="monthlyAccountTable"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">月度明细</h2>
+                <div class="panel-meta">每条记录来自 /api/user/checkin?month=YYYY-MM 后写入 SQL</div>
+              </div>
+            </div>
+            <div class="table-wrap" id="monthlyRecordsTable"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      config: null,
+      lastRun: null,
+      balances: null,
+      history: null,
+      monthly: null,
+      activeSite: "all",
+      trendScope: "all",
+      monthlyTrendScope: "all",
+      monthlyStatusTimer: null,
+      checkinStatusTimer: null,
+      activeTab: "overview",
+    };
+
+    const statsGrid = document.getElementById("statsGrid");
+    const statusInline = document.getElementById("statusInline");
+    const statusSubline = document.getElementById("statusSubline");
+    const appStatus = document.getElementById("appStatus");
+    const activeFilterMeta = document.getElementById("activeFilterMeta");
+    const siteFilterRow = document.getElementById("siteFilterRow");
+    const tabRow = document.getElementById("tabRow");
+
+    const siteSelect = document.getElementById("siteSelect");
+    const accountSelect = document.getElementById("accountSelect");
+    const singleRunBtn = document.getElementById("singleRunBtn");
+    const fullRunBtn = document.getElementById("fullRunBtn");
+    const singleRunStatus = document.getElementById("singleRunStatus");
+    const fullRunStatus = document.getElementById("fullRunStatus");
+    const singleRunOutput = document.getElementById("singleRunOutput");
+    const selectedTargetCard = document.getElementById("selectedTargetCard");
+
+    const reloadLocalBtn = document.getElementById("reloadLocalBtn");
+    const refreshSiteBalanceBtn = document.getElementById("refreshSiteBalanceBtn");
+    const syncSiteNamesBtn = document.getElementById("syncSiteNamesBtn");
+
+    const overviewRunMeta = document.getElementById("overviewRunMeta");
+    const overviewRunGrid = document.getElementById("overviewRunGrid");
+    const overviewBalanceMeta = document.getElementById("overviewBalanceMeta");
+    const overviewBalanceGrid = document.getElementById("overviewBalanceGrid");
+    const overviewFeed = document.getElementById("overviewFeed");
+    const overviewContextFeed = document.getElementById("overviewContextFeed");
+
+    const configMeta = document.getElementById("configMeta");
+    const configSummaryBadges = document.getElementById("configSummaryBadges");
+    const configTableWrap = document.getElementById("configTableWrap");
+    const configJsonInput = document.getElementById("configJsonInput");
+    const saveConfigJsonBtn = document.getElementById("saveConfigJsonBtn");
+    const configJsonStatus = document.getElementById("configJsonStatus");
+
+    const lastRunMeta = document.getElementById("lastRunMeta");
+    const lastRunBadges = document.getElementById("lastRunBadges");
+    const lastRunSiteTable = document.getElementById("lastRunSiteTable");
+    const lastRunAccountTable = document.getElementById("lastRunAccountTable");
+    const lastRunSummaryText = document.getElementById("lastRunSummaryText");
+
+    const balanceMeta = document.getElementById("balanceMeta");
+    const balanceOverallBadges = document.getElementById("balanceOverallBadges");
+    const balanceSiteTable = document.getElementById("balanceSiteTable");
+    const balanceAccountTable = document.getElementById("balanceAccountTable");
+    const trendMeta = document.getElementById("trendMeta");
+    const trendChart = document.getElementById("trendChart");
+    const trendTable = document.getElementById("trendTable");
+    const trendScopeSelect = document.getElementById("trendScopeSelect");
+    const monthlyMeta = document.getElementById("monthlyMeta");
+    const monthlyMonthInput = document.getElementById("monthlyMonthInput");
+    const monthlyTrendScopeSelect = document.getElementById("monthlyTrendScopeSelect");
+    const loadMonthlyBtn = document.getElementById("loadMonthlyBtn");
+    const syncMonthlySiteBtn = document.getElementById("syncMonthlySiteBtn");
+    const syncMonthlyAccountBtn = document.getElementById("syncMonthlyAccountBtn");
+    const monthlySyncStatus = document.getElementById("monthlySyncStatus");
+    const monthlyTrendMeta = document.getElementById("monthlyTrendMeta");
+    const monthlyTrendChart = document.getElementById("monthlyTrendChart");
+    const monthlyTrendTable = document.getElementById("monthlyTrendTable");
+    const monthlySiteTable = document.getElementById("monthlySiteTable");
+    const monthlyAccountTable = document.getElementById("monthlyAccountTable");
+    const monthlyRecordsTable = document.getElementById("monthlyRecordsTable");
+
+    function escapeHtml(value) {
+      let str = String(value ?? "");
+      return str
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function preferredName(record) {
+      return record?.display_name || record?.username || record?.name || record?.account || record?.account_name || record?.user_id || "-";
+    }
+
+    function getConfigSites() {
+      return state.config?.sites || [];
+    }
+
+    function getEnabledSites() {
+      return getConfigSites().filter((site) => site.enabled);
+    }
+
+    function isSiteEnabled(siteName) {
+      const site = getConfigSite(siteName);
+      return Boolean(site?.enabled);
+    }
+
+    function getConfigSite(siteName) {
+      return getConfigSites().find((site) => site.name === siteName) || null;
+    }
+
+    function getConfigAccount(siteName, userId) {
+      const site = getConfigSite(siteName);
+      return site?.accounts?.find((item) => String(item.user_id) === String(userId)) || null;
+    }
+
+    function getActiveSiteLabel() {
+      return state.activeSite === "all" ? "全部站点" : state.activeSite;
+    }
+
+    function getTrendScopeLabel() {
+      if (state.trendScope === "all") {
+        return "总余额";
+      }
+      if (state.trendScope.startsWith("site:")) {
+        return state.trendScope.slice(5);
+      }
+      if (state.trendScope.startsWith("account:")) {
+        const [, site, userId] = state.trendScope.split(":");
+        const account = getConfigAccount(site, userId);
+        return `${site} / ${preferredName(account || { user_id: userId })}`;
+      }
+      return state.trendScope;
+    }
+
+    function currentMonthValue() {
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    }
+
+    function getMonthlyTrendScopeLabel() {
+      if (state.monthlyTrendScope === "all") {
+        return "全部站点";
+      }
+      if (state.monthlyTrendScope.startsWith("site:")) {
+        return state.monthlyTrendScope.slice(5);
+      }
+      if (state.monthlyTrendScope.startsWith("account:")) {
+        const [, site, userId] = state.monthlyTrendScope.split(":");
+        const account = getConfigAccount(site, userId);
+        return `${site} / ${preferredName(account || { user_id: userId })}`;
+      }
+      return state.monthlyTrendScope;
+    }
+
+    function matchesActiveSite(row) {
+      return state.activeSite === "all" || row.site === state.activeSite;
+    }
+
+    function balanceTrendScopeForActiveSite() {
+      return state.activeSite === "all" ? "all" : `site:${state.activeSite}`;
+    }
+
+    function syncBalanceTrendToActiveSite() {
+      state.trendScope = balanceTrendScopeForActiveSite();
+    }
+
+    function renderTrendScopeSelector(history) {
+      const scopedSiteNames = (history?.site_summaries || [])
+        .filter(matchesActiveSite)
+        .map((row) => row.site)
+        .filter(Boolean);
+      const siteNames = state.activeSite === "all"
+        ? Array.from(new Set(scopedSiteNames))
+        : [state.activeSite];
+      const accountItems = Array.from(new Map((history?.account_summaries || [])
+        .filter(matchesActiveSite)
+        .map((row) => [`${row.site}:${row.user_id}`, row])
+      ).values());
+      const baseOptions = state.activeSite === "all" ? [{ value: "all", label: "总余额" }] : [];
+      const options = baseOptions.concat(
+        siteNames.map((siteName) => ({ value: `site:${siteName}`, label: `${siteName} 余额` })),
+        accountItems.map((row) => ({ value: `account:${row.site}:${row.user_id}`, label: `${row.site} / ${preferredName(row)} 余额` })),
+      );
+
+      trendScopeSelect.innerHTML = options.map((item) => `
+        <option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>
+      `).join("");
+
+      if (!options.some((item) => item.value === state.trendScope)) {
+        state.trendScope = "all";
+      }
+      trendScopeSelect.value = state.trendScope;
+    }
+
+    function formatDisplayValue(value) {
+      if (value === null || value === undefined || value === "") {
+        return "-";
+      }
+
+      return String(value)
+        .split("|")
+        .map((part) => {
+          const trimmed = part.trim();
+          if (!trimmed || trimmed === "-") {
+            return "-";
+          }
+
+          if (/^[-+]?\d+(\.\d+)?$/.test(trimmed)) {
+            return Number(trimmed).toFixed(2);
+          }
+
+          const match = trimmed.match(/^([^0-9+\-]*)([-+]?\d+(\.\d+)?)(.*)$/);
+          if (!match) {
+            return trimmed;
+          }
+
+          const [, prefix, amount, , suffix] = match;
+          const numeric = Number(amount);
+          if (!Number.isFinite(numeric)) {
+            return trimmed;
+          }
+          return `${prefix}${numeric.toFixed(2)}${suffix}`.trim();
+        })
+        .join(" | ");
+    }
+
+    function formatResult(row) {
+      if (row?.checkin_status) {
+        return row.checkin_status;
+      }
+      if (row?.checked_in_today) {
+        return "今日已签到";
+      }
+      if (row?.ok === false) {
+        return "失败";
+      }
+      if (row?.success) {
+        return "签到成功";
+      }
+      return row?.message || "失败";
+    }
+
+    function resultTone(row) {
+      if (row?.checkin_status_tone) {
+        return row.checkin_status_tone;
+      }
+      if (row?.checked_in_today) {
+        return "warn";
+      }
+      if (row?.ok === false) {
+        return "danger";
+      }
+      if (row?.success) {
+        return "ok";
+      }
+      if ((row?.message || "").includes("已签到")) {
+        return "warn";
+      }
+      return "neutral";
+    }
+
+    function statusChip(text, tone = "neutral") {
+      return `<span class="chip ${tone}">${escapeHtml(text)}</span>`;
+    }
+
+    function badge(text, tone = "neutral") {
+      return `<span class="badge ${tone}">${escapeHtml(text)}</span>`;
+    }
+
+    function identityHtml(record) {
+      const name = preferredName(record);
+      const secondary = [];
+      if (record?.username && record.username !== name) {
+        secondary.push(`@${record.username}`);
+      }
+      if (record?.user_id) {
+        secondary.push(`ID ${record.user_id}`);
+      }
+      if (record?.email) {
+        secondary.push(record.email);
+      }
+      return `
+        <div class="identity">
+          <strong>${escapeHtml(name)}</strong>
+          <div class="subline">${escapeHtml(secondary.join(" · ") || "未记录更多标识")}</div>
+        </div>
+      `;
+    }
+
+    function renderTable(container, columns, rows, rowClassName = "") {
+      if (!rows?.length) {
+        container.innerHTML = '<div class="empty">暂无数据</div>';
+        return;
+      }
+
+      const head = columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("");
+      const body = rows.map((row) => {
+        const cells = columns.map((column) => {
+          const value = typeof column.value === "function" ? column.value(row) : row[column.value];
+          return `<td>${value ?? "-"}</td>`;
+        }).join("");
+        const className = [rowClassName, typeof row._rowClass === "string" ? row._rowClass : ""].filter(Boolean).join(" ");
+        const dataAttrs = [];
+        if (row.site) {
+          dataAttrs.push(`data-site="${escapeHtml(row.site)}"`);
+        }
+        if (row.user_id) {
+          dataAttrs.push(`data-user-id="${escapeHtml(row.user_id)}"`);
+        }
+        return `<tr class="${className}" ${dataAttrs.join(" ")}>${cells}</tr>`;
+      }).join("");
+
+      container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    }
+
+    function setAppStatus(text, tone = "normal") {
+      appStatus.textContent = text;
+      appStatus.dataset.tone = tone;
+      appStatus.classList.toggle("is-pending", tone === "busy");
+      statusInline.textContent = tone === "error" ? "异常" : tone === "busy" ? "处理中" : "就绪";
+      statusSubline.textContent = text;
+    }
+
+    function setInlineStatus(node, text, tone = "normal") {
+      if (!node) {
+        return;
+      }
+      node.textContent = text;
+      node.dataset.tone = tone;
+      node.classList.toggle("is-pending", tone === "busy");
+    }
+
+    function defaultConfigJsonText() {
+      return JSON.stringify({
+        name: "new-platform",
+        enabled: true,
+        base_url: "https://example.com",
+        accounts: [
+          {
+            name: "account-name",
+            user_id: "1001",
+            access_key: "paste-key-here",
+            ip_profile: "ip-slot-29"
+          }
+        ]
+      }, null, 2);
+    }
+
+    function setButtonBusy(button, busy, label) {
+      if (!button) {
+        return;
+      }
+      if (busy) {
+        if (button.dataset.originalLabel === undefined) {
+          button.dataset.originalLabel = button.textContent;
+        }
+        button.dataset.busy = "true";
+        button.disabled = true;
+        if (label) {
+          button.textContent = label;
+        }
+      } else {
+        button.removeAttribute("data-busy");
+        button.disabled = false;
+        if (button.dataset.originalLabel !== undefined) {
+          button.textContent = button.dataset.originalLabel;
+        }
+      }
+    }
+
+    function pulseRow(site, userId, tone) {
+      if (!window.CSS || typeof window.CSS.escape !== "function") {
+        return;
+      }
+      const siteSelector = CSS.escape(site);
+      const userSelector = userId ? `[data-user-id="${CSS.escape(userId)}"]` : "";
+      const target = document.querySelector(`tr[data-site="${siteSelector}"]${userSelector}`);
+      if (!target) {
+        return;
+      }
+      target.classList.remove("row-pending", "row-done", "row-error");
+      target.classList.add(tone === "ok" ? "row-done" : tone === "error" ? "row-error" : "row-pending");
+      window.setTimeout(() => {
+        target.classList.remove("row-pending", "row-done", "row-error");
+      }, 1800);
+    }
+
+    const SUB2API_NEWAPI_PREFIX = "/api/v1/admin/newapi-checkin";
+
+    function normalizeDashboardApiUrl(url) {
+      if (typeof url !== "string" || !url.startsWith("/api/")) {
+        return url;
+      }
+      return `${SUB2API_NEWAPI_PREFIX}${url.slice(4)}`;
+    }
+
+    function buildSub2APIRequestOptions(options = {}) {
+      const headers = new Headers(options.headers || {});
+      const token = localStorage.getItem("auth_token");
+      if (token && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+      return {
+        ...options,
+        headers,
+      };
+    }
+
+    async function fetchJson(url, options) {
+      const response = await fetch(normalizeDashboardApiUrl(url), buildSub2APIRequestOptions(options));
+      const payload = await response.json();
+      if (!response.ok || payload.ok === false || (payload.code !== undefined && payload.code !== 0)) {
+        throw new Error(payload.message || payload.reason || `请求失败: ${response.status}`);
+      }
+      return payload.data;
+    }
+
+    function setStats() {
+      const cards = Array.from(statsGrid.querySelectorAll(".metric-card"));
+      const values = [
+        state.config?.enabled_site_count ?? "-",
+        state.config?.enabled_account_count ?? "-",
+        state.lastRun?.success_count ?? "-",
+        state.lastRun?.already_done_count ?? "-",
+        formatDisplayValue(state.lastRun?.quota_awarded_display),
+      ];
+
+      cards.slice(0, 5).forEach((card, index) => {
+        const node = card.querySelector(".metric-value");
+        if (node) {
+          node.textContent = values[index];
+        }
+      });
+
+      activeFilterMeta.textContent = `当前筛选：${getActiveSiteLabel()}`;
+    }
+
+    function setActiveTab(tab) {
+      state.activeTab = tab;
+      Array.from(tabRow.querySelectorAll("[data-tab]")).forEach((button) => {
+        button.setAttribute("aria-selected", button.dataset.tab === tab ? "true" : "false");
+      });
+      Array.from(document.querySelectorAll("[data-tab-panel]")).forEach((panel) => {
+        panel.hidden = panel.getAttribute("data-tab-panel") !== tab;
+      });
+    }
+
+    function renderSiteFilters() {
+      const items = [{ key: "all", label: "全部站点" }].concat(
+        getConfigSites().map((site) => ({
+          key: site.name,
+          label: site.enabled ? site.name : `${site.name}（停用）`,
+        })),
+      );
+
+      siteFilterRow.innerHTML = items.map((item) => `
+        <button class="filter-pill ${state.activeSite === item.key ? "active" : ""}" type="button" data-site-filter="${escapeHtml(item.key)}">
+          ${escapeHtml(item.label)}
+        </button>
+      `).join("");
+
+      Array.from(siteFilterRow.querySelectorAll("[data-site-filter]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          state.activeSite = button.getAttribute("data-site-filter");
+          syncBalanceTrendToActiveSite();
+          renderAllViews();
+        });
+      });
+    }
+
+    function setSelectedTarget(siteName, userId) {
+      if (!siteName || !userId) {
+        return;
+      }
+      siteSelect.value = siteName;
+      updateAccountOptions(userId);
+      updateSelectedTargetCard();
+    }
+
+    function updateSelectedTargetCard() {
+      const site = getConfigSite(siteSelect.value);
+      const account = getConfigAccount(siteSelect.value, accountSelect.value);
+      const title = selectedTargetCard.querySelector("strong");
+      const meta = selectedTargetCard.querySelector(".target-meta");
+      if (!site || !account) {
+        title.textContent = "-";
+        meta.textContent = "等待选择账号";
+        return;
+      }
+      title.textContent = preferredName(account);
+      meta.textContent = site.enabled
+        ? `${site.name} · ID ${account.user_id} · ${account.ip_profile || "-"}`
+        : `${site.name} 已停用签到 · ID ${account.user_id} · ${site.disabled_reason || "仍可查看记录和刷新余额"}`;
+      singleRunBtn.disabled = !site.enabled;
+    }
+
+    function renderConfigSelectors() {
+      const sites = getConfigSites();
+      if (!sites.length) {
+        siteSelect.innerHTML = "";
+        accountSelect.innerHTML = "";
+        singleRunBtn.disabled = true;
+        updateSelectedTargetCard();
+        return;
+      }
+
+      siteSelect.innerHTML = sites.map((site) => `
+        <option value="${escapeHtml(site.name)}">${escapeHtml(site.enabled ? site.name : `${site.name}（停用）`)}</option>
+      `).join("");
+
+      if (!sites.find((site) => site.name === siteSelect.value)) {
+        siteSelect.value = sites[0].name;
+      }
+      updateAccountOptions();
+    }
+
+    function updateAccountOptions(preferredUserId = "") {
+      const site = getConfigSite(siteSelect.value);
+      if (!site) {
+        accountSelect.innerHTML = "";
+        singleRunBtn.disabled = true;
+        updateSelectedTargetCard();
+        return;
+      }
+
+      accountSelect.innerHTML = (site.accounts || []).map((account) => `
+        <option value="${escapeHtml(account.user_id)}">
+          ${escapeHtml(preferredName(account))} · ${escapeHtml(account.user_id)} · ${escapeHtml(account.ip_profile || "-")}
+        </option>
+      `).join("");
+
+      if (preferredUserId && site.accounts.some((item) => String(item.user_id) === String(preferredUserId))) {
+        accountSelect.value = preferredUserId;
+      }
+      updateSelectedTargetCard();
+    }
+
+    function attachConfigActions() {
+      Array.from(configTableWrap.querySelectorAll("[data-pick-site][data-pick-user]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          if (!isSiteEnabled(button.dataset.pickSite)) {
+            singleRunStatus.textContent = `${button.dataset.pickSite} 已停用签到，不能设为补签目标。`;
+            singleRunStatus.dataset.tone = "warn";
+            return;
+          }
+          setSelectedTarget(button.dataset.pickSite, button.dataset.pickUser);
+          singleRunStatus.textContent = `已把 ${button.dataset.pickSite} / ${button.dataset.pickUser} 设为补签目标。`;
+          singleRunStatus.dataset.tone = "ok";
+        });
+      });
+      Array.from(configTableWrap.querySelectorAll("[data-refresh-account][data-site]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          refreshAccountBalance(button.dataset.site, button.dataset.refreshAccount, button);
+        });
+      });
+      Array.from(configTableWrap.querySelectorAll("[data-sync-account][data-site]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          syncAccountName(button.dataset.site, button.dataset.syncAccount, button);
+        });
+      });
+      Array.from(configTableWrap.querySelectorAll("[data-delete-site]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          deleteSite(button.dataset.deleteSite, button);
+        });
+      });
+      Array.from(configTableWrap.querySelectorAll("[data-toggle-site]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          toggleSiteEnabled(button.dataset.toggleSite, button.dataset.siteEnabledTarget === "true", button);
+        });
+      });
+      Array.from(configTableWrap.querySelectorAll("[data-delete-account-site]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          deleteAccount(button.dataset.deleteAccountSite, button.dataset.deleteAccountUser, button.dataset.deleteAccountLabel, button);
+        });
+      });
+    }
+
+    function renderOverview() {
+      const siteSummaries = (state.lastRun?.site_summaries || []).filter((row) => state.activeSite === "all" || row.site === state.activeSite);
+      const balanceSummaries = (state.balances?.site_summaries || []).filter((row) => state.activeSite === "all" || row.site === state.activeSite);
+      const accountResults = (state.lastRun?.account_results || []).filter(matchesActiveSite);
+      const selectedAccount = getConfigAccount(siteSelect.value, accountSelect.value);
+
+      overviewRunMeta.textContent = state.lastRun?.started_at
+        ? `${state.lastRun.started_at} -> ${state.lastRun.ended_at}，共 ${siteSummaries.length} 个站点视图`
+        : "等待最近一次结果";
+      overviewBalanceMeta.textContent = state.balances?.generated_at
+        ? `${state.balances.generated_at} 在线查询`
+        : "等待实时余额";
+
+      if (!siteSummaries.length) {
+        overviewRunGrid.innerHTML = '<div class="empty">暂无执行汇总</div>';
+      } else {
+        overviewRunGrid.innerHTML = siteSummaries.map((row) => `
+          <article class="overview-card">
+            <div class="overview-top">
+              <div class="overview-site">
+                <strong>${escapeHtml(row.site)}</strong>
+                <div class="overview-sub">任务 ${escapeHtml(row.task_count)} · 奖励 ${escapeHtml(formatDisplayValue(row.quota_display_total))}</div>
+              </div>
+              <div class="chip-row">
+                ${statusChip(`成功 ${row.success_count}`, row.success_count > 0 ? "ok" : "neutral")}
+                ${statusChip(`已签 ${row.already_done_count}`, row.already_done_count > 0 ? "warn" : "neutral")}
+                ${statusChip(`失败 ${row.failed_count}`, row.failed_count > 0 ? "danger" : "neutral")}
+              </div>
+            </div>
+            <div class="overview-metrics">
+              <div class="overview-metric">
+                <div class="overview-metric-label" title="当前签到任务的总数量" style="cursor: help;">任务数</div>
+                <div class="overview-metric-value">${escapeHtml(row.task_count)}</div>
+              </div>
+              <div class="overview-metric">
+                <div class="overview-metric-label" title="成功签到的账号数量" style="cursor: help;">成功数</div>
+                <div class="overview-metric-value">${escapeHtml(row.success_count)}</div>
+              </div>
+              <div class="overview-metric">
+                <div class="overview-metric-label" title="奖励额度折算后的实际价值" style="cursor: help;">奖励($)</div>
+                <div class="overview-metric-value">${escapeHtml(formatDisplayValue(row.quota_display_total))}</div>
+              </div>
+            </div>
+          </article>
+        `).join("");
+      }
+
+      if (!balanceSummaries.length) {
+        overviewBalanceGrid.innerHTML = '<div class="empty">暂无余额汇总</div>';
+      } else {
+        overviewBalanceGrid.innerHTML = balanceSummaries.map((row) => `
+          <article class="overview-card">
+            <div class="overview-top">
+              <div class="overview-site">
+                <strong>${escapeHtml(row.site)}</strong>
+                <div class="overview-sub">${row.enabled ? "启用站点" : "停用站点"} · 账号 ${escapeHtml(row.account_count)}</div>
+              </div>
+              <div class="chip-row">
+                ${statusChip(row.enabled ? "在线巡检" : "停用", row.enabled ? "ok" : "warn")}
+              </div>
+            </div>
+            <div class="overview-metrics">
+              <div class="overview-metric">
+                <div class="overview-metric-label" title="该站点下所有账号的折算余额总和" style="cursor: help;">余额合计</div>
+                <div class="overview-metric-value">${escapeHtml(formatDisplayValue(row.quota_display_total))}</div>
+              </div>
+              <div class="overview-metric">
+                <div class="overview-metric-label" title="该站点下所有账号的已用折算总和" style="cursor: help;">已用合计</div>
+                <div class="overview-metric-value">${escapeHtml(formatDisplayValue(row.used_display_total))}</div>
+              </div>
+              <div class="overview-metric">
+                <div class="overview-metric-label" title="该站点当前纳入统计的账号数量" style="cursor: help;">账号数</div>
+                <div class="overview-metric-value">${escapeHtml(row.account_count)}</div>
+              </div>
+            </div>
+          </article>
+        `).join("");
+      }
+
+      const failedAccounts = accountResults.filter((row) => row.ok === false || row.success === false && !(row.message || "").includes("已签到"));
+      const signedAccounts = accountResults.filter((row) => (row.message || "").includes("已签到"));
+      const feedItems = [];
+
+      if (failedAccounts.length) {
+        failedAccounts.forEach((row) => {
+          feedItems.push({
+            title: `${row.site} / ${preferredName(row)}`,
+            tone: "danger",
+            tag: "需要处理",
+            meta: `ID ${row.user_id} · ${row.ip_profile || "-"}`,
+            body: row.message || row.quota_query_message || "签到失败",
+          });
+        });
+      }
+
+      signedAccounts.slice(0, 4).forEach((row) => {
+        feedItems.push({
+          title: `${row.site} / ${preferredName(row)}`,
+          tone: "warn",
+          tag: "已签过",
+          meta: `ID ${row.user_id} · ${row.ip_profile || "-"}`,
+          body: "今天已签到，无需补跑。",
+        });
+      });
+
+      if (!feedItems.length) {
+        feedItems.push({
+          title: "今天没有异常项",
+          tone: "ok",
+          tag: "运行平稳",
+          meta: `${getActiveSiteLabel()} 范围内未发现失败项`,
+          body: "如果要补签个别账号，可以直接从平台目录里点“设为补签”。",
+        });
+      }
+
+      overviewFeed.innerHTML = feedItems.map((item) => `
+        <article class="feed-item">
+          <div class="feed-item-head">
+            <strong>${escapeHtml(item.title)}</strong>
+            ${badge(item.tag, item.tone)}
+          </div>
+          <div class="dim">${escapeHtml(item.meta)}</div>
+          <div class="feed-item-body">${escapeHtml(item.body)}</div>
+        </article>
+      `).join("");
+
+      const contextItems = [];
+      contextItems.push({
+        title: `当前视图：${getActiveSiteLabel()}`,
+        tone: "neutral",
+        tag: "筛选",
+        meta: state.activeSite === "all" ? "正在看所有站点" : "页面里的表格和卡片都已经收窄",
+        body: state.activeSite === "all" ? "适合看整体趋势和平台对比。" : "适合处理单个站点的补签和余额核对。",
+      });
+      if (selectedAccount) {
+        contextItems.push({
+          title: preferredName(selectedAccount),
+          tone: "ok",
+          tag: "补签目标",
+          meta: `${siteSelect.value} · ID ${selectedAccount.user_id} · ${selectedAccount.ip_profile || "-"}`,
+          body: "单账号签到会沿用配置里的 token 和出口档位。",
+        });
+      }
+      if (state.lastRun?.quota_awarded_display) {
+        contextItems.push({
+          title: "最近奖励",
+          tone: "neutral",
+          tag: "执行结果",
+          meta: `${state.lastRun.success_count} 成功 · ${state.lastRun.already_done_count} 已签`,
+          body: formatDisplayValue(state.lastRun.quota_awarded_display),
+        });
+      }
+
+      overviewContextFeed.innerHTML = contextItems.map((item) => `
+        <article class="feed-item">
+          <div class="feed-item-head">
+            <strong>${escapeHtml(item.title)}</strong>
+            ${badge(item.tag, item.tone)}
+          </div>
+          <div class="dim">${escapeHtml(item.meta)}</div>
+          <div class="feed-item-body">${escapeHtml(item.body)}</div>
+        </article>
+      `).join("");
+    }
+
+    function renderConfig(config) {
+      if (!config) {
+        configMeta.textContent = "暂无配置数据";
+        configSummaryBadges.innerHTML = "";
+        configTableWrap.innerHTML = '<div class="empty">暂无数据</div>';
+        return;
+      }
+
+      configMeta.textContent = `共 ${config.all_site_count} 个站点，启用 ${config.enabled_site_count} 个；共 ${config.all_account_count} 个账号，启用 ${config.enabled_account_count} 个。`;
+
+      const visibleSites = config.sites.filter((site) => state.activeSite === "all" || site.name === state.activeSite);
+      configSummaryBadges.innerHTML = [
+        badge(`查看范围 ${getActiveSiteLabel()}`, "neutral"),
+        badge(`启用站点 ${config.enabled_site_count}`, "ok"),
+        badge(`启用账号 ${config.enabled_account_count}`, "ok"),
+        badge(`停用站点 ${config.all_site_count - config.enabled_site_count}`, config.all_site_count > config.enabled_site_count ? "warn" : "neutral"),
+      ].join("");
+
+      const rows = [];
+      visibleSites.forEach((site) => {
+        (site.accounts || []).forEach((account, index) => {
+          const siteHtml = index === 0
+            ? `
+                <div class="site-block">
+                  <div class="site-top">
+                    <strong>${escapeHtml(site.name)}</strong>
+                    ${badge(site.enabled ? "启用" : "停用", site.enabled ? "ok" : "warn")}
+                  </div>
+                  <div class="site-url">${escapeHtml(site.base_url)}</div>
+                  <div class="site-note">${escapeHtml(site.disabled_reason || "按当前配置参与轮询")}</div>
+                </div>
+              `
+            : `<span class="site-repeat">↳ 同站点账号</span>`;
+
+          rows.push({
+            _rowClass: `catalog-row ${index === 0 ? "site-start" : ""}`,
+            site: site.name,
+            user_id: account.user_id,
+            siteHtml,
+            identity: account,
+            route: account.ip_profile || "-",
+            endpoint: `/api/user/checkin`,
+            display: account.display_name || "-",
+            action: `
+              <div class="action-cluster">
+                <button
+                  class="quick-action"
+                  type="button"
+                  data-pick-site="${escapeHtml(site.name)}"
+                  data-pick-user="${escapeHtml(account.user_id)}"
+                  ${site.enabled ? "" : "disabled"}
+                  title="${site.enabled ? "设为单账号补签目标" : "站点已停用签到，不能补签"}"
+                >
+                  设为补签
+                </button>
+                <button
+                  class="quick-action secondary"
+                  type="button"
+                  data-site="${escapeHtml(site.name)}"
+                  data-refresh-account="${escapeHtml(account.user_id)}"
+                >
+                  ${site.enabled ? "刷余额/签到" : "刷余额"}
+                </button>
+                <button
+                  class="quick-action secondary"
+                  type="button"
+                  data-site="${escapeHtml(site.name)}"
+                  data-sync-account="${escapeHtml(account.user_id)}"
+                >
+                  同步名
+                </button>
+                <button
+                  class="quick-action danger"
+                  type="button"
+                  data-delete-account-site="${escapeHtml(site.name)}"
+                  data-delete-account-user="${escapeHtml(account.user_id)}"
+                  data-delete-account-label="${escapeHtml(preferredName(account))}"
+                  title="删除该账号及本地缓存记录"
+                >
+                  删账号
+                </button>
+                ${index === 0 ? `
+                  <button
+                    class="quick-action ${site.enabled ? "danger" : "secondary"}"
+                    type="button"
+                    data-toggle-site="${escapeHtml(site.name)}"
+                    data-site-enabled-target="${site.enabled ? "false" : "true"}"
+                    title="${site.enabled ? "禁用该站点后不会再执行签到" : "重新允许该站点参与签到"}"
+                  >
+                    ${site.enabled ? "禁用签到" : "启用签到"}
+                  </button>
+                  <button
+                    class="quick-action danger"
+                    type="button"
+                    data-delete-site="${escapeHtml(site.name)}"
+                    title="删除该站点及本地缓存记录"
+                  >
+                    删站点
+                  </button>
+                ` : ""}
+              </div>
+            `,
+          });
+        });
+      });
+
+      renderTable(
+        configTableWrap,
+        [
+          { label: "站点", value: (row) => row.siteHtml },
+          { label: "名称 / 账号", value: (row) => identityHtml(row.identity) },
+          { label: "展示名称", value: (row) => `<span class="dim">${escapeHtml(row.display)}</span>` },
+          { label: "出口档位", value: (row) => `<span class="route-badge">${escapeHtml(row.route)}</span>` },
+          { label: "签到路径", value: (row) => `<span class="dim">${escapeHtml(row.endpoint)}</span>` },
+          { label: "操作", value: (row) => row.action },
+        ],
+        rows,
+      );
+      attachConfigActions();
+    }
+
+    function renderHistory(report) {
+      if (!report?.started_at) {
+        lastRunMeta.textContent = "暂无最近执行结果";
+        lastRunBadges.innerHTML = "";
+        lastRunSiteTable.innerHTML = '<div class="empty">暂无数据</div>';
+        lastRunAccountTable.innerHTML = '<div class="empty">暂无数据</div>';
+        lastRunSummaryText.textContent = "";
+        return;
+      }
+
+      lastRunMeta.textContent = `${report.started_at} -> ${report.ended_at}，耗时 ${formatDisplayValue(report.duration_seconds)}s`;
+      lastRunBadges.innerHTML = [
+        badge(`任务 ${report.task_count}`, "neutral"),
+        badge(`成功 ${report.success_count}`, "ok"),
+        badge(`已签 ${report.already_done_count}`, report.already_done_count > 0 ? "warn" : "neutral"),
+        badge(`失败 ${report.failed_count}`, report.failed_count > 0 ? "danger" : "neutral"),
+        badge(`奖励 ${formatDisplayValue(report.quota_awarded_display)}`, "neutral"),
+      ].join("");
+
+      renderTable(
+        lastRunSiteTable,
+        [
+          { label: "站点", value: (row) => escapeHtml(row.site) },
+          { label: "任务数", value: (row) => escapeHtml(row.task_count) },
+          { label: "成功", value: (row) => escapeHtml(row.success_count) },
+          { label: "已签", value: (row) => escapeHtml(row.already_done_count) },
+          { label: "失败", value: (row) => escapeHtml(row.failed_count) },
+          { label: "奖励($)", value: (row) => escapeHtml(formatDisplayValue(row.quota_display_total)) },
+        ],
+        (report.site_summaries || []).filter((row) => state.activeSite === "all" || row.site === state.activeSite),
+      );
+
+      const accountRows = (report.account_results || [])
+        .filter(matchesActiveSite)
+        .map((row) => {
+          const configAccount = getConfigAccount(row.site, row.user_id) || {};
+          return {
+            ...row,
+            name: configAccount.name || row.account,
+            username: configAccount.username || row.username || "",
+            display_name: configAccount.display_name || row.display_name || "",
+          };
+        });
+
+      renderTable(
+        lastRunAccountTable,
+        [
+          { label: "签到日期", value: (row) => escapeHtml(row.checkin_date || (report.ended_at || "").slice(0, 10) || "-") },
+          { label: "站点", value: (row) => escapeHtml(row.site) },
+          { label: "名称 / 账号", value: (row) => identityHtml(row) },
+          { label: "IP 档位", value: (row) => `<span class="route-badge">${escapeHtml(row.ip_profile || "-")}</span>` },
+          { label: "结果", value: (row) => badge(formatResult(row), resultTone(row)) },
+          { label: "奖励($)", value: (row) => escapeHtml(formatDisplayValue(row.quota_awarded_display)) },
+          { label: "当前余额($)", value: (row) => escapeHtml(formatDisplayValue(row.remaining_quota_display)) },
+          { label: "已用($)", value: (row) => escapeHtml(formatDisplayValue(row.used_quota_display)) },
+          { label: "消息", value: (row) => `<span class="dim">${escapeHtml(row.message || row.quota_query_message || "-")}</span>` },
+        ],
+        accountRows,
+      );
+
+      lastRunSummaryText.textContent = report.summary_text || "";
+    }
+
+    function chartPath(rows, key, width, height, padding) {
+      if (!rows.length) {
+        return "";
+      }
+      const values = rows.map((row) => Number(row[key] || 0));
+      const max = Math.max(...values, 1);
+      const step = rows.length > 1 ? (width - padding * 2) / (rows.length - 1) : 0;
+      return rows.map((row, index) => {
+        const x = rows.length > 1 ? padding + step * index : width / 2;
+        const y = height - padding - (Number(row[key] || 0) / max) * (height - padding * 2);
+        return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+      }).join(" ");
+    }
+
+    function chartDots(rows, key, width, height, padding, className) {
+      const values = rows.map((row) => Number(row[key] || 0));
+      const max = Math.max(...values, 1);
+      const step = rows.length > 1 ? (width - padding * 2) / (rows.length - 1) : 0;
+      return rows.map((row, index) => {
+        const x = rows.length > 1 ? padding + step * index : width / 2;
+        const y = height - padding - (Number(row[key] || 0) / max) * (height - padding * 2);
+        return `<circle class="trend-dot ${className}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="currentColor"><title>${escapeHtml(row.date)} ${escapeHtml(formatDisplayValue(row[key]))}</title></circle>`;
+      }).join("");
+    }
+
+    function renderTrend(history) {
+      if (!history?.daily_summaries?.length) {
+        renderTrendScopeSelector(history);
+        trendMeta.textContent = "暂无历史趋势数据";
+        trendChart.innerHTML = '<div class="empty">刷新余额/签到或完成每日脚本后，会在这里形成每日趋势。</div>';
+        trendTable.innerHTML = '<div class="empty">暂无数据</div>';
+        return;
+      }
+
+      renderTrendScopeSelector(history);
+      let visibleRows = history.daily_summaries.slice(-30);
+      if (state.trendScope.startsWith("site:")) {
+        const siteName = state.trendScope.slice(5);
+        visibleRows = (history.site_summaries || []).filter((row) => row.site === siteName).slice(-30);
+      } else if (state.trendScope.startsWith("account:")) {
+        const [, siteName, userId] = state.trendScope.split(":");
+        visibleRows = (history.account_summaries || [])
+          .filter((row) => row.site === siteName && String(row.user_id) === String(userId))
+          .slice(-30);
+      }
+
+      if (!visibleRows.length) {
+        trendMeta.textContent = `${history.generated_at || "-"}，${getTrendScopeLabel()} 暂无趋势数据，存储 ${history.history_path || ""}`;
+        trendChart.innerHTML = '<div class="empty">当前趋势范围还没有写入历史记录。</div>';
+        trendTable.innerHTML = '<div class="empty">暂无数据</div>';
+        return;
+      }
+
+      trendMeta.textContent = `${history.generated_at || "-"}，${getTrendScopeLabel()} 最近 ${visibleRows.length} 天，存储 ${history.history_path || ""}`;
+      const width = 920;
+      const height = 280;
+      const padding = 34;
+      const awardPath = chartPath(visibleRows, "quota_awarded_display_value", width, height, padding);
+      const balancePath = chartPath(visibleRows, "balance_display_value", width, height, padding);
+      const labels = visibleRows.map((row, index) => {
+        const step = visibleRows.length > 1 ? (width - padding * 2) / (visibleRows.length - 1) : 0;
+        const x = visibleRows.length > 1 ? padding + step * index : width / 2;
+        return `<text x="${x.toFixed(1)}" y="${height - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${escapeHtml(row.date.slice(5))}</text>`;
+      }).join("");
+
+      trendChart.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(getTrendScopeLabel())}每日签到新增与余额趋势">
+          <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="var(--line)" />
+          <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="var(--line)" />
+          <path class="trend-line balance" d="${balancePath}" />
+          <path class="trend-line award" d="${awardPath}" />
+          <g style="color: var(--ok)">${chartDots(visibleRows, "balance_display_value", width, height, padding, "balance")}</g>
+          <g style="color: var(--accent)">${chartDots(visibleRows, "quota_awarded_display_value", width, height, padding, "award")}</g>
+          ${labels}
+        </svg>
+      `;
+
+      renderTable(
+        trendTable,
+        [
+          { label: "日期", value: (row) => escapeHtml(row.date) },
+          { label: "任务", value: (row) => escapeHtml(row.task_count) },
+          { label: "成功", value: (row) => escapeHtml(row.success_count) },
+          { label: "已签", value: (row) => escapeHtml(row.already_done_count) },
+          { label: "异常", value: (row) => escapeHtml(row.failed_count) },
+          { label: "新增($)", value: (row) => escapeHtml(formatDisplayValue(row.quota_awarded_display)) },
+          { label: "余额($)", value: (row) => escapeHtml(formatDisplayValue(row.balance_display)) },
+        ],
+        visibleRows,
+      );
+    }
+
+    function renderMonthlyTrendScopeSelector(monthly) {
+      const siteNames = Array.from(new Set((monthly?.site_summaries || []).map((row) => row.site).filter(Boolean)));
+      const accountItems = monthly?.account_summaries || [];
+      const options = [{ value: "all", label: "全部站点" }].concat(
+        siteNames.map((siteName) => ({ value: `site:${siteName}`, label: `${siteName} 签到奖励` })),
+        accountItems.map((row) => ({ value: `account:${row.site}:${row.user_id}`, label: `${row.site} / ${preferredName(row)} 签到奖励` })),
+      );
+
+      monthlyTrendScopeSelect.innerHTML = options.map((item) => `
+        <option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>
+      `).join("");
+
+      if (!options.some((item) => item.value === state.monthlyTrendScope)) {
+        state.monthlyTrendScope = "all";
+      }
+      monthlyTrendScopeSelect.value = state.monthlyTrendScope;
+    }
+
+    function compactDailyRows(rows) {
+      const daily = new Map();
+      (rows || []).forEach((row) => {
+        const date = row.date;
+        if (!daily.has(date)) {
+          daily.set(date, { date, quota_awarded_display_value: 0, checkin_count: 0 });
+        }
+        const item = daily.get(date);
+        item.quota_awarded_display_value += Number(row.quota_awarded_display_value || 0);
+        item.checkin_count += Number(row.checkin_count || 0);
+      });
+      return Array.from(daily.values())
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map((row) => ({
+          ...row,
+          quota_awarded_display: `$${Number(row.quota_awarded_display_value || 0).toFixed(2)}`,
+        }));
+    }
+
+    function monthlyTrendRows(monthly) {
+      if (!monthly) {
+        return [];
+      }
+      if (state.monthlyTrendScope === "all") {
+        return compactDailyRows(monthly.site_daily_summaries || []);
+      }
+      if (state.monthlyTrendScope.startsWith("site:")) {
+        const siteName = state.monthlyTrendScope.slice(5);
+        return compactDailyRows((monthly.site_daily_summaries || []).filter((row) => row.site === siteName));
+      }
+      if (state.monthlyTrendScope.startsWith("account:")) {
+        const [, siteName, userId] = state.monthlyTrendScope.split(":");
+        return compactDailyRows((monthly.account_daily_summaries || [])
+          .filter((row) => row.site === siteName && String(row.user_id) === String(userId)));
+      }
+      return [];
+    }
+
+    function renderMonthlyTrend(monthly) {
+      renderMonthlyTrendScopeSelector(monthly);
+      const rows = monthlyTrendRows(monthly);
+      if (!rows.length) {
+        monthlyTrendMeta.textContent = `${getMonthlyTrendScopeLabel()} 暂无月度趋势数据`;
+        monthlyTrendChart.innerHTML = '<div class="empty">点击同步当前站点月份或账号月份后，这里会从 SQL 记录形成折线图。</div>';
+        monthlyTrendTable.innerHTML = '<div class="empty">暂无数据</div>';
+        return;
+      }
+
+      const width = 920;
+      const height = 260;
+      const padding = 34;
+      const awardPath = chartPath(rows, "quota_awarded_display_value", width, height, padding);
+      const labels = rows.map((row, index) => {
+        const step = rows.length > 1 ? (width - padding * 2) / (rows.length - 1) : 0;
+        const x = rows.length > 1 ? padding + step * index : width / 2;
+        return `<text x="${x.toFixed(1)}" y="${height - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${escapeHtml(row.date.slice(5))}</text>`;
+      }).join("");
+
+      monthlyTrendMeta.textContent = `${monthly?.generated_at || "-"}，${getMonthlyTrendScopeLabel()} 最近 ${rows.length} 天签到奖励`;
+      monthlyTrendChart.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(getMonthlyTrendScopeLabel())}月度签到奖励趋势">
+          <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="var(--line)" />
+          <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="var(--line)" />
+          <path class="trend-line award" d="${awardPath}" />
+          <g style="color: var(--accent)">${chartDots(rows, "quota_awarded_display_value", width, height, padding, "award")}</g>
+          ${labels}
+        </svg>
+      `;
+
+      renderTable(
+        monthlyTrendTable,
+        [
+          { label: "日期", value: (row) => escapeHtml(row.date) },
+          { label: "签到次数", value: (row) => escapeHtml(row.checkin_count) },
+          { label: "签到奖励($)", value: (row) => escapeHtml(formatDisplayValue(row.quota_awarded_display)) },
+        ],
+        rows,
+      );
+    }
+
+    function renderMonthly(monthly) {
+      if (!monthly) {
+        monthlyMeta.textContent = "尚未读取 SQL 月度记录";
+        monthlySiteTable.innerHTML = '<div class="empty">暂无数据</div>';
+        monthlyAccountTable.innerHTML = '<div class="empty">暂无数据</div>';
+        monthlyRecordsTable.innerHTML = '<div class="empty">暂无数据</div>';
+        renderMonthlyTrend(null);
+        return;
+      }
+
+      const records = (monthly.records || []).filter(matchesActiveSite);
+      const siteRows = (monthly.site_summaries || []).filter(matchesActiveSite);
+      const accountRows = (monthly.account_summaries || []).filter(matchesActiveSite);
+      const sync = monthly.sync_state || {};
+      monthlyMeta.textContent = `${monthly.generated_at}，月份 ${monthly.selected_month}，SQL ${monthly.initialized ? "已初始化" : "初始化中"}，记录 ${records.length} 条。`;
+      setInlineStatus(
+        monthlySyncStatus,
+        sync.running
+          ? `${sync.message || "正在同步"}：${sync.processed || 0}/${sync.total || 0} ${sync.last_site || ""} ${sync.last_user_id || ""}`.trim()
+          : (sync.message || "月度同步空闲"),
+        sync.running ? "busy" : sync.error ? "error" : "ok",
+      );
+
+      renderMonthlyTrend(monthly);
+      renderTable(
+        monthlySiteTable,
+        [
+          { label: "站点", value: (row) => escapeHtml(row.site) },
+          { label: "账号数", value: (row) => escapeHtml(row.account_count) },
+          { label: "签到次数", value: (row) => escapeHtml(row.checkin_count) },
+          { label: "签到奖励($)", value: (row) => escapeHtml(formatDisplayValue(row.quota_awarded_display)) },
+        ],
+        siteRows,
+      );
+      renderTable(
+        monthlyAccountTable,
+        [
+          { label: "站点", value: (row) => escapeHtml(row.site) },
+          { label: "名称 / 账号", value: (row) => identityHtml(row) },
+          { label: "签到次数", value: (row) => escapeHtml(row.checkin_count) },
+          { label: "签到奖励($)", value: (row) => escapeHtml(formatDisplayValue(row.quota_awarded_display)) },
+        ],
+        accountRows,
+      );
+      renderTable(
+        monthlyRecordsTable,
+        [
+          { label: "日期", value: (row) => escapeHtml(row.checkin_date) },
+          { label: "站点", value: (row) => escapeHtml(row.site) },
+          { label: "名称 / 账号", value: (row) => identityHtml(row) },
+          { label: "奖励($)", value: (row) => escapeHtml(formatDisplayValue(row.quota_awarded_display)) },
+          { label: "来源", value: (row) => `<span class="dim">${escapeHtml(row.source || "-")}</span>` },
+          { label: "写入时间", value: (row) => `<span class="dim">${escapeHtml(row.fetched_at || "-")}</span>` },
+        ],
+        records.slice(-320).reverse(),
+      );
+    }
+
+    function renderBalances(payload) {
+      if (!payload) {
+        balanceMeta.textContent = "暂无余额数据";
+        balanceOverallBadges.innerHTML = "";
+        balanceSiteTable.innerHTML = '<div class="empty">暂无数据</div>';
+        balanceAccountTable.innerHTML = '<div class="empty">暂无数据</div>';
+        return;
+      }
+
+      balanceMeta.textContent = `${payload.generated_at}，共 ${payload.site_count} 个站点，${payload.account_count} 个账号。`;
+      const overall = payload.overall || {};
+      const overallBadges = [badge(`缓存账号 ${payload.account_count}`, "neutral")];
+      (overall.display_totals || []).forEach((item) => {
+        overallBadges.push(badge(`总余额 ${formatDisplayValue(item.quota_display_total)}`, "ok"));
+        overallBadges.push(badge(`总已用 ${formatDisplayValue(item.used_display_total)}`, "neutral"));
+      });
+      balanceOverallBadges.innerHTML = overallBadges.join("");
+
+      const siteRows = (payload.site_summaries || []).filter((row) => state.activeSite === "all" || row.site === state.activeSite);
+      if (state.activeSite === "all" && siteRows.length > 1) {
+        siteRows.push({
+          site: "总计",
+          enabled: true,
+          account_count: payload.account_count,
+          quota_display_total: (overall.display_totals || []).map((item) => item.quota_display_total).join(" | "),
+          used_display_total: (overall.display_totals || []).map((item) => item.used_display_total).join(" | "),
+        });
+      }
+
+      renderTable(
+        balanceSiteTable,
+        [
+          { label: "站点", value: (row) => escapeHtml(row.site) },
+          { label: "状态", value: (row) => badge(row.enabled ? "启用" : "停用", row.enabled ? "ok" : "warn") },
+          { label: "账号数", value: (row) => escapeHtml(row.account_count) },
+          { label: "签到成功", value: (row) => escapeHtml(row.checkin_success_count ?? "-") },
+          { label: "今日已签", value: (row) => escapeHtml(row.already_done_count ?? "-") },
+          { label: "异常", value: (row) => escapeHtml(row.checkin_failed_count ?? "-") },
+          { label: "余额($)", value: (row) => escapeHtml(formatDisplayValue(row.quota_display_total)) },
+          { label: "已用($)", value: (row) => escapeHtml(formatDisplayValue(row.used_display_total)) },
+        ],
+        siteRows,
+      );
+
+      renderTable(
+        balanceAccountTable,
+        [
+          { label: "站点", value: (row) => escapeHtml(row.site) },
+          { label: "名称 / 账号", value: (row) => identityHtml(row) },
+          { label: "IP 档位", value: (row) => `<span class="route-badge">${escapeHtml(row.ip_profile || "-")}</span>` },
+          { label: "签到状态", value: (row) => badge(row.checkin_status || row.status, row.checkin_status_tone || (row.ok === false ? "danger" : "ok")) },
+          { label: "余额($)", value: (row) => escapeHtml(formatDisplayValue(row.quota_display)) },
+          { label: "已用($)", value: (row) => escapeHtml(formatDisplayValue(row.used_quota_display)) },
+          { label: "消息", value: (row) => `<span class="dim">${escapeHtml(row.checkin_message || row.message || "-")}</span>` },
+        ],
+        (payload.accounts || []).filter(matchesActiveSite),
+      );
+    }
+
+    function renderAllViews() {
+      renderSiteFilters();
+      renderConfig(state.config);
+      renderHistory(state.lastRun);
+      renderBalances(state.balances);
+      renderTrend(state.history);
+      renderMonthly(state.monthly);
+      renderOverview();
+      setStats();
+    }
+
+    async function loadConfig() {
+      state.config = await fetchJson("/api/config");
+      renderConfigSelectors();
+    }
+
+    async function loadLastRun() {
+      state.lastRun = await fetchJson("/api/last-run");
+    }
+
+    async function loadBalances() {
+      state.balances = await fetchJson("/api/balances");
+    }
+
+    async function loadHistory() {
+      state.history = await fetchJson("/api/history");
+    }
+
+    async function loadMonthly(month = monthlyMonthInput.value || currentMonthValue()) {
+      const url = `/api/monthly?month=${encodeURIComponent(month)}`;
+      state.monthly = await fetchJson(url);
+      if (state.monthly?.selected_month) {
+        monthlyMonthInput.value = state.monthly.selected_month;
+      }
+    }
+
+    async function loadLocalState() {
+      setAppStatus("正在读取 SQL 存储…", "busy");
+      [reloadLocalBtn, refreshSiteBalanceBtn, syncSiteNamesBtn, singleRunBtn, fullRunBtn, loadMonthlyBtn, syncMonthlySiteBtn, syncMonthlyAccountBtn].forEach((button) => {
+        setButtonBusy(button, true, "读取中");
+      });
+      try {
+        await loadConfig();
+        await loadLastRun();
+        await loadBalances();
+        await loadHistory();
+        await loadMonthly();
+        renderAllViews();
+        setAppStatus(`本地缓存已读取 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`, "ok");
+      } catch (error) {
+        setAppStatus(`读取本地缓存失败: ${error.message}`, "error");
+      } finally {
+        [reloadLocalBtn, refreshSiteBalanceBtn, syncSiteNamesBtn, singleRunBtn, fullRunBtn, loadMonthlyBtn, syncMonthlySiteBtn, syncMonthlyAccountBtn].forEach((button) => {
+          setButtonBusy(button, false);
+        });
+        updateSelectedTargetCard();
+      }
+    }
+
+    function selectedSiteForRemoteAction() {
+      if (state.activeSite !== "all") {
+        return state.activeSite;
+      }
+      return siteSelect.value;
+    }
+
+    async function refreshSiteBalance() {
+      const site = selectedSiteForRemoteAction();
+      if (!site) {
+        setAppStatus("请先选择一个站点。", "error");
+        return;
+      }
+      setAppStatus(`正在刷新 ${site} 的余额与签到状态…`, "busy");
+      setButtonBusy(refreshSiteBalanceBtn, true, "刷新中");
+      try {
+        const result = await fetchJson("/api/refresh-site-balances", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site }),
+        });
+        state.balances = result.balances;
+        state.history = result.history || state.history;
+        state.lastRun = result.last_run || state.lastRun;
+        state.monthly = result.monthly || state.monthly;
+        renderAllViews();
+        setAppStatus(`${site} 已写入 JSON：签到成功 ${result.success_count}，今日已签 ${result.already_done_count}，异常 ${result.failed_count}`, result.failed_count > 0 ? "error" : "ok");
+        pulseRow(site, "", result.failed_count > 0 ? "error" : "ok");
+      } catch (error) {
+        setAppStatus(`刷新站点余额失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(refreshSiteBalanceBtn, false);
+      }
+    }
+
+    async function syncSiteNames() {
+      const site = selectedSiteForRemoteAction();
+      if (!site) {
+        setAppStatus("请先选择一个站点。", "error");
+        return;
+      }
+      setAppStatus(`正在同步 ${site} 的账号名称…`, "busy");
+      setButtonBusy(syncSiteNamesBtn, true, "同步中");
+      try {
+        const result = await fetchJson("/api/sync-site-names", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site }),
+        });
+        state.balances = result.balances;
+        await loadConfig();
+        renderAllViews();
+        setAppStatus(`${site} 名称同步完成：成功 ${result.success_count}，失败 ${result.failed_count}，${result.changed ? "配置已更新" : "没有变更"}`, result.failed_count > 0 ? "error" : "ok");
+        pulseRow(site, "", result.failed_count > 0 ? "error" : "ok");
+      } catch (error) {
+        setAppStatus(`同步站点名称失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(syncSiteNamesBtn, false);
+      }
+    }
+
+    async function refreshAccountBalance(site, userId, button) {
+      setAppStatus(`正在刷新 ${site} / ${userId} 的余额与签到状态…`, "busy");
+      setButtonBusy(button, true, "刷新中");
+      try {
+        const result = await fetchJson("/api/refresh-account-balance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site, user_id: userId }),
+        });
+        state.balances = result.balances;
+        state.history = result.history || state.history;
+        state.lastRun = result.last_run || state.lastRun;
+        state.monthly = result.monthly || state.monthly;
+        renderAllViews();
+        setAppStatus(`${site} / ${userId} 已写入 JSON：${result.checkin?.checkin_status || result.message || "状态已刷新"}`, result.ok ? "ok" : "error");
+        pulseRow(site, userId, result.ok ? "ok" : "error");
+      } catch (error) {
+        setAppStatus(`刷新账号余额失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
+    }
+
+    async function syncAccountName(site, userId, button) {
+      setAppStatus(`正在同步 ${site} / ${userId} 的名称…`, "busy");
+      setButtonBusy(button, true, "同步中");
+      try {
+        const result = await fetchJson("/api/sync-account-name", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site, user_id: userId }),
+        });
+        state.balances = result.balances;
+        await loadConfig();
+        renderAllViews();
+        setAppStatus(`${site} / ${userId} 名称同步完成，${result.changed ? "配置已更新" : "没有变更"}`, result.ok ? "ok" : "error");
+        pulseRow(site, userId, result.changed ? "ok" : "pending");
+      } catch (error) {
+        setAppStatus(`同步账号名称失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
+    }
+
+    async function saveConfigJson() {
+      let payload;
+      try {
+        payload = JSON.parse(configJsonInput.value || "{}");
+      } catch (error) {
+        setInlineStatus(configJsonStatus, `JSON 解析失败: ${error.message}`, "error");
+        return;
+      }
+
+      setInlineStatus(configJsonStatus, "正在写入配置…", "busy");
+      setButtonBusy(saveConfigJsonBtn, true, "写入中");
+      try {
+        const result = await fetchJson("/api/config-site", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        state.config = result.config;
+        state.balances = result.balances;
+        renderConfigSelectors();
+        renderAllViews();
+        setInlineStatus(configJsonStatus, `已写入 ${result.site_count} 个平台，新增账号 ${result.added_accounts}，更新账号 ${result.updated_accounts}`, "ok");
+        setAppStatus("平台配置已写入 JSON", "ok");
+      } catch (error) {
+        setInlineStatus(configJsonStatus, `写入失败: ${error.message}`, "error");
+        setAppStatus(`平台配置写入失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(saveConfigJsonBtn, false);
+      }
+    }
+
+    async function toggleSiteEnabled(site, enabled, button) {
+      if (!site) {
+        setAppStatus("缺少要切换的站点。", "error");
+        return;
+      }
+      const actionText = enabled ? "启用签到" : "禁用签到";
+      if (!enabled) {
+        const confirmed = window.confirm(`确认禁用 ${site} 的签到？后续全量签到、单账号补签和余额刷新里的签到查询都会跳过它。`);
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      setAppStatus(`正在${actionText}：${site}…`, "busy");
+      setButtonBusy(button, true, enabled ? "启用中" : "禁用中");
+      try {
+        const result = await fetchJson("/api/site-enabled", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            site,
+            enabled,
+            disabled_reason: enabled ? "" : "页面禁用签到",
+          }),
+        });
+        state.config = result.config;
+        state.balances = result.balances || state.balances;
+        renderConfigSelectors();
+        renderAllViews();
+        const message = `${site} 已${enabled ? "启用" : "禁用"}签到`;
+        setInlineStatus(configJsonStatus, message, "ok");
+        setAppStatus(message, "ok");
+      } catch (error) {
+        setInlineStatus(configJsonStatus, `${actionText}失败: ${error.message}`, "error");
+        setAppStatus(`${actionText}失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
+    }
+
+    async function deleteSite(site, button) {
+      if (!site) {
+        setAppStatus("缺少要删除的站点。", "error");
+        return;
+      }
+      const confirmed = window.confirm(`确认删除站点 ${site}？这会同步移除本地配置、余额缓存和历史趋势记录。`);
+      if (!confirmed) {
+        return;
+      }
+
+      setAppStatus(`正在删除 ${site} 的本地配置和缓存…`, "busy");
+      setButtonBusy(button, true, "删除中");
+      try {
+        const result = await fetchJson("/api/delete-site", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site }),
+        });
+        state.config = result.config;
+        state.balances = result.balances;
+        state.history = result.history;
+        state.lastRun = result.last_run || state.lastRun;
+        if (state.activeSite === site) {
+          state.activeSite = "all";
+        }
+        renderConfigSelectors();
+        renderAllViews();
+        const message = `已删除 ${site}：配置账号 ${result.removed_accounts} 个，缓存 ${result.removed_cache_accounts} 条，历史 ${result.removed_history_entries} 条`;
+        setInlineStatus(configJsonStatus, message, "ok");
+        setAppStatus(message, "ok");
+      } catch (error) {
+        setInlineStatus(configJsonStatus, `删除失败: ${error.message}`, "error");
+        setAppStatus(`删除站点失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
+    }
+
+    async function deleteAccount(site, userId, label, button) {
+      if (!site || !userId) {
+        setAppStatus("缺少要删除的站点或账号。", "error");
+        return;
+      }
+      const name = label || userId;
+      const confirmed = window.confirm(`确认删除 ${site} / ${name}（ID ${userId}）？这会同步移除该账号的本地配置、余额缓存和历史记录。`);
+      if (!confirmed) {
+        return;
+      }
+
+      setAppStatus(`正在删除 ${site} / ${userId} 的本地配置和缓存…`, "busy");
+      setButtonBusy(button, true, "删除中");
+      try {
+        const result = await fetchJson("/api/delete-account", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site, user_id: userId }),
+        });
+        state.config = result.config;
+        state.balances = result.balances;
+        state.history = result.history;
+        state.lastRun = result.last_run || state.lastRun;
+        state.monthly = result.monthly || state.monthly;
+        if (siteSelect.value === site && accountSelect.value === userId) {
+          accountSelect.value = "";
+        }
+        renderConfigSelectors();
+        renderAllViews();
+        const message = `已删除 ${site} / ${userId}：缓存 ${result.removed_cache_accounts} 条，历史 ${result.removed_history_entries} 条，月度 ${result.removed_monthly_entries} 条`;
+        setInlineStatus(configJsonStatus, message, "ok");
+        setAppStatus(message, "ok");
+      } catch (error) {
+        setInlineStatus(configJsonStatus, `删除账号失败: ${error.message}`, "error");
+        setAppStatus(`删除账号失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
+    }
+
+    async function refreshMonthlyStatus() {
+      const status = await fetchJson("/api/monthly-sync-status");
+      if (state.monthly) {
+        state.monthly.sync_state = status;
+      }
+      renderMonthly(state.monthly);
+      if (!status.running && state.monthlyStatusTimer) {
+        window.clearInterval(state.monthlyStatusTimer);
+        state.monthlyStatusTimer = null;
+        await loadMonthly(monthlyMonthInput.value || currentMonthValue());
+        await loadLastRun();
+        await loadHistory();
+        renderAllViews();
+      }
+    }
+
+    function startMonthlyStatusPolling() {
+      if (state.monthlyStatusTimer) {
+        window.clearInterval(state.monthlyStatusTimer);
+      }
+      state.monthlyStatusTimer = window.setInterval(() => {
+        refreshMonthlyStatus().catch((error) => {
+          setInlineStatus(monthlySyncStatus, `月度状态读取失败: ${error.message}`, "error");
+        });
+      }, 1800);
+    }
+
+    async function loadSelectedMonthly() {
+      setInlineStatus(monthlySyncStatus, "正在读取 SQL 月度记录…", "busy");
+      setButtonBusy(loadMonthlyBtn, true, "读取中");
+      try {
+        await loadMonthly(monthlyMonthInput.value || currentMonthValue());
+        renderAllViews();
+        setInlineStatus(monthlySyncStatus, `已读取 ${state.monthly?.selected_month || monthlyMonthInput.value} 本地缓存`, "ok");
+      } catch (error) {
+        setInlineStatus(monthlySyncStatus, `读取月度缓存失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(loadMonthlyBtn, false);
+      }
+    }
+
+    async function syncMonthly(scope) {
+      const month = monthlyMonthInput.value || currentMonthValue();
+      const site = scope === "site" || scope === "account" ? selectedSiteForRemoteAction() : "";
+      const userId = scope === "account" ? accountSelect.value : "";
+      const button = scope === "account" ? syncMonthlyAccountBtn : syncMonthlySiteBtn;
+      if (!site) {
+        setInlineStatus(monthlySyncStatus, "请先选择一个站点。", "error");
+        return;
+      }
+      if (scope === "account" && !userId) {
+        setInlineStatus(monthlySyncStatus, "请先选择一个账号。", "error");
+        return;
+      }
+
+      setInlineStatus(monthlySyncStatus, `已提交 ${month} ${site}${userId ? ` / ${userId}` : ""} 月度同步，后台会慢慢查。`, "busy");
+      setButtonBusy(button, true, "同步中");
+      try {
+        const result = await fetchJson("/api/sync-monthly", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ month, site, user_id: userId }),
+        });
+        state.monthly = result.monthly || state.monthly;
+        renderAllViews();
+        if (result.started) {
+          startMonthlyStatusPolling();
+        } else {
+          setInlineStatus(monthlySyncStatus, "已有月度同步正在执行，继续查看当前状态。", "busy");
+        }
+      } catch (error) {
+        setInlineStatus(monthlySyncStatus, `提交月度同步失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
+    }
+
+    async function refreshCheckinJobStatus() {
+      const status = await fetchJson("/api/checkin-job-status");
+      setInlineStatus(
+        fullRunStatus,
+        status.running
+          ? `${status.message || "完整签到运行中"}，开始于 ${status.started_at || "-"}`
+          : `${status.message || "完整签到空闲"}，退出码 ${status.exit_code ?? "-"}`,
+        status.running ? "busy" : status.exit_code && status.exit_code !== 0 ? "error" : "ok",
+      );
+      if (!status.running && state.checkinStatusTimer) {
+        window.clearInterval(state.checkinStatusTimer);
+        state.checkinStatusTimer = null;
+        await loadLastRun();
+        await loadBalances();
+        await loadHistory();
+        await loadMonthly(currentMonthValue());
+        renderAllViews();
+      }
+    }
+
+    function startCheckinStatusPolling() {
+      if (state.checkinStatusTimer) {
+        window.clearInterval(state.checkinStatusTimer);
+      }
+      state.checkinStatusTimer = window.setInterval(() => {
+        refreshCheckinJobStatus().catch((error) => {
+          setInlineStatus(fullRunStatus, `完整签到状态读取失败: ${error.message}`, "error");
+        });
+      }, 2400);
+    }
+
+    async function runFullCheckin() {
+      setInlineStatus(fullRunStatus, "正在提交完整签到到后台…", "busy");
+      setButtonBusy(fullRunBtn, true, "已提交");
+      try {
+        const result = await fetchJson("/api/run-full-checkin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        setInlineStatus(fullRunStatus, result.started ? "完整签到已在后台运行。" : "完整签到已经在运行。", "busy");
+        startCheckinStatusPolling();
+      } catch (error) {
+        setInlineStatus(fullRunStatus, `完整签到启动失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(fullRunBtn, false);
+      }
+    }
+
+    async function runSingleCheckin() {
+      const site = siteSelect.value;
+      const userId = accountSelect.value;
+      if (!site || !userId) {
+        singleRunStatus.textContent = "请先选择站点和账号。";
+        singleRunStatus.dataset.tone = "error";
+        return;
+      }
+      if (!isSiteEnabled(site)) {
+        singleRunStatus.textContent = `${site} 已停用签到，不能执行单账号签到；可以继续刷新余额、查看签到记录和月度记录。`;
+        singleRunStatus.dataset.tone = "warn";
+        return;
+      }
+
+      singleRunBtn.disabled = true;
+      singleRunStatus.textContent = `正在执行 ${site} / ${userId} 的签到…`;
+      singleRunStatus.dataset.tone = "busy";
+      singleRunOutput.textContent = "";
+      setAppStatus(`正在执行 ${site} / ${userId} 的单账号签到…`, "busy");
+
+      try {
+        const result = await fetchJson("/api/checkin-single", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site, user_id: userId }),
+        });
+        const report = result.report || {};
+        singleRunStatus.textContent = `执行完成，退出码 ${result.exit_code}；成功 ${report.success_count ?? "-"}，失败 ${report.failed_count ?? "-"}`;
+        singleRunStatus.dataset.tone = result.exit_code === 0 ? "ok" : "error";
+        singleRunOutput.textContent = [
+          "===== SUMMARY =====",
+          report.summary_text || "无摘要",
+          "",
+          "===== STDOUT =====",
+          result.stdout || "",
+          "",
+          "===== STDERR =====",
+          result.stderr || "",
+        ].join("\n");
+
+        state.monthly = result.monthly || state.monthly;
+        state.lastRun = result.last_run || state.lastRun;
+        await loadBalances();
+        await loadHistory();
+        renderAllViews();
+        setAppStatus(`单账号签到完成 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`, "ok");
+      } catch (error) {
+        singleRunStatus.textContent = `执行失败: ${error.message}`;
+        singleRunStatus.dataset.tone = "error";
+        singleRunOutput.textContent = error.stack || error.message;
+        setAppStatus(`单账号签到失败: ${error.message}`, "error");
+      } finally {
+        singleRunBtn.disabled = false;
+      }
+    }
+
+    tabRow.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-tab]");
+      if (!button) {
+        return;
+      }
+      setActiveTab(button.dataset.tab);
+    });
+
+    reloadLocalBtn.addEventListener("click", loadLocalState);
+    refreshSiteBalanceBtn.addEventListener("click", refreshSiteBalance);
+    syncSiteNamesBtn.addEventListener("click", syncSiteNames);
+    saveConfigJsonBtn.addEventListener("click", saveConfigJson);
+    singleRunBtn.addEventListener("click", runSingleCheckin);
+    fullRunBtn.addEventListener("click", runFullCheckin);
+    loadMonthlyBtn.addEventListener("click", loadSelectedMonthly);
+    syncMonthlySiteBtn.addEventListener("click", () => syncMonthly("site"));
+    syncMonthlyAccountBtn.addEventListener("click", () => syncMonthly("account"));
+    siteSelect.addEventListener("change", () => updateAccountOptions());
+    accountSelect.addEventListener("change", updateSelectedTargetCard);
+    trendScopeSelect.addEventListener("change", () => {
+      state.trendScope = trendScopeSelect.value || "all";
+      renderTrend(state.history);
+    });
+    monthlyTrendScopeSelect.addEventListener("change", () => {
+      state.monthlyTrendScope = monthlyTrendScopeSelect.value || "all";
+      renderMonthly(state.monthly);
+    });
+    monthlyMonthInput.addEventListener("change", loadSelectedMonthly);
+
+    configJsonInput.value = defaultConfigJsonText();
+    monthlyMonthInput.value = currentMonthValue();
+    setActiveTab("overview");
+    loadLocalState();
+  </script>
+</body>
+</html>

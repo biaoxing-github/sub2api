@@ -537,6 +537,32 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/tools',
+    name: 'AdminTools',
+    component: () => import('@/views/admin/AdminToolsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Admin Tools',
+      titleKey: 'admin.tools.title',
+      descriptionKey: 'admin.tools.description'
+    }
+  },
+  {
+    path: '/admin/newapi-checkin',
+    redirect: {
+      path: '/admin/tools',
+      query: { tab: 'newapi' }
+    }
+  },
+  {
+    path: '/admin/token-cost',
+    redirect: {
+      path: '/admin/tools',
+      query: { tab: 'token-cost' }
+    }
+  },
+  {
     path: '/admin/announcements',
     name: 'AdminAnnouncements',
     component: () => import('@/views/admin/AnnouncementsView.vue'),

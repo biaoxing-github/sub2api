@@ -1,0 +1,241 @@
+package service
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+func fixedNewAPICheckinNow() time.Time {
+	return time.Date(2026, 7, 8, 9, 10, 11, 0, time.Local)
+}
+
+func newTestNewAPICheckinService(t *testing.T, repo NewAPICheckinRepository, client *http.Client) *NewAPICheckinService {
+	t.Helper()
+	return NewNewAPICheckinService(NewAPICheckinOptions{
+		Repository: repo,
+		HTTPClient: client,
+		Now:        fixedNewAPICheckinNow,
+	})
+}
+
+func TestNewAPICheckinConfigSummaryCountsAndKeepsDisabledSiteVisible(t *testing.T) {
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{
+			{
+				"name":     "enabled-site",
+				"enabled":  true,
+				"base_url": "https://enabled.example",
+				"accounts": []map[string]any{
+					{"name": "alpha", "user_id": "1001", "access_key": "key-a", "ip_profile": "slot-a"},
+				},
+			},
+			{
+				"name":            "turnstile-site",
+				"enabled":         false,
+				"disabled_reason": "Turnstile 保护站点，仅保留余额与月度记录查询",
+				"base_url":        "https://turnstile.example",
+				"accounts": []map[string]any{
+					{"name": "beta", "user_id": "2001", "access_key": "key-b", "ip_profile": "slot-b"},
+				},
+			},
+		},
+	})
+
+	svc := newTestNewAPICheckinService(t, repo, nil)
+	summary, err := svc.ConfigSummary(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, 2, summary.AllSiteCount)
+	require.Equal(t, 1, summary.EnabledSiteCount)
+	require.Equal(t, 2, summary.AllAccountCount)
+	require.Equal(t, 1, summary.EnabledAccountCount)
+	require.Len(t, summary.Sites, 2)
+	require.False(t, summary.Sites[1].Enabled)
+	require.Equal(t, "turnstile-site", summary.Sites[1].Name)
+	require.Equal(t, "Turnstile 保护站点，仅保留余额与月度记录查询", summary.Sites[1].DisabledReason)
+}
+
+func TestNewAPICheckinSetSiteEnabledPersistsReasonAndSummary(t *testing.T) {
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{
+			{
+				"name":     "demo",
+				"enabled":  true,
+				"base_url": "https://demo.example",
+				"accounts": []map[string]any{
+					{"name": "alpha", "user_id": "1001", "access_key": "key-a"},
+				},
+			},
+		},
+	})
+
+	svc := newTestNewAPICheckinService(t, repo, nil)
+	result, err := svc.SetSiteEnabled(context.Background(), "demo", false, "页面禁用签到")
+	require.NoError(t, err)
+
+	require.False(t, result.Enabled)
+	require.Equal(t, "页面禁用签到", result.DisabledReason)
+	require.Equal(t, 0, result.Config.EnabledSiteCount)
+	require.Equal(t, 1, result.Config.AllSiteCount)
+
+	summary, err := svc.ConfigSummary(context.Background())
+	require.NoError(t, err)
+	require.False(t, summary.Sites[0].Enabled)
+	require.Equal(t, "页面禁用签到", summary.Sites[0].DisabledReason)
+}
+
+func TestNewAPICheckinRunFullCheckinSkipsDisabledSitesAndPreservesLatestWhenNoTasks(t *testing.T) {
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{
+			{
+				"name":            "disabled-only",
+				"enabled":         false,
+				"disabled_reason": "Turnstile 保护站点，仅保留余额与月度记录查询",
+				"base_url":        "https://disabled.example",
+				"accounts": []map[string]any{
+					{"name": "beta", "user_id": "2001", "access_key": "key-b"},
+				},
+			},
+		},
+	})
+	repo.report = NewAPICheckinReport{
+		StartedAt: "2026-07-07 09:00:00",
+		TaskCount: 1,
+		AccountResults: []NewAPICheckinAccountResult{
+			{Site: "old", UserID: "9999", Success: true, Message: "签到成功"},
+		},
+	}
+
+	svc := newTestNewAPICheckinService(t, repo, nil)
+	report, err := svc.RunFullCheckin(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, report.TaskCount)
+	require.Empty(t, report.AccountResults)
+
+	latest, err := svc.LastRun(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, latest.TaskCount)
+	require.Len(t, latest.AccountResults, 1)
+	require.Equal(t, "old", latest.AccountResults[0].Site)
+}
+
+func TestNewAPICheckinRefreshAccountBalanceUsesNewApiHeaders(t *testing.T) {
+	var seen []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.String()+" "+r.Header.Get("Authorization")+" "+r.Header.Get("New-Api-User"))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_display_type":"USD","quota_per_unit":500000}}`))
+		case r.URL.Path == "/api/user/checkin" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"success":true,"message":"签到成功","data":{"quota_awarded":50000,"checkin_date":"2026-07-08"}}`))
+		case r.URL.Path == "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"username":"demo-user","display_name":"Demo User","quota":250000,"used_quota":10000}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{
+			{
+				"name":     "demo",
+				"enabled":  true,
+				"base_url": upstream.URL,
+				"accounts": []map[string]any{
+					{"name": "alpha", "user_id": "1001", "access_key": "key-a", "ip_profile": "slot-a"},
+				},
+			},
+		},
+	})
+
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+	result, err := svc.RefreshAccountBalance(context.Background(), "demo", "1001")
+	require.NoError(t, err)
+
+	require.True(t, result.OK)
+	require.Equal(t, "签到成功", result.Checkin.CheckinStatus)
+	require.Equal(t, int64(50000), *result.Checkin.QuotaAwarded)
+	require.Equal(t, "$0.1", result.Checkin.QuotaAwardedDisplay)
+	require.Equal(t, int64(250000), *result.Account.Quota)
+	require.Equal(t, "$0.5", result.Account.QuotaDisplay)
+	require.Contains(t, seen, "POST /api/user/checkin Bearer key-a 1001")
+	require.Contains(t, seen, "GET /api/user/self Bearer key-a 1001")
+}
+
+type memoryNewAPICheckinRepository struct {
+	config  NewAPICheckinConfig
+	report  NewAPICheckinReport
+	balance NewAPICheckinBalancePayload
+	history NewAPICheckinHistoryPayload
+	monthly []NewAPICheckinMonthlyRecord
+}
+
+func newMemoryNewAPICheckinRepository(t *testing.T, rawConfig map[string]any) *memoryNewAPICheckinRepository {
+	t.Helper()
+	cfg, err := decodeNewAPIConfigMap(rawConfig)
+	require.NoError(t, err)
+	return &memoryNewAPICheckinRepository{
+		config: cfg,
+		balance: NewAPICheckinBalancePayload{
+			SiteStatuses: map[string]NewAPICheckinSiteStatus{},
+		},
+	}
+}
+
+func (r *memoryNewAPICheckinRepository) LoadConfig(context.Context) (NewAPICheckinConfig, error) {
+	return r.config, nil
+}
+
+func (r *memoryNewAPICheckinRepository) SaveConfig(_ context.Context, cfg NewAPICheckinConfig) error {
+	r.config = cfg
+	return nil
+}
+
+func (r *memoryNewAPICheckinRepository) LoadLatestReport(context.Context) (NewAPICheckinReport, error) {
+	return r.report, nil
+}
+
+func (r *memoryNewAPICheckinRepository) SaveLatestReport(_ context.Context, report NewAPICheckinReport) error {
+	r.report = report
+	return nil
+}
+
+func (r *memoryNewAPICheckinRepository) LoadBalanceCache(context.Context) (NewAPICheckinBalancePayload, error) {
+	return r.balance, nil
+}
+
+func (r *memoryNewAPICheckinRepository) SaveBalanceCache(_ context.Context, cache NewAPICheckinBalancePayload) error {
+	r.balance = cache
+	return nil
+}
+
+func (r *memoryNewAPICheckinRepository) LoadHistory(context.Context) (NewAPICheckinHistoryPayload, error) {
+	return r.history, nil
+}
+
+func (r *memoryNewAPICheckinRepository) SaveHistory(_ context.Context, payload NewAPICheckinHistoryPayload) error {
+	r.history = payload
+	return nil
+}
+
+func (r *memoryNewAPICheckinRepository) LoadMonthlyRecords(context.Context) ([]NewAPICheckinMonthlyRecord, error) {
+	return r.monthly, nil
+}
+
+func (r *memoryNewAPICheckinRepository) SaveMonthlyRecords(_ context.Context, records []NewAPICheckinMonthlyRecord) error {
+	r.monthly = records
+	return nil
+}
+
+func (r *memoryNewAPICheckinRepository) StorageLabel() string {
+	return "memory:newapi-checkin"
+}
+
+var _ NewAPICheckinRepository = (*memoryNewAPICheckinRepository)(nil)

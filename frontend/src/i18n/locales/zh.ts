@@ -366,6 +366,8 @@ export default {
     accountSchedulingPool: '调度池',
     accountProbeReports: '上游体检报告',
     accountModelProbes: '模型探针',
+    newapiCheckin: 'NewApi 签到',
+    adminTools: '工具箱',
     proxies: 'IP管理',
     redeemCodes: '兑换码',
     ops: '运维监控',
@@ -1442,6 +1444,23 @@ export default {
 
   // Admin
   admin: {
+    newapiCheckin: {
+      title: 'NewApi 签到',
+      description: '多站点签到、余额、历史和月度记录看板'
+    },
+    tools: {
+      title: '工具箱',
+      description: 'NewApi 签到与 Token 成本计算工具',
+      tabsLabel: '工具切换',
+      tabs: {
+        newapi: 'NewApi 签到',
+        tokenCost: 'Token 成本'
+      },
+      frames: {
+        newapi: 'NewApi 签到看板',
+        tokenCost: 'Token 成本计算器'
+      }
+    },
     // Dashboard
     dashboard: {
       title: '管理控制台',

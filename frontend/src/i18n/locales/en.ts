@@ -366,6 +366,8 @@ export default {
     accountSchedulingPool: 'Scheduling Pool',
     accountProbeReports: 'Probe Reports',
     accountModelProbes: 'Model Probes',
+    newapiCheckin: 'NewApi Checkin',
+    adminTools: 'Tools',
     proxies: 'Proxies',
     redeemCodes: 'Redeem Codes',
     ops: 'Ops',
@@ -1437,6 +1439,23 @@ export default {
 
   // Admin
   admin: {
+    newapiCheckin: {
+      title: 'NewApi Checkin',
+      description: 'Multi-site checkin, balance, history, and monthly records dashboard'
+    },
+    tools: {
+      title: 'Tools',
+      description: 'NewApi checkin and token cost calculator tools',
+      tabsLabel: 'Tool switcher',
+      tabs: {
+        newapi: 'NewApi Checkin',
+        tokenCost: 'Token Cost'
+      },
+      frames: {
+        newapi: 'NewApi checkin dashboard',
+        tokenCost: 'Token cost calculator'
+      }
+    },
     // Dashboard
     dashboard: {
       title: 'Admin Dashboard',

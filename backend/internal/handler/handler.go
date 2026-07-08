@@ -34,6 +34,8 @@ type AdminHandlers struct {
 	ChannelMonitor         *admin.ChannelMonitorHandler
 	ChannelMonitorTemplate *admin.ChannelMonitorRequestTemplateHandler
 	ContentModeration      *admin.ContentModerationHandler
+	NewAPICheckin          *admin.NewAPICheckinHandler
+	TokenCost              *admin.TokenCostHandler
 	Payment                *admin.PaymentHandler
 	Affiliate              *admin.AffiliateHandler
 }

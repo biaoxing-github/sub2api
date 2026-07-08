@@ -737,6 +737,7 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/account-scheduling-pool', label: t('nav.accountSchedulingPool'), icon: SignalIcon },
     { path: '/admin/account-probe-reports', label: t('nav.accountProbeReports'), icon: ChartIcon },
     { path: '/admin/model-probes', label: t('nav.accountModelProbes'), icon: SignalIcon },
+    { path: '/admin/tools', label: t('nav.adminTools'), icon: GiftIcon },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
     { path: '/admin/risk-control', label: t('nav.riskControl'), icon: ShieldIcon, hideInSimpleMode: true, featureFlag: flagRiskControl },

@@ -1,0 +1,2084 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API Token 余额动态计算器</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #F5F5F7;
+      --surface: #FFFFFF;
+      --surface-solid: #FFFFFF;
+      --surface-soft: rgba(0, 0, 0, 0.04);
+      --surface-strong: rgba(255, 255, 255, 0.8);
+      --text: #1D1D1F;
+      --text-soft: #424245;
+      --muted: #86868B;
+      --line: rgba(0, 0, 0, 0.08);
+      --line-strong: rgba(0, 0, 0, 0.16);
+      --accent: #0066CC;
+      --accent-strong: #0055AB;
+      --accent-soft: rgba(0, 102, 204, 0.1);
+      --warn: #B25000;
+      --warn-soft: #FFF4E6;
+      --danger: #E30000;
+      --danger-soft: #FFEBEB;
+      --ok: #008000;
+      --ok-soft: #E6F5E6;
+      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
+      --shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.12);
+      --radius-sm: 8px;
+      --radius: 12px;
+      --radius-lg: 16px;
+      --mono: "SF Mono", "ui-monospace", "JetBrains Mono", Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", Arial, sans-serif;
+      --spring: cubic-bezier(0.175, 0.885, 0.32, 1.1);
+      --ease: cubic-bezier(0.25, 1, 0.5, 1);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      overflow-x: hidden;
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    button, input, select, textarea { font: inherit; }
+
+    button {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--text);
+      padding: 6px 14px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s var(--ease);
+      box-shadow: var(--shadow-sm);
+    }
+
+    button:hover:not(:disabled) {
+      background: #F5F5F7;
+      border-color: var(--line-strong);
+    }
+
+    button:active:not(:disabled) {
+      transform: scale(0.96);
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    button.primary {
+      border: none;
+      background: var(--accent);
+      color: #fff;
+    }
+
+    button.primary:hover:not(:disabled) {
+      background: var(--accent-strong);
+      border-color: transparent;
+    }
+
+    button.danger {
+      border-color: transparent;
+      background: var(--danger-soft);
+      color: var(--danger);
+      box-shadow: none;
+    }
+
+    button.danger:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--danger-soft) 80%, var(--danger));
+    }
+
+    input, select, textarea {
+      width: 100%;
+      min-height: 36px;
+      padding: 6px 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--text);
+      transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+    }
+
+    input:focus, select:focus, textarea:focus, button:focus-visible {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    code, pre { font-family: var(--mono); }
+
+    .shell {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 24px;
+      align-items: end;
+      margin-bottom: 32px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(24px, 4vw, 36px);
+      line-height: 1.1;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .lead {
+      max-width: 800px;
+      margin: 8px 0 0;
+      color: var(--text-soft);
+      font-size: 15px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .recharge-field {
+      width: 180px;
+      color: var(--text-soft);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .recharge-field input {
+      min-height: 36px;
+      font-family: var(--mono);
+      font-weight: 600;
+      margin-top: 4px;
+    }
+
+    .section-switch {
+      display: inline-flex;
+      gap: 4px;
+      margin: 0 0 24px;
+      padding: 4px;
+      border-radius: calc(var(--radius-sm) + 4px);
+      background: var(--surface-soft);
+    }
+
+    .section-switch button {
+      min-height: 32px;
+      border: none;
+      background: transparent;
+      color: var(--text-soft);
+      padding: 4px 16px;
+      font-weight: 600;
+      box-shadow: none;
+      border-radius: var(--radius-sm);
+    }
+
+    .section-switch button.active {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat, .panel, .editor-card {
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      border: 1px solid var(--line);
+      transition: transform 0.3s var(--spring), box-shadow 0.3s var(--ease);
+    }
+
+    .stat {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .stat-label {
+      color: var(--text-soft);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .stat-value {
+      margin-top: 8px;
+      font-size: clamp(20px, 2vw, 24px);
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -0.01em;
+    }
+
+    .stat-note {
+      margin-top: auto;
+      padding-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+      gap: 24px;
+      align-items: start;
+    }
+
+    .workspace-main {
+      display: grid;
+      gap: 24px;
+      min-width: 0;
+    }
+
+    .workspace-side {
+      position: sticky;
+      top: 24px;
+      display: grid;
+      gap: 24px;
+      align-self: start;
+    }
+
+    .panel, .editor-card {
+      padding: 24px;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .panel-meta {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      color: var(--text-soft);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .field.full { grid-column: 1 / -1; }
+
+    .section-view {
+      display: none;
+      gap: 24px;
+    }
+
+    .section-view.active {
+      display: grid;
+      animation: fadeIn 0.4s var(--ease);
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .segmented {
+      display: inline-flex;
+      padding: 3px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-soft);
+    }
+
+    .segmented button {
+      min-height: 28px;
+      border: none;
+      background: transparent;
+      padding: 4px 12px;
+      color: var(--text-soft);
+      box-shadow: none;
+    }
+
+    .segmented button.active {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .platform-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .platform-pager {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+      gap: 16px;
+    }
+
+    .pager-meta {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .pager-meta strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .pager-buttons, .pager-pages {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .pager-button, .pager-page {
+      min-height: 32px;
+      padding: 4px 10px;
+      box-shadow: none;
+      background: var(--surface-soft);
+      border: none;
+      font-weight: 500;
+      color: var(--text-soft);
+    }
+
+    .pager-page {
+      min-width: 32px;
+      font-family: var(--mono);
+    }
+
+    .pager-page.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .platform-card {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+      transition: box-shadow 0.3s var(--ease), transform 0.3s var(--spring);
+    }
+
+    .platform-card:hover {
+      box-shadow: var(--shadow-lg);
+      transform: translateY(-2px);
+    }
+
+    .platform-card-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .platform-card-title {
+      display: grid;
+      gap: 6px;
+    }
+
+    .platform-title-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .platform-card-name {
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 1.2;
+    }
+
+    .score-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--tier-bg, var(--surface-soft));
+      color: var(--tier-color, var(--text));
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .tier-super .score-badge { --tier-bg: #E6F4EA; --tier-color: #137333; }
+    .tier-good .score-badge { --tier-bg: #E8F0FE; --tier-color: #1967D2; }
+    .tier-normal .score-badge { --tier-bg: #FEF7E0; --tier-color: #B06000; }
+    .tier-expensive .score-badge { --tier-bg: #FCE8E6; --tier-color: #C5221F; }
+    .tier-unknown .score-badge { --tier-bg: #F1F3F4; --tier-color: #5F6368; }
+
+    .platform-card-meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .platform-card-meta strong {
+      color: var(--text-soft);
+      font-weight: 600;
+    }
+
+    .platform-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .metric-chip {
+      padding: 8px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-soft);
+    }
+
+    .metric-chip-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .metric-chip-value {
+      margin-top: 4px;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .power-console {
+      display: grid;
+      gap: 12px;
+      padding: 16px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-soft);
+    }
+
+    .power-row {
+      display: grid;
+      grid-template-columns: 40px minmax(0, 1fr) 70px;
+      gap: 12px;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-soft);
+    }
+
+    .power-row strong {
+      font-family: var(--mono);
+      font-weight: 600;
+      color: var(--text);
+      text-align: right;
+    }
+
+    .power-track {
+      height: 6px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--line);
+    }
+
+    .power-fill {
+      display: block;
+      height: 100%;
+      width: var(--bar-width, 0%);
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 0.6s var(--spring);
+    }
+
+    .console-split {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .console-pill {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .console-pill strong {
+      display: block;
+      margin-top: 2px;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .platform-fields {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .platform-card .field {
+      gap: 4px;
+      font-size: 12px;
+    }
+
+    .cell-input {
+      min-height: 30px;
+      padding: 4px 8px;
+      font-size: 13px;
+      border-radius: 6px;
+    }
+
+    .platform-card .field.full { grid-column: 1 / -1; }
+
+    .muted { color: var(--muted); }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--text-soft);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .badge.ok { background: var(--ok-soft); color: var(--ok); }
+    .badge.warn { background: var(--warn-soft); color: var(--warn); }
+    .badge.danger { background: var(--danger-soft); color: var(--danger); }
+
+    .rank-list { display: grid; gap: 12px; }
+
+    .rank-item {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      transition: transform 0.2s var(--ease);
+    }
+
+    .rank-item:hover {
+      transform: translateX(4px);
+    }
+
+    .rank-index {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--surface-soft);
+      color: var(--text-soft);
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    .rank-item:nth-child(1) .rank-index { background: #FFD700; color: #000; }
+    .rank-item:nth-child(2) .rank-index { background: #E0E0E0; color: #000; }
+    .rank-item:nth-child(3) .rank-index { background: #CD7F32; color: #000; }
+
+    .rank-name {
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .rank-value {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 600;
+      text-align: right;
+    }
+
+    .status {
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-soft);
+      color: var(--text-soft);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .status.ok { background: var(--ok-soft); color: var(--ok); }
+    .status.warn { background: var(--warn-soft); color: var(--warn); }
+
+    .history-list, .event-list {
+      display: grid;
+      gap: 12px;
+      max-height: 400px;
+      overflow-y: auto;
+      padding-right: 8px;
+    }
+
+    .history-editor {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) repeat(4, minmax(0, 1fr)) auto;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 24px;
+      padding: 16px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-soft);
+    }
+
+    .tgb-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .group-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .group-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .group-meta {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .history-item, .event-item {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+    }
+
+    .history-title, .event-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .history-body, .event-body {
+      color: var(--text-soft);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .modal-shell {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      padding: 24px;
+      background: rgba(0, 0, 0, 0.2);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 100;
+    }
+
+    .modal-shell.open {
+      display: grid;
+    }
+
+    .modal-card {
+      width: min(640px, 100%);
+      max-height: min(90vh, 800px);
+      overflow-y: auto;
+      border-radius: var(--radius-lg);
+      background: var(--surface-solid);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.16);
+      padding: 32px;
+      transform: scale(0.96) translateY(12px);
+      opacity: 0;
+      transition: opacity 0.3s var(--ease), transform 0.4s var(--spring);
+    }
+
+    .modal-shell.open .modal-card {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    .hidden { display: none !important; }
+
+    /* View Transitions Setup */
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+      animation-duration: 0.4s;
+      animation-timing-function: var(--spring);
+    }
+
+    @media (max-width: 1240px) {
+      .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .layout { grid-template-columns: 1fr; }
+      .workspace-side { position: static; }
+      .tgb-grid { grid-template-columns: 1fr; }
+      .history-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .platform-grid, .platform-fields, .platform-metrics, .console-split { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 760px) {
+      .shell { padding: 24px 16px; }
+      .topbar { grid-template-columns: 1fr; gap: 16px; margin-bottom: 24px; }
+      .actions { justify-content: flex-start; }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .form-grid { grid-template-columns: 1fr; }
+      .field.full { grid-column: auto; }
+      .section-switch { display: flex; width: 100%; }
+      .section-switch button { flex: 1; text-align: center; }
+      .history-editor { grid-template-columns: 1fr; }
+      .platform-grid, .platform-fields, .platform-metrics, .console-split { grid-template-columns: 1fr; }
+      .platform-card-head { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>API Token 余额动态计算器</h1>
+        <p class="lead">在这里直接改平台余额、plus/pro 倍率和兑换比例，页面会实时重算购买力与性价比；通过管理端打开时，数据会自动保存到数据库。</p>
+      </div>
+      <div class="actions">
+        <label class="field recharge-field">
+          个人充值总价 r
+          <input id="personalRechargeInput" type="number" step="0.01" min="0" inputmode="decimal">
+        </label>
+        <button id="openReportBtn">重新载入动态页</button>
+        <button id="saveDataBtn">保存数据</button>
+      </div>
+    </header>
+
+    <div class="section-switch" aria-label="TGB 分区">
+      <button class="active" id="viewTBtn" type="button">T</button>
+      <button id="viewGBtn" type="button">G</button>
+      <button id="viewBBtn" type="button">B</button>
+    </div>
+
+    <section class="stats" id="statsGrid"></section>
+
+    <section class="layout">
+      <section class="workspace-main">
+        <section class="section-view active" data-view="t">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">平台编辑表</h2>
+                <div class="panel-meta" id="tableMeta">只展示余额大于 0 的平台。</div>
+              </div>
+              <div class="toolbar">
+                <button id="openAddPlatformBtn" class="primary" type="button">新增平台</button>
+                <label class="field" style="min-width: 220px;">
+                  搜索
+                  <input id="searchInput" placeholder="平台名 / 备注">
+                </label>
+                <label class="field" style="min-width: 150px;">
+                  显示
+                  <select id="visibilitySelect">
+                    <option value="active">余额大于 0</option>
+                    <option value="all">全部平台</option>
+                  </select>
+                </label>
+                <button id="resetBtn" class="danger">恢复默认</button>
+              </div>
+            </div>
+            <div class="platform-grid" id="platformTableBody"></div>
+            <nav class="platform-pager" id="platformPager" aria-label="平台分页"></nav>
+          </section>
+        </section>
+
+        <section class="section-view" data-view="g">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">TGB 视图</h2>
+                <div class="panel-meta">把平台按三种关注方式拆开看，避免一页塞满所有表格。</div>
+              </div>
+            </div>
+            <div class="tgb-grid" id="tgbGrid"></div>
+          </section>
+        </section>
+
+        <section class="section-view" data-view="b">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">历史留痕</h2>
+                <div class="panel-meta">历史点记录总余额和购买力涨跌；事件记录每次编辑。</div>
+              </div>
+              <div class="toolbar">
+                <button id="copyMarkdownBtn">复制报告</button>
+                <button id="clearEventsBtn">清空事件</button>
+              </div>
+            </div>
+            <div class="history-editor">
+              <label class="field">
+                历史摘要
+                <input id="historySummaryInput" placeholder="例如 更新 dawclaude 余额后重新记录">
+              </label>
+              <label class="field">
+                总余额
+                <input id="historyBalanceInput" type="number" step="0.01" min="0">
+              </label>
+              <label class="field">
+                Pro 购买力
+                <input id="historyProInput" type="number" step="0.01" min="0">
+              </label>
+              <label class="field">
+                Plus 购买力
+                <input id="historyPlusInput" type="number" step="0.01" min="0">
+              </label>
+              <label class="field">
+                记录日期
+                <input id="historyAtInput" placeholder="例如 2026-06-28">
+              </label>
+              <button class="primary" id="recordHistoryBtn" type="button">记录历史点</button>
+            </div>
+            <div class="history-list" id="historyList"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">编辑事件</h2>
+                <div class="panel-meta">保留最近 200 条，便于回看倍率和余额改动。</div>
+              </div>
+            </div>
+            <div class="event-list" id="eventList"></div>
+          </section>
+        </section>
+      </section>
+
+      <aside class="workspace-side">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">性价比排行</h2>
+              <div class="panel-meta">按每 1r 可买标准$排序。</div>
+            </div>
+            <div class="segmented" aria-label="排行口径">
+              <button class="active" id="rankPlusBtn" type="button">Plus</button>
+              <button id="rankProBtn" type="button">Pro</button>
+            </div>
+          </div>
+          <div class="rank-list" id="rankList"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">操作状态</h2>
+              <div class="panel-meta">管理端服务把数据写入数据库。</div>
+            </div>
+          </div>
+          <div class="status" id="statusBox">已加载默认数据，正在检测管理端服务。</div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <div class="modal-shell" id="addPlatformModal" aria-hidden="true">
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="addPlatformTitle">
+      <div class="panel-head">
+        <div>
+          <h2 class="panel-title" id="addPlatformTitle">新增平台</h2>
+          <div class="panel-meta">在弹窗里补余额、倍率和兑换比例，保存后会直接加入编辑区。</div>
+        </div>
+        <button id="closeAddPlatformBtn" class="modal-close" type="button" aria-label="关闭新增平台弹窗">关闭</button>
+      </div>
+      <form class="form-grid" id="addPlatformForm">
+        <label class="field full">
+          平台名
+          <input id="newName" required placeholder="例如 newapi">
+        </label>
+        <label class="field">
+          账面余额 $
+          <input id="newBalance" type="number" step="0.01" min="0" value="0">
+        </label>
+        <label class="field">
+          计算余额 $
+          <input id="newCalcBalance" type="number" step="0.01" min="0" placeholder="空=账面余额">
+        </label>
+        <label class="field">
+          r 数
+          <input id="newRateR" type="number" step="0.0001" min="0" value="1">
+        </label>
+        <label class="field">
+          换得 $
+          <input id="newRateUsd" type="number" step="0.0001" min="0.0001" value="1">
+        </label>
+        <label class="field">
+          plus 倍率
+          <input id="newPlus" type="number" step="0.0001" min="0" placeholder="可空">
+        </label>
+        <label class="field">
+          pro 倍率
+          <input id="newProMin" type="number" step="0.0001" min="0" placeholder="可空">
+        </label>
+        <label class="field">
+          pro 上限
+          <input id="newProMax" type="number" step="0.0001" min="0" placeholder="区间可填">
+        </label>
+        <label class="field full">
+          备注
+          <input id="newNote" placeholder="例如 tokeness 折算口径">
+        </label>
+        <button class="primary" type="submit">添加平台</button>
+      </form>
+    </section>
+  </div>
+  <script>
+    const STORAGE_KEY = "token-api-cost-live-calculator:v1";
+    const REPORT_FILE = "token-api-cost-live-calculator.html";
+    const DEFAULT_PERSONAL_RECHARGE_R = 333;
+    const PLATFORM_PAGE_SIZE = 6;
+
+    const defaultState = {
+      version: 1,
+      updatedAt: "2026-06-28T00:00:00+08:00",
+      rankMode: "plus",
+      personalRechargeR: DEFAULT_PERSONAL_RECHARGE_R,
+      platforms: [
+        { id: "torchai", name: "torchai", balanceUsd: 180, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: null, proMin: 0.3, proMax: null, note: "当前 pro 口径，已涨到 0.3" },
+        { id: "okcodex", name: "okcodex", balanceUsd: 58.82, calcBalanceUsd: null, rateR: 7, rateUsd: 100, plus: 0.1, proMin: 0.21, proMax: null, note: "余额 58.82$，plus 0.1 / pro 0.21" },
+        { id: "encore", name: "encore", balanceUsd: 1055, calcBalanceUsd: null, rateR: 1, rateUsd: 10, plus: 1.15, proMin: 2.38, proMax: null, note: "encore plus/pro 双池" },
+        { id: "qingflow", name: "qingflow", balanceUsd: 12, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.09, proMin: 0.11, proMax: null, note: "余额已降到 12$" },
+        { id: "devpool", name: "devpool", balanceUsd: 143.57, calcBalanceUsd: null, rateR: 1, rateUsd: 10, plus: null, proMin: 1.5, proMax: null, note: "" },
+        { id: "zz1cc", name: "zz1cc", balanceUsd: 397, calcBalanceUsd: null, rateR: 36, rateUsd: 550, plus: null, proMin: 2.8, proMax: null, note: "涨价到 2.8 倍" },
+        { id: "aisz", name: "aisz", balanceUsd: 64, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.1, proMin: 0.2, proMax: null, note: "plus/pro 双池" },
+        { id: "dawclaude", name: "dawclaude", balanceUsd: 5.49, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.3, proMin: 0.35, proMax: 0.5, note: "pro 为区间倍率" },
+        { id: "eirouter", name: "eirouter", balanceUsd: 60, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: null, proMin: 0.4, proMax: null, note: "" },
+        { id: "tuling", name: "tuling", balanceUsd: 10.4, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.35, proMin: 0.45, proMax: null, note: "新增平台" },
+        { id: "qianxing", name: "乾行", balanceUsd: 45, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.16, proMin: 0.3, proMax: null, note: "plus 0.16 / pro 0.3" },
+        { id: "5yuan", name: "5yuan", balanceUsd: 10.91, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.08, proMin: 0.16, proMax: null, note: "" },
+        { id: "xiaobai-code", name: "小白code", balanceUsd: 14.6, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.13, proMin: 0.18, proMax: null, note: "" },
+        { id: "mikuapi", name: "mikuapi", balanceUsd: 20.17, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.3, proMin: 0.5, proMax: null, note: "" },
+        { id: "superapi", name: "superapi", balanceUsd: 28, calcBalanceUsd: null, rateR: 1, rateUsd: 1, plus: 0.08, proMin: 0.22, proMax: null, note: "新增平台" },
+        { id: "tokeness", name: "tokeness", balanceUsd: 75, calcBalanceUsd: 10.7142857143, rateR: 1, rateUsd: 1, plus: 0.03, proMin: 0.1, proMax: null, note: "75$ 原始余额；5m 输入或 30m 输出折算为 10.71$ 后计算购买力" }
+      ],
+      history: [
+        { at: "2026-06-24", summary: "初始核算", totalBalance: 2758.64, proMin: 3600.27, proMax: 3600.27, plus: null },
+        { at: "2026-06-24", summary: "torchai 调到 0.2 倍率", totalBalance: 2758.64, proMin: 3985.98, proMax: 3985.98, plus: null },
+        { at: "2026-06-25", summary: "zz1cc 调到 2.8 倍率，torchai 恢复 0.35 倍率", totalBalance: 2758.64, proMin: 3493.93, proMax: 3493.93, plus: null },
+        { at: "2026-06-26", summary: "encore/okcodex 涨倍率，qingflow 余额调整，foyeapi/funny 用完，eirouter/aisz 余额更新，乾行到 24.71$", totalBalance: 2755.45, proMin: 2874.02, proMax: 2874.02, plus: null },
+        { at: "2026-06-26", summary: "aisz 调到 0.2 倍率，5yuan 调到 0.16 倍率", totalBalance: 2755.45, proMin: 2803.93, proMax: 2803.93, plus: null },
+        { at: "2026-06-26", summary: "乾行调到 0.16 倍率且余额到 38$，torchai 降到 0.28 倍率", totalBalance: 2768.74, proMin: 2964.09, proMax: 2964.09, plus: null },
+        { at: "2026-06-26", summary: "加入 plus/pro 双池口径，okcodex/qingflow/aisz 区分 plus，乾行 45$，eirouter 60$，新增 tuling", totalBalance: 2782.14, proMin: 3063.37, proMax: 3063.37, plus: null },
+        { at: "2026-06-27", summary: "encore 改为 plus=1.15/pro=2.38，新增 superapi 与 tokeness，删除余额为 0 的平台展示", totalBalance: 2810.14, proMin: 2852.44, proMax: 2852.44, plus: null },
+        { at: "2026-06-27", summary: "tokeness 加入 plus/pro 口径，更新 dawcode、mikuapi、乾行、5yuan、小白 的 plus/pro 倍率", totalBalance: 2885.14, proMin: 3408.39, proMax: 3413.1, plus: null },
+        { at: "2026-06-27", summary: "tokeness 改为先按 5m/30m 折算 10.71$ 再套 plus/pro 倍率", totalBalance: 2885.14, proMin: 2765.53, proMax: 2770.24, plus: 3630.74 },
+        { at: "2026-07-03", summary: "okcodex 余额调整为 58.82$，plus=0.1，pro=0.21", totalBalance: 2179.96, proMin: 2790.96, proMax: 2795.67, plus: 3631.25 },
+        { at: "2026-07-03", summary: "torchai pro 倍率涨到 0.3", totalBalance: 2294.01, proMin: 2991.54, proMax: 3073.43, plus: 4030.52 }
+      ],
+      events: [
+        { at: "2026/7/3 09:11:35", title: "编辑平台", detail: "okcodex：余额 764 -> 58.82，plus 1.3 -> 0.1，pro 3 -> 0.21" },
+        { at: "2026/7/3 12:11:12", title: "编辑平台", detail: "torchai 的 proMin：0.25 -> 0.3" }
+      ]
+    };
+
+    let state = loadState();
+    let filterText = "";
+    let visibility = "active";
+    let serverAvailable = false;
+    let remoteSaveTimer = null;
+    let platformPage = 1;
+
+    const elements = {
+      statsGrid: document.querySelector("#statsGrid"),
+      platformTableBody: document.querySelector("#platformTableBody"),
+      platformPager: document.querySelector("#platformPager"),
+      rankList: document.querySelector("#rankList"),
+      personalRechargeInput: document.querySelector("#personalRechargeInput"),
+      rankPlusBtn: document.querySelector("#rankPlusBtn"),
+      rankProBtn: document.querySelector("#rankProBtn"),
+      statusBox: document.querySelector("#statusBox"),
+      historyList: document.querySelector("#historyList"),
+      eventList: document.querySelector("#eventList"),
+      searchInput: document.querySelector("#searchInput"),
+      visibilitySelect: document.querySelector("#visibilitySelect"),
+      tableMeta: document.querySelector("#tableMeta"),
+      tgbGrid: document.querySelector("#tgbGrid"),
+      historySummaryInput: document.querySelector("#historySummaryInput"),
+      historyBalanceInput: document.querySelector("#historyBalanceInput"),
+      historyProInput: document.querySelector("#historyProInput"),
+      historyPlusInput: document.querySelector("#historyPlusInput"),
+      historyAtInput: document.querySelector("#historyAtInput"),
+      viewTBtn: document.querySelector("#viewTBtn"),
+      viewGBtn: document.querySelector("#viewGBtn"),
+      viewBBtn: document.querySelector("#viewBBtn"),
+      addPlatformModal: document.querySelector("#addPlatformModal"),
+      openAddPlatformBtn: document.querySelector("#openAddPlatformBtn"),
+      closeAddPlatformBtn: document.querySelector("#closeAddPlatformBtn"),
+      addPlatformForm: document.querySelector("#addPlatformForm")
+    };
+
+    let activeView = "t";
+
+    function loadState() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        return structuredClone(defaultState);
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        return normalizeState(parsed);
+      } catch (error) {
+        console.warn("读取本地数据失败，改用默认值", error);
+        return structuredClone(defaultState);
+      }
+    }
+
+    function normalizeState(source) {
+      const merged = {
+        ...structuredClone(defaultState),
+        ...source
+      };
+      merged.platforms = Array.isArray(source.platforms) ? source.platforms.map(normalizePlatform) : structuredClone(defaultState.platforms);
+      merged.history = Array.isArray(source.history) ? source.history : structuredClone(defaultState.history);
+      merged.events = Array.isArray(source.events) ? source.events : [];
+      merged.personalRechargeR = toPositive(source.personalRechargeR, DEFAULT_PERSONAL_RECHARGE_R);
+      return merged;
+    }
+
+    function normalizePlatform(platform) {
+      return {
+        id: platform.id || makeId(platform.name || "platform"),
+        name: platform.name || "未命名平台",
+        balanceUsd: toNumber(platform.balanceUsd),
+        calcBalanceUsd: isBlank(platform.calcBalanceUsd) ? null : toNumber(platform.calcBalanceUsd),
+        rateR: toPositive(platform.rateR, 1),
+        rateUsd: toPositive(platform.rateUsd, 1),
+        plus: isBlank(platform.plus) ? null : toPositive(platform.plus, null),
+        proMin: isBlank(platform.proMin) ? null : toPositive(platform.proMin, null),
+        proMax: isBlank(platform.proMax) ? null : toPositive(platform.proMax, null),
+        note: platform.note || ""
+      };
+    }
+
+    function saveState(message, type = "ok", syncRemote = false) {
+      state.updatedAt = new Date().toISOString();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      setStatus(message, type);
+      if (syncRemote) {
+        scheduleRemoteSave();
+      }
+    }
+
+    function setStatus(message, type = "") {
+      elements.statusBox.className = `status ${type}`.trim();
+      elements.statusBox.textContent = message;
+    }
+
+    async function checkServer() {
+      if (window.location.protocol === "file:") {
+        setStatus("当前是 file:// 打开，只能本地计算；请用 scripts/token_cost_editor_server.py 启动动态服务后再保存数据。", "warn");
+        return;
+      }
+      try {
+        serverAvailable = await probeServer();
+        if (serverAvailable) {
+          await loadStateFromServer();
+        } else {
+          setStatus("管理端服务未就绪。", "warn");
+        }
+      } catch (error) {
+        serverAvailable = false;
+        setStatus("管理端服务未连接，页面仍可计算但不会保存到数据库。", "warn");
+      }
+    }
+
+    async function loadStateFromServer() {
+      const response = await requestJson("/api/v1/admin/token-cost/state?view=page", { method: "GET" });
+      if (!response.ok) {
+        throw new Error("读取数据库状态失败");
+      }
+      if (response.data) {
+        state = normalizeState(response.data);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        render();
+        setStatus("已从数据库载入数据，后续编辑会自动保存。", "ok");
+        return;
+      }
+      setStatus("管理端服务已连接；当前数据库暂无状态，首次修改后会自动创建。", "ok");
+    }
+
+    function scheduleRemoteSave() {
+      window.clearTimeout(remoteSaveTimer);
+      remoteSaveTimer = window.setTimeout(() => saveDataToServer(false), 600);
+    }
+
+    async function saveDataToServer(manual) {
+      try {
+        const response = await requestJson("/api/v1/admin/token-cost/state", {
+          method: "POST",
+          body: { state }
+        });
+        if (!response.ok || !response.data.ok) {
+          throw new Error(response.data.error || "保存失败");
+        }
+        serverAvailable = true;
+        setStatus(manual ? "已保存到数据库。" : "已自动保存到数据库。", "ok");
+        pulseStats();
+      } catch (error) {
+        serverAvailable = false;
+        setStatus(`保存失败：${error.message}`, "warn");
+      }
+    }
+
+    async function probeServer() {
+      const response = await requestJson("/api/v1/admin/token-cost/health", { method: "GET" });
+      return Boolean(response.ok && response.data && response.data.ok);
+    }
+
+    async function requestJson(path, options = {}) {
+      const method = options.method || "GET";
+      const body = options.body === undefined ? null : options.body;
+      const init = { method, headers: {} };
+      const token = localStorage.getItem("auth_token");
+      if (token) {
+        init.headers["Authorization"] = `Bearer ${token}`;
+      }
+      if (method !== "GET" && body !== null) {
+        init.headers["Content-Type"] = "application/json";
+        init.body = JSON.stringify(body);
+      }
+      const response = await fetch(path, init);
+      const contentType = response.headers.get("Content-Type") || "";
+      let data = null;
+      if (contentType.includes("application/json")) {
+        data = await response.json();
+      } else if (contentType.includes("text/html")) {
+        const text = await response.text();
+        const match = text.match(/data-state='([^']*)'/);
+        if (match && match[1]) {
+          const decoded = match[1]
+            .replace(/&#39;/g, "'")
+            .replace(/&quot;/g, '"')
+            .replace(/&gt;/g, ">")
+            .replace(/&lt;/g, "<")
+            .replace(/&amp;/g, "&");
+          data = JSON.parse(decoded);
+        }
+      }
+      return { ok: response.ok, status: response.status, data };
+    }
+
+    function isBlank(value) {
+      return value === null || value === undefined || value === "";
+    }
+
+    function toNumber(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : 0;
+    }
+
+    function toPositive(value, fallback) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) {
+        return fallback;
+      }
+      return numeric;
+    }
+
+    function money(value) {
+      return `${format(value)}$`;
+    }
+
+    function rmb(value) {
+      return `${format(value)}r`;
+    }
+
+    function format(value, digits = 2) {
+      if (value === null || value === undefined || Number.isNaN(value)) {
+        return "-";
+      }
+      return Number(value).toLocaleString("zh-CN", {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits
+      });
+    }
+
+    function formatCompact(value) {
+      if (value === null || value === undefined || Number.isNaN(value)) {
+        return "-";
+      }
+      const abs = Math.abs(value);
+      const digits = abs >= 100 ? 2 : 4;
+      return Number(value).toLocaleString("zh-CN", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: digits
+      });
+    }
+
+    function formatRange(min, max, suffix = "") {
+      if (min === null || max === null) {
+        return "-";
+      }
+      if (Math.abs(min - max) < 0.00001) {
+        return `${format(min)}${suffix}`;
+      }
+      return `${format(min)} ~ ${format(max)}${suffix}`;
+    }
+
+    function makeId(name) {
+      const base = String(name).trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-").replace(/^-|-$/g, "");
+      const seed = base || "platform";
+      let candidate = seed;
+      let index = 2;
+      while (state && state.platforms && state.platforms.some((platform) => platform.id === candidate)) {
+        candidate = `${seed}-${index}`;
+        index += 1;
+      }
+      return candidate;
+    }
+
+    function calcBalance(platform) {
+      return platform.calcBalanceUsd === null ? platform.balanceUsd : platform.calcBalanceUsd;
+    }
+
+    function rPerUsd(platform) {
+      return platform.rateUsd > 0 ? platform.rateR / platform.rateUsd : 0;
+    }
+
+    function poolMetrics(platform, pool) {
+      const multiplier = pool === "plus" ? platform.plus : platform.proMin;
+      const multiplierMax = pool === "pro" && platform.proMax ? platform.proMax : multiplier;
+      if (!multiplier || !multiplierMax || multiplier <= 0 || multiplierMax <= 0) {
+        return null;
+      }
+      const basis = calcBalance(platform);
+      const lowPower = basis / Math.max(multiplier, multiplierMax);
+      const highPower = basis / Math.min(multiplier, multiplierMax);
+      // 购买力使用折算余额，成本使用账面余额，避免 tokeness 这类折算平台在每 1r 排行中抵消折算价。
+      const comparableCost = platform.balanceUsd * rPerUsd(platform);
+      return {
+        powerMin: lowPower,
+        powerMax: highPower,
+        comparableCost,
+        perStandardMin: comparableCost / highPower,
+        perStandardMax: comparableCost / lowPower,
+        standardPerRMin: comparableCost > 0 ? lowPower / comparableCost : 0,
+        standardPerRMax: comparableCost > 0 ? highPower / comparableCost : 0
+      };
+    }
+
+    function calculateTotals() {
+      const active = state.platforms.filter((platform) => platform.balanceUsd > 0);
+      const plusRows = active.map((platform) => poolMetrics(platform, "plus")).filter(Boolean);
+      const proRows = active.map((platform) => poolMetrics(platform, "pro")).filter(Boolean);
+      const totalBalance = active.reduce((sum, platform) => sum + platform.balanceUsd, 0);
+      const comparableBalance = active.reduce((sum, platform) => sum + calcBalance(platform), 0);
+      const bookCost = active.reduce((sum, platform) => sum + platform.balanceUsd * rPerUsd(platform), 0);
+      // 汇总性价比按真实账面成本分母计算，折算余额只进入购买力分子。
+      const comparableCost = bookCost;
+      const plusPower = plusRows.reduce((sum, row) => sum + row.powerMax, 0);
+      const proPowerMin = proRows.reduce((sum, row) => sum + row.powerMin, 0);
+      const proPowerMax = proRows.reduce((sum, row) => sum + row.powerMax, 0);
+      const personalRechargeR = toPositive(state.personalRechargeR, DEFAULT_PERSONAL_RECHARGE_R);
+      return {
+        activeCount: active.length,
+        totalBalance,
+        comparableBalance,
+        bookCost,
+        comparableCost,
+        personalRechargeR,
+        plusPower,
+        proPowerMin,
+        proPowerMax,
+        bookMultiple: personalRechargeR > 0 ? bookCost / personalRechargeR : 0,
+        plusPerR: comparableCost > 0 ? plusPower / comparableCost : 0,
+        proPerRMin: comparableCost > 0 ? proPowerMin / comparableCost : 0,
+        proPerRMax: comparableCost > 0 ? proPowerMax / comparableCost : 0
+      };
+    }
+
+    function performRender() {
+      const totals = calculateTotals();
+      renderStats(totals);
+      renderTable();
+      renderRanks();
+      renderTgb();
+      renderHistory();
+      renderEvents();
+      renderActiveView();
+      syncPersonalRechargeInput();
+    }
+
+    function render() {
+      if (document.startViewTransition) {
+        document.startViewTransition(() => performRender());
+      } else {
+        performRender();
+      }
+    }
+
+    function renderStats(totals) {
+      const cards = [
+        ["有效平台", `${totals.activeCount}`, "余额大于 0"],
+        ["账面余额", money(totals.totalBalance), "原始 $ 余额合计"],
+        ["计算余额", money(totals.comparableBalance), "用于购买力折算"],
+        ["Plus 购买力", `${format(totals.plusPower)} 标准$`, `约 1r=${formatCompact(totals.plusPerR)} 标准$`],
+        ["Pro 购买力", `${formatRange(totals.proPowerMin, totals.proPowerMax)} 标准$`, `约 1r=${formatCompact(totals.proPerRMin)}~${formatCompact(totals.proPerRMax)} 标准$`],
+        ["账面价值", rmb(totals.bookCost), `个人充值 ${rmb(totals.personalRechargeR)}，约 ${format(totals.bookMultiple)} 倍`]
+      ];
+      elements.statsGrid.innerHTML = cards.map(([label, value, note]) => `
+        <article class="stat">
+          <div class="stat-label">${escapeHtml(label)}</div>
+          <div class="stat-value">${escapeHtml(value)}</div>
+          <div class="stat-note">${escapeHtml(note)}</div>
+        </article>
+      `).join("");
+    }
+
+    function visiblePlatforms() {
+      const query = filterText.trim().toLowerCase();
+      return state.platforms.filter((platform) => {
+        if (visibility === "active" && platform.balanceUsd <= 0) {
+          return false;
+        }
+        if (!query) {
+          return true;
+        }
+        return `${platform.name} ${platform.note}`.toLowerCase().includes(query);
+      });
+    }
+
+    // 约束平台分页页码，筛选和删除后避免停在空白页。
+    function clampPlatformPage(rowCount) {
+      const pageCount = Math.max(1, Math.ceil(rowCount / PLATFORM_PAGE_SIZE));
+      platformPage = clamp(platformPage, 1, pageCount);
+      return pageCount;
+    }
+
+    function renderTable() {
+      const rows = visiblePlatforms();
+      const pageCount = clampPlatformPage(rows.length);
+      const pageStart = (platformPage - 1) * PLATFORM_PAGE_SIZE;
+      const pageRows = rows.slice(pageStart, pageStart + PLATFORM_PAGE_SIZE);
+      const rangeStart = rows.length ? pageStart + 1 : 0;
+      const rangeEnd = rows.length ? pageStart + pageRows.length : 0;
+      elements.tableMeta.textContent = `当前页 ${rangeStart}-${rangeEnd} / ${rows.length} 个平台，全部数据 ${state.platforms.length} 个平台。`;
+      if (rows.length === 0) {
+        elements.platformTableBody.innerHTML = `<div class="muted">没有匹配的平台。</div>`;
+        renderPlatformPager(rows.length, pageCount, rangeStart, rangeEnd);
+        return;
+      }
+      elements.platformTableBody.innerHTML = pageRows.map((platform) => {
+        const plus = poolMetrics(platform, "plus");
+        const pro = poolMetrics(platform, "pro");
+        const score = platformScore(plus, pro);
+        const plusBar = score.maxPerR > 0 && plus ? clamp((plus.standardPerRMax / score.maxPerR) * 100, 6, 100) : 0;
+        const proBar = score.maxPerR > 0 && pro ? clamp((pro.standardPerRMax / score.maxPerR) * 100, 6, 100) : 0;
+        const tier = scoreTier(score.bestPerR);
+        return `
+          <article class="platform-card ${tier.className}" data-id="${escapeHtml(platform.id)}">
+            <span class="scanline" aria-hidden="true"></span>
+            <div class="platform-card-head">
+              <div class="platform-card-title">
+                <div class="platform-title-line">
+                  <div class="platform-card-name">${escapeHtml(platform.name)}</div>
+                  <span class="score-badge">${escapeHtml(tier.label)}</span>
+                </div>
+                <div class="platform-card-meta">
+                  账面 <strong>${money(platform.balanceUsd)}</strong>，计算 <strong>${money(calcBalance(platform))}</strong>，
+                  兑换 <strong>${formatCompact(platform.rateR)}r/${formatCompact(platform.rateUsd)}$</strong>
+                </div>
+              </div>
+              <button class="danger" data-action="delete" type="button">删除</button>
+            </div>
+            <div class="power-console">
+              <div class="power-row">
+                <span>Plus</span>
+                <span class="power-track"><span class="power-fill" style="--bar-width: ${plusBar}%"></span></span>
+                <strong>${plus ? `1r=${formatCompact(plus.standardPerRMax)}` : "-"}</strong>
+              </div>
+              <div class="power-row">
+                <span>Pro</span>
+                <span class="power-track"><span class="power-fill" style="--bar-width: ${proBar}%"></span></span>
+                <strong>${pro ? `1r=${formatCompact(pro.standardPerRMax)}` : "-"}</strong>
+              </div>
+              <div class="console-split">
+                <div class="console-pill">余额成本<strong>${rmb(score.cost)}</strong></div>
+                <div class="console-pill">最优倍率<strong>${score.bestMultiplier ? formatCompact(score.bestMultiplier) : "-"}</strong></div>
+                <div class="console-pill">备注<strong>${escapeHtml(platform.note || "无")}</strong></div>
+              </div>
+            </div>
+            <div class="platform-metrics">
+              <div class="metric-chip">
+                <div class="metric-chip-label">Plus 购买力</div>
+                <div class="metric-chip-value">${plus ? format(plus.powerMax) : "-"}</div>
+              </div>
+              <div class="metric-chip">
+                <div class="metric-chip-label">Pro 购买力</div>
+                <div class="metric-chip-value">${pro ? formatRange(pro.powerMin, pro.powerMax) : "-"}</div>
+              </div>
+              <div class="metric-chip">
+                <div class="metric-chip-label">每 1r Plus</div>
+                <div class="metric-chip-value">${plus ? formatCompact(plus.standardPerRMax) : "-"}</div>
+              </div>
+              <div class="metric-chip">
+                <div class="metric-chip-label">每 1r Pro</div>
+                <div class="metric-chip-value">${pro ? formatRange(pro.standardPerRMin, pro.standardPerRMax) : "-"}</div>
+              </div>
+            </div>
+            <div class="platform-fields">
+              <label class="field">
+                平台名
+                <input class="cell-input" data-field="name" value="${escapeAttr(platform.name)}">
+              </label>
+              <label class="field">
+                账面余额 $
+                <input class="cell-input" data-field="balanceUsd" type="number" step="0.01" min="0" value="${platform.balanceUsd}">
+              </label>
+              <label class="field">
+                计算余额 $
+                <input class="cell-input" data-field="calcBalanceUsd" type="number" step="0.01" min="0" placeholder="同余额" value="${platform.calcBalanceUsd ?? ""}">
+              </label>
+              <label class="field">
+                r 数
+                <input class="cell-input" data-field="rateR" type="number" step="0.0001" min="0" value="${platform.rateR}">
+              </label>
+              <label class="field">
+                换得 $
+                <input class="cell-input" data-field="rateUsd" type="number" step="0.0001" min="0.0001" value="${platform.rateUsd}">
+              </label>
+              <label class="field">
+                plus 倍率
+                <input class="cell-input" data-field="plus" type="number" step="0.0001" min="0" value="${platform.plus ?? ""}">
+              </label>
+              <label class="field">
+                pro 倍率
+                <input class="cell-input" data-field="proMin" type="number" step="0.0001" min="0" value="${platform.proMin ?? ""}">
+              </label>
+              <label class="field">
+                pro 上限
+                <input class="cell-input" data-field="proMax" type="number" step="0.0001" min="0" value="${platform.proMax ?? ""}">
+              </label>
+              <label class="field" style="grid-column: 1 / -1;">
+                备注
+                <input class="cell-input" data-field="note" value="${escapeAttr(platform.note)}">
+              </label>
+            </div>
+          </article>
+        `;
+      }).join("");
+      renderPlatformPager(rows.length, pageCount, rangeStart, rangeEnd);
+    }
+
+    // 渲染分页控制台，保留页码、上一页/下一页和当前页范围提示。
+    function renderPlatformPager(rowCount, pageCount, rangeStart, rangeEnd) {
+      if (!rowCount) {
+        elements.platformPager.classList.add("hidden");
+        elements.platformPager.innerHTML = "";
+        return;
+      }
+      elements.platformPager.classList.remove("hidden");
+      const pages = Array.from({ length: pageCount }, (_, index) => index + 1);
+      elements.platformPager.innerHTML = `
+        <div class="pager-meta">
+          <span>每页 ${PLATFORM_PAGE_SIZE} 个平台</span>
+          <strong>${rangeStart}-${rangeEnd} / ${rowCount} · 第 ${platformPage}/${pageCount} 页</strong>
+        </div>
+        <div class="pager-pages" aria-label="页码">
+          ${pages.map((page) => `
+            <button class="pager-page ${page === platformPage ? "active" : ""}" data-page="${page}" type="button" ${page === platformPage ? 'aria-current="page"' : ""}>${page}</button>
+          `).join("")}
+        </div>
+        <div class="pager-buttons">
+          <button class="pager-button" data-page="${platformPage - 1}" type="button" ${platformPage <= 1 ? "disabled" : ""}>上一页</button>
+          <button class="pager-button" data-page="${platformPage + 1}" type="button" ${platformPage >= pageCount ? "disabled" : ""}>下一页</button>
+        </div>
+      `;
+    }
+
+    function changePlatformPage(page) {
+      const rows = visiblePlatforms();
+      const pageCount = Math.max(1, Math.ceil(rows.length / PLATFORM_PAGE_SIZE));
+      const nextPage = clamp(page, 1, pageCount);
+      if (nextPage === platformPage) {
+        return;
+      }
+      platformPage = nextPage;
+      renderTable();
+      pulsePager();
+      pulseVisiblePlatforms();
+    }
+
+    function platformScore(plus, pro) {
+      const rows = [plus, pro].filter(Boolean);
+      const best = rows.reduce((winner, item) => {
+        if (!winner || item.standardPerRMax > winner.standardPerRMax) {
+          return item;
+        }
+        return winner;
+      }, null);
+      const maxPerR = rows.reduce((max, item) => Math.max(max, item.standardPerRMax || 0), 0);
+      return {
+        bestPerR: best ? best.standardPerRMax : 0,
+        bestMultiplier: best ? best.multiplierMin : null,
+        maxPerR,
+        cost: best ? best.comparableCost : 0
+      };
+    }
+
+    function scoreTier(bestPerR) {
+      if (!bestPerR) {
+        return { className: "tier-unknown", label: "未定价" };
+      }
+      if (bestPerR >= 12) {
+        return { className: "tier-super", label: "超值" };
+      }
+      if (bestPerR >= 7) {
+        return { className: "tier-good", label: "划算" };
+      }
+      if (bestPerR >= 4) {
+        return { className: "tier-normal", label: "正常" };
+      }
+      return { className: "tier-expensive", label: "偏贵" };
+    }
+
+    function renderRanks() {
+      const mode = state.rankMode || "plus";
+      elements.rankPlusBtn.classList.toggle("active", mode === "plus");
+      elements.rankProBtn.classList.toggle("active", mode === "pro");
+      const ranked = state.platforms
+        .filter((platform) => platform.balanceUsd > 0)
+        .map((platform) => ({ platform, metrics: poolMetrics(platform, mode) }))
+        .filter((row) => row.metrics && row.metrics.comparableCost > 0)
+        .sort((a, b) => b.metrics.standardPerRMax - a.metrics.standardPerRMax)
+        .slice(0, 8);
+
+      if (ranked.length === 0) {
+        elements.rankList.innerHTML = `<div class="muted">暂无可排行平台。</div>`;
+        return;
+      }
+
+      elements.rankList.innerHTML = ranked.map((row, index) => `
+        <div class="rank-item">
+          <span class="rank-index">${index + 1}</span>
+          <div>
+            <div class="rank-name">${escapeHtml(row.platform.name)}</div>
+            <div class="muted">${mode.toUpperCase()} ${formatRange(row.metrics.powerMin, row.metrics.powerMax)} 标准$</div>
+          </div>
+          <div class="rank-value">1r=${formatCompact(row.metrics.standardPerRMax)}</div>
+        </div>
+      `).join("");
+    }
+
+    function renderTgb() {
+      const buckets = [
+        {
+          key: "t",
+          title: "T",
+          desc: "总览与汇总",
+          rows: [
+            `有效平台 ${state.platforms.filter((platform) => platform.balanceUsd > 0).length}`,
+            `历史点 ${state.history.length}`,
+            `编辑事件 ${state.events.length}`
+          ]
+        },
+        {
+          key: "g",
+          title: "G",
+          desc: "平台编辑组",
+          rows: [
+            `带 plus 的平台 ${state.platforms.filter((platform) => platform.plus !== null).length}`,
+            `带 pro 的平台 ${state.platforms.filter((platform) => platform.proMin !== null).length}`,
+            `零余额平台 ${state.platforms.filter((platform) => platform.balanceUsd <= 0).length}`
+          ]
+        },
+        {
+          key: "b",
+          title: "B",
+          desc: "历史留痕组",
+          rows: [
+            `最新记录 ${state.history.at(-1)?.at || "-"}`,
+            `最新摘要 ${state.history.at(-1)?.summary || "-"}`,
+            `最新事件 ${state.events.at(-1)?.title || "-"}`
+          ]
+        }
+      ];
+      elements.tgbGrid.innerHTML = buckets.map((bucket) => `
+        <article class="group-card">
+          <div class="group-title">
+            <span>${escapeHtml(bucket.title)}</span>
+            <span class="badge">${bucket.rows.length}</span>
+          </div>
+          <div class="group-meta">${escapeHtml(bucket.desc)}</div>
+          <div class="group-meta">${bucket.rows.map((row) => `• ${escapeHtml(row)}`).join("<br>")}</div>
+        </article>
+      `).join("");
+    }
+
+    function renderHistory() {
+      if (!state.history.length) {
+        elements.historyList.innerHTML = `<div class="muted">还没有历史点。</div>`;
+        return;
+      }
+      elements.historyList.innerHTML = state.history.slice().reverse().map((item, reverseIndex) => {
+        const index = state.history.length - reverseIndex;
+        const previous = state.history[index - 2];
+        const balanceDelta = previous ? item.totalBalance - previous.totalBalance : null;
+        const proDelta = previous ? item.proMin - previous.proMin : null;
+        const plusText = item.plus === null || item.plus === undefined ? "未记录" : format(item.plus);
+        return `
+          <article class="history-item">
+            <div class="history-title">
+              <span>#${index} ${escapeHtml(item.summary)}</span>
+              <span>${escapeHtml(item.at)}</span>
+            </div>
+            <div class="history-body">
+              总余额 ${money(item.totalBalance)}，Pro ${formatRange(item.proMin, item.proMax)}，Plus ${plusText}；
+              余额涨跌 ${balanceDelta === null ? "-" : signed(balanceDelta, "$")}，Pro 涨跌 ${proDelta === null ? "-" : signed(proDelta, "")}
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function renderEvents() {
+      if (!state.events.length) {
+        elements.eventList.innerHTML = `<div class="muted">还没有编辑事件。</div>`;
+        return;
+      }
+      elements.eventList.innerHTML = state.events.slice().reverse().map((event) => `
+        <article class="event-item">
+          <div class="event-title">
+            <span>${escapeHtml(event.title)}</span>
+            <span>${escapeHtml(event.at)}</span>
+          </div>
+          <div class="event-body">${escapeHtml(event.detail)}</div>
+        </article>
+      `).join("");
+    }
+
+    function formatMultiplier(min, max) {
+      if (!min) {
+        return "-";
+      }
+      if (!max || Math.abs(min - max) < 0.00001) {
+        return formatCompact(min);
+      }
+      return `${formatCompact(min)} ~ ${formatCompact(max)}`;
+    }
+
+    function md(value) {
+      return String(value).replace(/\|/g, "\\|").replace(/\n/g, " ");
+    }
+
+    function signed(value, suffix) {
+      const sign = value >= 0 ? "+" : "";
+      return `${sign}${format(value)}${suffix}`;
+    }
+
+    function addEvent(title, detail) {
+      state.events.push({
+        at: new Date().toLocaleString("zh-CN", { hour12: false }),
+        title,
+        detail
+      });
+      if (state.events.length > 200) {
+        state.events = state.events.slice(-200);
+      }
+    }
+
+    function syncPersonalRechargeInput() {
+      if (document.activeElement === elements.personalRechargeInput) {
+        return;
+      }
+      elements.personalRechargeInput.value = toPositive(state.personalRechargeR, DEFAULT_PERSONAL_RECHARGE_R);
+    }
+
+    function updatePersonalRecharge(value) {
+      const before = toPositive(state.personalRechargeR, DEFAULT_PERSONAL_RECHARGE_R);
+      const next = value === "" ? 0 : Math.max(0, toNumber(value));
+      if (String(before) === String(next)) {
+        return;
+      }
+      state.personalRechargeR = next;
+      addEvent("编辑个人充值", `个人充值总价：${before}r -> ${next}r`);
+      saveState("已更新个人充值总价并重新计算。", "ok", true);
+      render();
+      pulseStats();
+    }
+
+    function updatePlatform(id, field, value) {
+      const platform = state.platforms.find((item) => item.id === id);
+      if (!platform) {
+        return;
+      }
+      const before = platform[field];
+      if (field === "name" || field === "note") {
+        platform[field] = value;
+      } else {
+        platform[field] = value === "" ? null : toNumber(value);
+        if (field === "balanceUsd") {
+          platform[field] = Math.max(0, platform[field]);
+        }
+      }
+      if (String(before ?? "") !== String(platform[field] ?? "")) {
+        addEvent("编辑平台", `${platform.name} 的 ${field}：${before ?? "空"} -> ${platform[field] ?? "空"}`);
+        saveState("已自动保存并重新计算。", "ok", true);
+        render();
+        pulsePlatformCard(id, "flash");
+      }
+    }
+
+    function deletePlatform(id) {
+      const platform = state.platforms.find((item) => item.id === id);
+      if (!platform) {
+        return;
+      }
+      const beforeTotals = calculateTotals();
+      state.platforms = state.platforms.filter((item) => item.id !== id);
+      const afterTotals = calculateTotals();
+      const summary = `删除 ${platform.name}（${money(platform.balanceUsd)}）`;
+      const at = new Date().toLocaleDateString("zh-CN").replaceAll("/", "-");
+      state.history.push({
+        at,
+        summary,
+        totalBalance: Number(afterTotals.totalBalance.toFixed(2)),
+        proMin: Number(afterTotals.proPowerMin.toFixed(2)),
+        proMax: Number(afterTotals.proPowerMax.toFixed(2)),
+        plus: Number(afterTotals.plusPower.toFixed(2))
+      });
+      addEvent(
+        "删除平台",
+        `${platform.name} 已从动态表移除；总余额 ${signed(afterTotals.totalBalance - beforeTotals.totalBalance, "$")}，Plus ${signed(afterTotals.plusPower - beforeTotals.plusPower, "")}，Pro ${signed(afterTotals.proPowerMin - beforeTotals.proPowerMin, "")}`
+      );
+      addEvent("记录历史点", `${at} / ${summary}`);
+      saveState("已删除平台、保存并记录历史点。", "warn", true);
+      render();
+      pulsePager();
+      pulseStats();
+    }
+
+    function addPlatformFromForm(event) {
+      event.preventDefault();
+      const name = document.querySelector("#newName").value.trim();
+      if (!name) {
+        setStatus("平台名不能为空。", "warn");
+        return;
+      }
+      const platform = normalizePlatform({
+        id: makeId(name),
+        name,
+        balanceUsd: document.querySelector("#newBalance").value,
+        calcBalanceUsd: document.querySelector("#newCalcBalance").value,
+        rateR: document.querySelector("#newRateR").value,
+        rateUsd: document.querySelector("#newRateUsd").value,
+        plus: document.querySelector("#newPlus").value,
+        proMin: document.querySelector("#newProMin").value,
+        proMax: document.querySelector("#newProMax").value,
+        note: document.querySelector("#newNote").value
+      });
+      state.platforms.push(platform);
+      addEvent("新增平台", `${platform.name}，余额 ${money(platform.balanceUsd)}，plus=${platform.plus ?? "空"}，pro=${platform.proMin ?? "空"}`);
+      event.target.reset();
+      document.querySelector("#newRateR").value = 1;
+      document.querySelector("#newRateUsd").value = 1;
+      closeAddPlatformModal();
+      saveState("已新增平台并重新计算。", "ok", true);
+      const rows = visiblePlatforms();
+      platformPage = Math.max(1, Math.ceil(rows.length / PLATFORM_PAGE_SIZE));
+      render();
+      pulsePager();
+      pulsePlatformCard(platform.id, "flash");
+    }
+
+    function openAddPlatformModal() {
+      elements.addPlatformModal.classList.add("open");
+      elements.addPlatformModal.setAttribute("aria-hidden", "false");
+      window.setTimeout(() => document.querySelector("#newName")?.focus(), 20);
+    }
+
+    function closeAddPlatformModal() {
+      elements.addPlatformModal.classList.remove("open");
+      elements.addPlatformModal.setAttribute("aria-hidden", "true");
+      elements.openAddPlatformBtn.focus();
+    }
+
+    function recordHistory() {
+      const summary = elements.historySummaryInput.value.trim() || "手动更新";
+      const at = elements.historyAtInput.value.trim() || new Date().toLocaleDateString("zh-CN").replaceAll("/", "-");
+      const totalBalance = toNumber(elements.historyBalanceInput.value);
+      const proValue = toNumber(elements.historyProInput.value);
+      const plusValue = toNumber(elements.historyPlusInput.value);
+      const totals = calculateTotals();
+      state.history.push({
+        at,
+        summary,
+        totalBalance: totalBalance > 0 ? Number(totalBalance.toFixed(2)) : Number(totals.totalBalance.toFixed(2)),
+        proMin: proValue > 0 ? Number(proValue.toFixed(2)) : Number(totals.proPowerMin.toFixed(2)),
+        proMax: proValue > 0 ? Number(proValue.toFixed(2)) : Number(totals.proPowerMax.toFixed(2)),
+        plus: plusValue > 0 ? Number(plusValue.toFixed(2)) : Number(totals.plusPower.toFixed(2))
+      });
+      addEvent("记录历史点", `${at} / ${summary}`);
+      saveState("已记录历史点。", "ok", true);
+      elements.historySummaryInput.value = "";
+      elements.historyBalanceInput.value = "";
+      elements.historyProInput.value = "";
+      elements.historyPlusInput.value = "";
+      elements.historyAtInput.value = "";
+      render();
+      pulseStats();
+      pulseVisiblePlatforms();
+    }
+
+    async function copyMarkdown() {
+      setStatus("当前版本不再提供 Markdown 复制。", "warn");
+    }
+
+    function resetToDefault() {
+      if (!window.confirm("确认恢复默认数据？当前浏览器里的动态改动会被覆盖。")) {
+        return;
+      }
+      state = structuredClone(defaultState);
+      addEvent("恢复默认", "已恢复为 2026-06-28 初始动态页数据");
+      saveState("已恢复默认数据。", "warn", true);
+      render();
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[char]));
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/`/g, "&#96;");
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function pulsePlatformCard(id, mode = "pulse") {
+      window.requestAnimationFrame(() => {
+        const card = elements.platformTableBody.querySelector(`[data-id="${CSS.escape(id)}"]`);
+        if (!card) {
+          return;
+        }
+        card.classList.remove("flash", "pulse");
+        void card.offsetWidth;
+        card.classList.add(mode);
+      });
+    }
+
+    function pulseVisiblePlatforms() {
+      window.requestAnimationFrame(() => {
+        const cards = Array.from(elements.platformTableBody.querySelectorAll(".platform-card"));
+        cards.forEach((card, index) => {
+          window.setTimeout(() => {
+            card.classList.remove("pulse");
+            void card.offsetWidth;
+            card.classList.add("pulse");
+          }, index * 35);
+        });
+      });
+    }
+
+    function pulseStats() {
+      elements.statsGrid.classList.remove("pulse");
+      void elements.statsGrid.offsetWidth;
+      elements.statsGrid.classList.add("pulse");
+    }
+
+    function pulsePager() {
+      elements.platformPager.classList.remove("pulse");
+      void elements.platformPager.offsetWidth;
+      elements.platformPager.classList.add("pulse");
+    }
+
+    elements.addPlatformForm.addEventListener("submit", addPlatformFromForm);
+    elements.personalRechargeInput.addEventListener("change", (event) => updatePersonalRecharge(event.target.value));
+    elements.personalRechargeInput.addEventListener("blur", () => syncPersonalRechargeInput());
+    document.querySelector("#recordHistoryBtn").addEventListener("click", recordHistory);
+    document.querySelector("#saveDataBtn").addEventListener("click", () => saveDataToServer(true));
+    document.querySelector("#openReportBtn").addEventListener("click", () => {
+      window.location.href = REPORT_FILE;
+    });
+    document.querySelector("#resetBtn").addEventListener("click", resetToDefault);
+    document.querySelector("#copyMarkdownBtn").addEventListener("click", copyMarkdown);
+    elements.openAddPlatformBtn.addEventListener("click", openAddPlatformModal);
+    elements.closeAddPlatformBtn.addEventListener("click", closeAddPlatformModal);
+    elements.addPlatformModal.addEventListener("click", (event) => {
+      if (event.target === elements.addPlatformModal) {
+        closeAddPlatformModal();
+      }
+    });
+    document.querySelector("#clearEventsBtn").addEventListener("click", () => {
+      state.events = [];
+      saveState("已清空编辑事件。", "warn", true);
+      render();
+    });
+    elements.searchInput.addEventListener("input", (event) => {
+      filterText = event.target.value;
+      platformPage = 1;
+      renderTable();
+      pulsePager();
+    });
+    elements.visibilitySelect.addEventListener("change", (event) => {
+      visibility = event.target.value;
+      platformPage = 1;
+      renderTable();
+      pulsePager();
+    });
+    elements.platformPager.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-page]");
+      if (!button || button.disabled) {
+        return;
+      }
+      changePlatformPage(Number(button.dataset.page));
+    });
+    elements.rankPlusBtn.addEventListener("click", () => {
+      state.rankMode = "plus";
+      saveState("已切换到 Plus 排行。", "ok", true);
+      renderRanks();
+      renderTgb();
+    });
+    elements.rankProBtn.addEventListener("click", () => {
+      state.rankMode = "pro";
+      saveState("已切换到 Pro 排行。", "ok", true);
+      renderRanks();
+      renderTgb();
+    });
+    elements.viewTBtn.addEventListener("click", () => setActiveView("t"));
+    elements.viewGBtn.addEventListener("click", () => setActiveView("g"));
+    elements.viewBBtn.addEventListener("click", () => setActiveView("b"));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && elements.addPlatformModal.classList.contains("open")) {
+        closeAddPlatformModal();
+      }
+    });
+    elements.platformTableBody.addEventListener("change", (event) => {
+      const row = event.target.closest("[data-id]");
+      if (!row) {
+        return;
+      }
+      const action = event.target.dataset.action;
+      if (action === "delete") {
+        deletePlatform(row.dataset.id);
+        return;
+      }
+      const field = event.target.dataset.field;
+      if (field) {
+        updatePlatform(row.dataset.id, field, event.target.value);
+      }
+    });
+    elements.platformTableBody.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-id]");
+      if (row && event.target.dataset.action === "delete") {
+        deletePlatform(row.dataset.id);
+      }
+    });
+
+    render();
+    checkServer();
+
+    function setActiveView(view) {
+      activeView = view;
+      document.querySelectorAll(".section-view").forEach((section) => {
+        section.classList.toggle("active", section.dataset.view === view);
+      });
+      elements.viewTBtn.classList.toggle("active", view === "t");
+      elements.viewGBtn.classList.toggle("active", view === "g");
+      elements.viewBBtn.classList.toggle("active", view === "b");
+      renderTgb();
+    }
+
+    function renderActiveView() {
+      document.querySelectorAll(".section-view").forEach((section) => {
+        section.classList.toggle("active", section.dataset.view === activeView);
+      });
+    }
+  </script>
+</body>
+</html>

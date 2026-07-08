@@ -4076,3 +4076,50 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：最近 120 秒 `sub2api-green` 与 `sub2api-proxy` 日志未命中 panic、fatal、migration、checksum、pq、bind、listen、rebuild 等发布关键错误。
 - Current state：active green `sub2api:v0.1.143.3`；rollback blue `sub2api:v0.1.143.2`。
 - LIMIT：`ADMIN_PASSWORD` 为空，未执行 authenticated `/api/v1/admin/system/version`；未执行真实上游 OpenAI 请求。
+
+## 2026-07-06 08:29 +08:00 - v0.1.144 P0/P1 absorption
+
+- PASS：CodeGraph `codegraph_status` 健康，当前索引包含 2195 个文件、69172 个节点、182059 条边。
+- PASS：实现 P0：`gateway.usage_record.overflow_policy` 默认改为 `sync`，worker pool 默认/非法配置也回到 `sync`，best-effort usage_log 被标记 dropped 时同步兜底写入。
+- PASS：实现 P1：OpenAI Responses HTTP/WS 成功结果回填映射后的 `BillingModel`，RecordUsage 继续按 `BillingModelSource` 区分上游模型与请求模型计费。
+- PASS：`go test -tags unit ./internal/config -run TestLoad_DefaultGatewayUsageRecordConfig -count=1` -> `ok github.com/Wei-Shaw/sub2api/internal/config 0.057s`。
+- PASS：`go test -tags unit ./internal/service -run 'Test(WriteUsageLogBestEffort_FallsBackWhenBestEffortDropped|GatewayServiceRecordUsage_DroppedUsageLogFallsBackToSyncCreate|UsageRecordWorkerPool_OptionsFromConfig_NilConfig|UsageRecordWorkerPool_NormalizeOptions_BoundsAndDefaults)$' -count=1` -> `ok github.com/Wei-Shaw/sub2api/internal/service 0.054s`。
+- PASS：`go test -tags unit ./internal/service -run 'TestOpenAIGatewayService_Forward_TextResponses(SetsBillingModelToMappedModel|WithoutMappingKeepsRequestedBillingModel)$' -count=1` -> `ok github.com/Wei-Shaw/sub2api/internal/service 0.057s`。
+- PASS：`go test -tags unit ./internal/service -run 'TestOpenAIGatewayServiceRecordUsage_ResponsesMappedBillingModelHonorsBillingModelSource$' -count=1` -> `ok github.com/Wei-Shaw/sub2api/internal/service 0.054s`。
+- PASS：宽一点的 P0/P1 service/config 切片通过：`go test -tags unit ./internal/service -run 'Test(OpenAIGatewayService_Forward_TextResponses|OpenAIGatewayServiceRecordUsage_.*Billing|GatewayServiceRecordUsage_.*UsageLog|UsageRecordWorkerPool_)' -count=1` 与 `go test -tags unit ./internal/config ./internal/service ... -count=1` 均通过。
+- PASS：server 编译面 `go test -tags unit ./cmd/server -run TestNonExistent -count=0` 通过。
+- PASS：`git diff --check` 通过；仅提示既有 `.codegraph/daemon.pid`、`docs/feature_list.jsonl`、`docs/process_list.jsonl` 下次 Git 触碰时 LF 会替换为 CRLF。
+- LIMIT：本轮只完成 P0/P1 开发验证，未提交、未推送、未构建镜像、未部署、未执行真实上游 OpenAI 请求；无关 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json` 未处理。
+
+## 2026-07-08 08:39 +08:00 - NewApi 签到 dashboard SQL 迁移
+
+- 变更范围：新增 `backend/migrations/163_add_newapi_checkin_tables.sql`、`backend/internal/repository/newapi_checkin_repo.go`、`backend/internal/service/newapi_checkin_service.go`、`backend/internal/handler/admin/newapi_checkin_handler.go`，并接入 `handler/wire`、`repository/wire`、`service/wire`、`server/routes/admin.go`、`cmd/server/wire_gen.go`；前端新增 `frontend/public/newapi-checkin/index.html`、`frontend/src/views/admin/NewAPICheckinView.vue`，并接入路由、侧边栏和中英文文案。
+- PASS：页面和旧线程功能保持一致：总览、平台目录、签到记录、实时余额、月度历史、实时余额站点筛选联动趋势下拉、Turnstile 禁用站点保留展示/余额/月度查询，自动和手动签到跳过禁用站点。
+- PASS：存储从 JSON 文件迁移到 sub2api SQL：配置、最近运行、余额缓存、签到历史、月度记录均通过 SQL repository 读写；页面存储文案改为 `sub2api SQL` / `读取 SQL 数据` / `写回 SQL`。
+- PASS：CodeGraph `codegraph_status` 健康，当前索引 2203 files / 69519 nodes / 183206 edges。
+- PASS：`git diff --check` 通过；仅提示既有 `.codegraph/daemon.pid`、`docs/feature_list.jsonl`、`docs/process_list.jsonl` LF/CRLF warning。
+- PASS：`go test ./internal/handler/admin -run NewAPICheckin -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/handler/admin 0.100s`。
+- PASS：`go test ./internal/repository -run NewAPICheckin -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/repository 0.040s [no tests to run]`。
+- PASS：`go test ./internal/service -run NewAPICheckin -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 0.064s`。
+- PASS：`go test ./internal/handler/... ./internal/server/... ./cmd/server -run NewAPICheckin -count=1` 通过，覆盖 handler、admin handler、server routes、middleware、cmd/server 编译面。
+- PASS：`npm run typecheck` 通过，`vue-tsc --noEmit` 无错误。
+- PASS：内联 dashboard JS 语法检查通过：`inline_script_check=ok scripts=1`。
+- PASS：静态锚点检查确认 `SUB2API_NEWAPI_PREFIX`、API URL 归一化、Authorization 注入、余额趋势联动函数和站点筛选属性均存在。
+- PASS：Vite dev server `http://127.0.0.1:5174/` 下 `/newapi-checkin/index.html` 和 `/admin/newapi-checkin` 均返回 200。
+- PASS：Browser 渲染冒烟确认页面标题为 `NewApi Checkin Dashboard`，页面非空，点击 `平台目录` 后配置视图选中，无相关 console error/warn；截图已在本轮 Browser 输出中保留。
+- PASS：`npm run build` 通过；产物 `backend/internal/web/dist/newapi-checkin/index.html` 存在，包含 `sub2api SQL` 文案，不包含旧的 `本地 JSON 缓存` / `写回 JSON` / `读取本地 JSON`。
+- OBSERVE：Browser 插件 `domSnapshot()` 报 `TypeError: o.incrementalAriaSnapshot is not a function`，因此同一 Browser 会话改用只读 evaluate、locator、console logs 和 screenshot 作为渲染证据。
+- OBSERVE：当前本机 8080 后端仍是旧运行进程，`/api/v1/admin/newapi-checkin/config` 返回 404；当前源码里的新路由已通过 Go 测试和构建验证，真实 API smoke 需要重启/部署这份工作树后再跑。
+- LIMIT：本轮未提交、未推送、未构建 Docker 镜像、未部署、未执行 authenticated admin API，也未对真实 NewApi 上游发起签到/余额请求。
+
+## 2026-07-08 09:48 +08:00 - 工具箱子 tab 与 Token 成本 SQL 集成
+
+- 变更范围：新增 token-cost SQL repository/service 测试、admin handler/routes/wire、`backend/migrations/164_add_token_cost_tables.sql`、`frontend/src/views/admin/AdminToolsView.vue`、`frontend/public/token-cost/index.html`、工具箱路由/侧边栏/i18n 和前端组件测试。
+- PASS：左侧菜单现在只有 `/admin/tools` 一个工具箱入口；页面内部子 tab 区分 `NewApi 签到` 与 `Token 成本`；旧 `/admin/newapi-checkin` 重定向到 `tab=newapi`，新增 `/admin/token-cost` 重定向到 `tab=token-cost`。
+- PASS：Token 成本运行时存储改为 SQL：`token_cost_state` 单例表、`token_cost_platforms`、`token_cost_history`、`token_cost_events`；迁移通过临时 JSONB 导入初始状态后落到规范表，不再依赖生产 JSON 文件。
+- PASS：`go test ./internal/service ./internal/repository ./internal/handler/admin ./internal/handler ./internal/server/routes ./cmd/server -run 'Test(TokenCost|NewAPICheckin)|TestNonExistent' -count=1` 全部通过。
+- PASS：`backend/migrations/164_add_token_cost_tables.sql` 在本机 `sub2api-postgres` 里用 `BEGIN ... ROLLBACK` 试跑通过，插入统计为 21 个平台、16 条历史、37 条事件。
+- PASS：`npm run test:run -- src/views/admin/__tests__/AdminToolsView.spec.ts` 通过 2 个测试；`npm run typecheck` 通过；`git diff --check` 通过，仅有既有 LF/CRLF warning。
+- PASS：Vite dev server `http://127.0.0.1:5173/` 下 Browser 渲染 `/token-cost/index.html` 和 `/newapi-checkin/index.html` 均非空且无 console error/warn；token-cost 页面脚本包含 `/api/v1/admin/token-cost` 与 Authorization 注入。
+- OBSERVE：Browser evaluate 作用域为只读，无法注入 fake admin localStorage，所以受保护的 `/admin/tools` 容器渲染由 Vitest 覆盖，Browser 只验证两个 iframe 文档本体。
+- LIMIT：未提交、未推送、未构建 Docker 镜像、未部署、未执行 authenticated admin API smoke。
