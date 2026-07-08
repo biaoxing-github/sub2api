@@ -93,7 +93,7 @@ func TestSecurityHeaders(t *testing.T) {
 		middleware(c)
 
 		assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
-		assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
+		assert.Equal(t, "SAMEORIGIN", w.Header().Get("X-Frame-Options"))
 		assert.Equal(t, "strict-origin-when-cross-origin", w.Header().Get("Referrer-Policy"))
 	})
 
@@ -145,7 +145,7 @@ func TestSecurityHeaders(t *testing.T) {
 		middleware(c)
 
 		assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
-		assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
+		assert.Equal(t, "SAMEORIGIN", w.Header().Get("X-Frame-Options"))
 		assert.Equal(t, "strict-origin-when-cross-origin", w.Header().Get("Referrer-Policy"))
 		assert.Empty(t, w.Header().Get("Content-Security-Policy"))
 		assert.Empty(t, GetNonceFromContext(c))
@@ -192,6 +192,8 @@ func TestSecurityHeaders(t *testing.T) {
 		assert.NotEmpty(t, csp)
 		// Default policy should contain these elements
 		assert.Contains(t, csp, "default-src 'self'")
+		assert.Contains(t, csp, "frame-src 'self'")
+		assert.Contains(t, csp, "frame-ancestors 'self'")
 	})
 
 	t.Run("uses_default_policy_when_whitespace_only", func(t *testing.T) {
@@ -342,6 +344,22 @@ func TestEnhanceCSPPolicy(t *testing.T) {
 		assert.Contains(t, enhanced, AirwallexDemoCheckoutDomain)
 		assert.Contains(t, enhanced, "style-src 'self'")
 		assert.Contains(t, enhanced, "frame-src 'self'")
+	})
+
+	t.Run("adds_self_to_frame_src_for_same_origin_tool_iframes", func(t *testing.T) {
+		policy := "default-src 'self'; script-src 'self' __CSP_NONCE__; frame-src https://challenges.cloudflare.com"
+		enhanced := enhanceCSPPolicy(policy)
+
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "frame-src", "'self'"))
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "frame-src", "https://challenges.cloudflare.com"))
+	})
+
+	t.Run("replaces_frame_ancestors_none_with_self_for_same_origin_tool_iframes", func(t *testing.T) {
+		policy := "default-src 'self'; frame-ancestors 'none'"
+		enhanced := enhanceCSPPolicy(policy)
+
+		assert.Equal(t, 1, countDirectiveValue(enhanced, "frame-ancestors", "'self'"))
+		assert.Equal(t, 0, countDirectiveValue(enhanced, "frame-ancestors", "'none'"))
 	})
 
 	t.Run("does_not_duplicate_airwallex_domains", func(t *testing.T) {

@@ -16,6 +16,8 @@ const (
 	CSPNonceKey = "csp_nonce"
 	// NonceTemplate is the placeholder in CSP policy for nonce
 	NonceTemplate = "__CSP_NONCE__"
+	// SelfSource 是 CSP 同源资源关键字，允许管理端 iframe 加载同源工具页。
+	SelfSource = "'self'"
 	// CloudflareInsightsDomain is the domain for Cloudflare Web Analytics
 	CloudflareInsightsDomain = "https://static.cloudflareinsights.com"
 	// StripeDomain is the domain for Stripe.js SDK
@@ -34,6 +36,8 @@ var requiredCSPDirectiveValues = []struct {
 	directive string
 	value     string
 }{
+	{"frame-src", SelfSource},
+	{"frame-ancestors", SelfSource},
 	{"script-src", CloudflareInsightsDomain},
 	{"script-src", StripeDomain},
 	{"frame-src", StripeDomain},
@@ -92,7 +96,7 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 		}
 
 		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-Frame-Options", "SAMEORIGIN")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		if isAPIRoutePath(c) {
 			c.Next()
@@ -134,6 +138,7 @@ func enhanceCSPPolicy(policy string) string {
 	if !strings.Contains(policy, NonceTemplate) && !strings.Contains(policy, "'nonce-") {
 		policy = addToDirective(policy, "script-src", NonceTemplate)
 	}
+	policy = replaceDirectiveValue(policy, "frame-ancestors", "'none'", SelfSource)
 
 	for _, required := range requiredCSPDirectiveValues {
 		if !directiveHasValue(policy, required.directive, required.value) {
@@ -158,6 +163,24 @@ func directiveHasValue(policy, directive, value string) bool {
 		return false
 	}
 	return false
+}
+
+func replaceDirectiveValue(policy, directive, oldValue, newValue string) string {
+	parts := strings.Split(policy, ";")
+	for i, rawDirective := range parts {
+		trimmed := strings.TrimSpace(rawDirective)
+		fields := strings.Fields(trimmed)
+		if len(fields) == 0 || fields[0] != directive {
+			continue
+		}
+		for fieldIndex := 1; fieldIndex < len(fields); fieldIndex++ {
+			if fields[fieldIndex] == oldValue {
+				fields[fieldIndex] = newValue
+			}
+		}
+		parts[i] = strings.Join(fields, " ")
+	}
+	return strings.Join(parts, ";")
 }
 
 // addToDirective adds a value to a specific CSP directive.
