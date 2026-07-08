@@ -4230,3 +4230,20 @@ Verification:
 Risk / notes:
 - No application rebuild or container restart was required because NewApi and TokenCost services load state from SQL repositories on each admin request.
 - Access keys were imported into SQL from the provided config source but were not written into tracked repository files or logs.
+## TokenCost platform count SQL refresh fix - 2026-07-08T11:46:36+08:00
+
+Actor: Devil
+
+Root cause:
+- The TokenCost native legacy page rendered stale localStorage data first. Its raw fetch path did not reuse the admin axios token-refresh interceptor, so an expired auth_token caused /api/v1/admin/token-cost/health to return 401 and prevented loading the 21-platform SQL state.
+
+Change:
+- Added one-shot auth refresh and retry to frontend/src/views/admin/tools/tokenCostLegacy.generated.ts requestJson.
+- Added frontend/src/views/admin/tools/tokenCostLegacy.generated.test.ts covering stale 16-platform local cache plus expired token, then refreshed token and 21-platform SQL state load.
+
+Verification:
+- npm run test:run -- tokenCostLegacy.generated.test.ts: 1 test passed.
+- npm run typecheck: passed.
+
+Runtime data evidence before release:
+- PostgreSQL token_cost_platforms count is 21.

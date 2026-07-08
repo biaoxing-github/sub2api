@@ -17,8 +17,9 @@ export function mountTokenCostLegacyTool(scope: LegacyToolScope): LegacyToolClea
   const structuredClone = scope.structuredClone
   const console = scope.console
 
-const STORAGE_KEY = "token-api-cost-live-calculator:v1";
+    const STORAGE_KEY = "token-api-cost-live-calculator:v1";
     const REPORT_FILE = "token-api-cost-live-calculator.html";
+    const AUTH_REFRESH_PATH = "/api/v1/auth/refresh";
     const DEFAULT_PERSONAL_RECHARGE_R = 333;
     const PLATFORM_PAGE_SIZE = 6;
 
@@ -222,6 +223,16 @@ const STORAGE_KEY = "token-api-cost-live-calculator:v1";
     async function requestJson(path, options = {}) {
       const method = options.method || "GET";
       const body = options.body === undefined ? null : options.body;
+      const init = buildRequestInit(method, body);
+      let response = await fetch(path, init);
+      if (response.status === 401 && await refreshAuthToken()) {
+        response = await fetch(path, buildRequestInit(method, body));
+      }
+      const data = await readResponseData(response);
+      return { ok: response.ok, status: response.status, data };
+    }
+
+    function buildRequestInit(method, body) {
       const init = { method, headers: {} };
       const token = localStorage.getItem("auth_token");
       if (token) {
@@ -231,7 +242,41 @@ const STORAGE_KEY = "token-api-cost-live-calculator:v1";
         init.headers["Content-Type"] = "application/json";
         init.body = JSON.stringify(body);
       }
-      const response = await fetch(path, init);
+      return init;
+    }
+
+    async function refreshAuthToken() {
+      const refreshToken = localStorage.getItem("refresh_token");
+      if (!refreshToken) {
+        return false;
+      }
+      try {
+        const response = await fetch(AUTH_REFRESH_PATH, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken })
+        });
+        if (!response.ok) {
+          return false;
+        }
+        const payload = await response.json();
+        const nextToken = payload?.data?.access_token;
+        const nextRefreshToken = payload?.data?.refresh_token;
+        const expiresIn = Number(payload?.data?.expires_in);
+        if (payload?.code !== 0 || !nextToken || !nextRefreshToken || !Number.isFinite(expiresIn)) {
+          return false;
+        }
+        localStorage.setItem("auth_token", nextToken);
+        localStorage.setItem("refresh_token", nextRefreshToken);
+        localStorage.setItem("token_expires_at", String(Date.now() + expiresIn * 1000));
+        return true;
+      } catch (error) {
+        console.warn("刷新登录态失败，保留当前本地数据", error);
+        return false;
+      }
+    }
+
+    async function readResponseData(response) {
       const contentType = response.headers.get("Content-Type") || "";
       let data = null;
       if (contentType.includes("application/json")) {
@@ -249,7 +294,7 @@ const STORAGE_KEY = "token-api-cost-live-calculator:v1";
           data = JSON.parse(decoded);
         }
       }
-      return { ok: response.ok, status: response.status, data };
+      return data;
     }
 
     function isBlank(value) {
