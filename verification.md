@@ -4247,3 +4247,22 @@ Verification:
 
 Runtime data evidence before release:
 - PostgreSQL token_cost_platforms count is 21.
+## TokenCost platform count release - 2026-07-08T11:55:15+08:00
+
+Actor: Devil
+
+Release:
+- Commit: 9e0a85aa5b07 fix(admin): 修复 Token 成本页旧缓存显示
+- Image: sub2api:v0.1.143.9
+- ImageID: sha256:670c7cd169c37d5b77b04a5ef5e567bb621e153d9f927ffb696e8440f9585240
+- Active after cutover: sub2api-green:8080
+- Rollback: sub2api-blue sub2api:v0.1.143.8
+
+Post-cutover verification:
+- /health on 8080, 18081 and 18082 returned 200.
+- /admin/tools on 8080 returned 200.
+- /api/v1/admin/token-cost/state without login returned 401 as expected.
+- /responses without login returned 401, not 502.
+- Public AdminTools chunk is assets/AdminToolsView-DrvtKGhj.js and contains /api/v1/auth/refresh plus 401 retry and token-cost state page loading path.
+- SQL token_cost_platforms count remains 21.
+- Fresh 30-second post-cutover green log window had no panic/fatal/migration failure/checksum/pq/bind/listen/rebuild-failed matches.
