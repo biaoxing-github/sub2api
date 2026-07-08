@@ -174,6 +174,27 @@ var (
 		return 1
 	`)
 
+	// cleanupExpiredSlotKeysScript 批量清理账号槽位键中过期成员，并删除空集合。
+	// KEYS 是 accountSlotKeyPrefix 匹配到的有序集合键列表，ARGV[1] 是槽位 TTL。
+	cleanupExpiredSlotKeysScript = redis.NewScript(`
+		redis.replicate_commands()
+		local ttl = tonumber(ARGV[1])
+		local timeResult = redis.call('TIME')
+		local now = tonumber(timeResult[1])
+		local expireBefore = now - ttl
+		local removed = 0
+		for i = 1, #KEYS do
+			local key = KEYS[i]
+			removed = removed + redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
+			if redis.call('ZCARD', key) == 0 then
+				redis.call('DEL', key)
+			else
+				redis.call('EXPIRE', key, ttl)
+			end
+		end
+		return removed
+	`)
+
 	// startupCleanupScript 清理非当前进程前缀的槽位成员。
 	// KEYS 是有序集合键列表，ARGV[1] 是当前进程前缀，ARGV[2] 是槽位 TTL。
 	// 遍历每个 KEYS[i]，移除前缀不匹配的成员，清空后删 key，否则刷新 EXPIRE。
@@ -501,6 +522,28 @@ func (c *concurrencyCache) CleanupExpiredAccountSlots(ctx context.Context, accou
 	key := accountSlotKey(accountID)
 	_, err := cleanupExpiredSlotsScript.Run(ctx, c.rdb, []string{key}, c.slotTTLSeconds).Result()
 	return err
+}
+
+// CleanupExpiredAccountSlotKeys 扫描账号槽位键并批量清理过期成员。
+func (c *concurrencyCache) CleanupExpiredAccountSlotKeys(ctx context.Context) error {
+	const scanCount = 200
+	var cursor uint64
+	for {
+		keys, nextCursor, err := c.rdb.Scan(ctx, cursor, accountSlotKeyPrefix+"*", scanCount).Result()
+		if err != nil {
+			return fmt.Errorf("scan account slot keys: %w", err)
+		}
+		if len(keys) > 0 {
+			if _, err := cleanupExpiredSlotKeysScript.Run(ctx, c.rdb, keys, c.slotTTLSeconds).Result(); err != nil {
+				return fmt.Errorf("cleanup account slot keys: %w", err)
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	return nil
 }
 
 func (c *concurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error {

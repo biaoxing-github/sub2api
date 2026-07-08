@@ -233,6 +233,12 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		return true
 	}
 
+	// Anthropic 官方窗口头先于本地临时不可调度规则处理，避免 5h/7d/7d_oi 限流被用户关键字规则误写成账号冷却。
+	if statusCode == http.StatusTooManyRequests && account.Platform == PlatformAnthropic && hasAnthropicRateLimitWindowHeaders(headers) {
+		s.handle429(ctx, account, headers, responseBody, requestedModel...)
+		return false
+	}
+
 	// 先尝试临时不可调度规则（401除外）
 	// 如果匹配成功，直接返回，不执行后续禁用逻辑
 	if statusCode != 401 {
@@ -283,8 +289,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			break
 		}
 		// OAuth 账号在 401 错误时临时不可调度（给 token 刷新窗口）；非 OAuth 账号保持原有 SetError 行为。
-		// Antigravity 除外：其 401 由 applyErrorPolicy 的 temp_unschedulable_rules 自行控制。
-		if account.Type == AccountTypeOAuth && account.Platform != PlatformAntigravity {
+		if account.Type == AccountTypeOAuth {
 			// 1. 失效缓存
 			if s.tokenCacheInvalidator != nil {
 				if err := s.tokenCacheInvalidator.InvalidateToken(ctx, account); err != nil {
@@ -310,6 +315,20 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			if upstreamMsg != "" {
 				msg = "OAuth 401: " + upstreamMsg
 			}
+			if account.Platform == PlatformAntigravity {
+				extraUpdates := antigravityForceTokenRefreshExtra("401_invalid")
+				if err := s.accountRepo.UpdateExtra(ctx, account.ID, extraUpdates); err != nil {
+					slog.Warn("antigravity_401_force_refresh_mark_failed", "account_id", account.ID, "error", err)
+				} else {
+					if account.Extra == nil {
+						account.Extra = make(map[string]any, len(extraUpdates))
+					}
+					for k, v := range extraUpdates {
+						account.Extra[k] = v
+					}
+					slog.Info("antigravity_401_force_refresh_marked", "account_id", account.ID)
+				}
+			}
 			cooldownMinutes := s.cfg.RateLimit.OAuth401CooldownMinutes
 			if cooldownMinutes <= 0 {
 				cooldownMinutes = 10
@@ -321,7 +340,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			}
 			shouldDisable = true
 		} else {
-			// 非 OAuth / Antigravity OAuth：保持 SetError 行为
+			// 非 OAuth：保持 SetError 行为
 			msg := "Authentication failed (401): invalid or expired credentials"
 			if upstreamMsg != "" {
 				msg = "Authentication failed (401): " + upstreamMsg
@@ -373,7 +392,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		)
 		shouldDisable = s.handle403(ctx, account, upstreamMsg, responseBody)
 	case 429:
-		s.handle429(ctx, account, headers, responseBody)
+		s.handle429(ctx, account, headers, responseBody, requestedModel...)
 		shouldDisable = false
 	case 529:
 		s.handle529(ctx, account)
@@ -958,7 +977,7 @@ func (s *RateLimitService) handleCustomErrorCode(ctx context.Context, account *A
 
 // handle429 处理429限流错误
 // 解析响应头获取重置时间，标记账号为限流状态
-func (s *RateLimitService) handle429(ctx context.Context, account *Account, headers http.Header, responseBody []byte) {
+func (s *RateLimitService) handle429(ctx context.Context, account *Account, headers http.Header, responseBody []byte, requestedModel ...string) {
 	// 1. OpenAI 平台：优先尝试解析 x-codex-* 响应头（用于 rate_limit_exceeded）
 	if account.Platform == PlatformOpenAI {
 		persistOpenAI429PlanType(ctx, s.accountRepo, account, responseBody)
@@ -974,7 +993,16 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		}
 	}
 
-	// 2. Anthropic 平台：尝试解析 per-window 头（5h / 7d），选择实际触发的窗口
+	// 2. Anthropic 平台：先处理 7d_oi。该窗口只冷却 Fable 模型族，不应阻断整个账号。
+	if account.Platform == PlatformAnthropic {
+		oiHandled := s.persistAnthropicFableWindowLimit(ctx, account, headers, firstRequestedModel(requestedModel...))
+		if oiHandled && !isAnthropicWindowExceeded(headers, "5h") && !isAnthropicWindowExceeded(headers, "7d") {
+			s.updateAnthropicPassiveUsageFromHeaders(ctx, account, headers)
+			return
+		}
+	}
+
+	// 3. Anthropic 平台：尝试解析 per-window 头（5h / 7d），选择实际触发的窗口
 	if result := calculateAnthropic429ResetTime(headers); result != nil {
 		s.notifyAccountSchedulingBlocked(account, result.resetAt, "429")
 		if err := s.accountRepo.SetRateLimited(ctx, account.ID, result.resetAt); err != nil {
@@ -996,10 +1024,10 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		return
 	}
 
-	// 3. 尝试从响应头解析重置时间（Anthropic 聚合头，向后兼容）
+	// 4. 尝试从响应头解析重置时间（Anthropic 聚合头，向后兼容）
 	resetTimestamp := headers.Get("anthropic-ratelimit-unified-reset")
 
-	// 4. 如果响应头没有，尝试从响应体解析（OpenAI usage_limit_reached, Gemini）
+	// 5. 如果响应头没有，尝试从响应体解析（OpenAI usage_limit_reached, Gemini）
 	if resetTimestamp == "" {
 		switch account.Platform {
 		case PlatformOpenAI:
@@ -1083,6 +1111,102 @@ func (s *RateLimitService) apply429FallbackRateLimit(ctx context.Context, accoun
 	if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetAt); err != nil {
 		slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
 	}
+}
+
+// hasAnthropicRateLimitWindowHeaders 判断响应是否携带 Anthropic 官方限流窗口头。
+func hasAnthropicRateLimitWindowHeaders(headers http.Header) bool {
+	if headers == nil {
+		return false
+	}
+	for _, window := range []string{"5h", "7d", "7d_oi"} {
+		prefix := "anthropic-ratelimit-unified-" + window + "-"
+		if headers.Get(prefix+"reset") != "" || headers.Get(prefix+"status") != "" || headers.Get(prefix+"utilization") != "" || headers.Get(prefix+"surpassed-threshold") != "" {
+			return true
+		}
+	}
+	return headers.Get("anthropic-ratelimit-unified-reset") != ""
+}
+
+// persistAnthropicFableWindowLimit 将 7d_oi 窗口写为 Fable 模型级冷却。
+func (s *RateLimitService) persistAnthropicFableWindowLimit(ctx context.Context, account *Account, headers http.Header, requestedModel string) bool {
+	if s == nil || s.accountRepo == nil || account == nil || !isAnthropicWindowExceeded(headers, "7d_oi") {
+		return false
+	}
+	if requestedModel != "" && !isAnthropicFableModel(requestedModel) {
+		return false
+	}
+	resetAt := parseAnthropicRateLimitResetHeader(headers, "7d_oi")
+	if resetAt == nil {
+		return false
+	}
+	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, anthropicFableRateLimitKey, *resetAt); err != nil {
+		slog.Warn("anthropic_fable_model_rate_limit_set_failed", "account_id", account.ID, "error", err)
+		return false
+	}
+	slog.Info("anthropic_fable_model_rate_limited", "account_id", account.ID, "reset_at", *resetAt, "reset_in", time.Until(*resetAt).Truncate(time.Second))
+	return true
+}
+
+// parseAnthropicRateLimitResetHeader 解析 Anthropic 窗口 reset 头，兼容毫秒时间戳。
+func parseAnthropicRateLimitResetHeader(headers http.Header, window string) *time.Time {
+	if headers == nil || strings.TrimSpace(window) == "" {
+		return nil
+	}
+	resetStr := strings.TrimSpace(headers.Get("anthropic-ratelimit-unified-" + window + "-reset"))
+	if resetStr == "" {
+		return nil
+	}
+	ts, err := strconv.ParseInt(resetStr, 10, 64)
+	if err != nil {
+		return nil
+	}
+	if ts > 1e11 {
+		ts = ts / 1000
+	}
+	resetAt := time.Unix(ts, 0)
+	return &resetAt
+}
+
+// updateAnthropicPassiveUsageFromHeaders 保存 Anthropic 5h/7d/7d_oi 被动采样数据。
+func (s *RateLimitService) updateAnthropicPassiveUsageFromHeaders(ctx context.Context, account *Account, headers http.Header) {
+	if s == nil || s.accountRepo == nil || account == nil || headers == nil {
+		return
+	}
+	extraUpdates := make(map[string]any, 6)
+	addUtil := func(window, key string) {
+		if utilStr := headers.Get("anthropic-ratelimit-unified-" + window + "-utilization"); utilStr != "" {
+			if util, err := strconv.ParseFloat(utilStr, 64); err == nil {
+				extraUpdates[key] = util
+			}
+		}
+	}
+	addReset := func(window, key string) {
+		if resetAt := parseAnthropicRateLimitResetHeader(headers, window); resetAt != nil {
+			extraUpdates[key] = resetAt.Unix()
+		}
+	}
+	addUtil("5h", "session_window_utilization")
+	addUtil("7d", "passive_usage_7d_utilization")
+	addReset("7d", "passive_usage_7d_reset")
+	addUtil("7d_oi", "passive_usage_7d_oi_utilization")
+	addReset("7d_oi", "passive_usage_7d_oi_reset")
+	if len(extraUpdates) == 0 {
+		return
+	}
+	extraUpdates["passive_usage_sampled_at"] = time.Now().UTC().Format(time.RFC3339)
+	if err := s.accountRepo.UpdateExtra(ctx, account.ID, extraUpdates); err != nil {
+		slog.Warn("passive_usage_update_failed", "account_id", account.ID, "error", err)
+	}
+}
+
+// firstRequestedModel 取得调用方传入的第一个非空请求模型名。
+func firstRequestedModel(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func (s *RateLimitService) get429FallbackCooldown(ctx context.Context, account *Account) (time.Duration, bool) {
@@ -1239,9 +1363,18 @@ func calculateAnthropic429ResetTime(headers http.Header) *anthropic429Result {
 func isAnthropicWindowExceeded(headers http.Header, window string) bool {
 	prefix := "anthropic-ratelimit-unified-" + window + "-"
 
+	if status := strings.TrimSpace(headers.Get(prefix + "status")); strings.EqualFold(status, "rejected") {
+		return true
+	}
+
 	// Check surpassed-threshold first (most explicit signal)
 	if st := headers.Get(prefix + "surpassed-threshold"); strings.EqualFold(st, "true") {
 		return true
+	}
+	if st := strings.TrimSpace(headers.Get(prefix + "surpassed-threshold")); st != "" {
+		if surpassed, err := strconv.ParseFloat(st, 64); err == nil && surpassed >= 1.0-1e-9 {
+			return true
+		}
 	}
 
 	// Fall back to utilization >= 1.0

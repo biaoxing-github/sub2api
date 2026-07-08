@@ -8,7 +8,10 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
-const modelRateLimitsKey = "model_rate_limits"
+const (
+	modelRateLimitsKey         = "model_rate_limits"
+	anthropicFableRateLimitKey = "claude-fable-5"
+)
 
 // isRateLimitActiveForKey 检查指定 key 的限流是否生效
 func (a *Account) isRateLimitActiveForKey(key string) bool {
@@ -34,15 +37,12 @@ func (a *Account) isModelRateLimitedWithContext(ctx context.Context, requestedMo
 		return false
 	}
 
-	modelKey := a.GetMappedModel(requestedModel)
-	if a.Platform == PlatformAntigravity {
-		modelKey = resolveFinalAntigravityModelKey(ctx, a, requestedModel)
+	for _, modelKey := range a.modelRateLimitKeysForRequest(ctx, requestedModel) {
+		if a.isRateLimitActiveForKey(modelKey) {
+			return true
+		}
 	}
-	modelKey = strings.TrimSpace(modelKey)
-	if modelKey == "" {
-		return false
-	}
-	return a.isRateLimitActiveForKey(modelKey)
+	return false
 }
 
 // GetModelRateLimitRemainingTime 获取模型限流剩余时间
@@ -56,15 +56,48 @@ func (a *Account) GetModelRateLimitRemainingTimeWithContext(ctx context.Context,
 		return 0
 	}
 
+	for _, modelKey := range a.modelRateLimitKeysForRequest(ctx, requestedModel) {
+		if remaining := a.getRateLimitRemainingForKey(modelKey); remaining > 0 {
+			return remaining
+		}
+	}
+	return 0
+}
+
+// modelRateLimitKeysForRequest 返回一次请求需要检查的模型限流 key 列表。
+func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedModel string) []string {
+	if a == nil {
+		return nil
+	}
+	keys := make([]string, 0, 2)
+	add := func(key string) {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return
+		}
+		for _, existing := range keys {
+			if existing == key {
+				return
+			}
+		}
+		keys = append(keys, key)
+	}
+
 	modelKey := a.GetMappedModel(requestedModel)
 	if a.Platform == PlatformAntigravity {
 		modelKey = resolveFinalAntigravityModelKey(ctx, a, requestedModel)
 	}
-	modelKey = strings.TrimSpace(modelKey)
-	if modelKey == "" {
-		return 0
+	add(modelKey)
+	if a.Platform == PlatformAnthropic && (isAnthropicFableModel(requestedModel) || isAnthropicFableModel(modelKey)) {
+		add(anthropicFableRateLimitKey)
 	}
-	return a.getRateLimitRemainingForKey(modelKey)
+	return keys
+}
+
+// isAnthropicFableModel 判断模型名是否属于 Claude Fable 族。
+func isAnthropicFableModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(model, anthropicFableRateLimitKey)
 }
 
 func WithOpenAIImageGenerationIntent(ctx context.Context) context.Context {

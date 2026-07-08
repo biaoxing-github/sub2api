@@ -1,6 +1,8 @@
 package service
 
 import (
+	"fmt"
+
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 )
@@ -18,13 +20,36 @@ const (
 	CodexClientRestrictionReasonMatchedGlobalAllowedClient = "global_allowed_client_matched"
 	// CodexClientRestrictionReasonNotMatchedUA 表示请求未命中官方客户端 UA 白名单。
 	CodexClientRestrictionReasonNotMatchedUA = "official_client_user_agent_not_matched"
+	// CodexClientRestrictionReasonVersionTooLow 表示 Codex 客户端版本低于上游要求。
+	CodexClientRestrictionReasonVersionTooLow = "codex_client_version_too_low"
+	// CodexClientRestrictionReasonVersionTooHigh 表示 Codex 客户端版本高于账号允许范围。
+	CodexClientRestrictionReasonVersionTooHigh = "codex_client_version_too_high"
 )
+
+const CodexOfficialClientsOnlyMessage = "This account only allows Codex official clients"
 
 // CodexClientRestrictionDetectionResult 是 codex_cli_only 统一检测入口结果。
 type CodexClientRestrictionDetectionResult struct {
-	Enabled bool
-	Matched bool
-	Reason  string
+	Enabled         bool
+	Matched         bool
+	Reason          string
+	DetectedVersion string
+	MinCodexVersion string
+	MaxCodexVersion string
+}
+
+func CodexClientRestrictionMessage(result CodexClientRestrictionDetectionResult) string {
+	switch result.Reason {
+	case CodexClientRestrictionReasonVersionTooLow:
+		if result.DetectedVersion != "" && result.MinCodexVersion != "" {
+			return fmt.Sprintf("Your Codex version (%s) is below the minimum required version (%s). Please update Codex.", result.DetectedVersion, result.MinCodexVersion)
+		}
+	case CodexClientRestrictionReasonVersionTooHigh:
+		if result.DetectedVersion != "" && result.MaxCodexVersion != "" {
+			return fmt.Sprintf("Your Codex version (%s) exceeds the maximum allowed version (%s). Please downgrade Codex to %s or lower.", result.DetectedVersion, result.MaxCodexVersion, result.MaxCodexVersion)
+		}
+	}
+	return CodexOfficialClientsOnlyMessage
 }
 
 // CodexClientRestrictionDetector 定义 codex_cli_only 统一检测入口。

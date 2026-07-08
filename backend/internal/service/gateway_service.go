@@ -9537,10 +9537,15 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	if writer, ok := repo.(usageLogBestEffortWriter); ok {
 		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
 			logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
-			if IsUsageLogCreateDropped(err) {
-				return
+			// 计费已在此前完成，usage_log 即使 best-effort 队列溢出也必须同步兜底，
+			// 否则会出现“已扣费但无明细”的对账缺口；重复写入由 repository 幂等处理。
+			fallbackCtx := usageCtx
+			if usageCtx.Err() != nil {
+				var fallbackCancel context.CancelFunc
+				fallbackCtx, fallbackCancel = detachedBillingContext(context.Background())
+				defer fallbackCancel()
 			}
-			if _, syncErr := repo.Create(usageCtx, usageLog); syncErr != nil {
+			if _, syncErr := repo.Create(fallbackCtx, usageLog); syncErr != nil {
 				logger.LegacyPrintf(logKey, "Create usage log sync fallback failed: %v", syncErr)
 			}
 		}

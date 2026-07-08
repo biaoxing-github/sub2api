@@ -4123,3 +4123,84 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：Vite dev server `http://127.0.0.1:5173/` 下 Browser 渲染 `/token-cost/index.html` 和 `/newapi-checkin/index.html` 均非空且无 console error/warn；token-cost 页面脚本包含 `/api/v1/admin/token-cost` 与 Authorization 注入。
 - OBSERVE：Browser evaluate 作用域为只读，无法注入 fake admin localStorage，所以受保护的 `/admin/tools` 容器渲染由 Vitest 覆盖，Browser 只验证两个 iframe 文档本体。
 - LIMIT：未提交、未推送、未构建 Docker 镜像、未部署、未执行 authenticated admin API smoke。
+
+## 2026-07-08 09:06 +08:00 - Token 成本 SQL 数据正式导入
+
+- PASS：本机 `sub2api-postgres` 的 `schema_migrations` 已记录 `163_add_newapi_checkin_tables.sql` 与 `164_add_token_cost_tables.sql`，应用时间为 `2026-07-08 09:02:02~09:02:03 +08:00`，checksum 与本地迁移文件一致。
+- PASS：`token_cost_state`、`token_cost_platforms`、`token_cost_history`、`token_cost_events` 均已存在。
+- PASS：导入后记录数为 `token_cost_state=1`、`token_cost_platforms=21`、`token_cost_history=16`、`token_cost_events=37`。
+- PASS：21 个平台余额数据已可从 SQL 读取：`torchai`、`okcodex`、`encore`、`qingflow`、`devpool`、`zz1cc`、`aisz`、`dawclaude`、`eirouter`、`tuling`、`乾行`、`5yuan`、`小白code`、`mikuapi`、`superapi`、`tokeness`、`词元`、`qiutian`、`openhh`、`登仙赞助`、`jucodex`。
+- PASS：`token_cost_state` 当前为 `version=1`、`updated_at_text=2026-07-06T03:38:28.869Z`、`rank_mode=plus`、`personal_recharge_r=400`。
+- PASS：`http://127.0.0.1:8080/health` 返回 `{"status":"ok"}`；未登录访问 `/api/v1/admin/token-cost/health` 与 `/api/v1/admin/token-cost/state` 返回 401，鉴权保护正常。
+- LIMIT：本地 `ADMIN_PASSWORD` 为空，登录接口拒绝空密码，因此未执行 authenticated token-cost state API 读数；本轮未重启应用容器、未重启 PostgreSQL/Redis、未构建镜像、未部署、未提交。
+
+## 2026-07-08 09:10 +08:00 - v0.1.143.4 SQL 工具箱发布验证
+
+- PASS：功能提交 `c7718ed4d2db` 已存在，提交范围为 NewApi 签到 SQL 迁移、Token 成本 SQL 集成、管理端工具箱 tab、测试和过程记录。
+- PASS：不可变镜像 `sub2api:v0.1.143.4` 已构建，镜像 ID 为 `sha256:99fcc89d142cad5134f730f491a856d33d45d4a2511723bb13ff599e83cfb67a`，label 为 `org.opencontainers.image.version=v0.1.143` 与 `org.opencontainers.image.revision=c7718ed4d2db`。
+- PASS：`docker exec sub2api-blue /app/sub2api --version` 输出 `Sub2API v0.1.143 (image: v0.1.143.4, commit: c7718ed4d2db, built: 2026-07-08T01:00:40Z)`。
+- PASS：候选 blue `18083` 验证通过：`/health` 200、首页 200、`/newapi-checkin/index.html` 200、`/token-cost/index.html` 200、未登录 admin/users 401、NewApi config 401、Token 成本 health 401、`/responses` 401、`/v1/responses` 401。
+- PASS：`sub2api-blue` 运行 `sub2api:v0.1.143.4`，`Status=running Health=healthy Restart=0`。
+- OBSERVE：候选启动早期日志出现 1 条 `pq: canceling statement due to user request` 的过期快照清理日志；后续最近 5 分钟候选和 active 均未复现发布阻断关键字。
+- PASS：手动将 `D:\sub2api-deploy\proxy\upstreams\active.conf` 从 `sub2api-green:8080` 切到 `sub2api-blue:8080`；`docker exec sub2api-proxy nginx -t` 通过，`docker exec sub2api-proxy nginx -s reload` 于 2026-07-08 09:07:50 +08:00 成功。
+- PASS：切流后 `8080`、`18081`、`18083` 冒烟均通过：`/health` 200、首页 200、`/newapi-checkin/index.html` 200、`/token-cost/index.html` 200、未登录 admin/users 401、NewApi config 401、Token 成本 health 401、`/responses` 401、`/v1/responses` 401。
+- PASS：65 秒观察后，active blue 仍为 `sub2api:v0.1.143.4` 且 `healthy Status=running Restart=0`；rollback green 仍为 `sub2api:v0.1.143.3` 且 `healthy`；公网 `8080/health` 仍为 200。
+- PASS：最近 120 秒 `sub2api-blue` 与 `sub2api-green` 日志未命中 panic、fatal、migration、checksum、pq、bind、listen、rebuild 等发布关键错误。
+- PASS：`schema_migrations` 已记录 163/164 两个迁移；NewApi 8 张 SQL 表存在且当前为空；Token 成本 SQL 行数为 `token_cost_state=1`、`token_cost_platforms=21`、`token_cost_history=16`、`token_cost_events=37`。
+- Current state：active blue `sub2api:v0.1.143.4`；rollback green `sub2api:v0.1.143.3`。
+- LIMIT：本地 `ADMIN_PASSWORD` 为空，未执行 authenticated admin API；未执行真实 NewApi 上游签到/余额请求或真实 OpenAI 上游请求；未推送远程。
+
+## 2026-07-08 11:20 +08:00 - v0.1.144/145/146 上游改动吸收评估
+
+- PASS：`git fetch origin --prune --tags` 成功，新增远端 tag `v0.1.145` 与 `v0.1.146`；本地已有 `v0.1.144`。
+- PASS：tag commit 确认：`v0.1.144` -> `41def4ba0386`，`v0.1.145` -> `3fa08aa9303b`，`v0.1.146` -> `d7a6a4513a58`。
+- PASS：对比范围确认：`v0.1.143..v0.1.144` 为 97 files changed / 4532 insertions / 782 deletions；`v0.1.144..v0.1.145` 为 94 files changed / 5538 insertions / 690 deletions；`v0.1.145..v0.1.146` 为 75 files changed / 4653 insertions / 390 deletions。
+- PASS：CodeGraph 状态健康，当前索引为 2208 files / 69607 nodes / 183419 edges；已用 CodeGraph 核对本地 `writeUsageLogBestEffort`、`RecordUsage`、endpoint、scheduler、concurrency 相关实现。
+- OBSERVE：当前工作树仍有 144 P0/P1 未提交改动：usage record 默认 sync / usage log sync fallback / Responses mapped billing model；本次只做读取分析，没有继续吸收或覆盖业务源码。
+- RECOMMEND：优先候选为 146 endpoint compact 归一化、145 OpenAI OAuth account test headers/custom UA、145 Anthropic custom models list、145 Antigravity server-invalidated token refresh、146 non-v1 OpenAI models URL、144 Codex session import identity collision、144 7d_oi/Fable model-level rate limit、144 concurrency slot cleanup。
+- LIMIT：未修改业务代码、未跑 Go/npm 测试、未提交、未构建镜像、未部署、未执行真实上游请求。
+
+## 2026-07-08 09:39 +08:00 - v0.1.144/145/146 P0 吸收本地验证
+
+- PASS：按 TDD 先补 RED 用例，初次运行确认失败：endpoint 缺少 `EndpointResponsesCompact`，Codex 导入索引仍是单账号返回签名，Antigravity 强制刷新 extra key 缺失。
+- PASS：已吸收 P0 小补丁：Responses compact/alias/raw path 归一化、OpenAI `/models` 非 v1 base URL、Anthropic custom models list 默认模型合并、Codex session import 身份冲突保护、Antigravity 401 强制刷新标记、OpenAI OAuth account-test Codex UA/originator。
+- PASS：`go test ./internal/handler -run 'TestNormalizeInboundEndpoint|TestDeriveUpstreamEndpoint|TestResponsesSubpathSuffix|TestInboundEndpointMiddleware|TestGetInboundEndpoint|TestGetUpstreamEndpoint|TestGatewayModels' -count=1` 通过。
+- PASS：`go test ./internal/handler/admin -run 'TestCodex' -count=1` 通过。
+- PASS：`go test -tags unit ./internal/service -run 'TestBuildOpenAIModelsURL|TestAccountTestService_OpenAI.*OAuth|TestAntigravity|TestTokenRefreshService_RefreshWithRetry_Antigravity|TestRateLimitService_HandleUpstreamError_OAuth401' -count=1` 通过。
+- PASS：编译/聚焦验证 `go test ./internal/handler ./internal/handler/admin -run 'TestNormalizeInboundEndpoint|TestDeriveUpstreamEndpoint|TestResponsesSubpathSuffix|TestInboundEndpointMiddleware|TestGetInboundEndpoint|TestGetUpstreamEndpoint|TestGatewayModels|TestCodex' -count=1`、`go test -tags unit ./cmd/server -run TestNonExistent -count=0` 均通过。
+- PASS：`git diff --check` exit 0；仅提示既有 `.codegraph/daemon.pid`、`docs/feature_list.jsonl`、`docs/process_list.jsonl` LF/CRLF warning。
+- LIMIT：本轮未提交、未构建镜像、未部署、未执行真实 OpenAI/Anthropic/Antigravity 上游请求；工作树仍包含此前未提交的 144 P0/P1 与 SQL 工具相关脏改。
+
+## 2026-07-08 09:43 +08:00 - v0.1.144/145/146 P0 吸收复核
+
+- PASS：复跑 `go test ./internal/handler -run 'TestNormalizeInboundEndpoint|TestDeriveUpstreamEndpoint|TestResponsesSubpathSuffix|TestInboundEndpointMiddleware|TestGetInboundEndpoint|TestGetUpstreamEndpoint|TestGatewayModels' -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/handler 0.073s`。
+- PASS：复跑 `go test ./internal/handler/admin -run 'TestCodex' -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/handler/admin 0.057s`。
+- PASS：复跑 `go test -tags unit ./internal/service -run 'TestBuildOpenAIModelsURL|TestAccountTestService_OpenAI.*OAuth|TestAntigravity|TestTokenRefreshService_RefreshWithRetry_Antigravity|TestRateLimitService_HandleUpstreamError_OAuth401' -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 5.612s`。
+- PASS：复跑合并 handler/admin 验证与 server 编译切片通过：`go test ./internal/handler ./internal/handler/admin -run 'TestNormalizeInboundEndpoint|TestDeriveUpstreamEndpoint|TestResponsesSubpathSuffix|TestInboundEndpointMiddleware|TestGetInboundEndpoint|TestGetUpstreamEndpoint|TestGatewayModels|TestCodex' -count=1`，`go test -tags unit ./cmd/server -run TestNonExistent -count=0`。
+- PASS：`git diff --check` exit 0；仅提示既有 `.codegraph/daemon.pid`、`docs/feature_list.jsonl`、`docs/process_list.jsonl` LF/CRLF warning。
+- LIMIT：本次复核未提交、未构建镜像、未部署、未执行真实 OpenAI/Anthropic/Antigravity 上游请求。
+
+## 2026-07-08 09:56 +08:00 - v0.1.143.7 工具页 iframe/静态分发发布验证
+
+- PASS：提交 `27812928bbb8 fix(admin): 修复工具页静态分发`，仅包含 `Dockerfile`、`backend/internal/web/embed_on.go`、`backend/internal/web/embed_test.go`。
+- PASS：`go test -tags embed ./internal/web -run 'TestFrontendServer_Middleware/serves_standalone_tool_pages_before_spa_fallback' -count=1` 通过。
+- PASS：`go test -tags embed ./internal/web -run 'TestFrontendServer_Middleware|TestServeEmbeddedFrontend' -count=1` 通过。
+- PASS：`go test ./internal/server/middleware ./internal/server/routes ./cmd/server -run 'Test(SecurityHeaders|EnhanceCSPPolicy|AddToDirective)|TestNonExistent' -count=1` 通过。
+- PASS：构建不可变镜像 `sub2api:v0.1.143.7`，镜像 label 为 `version=v0.1.143`、`revision=27812928bbb8`，构建日志确认前端层写入 `frontend build commit=27812928bbb8`。
+- PASS：候选 green `http://127.0.0.1:18082` 验证通过：`/health` 200、首页静态资源 200、`/admin/tools?tab=newapi` 200、两个工具页 200 且标题分别为 `NewApi Checkin Dashboard` 与 `API Token 余额动态计算器`、受保护 API 返回 401。
+- PASS：候选和切流后均验证 CSP/XFO：父页 `frame-src 'self'`、子页 `frame-ancestors 'self'`、`X-Frame-Options=SAMEORIGIN`。
+- PASS：切流到 green 后，`http://127.0.0.1:8080`、`http://127.0.0.1:18081`、`http://127.0.0.1:18082` 三路健康检查与工具页冒烟均通过。
+- PASS：切流后 active 为 `sub2api-green` / `sub2api:v0.1.143.7`，rollback 为 `sub2api-blue` / `sub2api:v0.1.143.6`。
+- PASS：切流后 fresh 60 秒日志窗口无 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed`。
+- LIMIT：候选启动早期出现过一次 `pq: canceling statement due to user request`，后续 fresh 60 秒窗口未复现；管理版本 API 因部署 `.env` 缺少 `ADMIN_PASSWORD` 未做登录态响应体验证。
+
+## 2026-07-08 10:03 +08:00 - v0.1.144/145/146 P1 吸收本地验证
+
+- PASS：已完成 P1 小补丁吸收：Anthropic `7d_oi` 仅写入 Fable 模型级冷却、并发槽位后台清理改为扫描 cache keys、OpenAI 默认模型加入 `gpt-5.6-sol/terra/luna`、GPT-5.6 计费回退 GPT-5.4、Codex 客户端版本限制返回具体升级/降级提示。
+- PASS：版本文件 `backend/cmd/server/VERSION` 读回为 `v0.1.146`。
+- PASS：`go test -tags unit ./internal/service -run 'Test(IsModelRateLimited_AnthropicFableFamilyKey|IsAnthropicFableModel|HandleUpstreamError_Anthropic7dOi|HandleUpstreamError_Anthropic5hWindow|StartSlotCleanupWorker_UsesCacheWideCleanupWithoutAccountRepo|GetModelPricing_GPT56|CodexClientRestrictionMessage|OpenAIGatewayService_Forward_VersionGateMessage)' -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 0.081s`。
+- PASS：`go test -tags unit ./internal/service -run 'Test(CalculateAnthropic429ResetTime|IsAnthropicWindowExceeded|UpdateSessionWindow|Handle429_AnthropicPlatformUnaffected|OpenAICodexClientRestrictionDetector|OpenAIGatewayService_GetCodexClientRestrictionDetector|OpenAIGatewayService_ForwardAsChatCompletions_RejectsCodexCLIOnlyNonOfficialClient|GetModelPricing)' -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 0.062s`。
+- PASS：`go test ./internal/pkg/openai -run 'TestDefaultModelsIncludeGPT56Family|TestCodexBaseInstructionsForModel' -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/pkg/openai 0.022s`。
+- PASS：编译切片 `go test -tags unit ./cmd/server -run TestNonExistent -count=0` 与 `go test -tags unit ./internal/repository -run TestNonExistent -count=0` 均通过。
+- PASS：`git diff --check` exit 0；仅提示 `.codegraph/daemon.pid`、`backend/cmd/server/VERSION`、`docs/feature_list.jsonl`、`docs/process_list.jsonl` 的 LF/CRLF warning。
+- LIMIT：本轮未提交、未构建镜像、未部署、未推送、未执行真实 Anthropic/OpenAI 上游请求。

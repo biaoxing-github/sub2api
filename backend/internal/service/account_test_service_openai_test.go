@@ -928,6 +928,93 @@ func TestAccountTestService_OpenAIAPIKeyResponsesTestUsesConfiguredCodexCLIUserA
 	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
 }
 
+func TestAccountTestService_OpenAIOAuthResponsesTestUsesConfiguredCodexCLIUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	ctx.Request.Header.Set("User-Agent", "curl/8.0")
+	ctx.Request.Header.Set("originator", "opencode")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"pong"}`,
+			"",
+			`data: {"type":"response.completed"}`,
+			"",
+		}, "\n"))),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	configuredUA := "Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)"
+	account := &Account{
+		ID:          418,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":                    "oauth-token",
+			"chatgpt_account_id":              "chatgpt-acc",
+			CredentialOpenAICodexCLIUserAgent: configuredUA,
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.5", "ping", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "chatgpt.com", upstream.lastReq.Host)
+	require.Equal(t, "Bearer oauth-token", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, "chatgpt-acc", upstream.lastReq.Header.Get("chatgpt-account-id"))
+	require.Equal(t, configuredUA, upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, codexCLIOriginator, upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
+	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
+}
+
+func TestAccountTestService_OpenAIOAuthResponsesTestDefaultsToCodexCLIUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, recorder := newTestContext()
+	ctx.Request.Header.Set("User-Agent", "curl/8.0")
+	ctx.Request.Header.Set("originator", "opencode")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"pong"}`,
+			"",
+			`data: {"type":"response.completed"}`,
+			"",
+		}, "\n"))),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	account := &Account{
+		ID:          419,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token":       "oauth-token",
+			"chatgpt_account_id": "chatgpt-acc",
+		},
+	}
+
+	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.5", "ping", "")
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, codexCLIUserAgent(), upstream.lastReq.Header.Get("User-Agent"))
+	require.Equal(t, codexCLIOriginator, upstream.lastReq.Header.Get("originator"))
+	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
+	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
+}
+
 func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()

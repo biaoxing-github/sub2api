@@ -25,6 +25,8 @@ func TestNormalizeInboundEndpoint(t *testing.T) {
 		{"/v1/messages", EndpointMessages},
 		{"/v1/chat/completions", EndpointChatCompletions},
 		{"/v1/responses", EndpointResponses},
+		{"/v1/responses/compact", EndpointResponsesCompact},
+		{"/v1/responses/compact/detail", EndpointResponsesCompact},
 		{"/v1/images/generations", EndpointImagesGenerations},
 		{"/v1/images/edits", EndpointImagesEdits},
 		{"/v1beta/models", EndpointGeminiModels},
@@ -32,14 +34,27 @@ func TestNormalizeInboundEndpoint(t *testing.T) {
 		// Prefixed paths (antigravity, openai).
 		{"/antigravity/v1/messages", EndpointMessages},
 		{"/openai/v1/responses", EndpointResponses},
-		{"/openai/v1/responses/compact", EndpointResponses},
+		{"/openai/v1/responses/compact", EndpointResponsesCompact},
+		{"/openai/v1/responses/compact/detail", EndpointResponsesCompact},
 		{"/openai/v1/images/generations", EndpointImagesGenerations},
 		{"/openai/v1/images/edits", EndpointImagesEdits},
 		{"/antigravity/v1beta/models/gemini:generateContent", EndpointGeminiModels},
 
+		// Bare aliases keep root Responses and compact Responses distinct.
+		{"/responses", EndpointResponses},
+		{"/responses/compact", EndpointResponsesCompact},
+		{"/responses/compact/detail", EndpointResponsesCompact},
+		{"/backend-api/codex/responses", EndpointResponses},
+		{"/backend-api/codex/responses/compact", EndpointResponsesCompact},
+		{"/backend-api/codex/responses/compact/detail", EndpointResponsesCompact},
+		{"/foo/responses", "/foo/responses"},
+		{"/foo/responses/compact", "/foo/responses/compact"},
+
 		// Gin route patterns with wildcards.
 		{"/v1beta/models/*modelAction", EndpointGeminiModels},
 		{"/v1/responses/*subpath", EndpointResponses},
+		{"/responses/*subpath", EndpointResponses},
+		{"/backend-api/codex/responses/*subpath", EndpointResponses},
 
 		// Unknown path is returned as-is.
 		{"/v1/embeddings", "/v1/embeddings"},
@@ -73,8 +88,15 @@ func TestDeriveUpstreamEndpoint(t *testing.T) {
 
 		// OpenAI — always /v1/responses.
 		{"openai responses root", EndpointResponses, "/v1/responses", service.PlatformOpenAI, EndpointResponses},
-		{"openai responses compact", EndpointResponses, "/openai/v1/responses/compact", service.PlatformOpenAI, "/v1/responses/compact"},
-		{"openai responses nested", EndpointResponses, "/openai/v1/responses/compact/detail", service.PlatformOpenAI, "/v1/responses/compact/detail"},
+		{"openai responses compact", EndpointResponsesCompact, "/openai/v1/responses/compact", service.PlatformOpenAI, "/v1/responses/compact"},
+		{"openai responses nested", EndpointResponsesCompact, "/openai/v1/responses/compact/detail", service.PlatformOpenAI, "/v1/responses/compact/detail"},
+		{"openai bare responses compact", EndpointResponsesCompact, "/responses/compact", service.PlatformOpenAI, "/v1/responses/compact"},
+		{"openai bare responses compact detail", EndpointResponsesCompact, "/responses/compact/detail", service.PlatformOpenAI, "/v1/responses/compact/detail"},
+		{"openai codex direct responses compact", EndpointResponsesCompact, "/backend-api/codex/responses/compact", service.PlatformOpenAI, "/v1/responses/compact"},
+		{"openai codex direct responses compact detail", EndpointResponsesCompact, "/backend-api/codex/responses/compact/detail", service.PlatformOpenAI, "/v1/responses/compact/detail"},
+		{"openai bare responses", EndpointResponses, "/responses", service.PlatformOpenAI, EndpointResponses},
+		{"openai codex direct responses", EndpointResponses, "/backend-api/codex/responses", service.PlatformOpenAI, EndpointResponses},
+		{"openai compact inbound without raw suffix", EndpointResponsesCompact, "/v1/messages", service.PlatformOpenAI, EndpointResponsesCompact},
 		{"openai from messages", EndpointMessages, "/v1/messages", service.PlatformOpenAI, EndpointResponses},
 		{"openai from completions", EndpointChatCompletions, "/v1/chat/completions", service.PlatformOpenAI, EndpointResponses},
 		{"openai image generations", EndpointImagesGenerations, "/v1/images/generations", service.PlatformOpenAI, EndpointImagesGenerations},
@@ -107,6 +129,12 @@ func TestResponsesSubpathSuffix(t *testing.T) {
 		{"/v1/responses/", ""},
 		{"/v1/responses/compact", "/compact"},
 		{"/openai/v1/responses/compact/detail", "/compact/detail"},
+		{"/responses", ""},
+		{"/responses/compact", "/compact"},
+		{"/responses/compact/detail", "/compact/detail"},
+		{"/backend-api/codex/responses", ""},
+		{"/backend-api/codex/responses/compact", "/compact"},
+		{"/backend-api/codex/responses/compact/detail", "/compact/detail"},
 		{"/v1/messages", ""},
 		{"", ""},
 	}
@@ -146,6 +174,72 @@ func TestGetInboundEndpoint_FallbackWithoutMiddleware(t *testing.T) {
 	// Middleware did not run — fallback to normalizing c.Request.URL.Path.
 	got := GetInboundEndpoint(c)
 	require.Equal(t, EndpointMessages, got)
+}
+
+func TestInboundEndpointMiddleware_WildcardRoutes(t *testing.T) {
+	tests := []struct {
+		name        string
+		routePath   string
+		requestPath string
+		want        string
+	}{
+		{
+			name:        "v1 responses compact",
+			routePath:   "/v1/responses/*subpath",
+			requestPath: "/v1/responses/compact",
+			want:        EndpointResponsesCompact,
+		},
+		{
+			name:        "bare responses compact",
+			routePath:   "/responses/*subpath",
+			requestPath: "/responses/compact",
+			want:        EndpointResponsesCompact,
+		},
+		{
+			name:        "codex direct responses compact",
+			routePath:   "/backend-api/codex/responses/*subpath",
+			requestPath: "/backend-api/codex/responses/compact",
+			want:        EndpointResponsesCompact,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(InboundEndpointMiddleware())
+
+			var captured string
+			router.POST(tt.routePath, func(c *gin.Context) {
+				captured = GetInboundEndpoint(c)
+				c.Status(http.StatusOK)
+			})
+
+			req := httptest.NewRequest(http.MethodPost, tt.requestPath, nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, tt.want, captured)
+		})
+	}
+}
+
+func TestGetInboundEndpoint_FallbackWildcardRouteWithoutMiddleware(t *testing.T) {
+	router := gin.New()
+
+	var captured string
+	router.POST("/v1/responses/*subpath", func(c *gin.Context) {
+		require.Equal(t, "/v1/responses/*subpath", c.FullPath())
+		captured = GetInboundEndpoint(c)
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, EndpointResponsesCompact, captured)
 }
 
 func TestGetUpstreamEndpoint_FullFlow(t *testing.T) {

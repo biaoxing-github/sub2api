@@ -110,6 +110,20 @@ func TestGetModelPricing_FallbackMatchesByFamily(t *testing.T) {
 	}
 }
 
+func TestGetModelPricing_GPT56FallsBackToGPT54Pricing(t *testing.T) {
+	svc := newTestBillingService()
+	gpt54, err := svc.GetModelPricing("gpt-5.4")
+	require.NoError(t, err)
+
+	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		t.Run(model, func(t *testing.T) {
+			pricing, err := svc.GetModelPricing(model)
+			require.NoError(t, err)
+			require.Same(t, gpt54, pricing)
+		})
+	}
+}
+
 func TestGetModelPricing_CaseInsensitive(t *testing.T) {
 	svc := newTestBillingService()
 

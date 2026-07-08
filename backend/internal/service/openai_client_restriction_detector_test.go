@@ -106,3 +106,30 @@ func TestOpenAICodexClientRestrictionDetector_Detect(t *testing.T) {
 	})
 
 }
+
+func TestCodexClientRestrictionMessage(t *testing.T) {
+	t.Run("版本太低：带实际版本与最低要求", func(t *testing.T) {
+		msg := CodexClientRestrictionMessage(CodexClientRestrictionDetectionResult{
+			Reason:          CodexClientRestrictionReasonVersionTooLow,
+			DetectedVersion: "0.39.0",
+			MinCodexVersion: "0.42.0",
+		})
+		require.Equal(t, "Your Codex version (0.39.0) is below the minimum required version (0.42.0). Please update Codex.", msg)
+	})
+
+	t.Run("版本太高：带实际版本与最高允许", func(t *testing.T) {
+		msg := CodexClientRestrictionMessage(CodexClientRestrictionDetectionResult{
+			Reason:          CodexClientRestrictionReasonVersionTooHigh,
+			DetectedVersion: "0.45.0",
+			MaxCodexVersion: "0.42.0",
+		})
+		require.Equal(t, "Your Codex version (0.45.0) exceeds the maximum allowed version (0.42.0). Please downgrade Codex to 0.42.0 or lower.", msg)
+	})
+
+	t.Run("其他拒绝原因：保持通用句", func(t *testing.T) {
+		msg := CodexClientRestrictionMessage(CodexClientRestrictionDetectionResult{
+			Reason: CodexClientRestrictionReasonNotMatchedUA,
+		})
+		require.Equal(t, CodexOfficialClientsOnlyMessage, msg)
+	})
+}

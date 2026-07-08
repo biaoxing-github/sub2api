@@ -3463,7 +3463,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		c.JSON(http.StatusForbidden, gin.H{
 			"error": gin.H{
 				"type":    "forbidden_error",
-				"message": "This account only allows Codex official clients",
+				"message": CodexClientRestrictionMessage(restrictionResult),
 			},
 		})
 		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
@@ -4060,6 +4060,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				wsAttempts,
 			)
 			wsResult.UpstreamModel = upstreamModel
+			if wsResult.BillingModel == "" {
+				wsResult.BillingModel = billingModel
+			}
 			if wsResult.ImageCount > 0 {
 				wsResult.ImageSize = imageSizeTier
 				wsResult.ImageInputSize = imageInputSize
@@ -4250,6 +4253,7 @@ httpRetryLoop:
 				UsageObserved:   usageObserved,
 				UsageMissing:    reqStream && !usageObserved,
 				Model:           originalModel,
+				BillingModel:    billingModel,
 				UpstreamModel:   upstreamModel,
 				ServiceTier:     serviceTier,
 				ReasoningEffort: reasoningEffort,

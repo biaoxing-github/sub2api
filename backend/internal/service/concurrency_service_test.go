@@ -30,6 +30,7 @@ type stubConcurrencyCacheForTest struct {
 	usersLoadBatch map[int64]*UserLoadInfo
 	usersLoadErr   error
 	cleanupErr     error
+	cleanupKeyCalls atomic.Int64
 
 	// 记录调用
 	releasedAccountIDs []int64
@@ -92,6 +93,11 @@ func (c *stubConcurrencyCacheForTest) GetUsersLoadBatch(_ context.Context, _ []U
 	return c.usersLoadBatch, c.usersLoadErr
 }
 func (c *stubConcurrencyCacheForTest) CleanupExpiredAccountSlots(_ context.Context, _ int64) error {
+	return c.cleanupErr
+}
+
+func (c *stubConcurrencyCacheForTest) CleanupExpiredAccountSlotKeys(_ context.Context) error {
+	c.cleanupKeyCalls.Add(1)
 	return c.cleanupErr
 }
 
@@ -379,4 +385,25 @@ func TestIncrementAccountWaitCount_NilCache(t *testing.T) {
 	allowed, err := svc.IncrementAccountWaitCount(context.Background(), 1, 10)
 	require.NoError(t, err)
 	require.True(t, allowed)
+}
+
+func TestStartSlotCleanupWorker_UsesCacheWideCleanupWithoutAccountRepo(t *testing.T) {
+	cache := &stubConcurrencyCacheForTest{}
+	svc := NewConcurrencyService(cache)
+
+	svc.StartSlotCleanupWorker(nil, time.Hour)
+
+	deadline := time.After(time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if cache.cleanupKeyCalls.Load() > 0 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("cleanup worker did not call cache-wide account slot cleanup")
+		case <-ticker.C:
+		}
+	}
 }

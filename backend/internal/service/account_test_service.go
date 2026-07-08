@@ -152,7 +152,7 @@ func (s *AccountTestService) buildOpenAITestResponsesRequest(ctx context.Context
 		return nil, errors.New("gin request is not available")
 	}
 
-	restoreClientHeaders := applyOpenAITestDefaultClientHeaders(c)
+	restoreClientHeaders := applyOpenAITestClientHeaders(c, account)
 	defer restoreClientHeaders()
 
 	cfg := s.cfg
@@ -161,7 +161,7 @@ func (s *AccountTestService) buildOpenAITestResponsesRequest(ctx context.Context
 	}
 	gateway := &OpenAIGatewayService{cfg: cfg}
 	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator"))
-	if account != nil && account.IsOpenAICodexCLISimulationEnabled() {
+	if account != nil && (account.IsOpenAICodexCLISimulationEnabled() || account.IsOAuth()) {
 		isCodexCLI = true
 	}
 
@@ -179,6 +179,41 @@ func (s *AccountTestService) buildOpenAITestResponsesRequest(ctx context.Context
 	}()
 
 	return gateway.buildUpstreamRequestWithBaseURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, requestBaseURL)
+}
+
+// applyOpenAITestClientHeaders 为管理端人工测试准备入站客户端身份。
+// OAuth 探测固定模拟 Codex 客户端，避免管理端浏览器或 curl UA 被透传到 ChatGPT 内部接口。
+func applyOpenAITestClientHeaders(c *gin.Context, account *Account) func() {
+	if c == nil || c.Request == nil {
+		return func() {}
+	}
+	originalUA, hadUA := c.Request.Header["User-Agent"]
+	originalOriginator, hadOriginator := c.Request.Header["Originator"]
+
+	if account != nil && account.IsOAuth() {
+		c.Request.Header.Set("User-Agent", openAICodexCLIUserAgentForAccount(account))
+		c.Request.Header.Set("originator", codexCLIOriginator)
+	} else {
+		if strings.TrimSpace(c.Request.Header.Get("User-Agent")) == "" {
+			c.Request.Header.Set("User-Agent", codexCLIUserAgent())
+		}
+		if strings.TrimSpace(c.Request.Header.Get("originator")) == "" {
+			c.Request.Header.Set("originator", codexCLIOriginator)
+		}
+	}
+
+	return func() {
+		if hadUA {
+			c.Request.Header["User-Agent"] = originalUA
+		} else {
+			c.Request.Header.Del("User-Agent")
+		}
+		if hadOriginator {
+			c.Request.Header["Originator"] = originalOriginator
+		} else {
+			c.Request.Header.Del("Originator")
+		}
+	}
 }
 
 // applyOpenAITestDefaultClientHeaders 为管理端人工测试补齐入站 Codex 客户端身份。
