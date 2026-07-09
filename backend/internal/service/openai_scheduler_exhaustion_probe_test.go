@@ -22,12 +22,8 @@ type schedulerExhaustionProbeRepo struct {
 
 func (r *schedulerExhaustionProbeRepo) ListByGroup(ctx context.Context, groupID int64) ([]Account, error) {
 	r.listByGroupCalls++
-	var result []Account
-	for _, acc := range r.accounts {
-		if acc.Platform == PlatformOpenAI {
-			result = append(result, acc)
-		}
-	}
+	result := make([]Account, 0, len(r.accounts))
+	result = append(result, r.accounts...)
 	return result, nil
 }
 
@@ -103,6 +99,34 @@ func TestOpenAISchedulerExhaustionProbeStopsOnSuccessAndClearsRuntimeBlock(t *te
 	require.Equal(t, 2, attempts[22])
 	_, blocked := svc.SnapshotOpenAIAccountRuntimeBlock(&repo.accounts[1], time.Now())
 	require.False(t, blocked)
+}
+
+func TestOpenAISchedulerExhaustionProbeUsesRequestedGrokPlatform(t *testing.T) {
+	groupID := int64(9)
+	repo := &schedulerExhaustionProbeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{
+			{ID: 61, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1},
+			{ID: 62, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1},
+		}},
+	}
+	attempted := make([]int64, 0, 1)
+	svc := &OpenAIGatewayService{
+		accountRepo: repo,
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+			attempted = append(attempted, account.ID)
+			return nil
+		},
+	}
+
+	recovered, err := svc.RecoverOpenAISchedulerExhaustion(context.Background(), OpenAISchedulerExhaustionProbeOptions{
+		GroupID:        &groupID,
+		Platform:       PlatformGrok,
+		RequestedModel: "grok-4.3",
+	})
+
+	require.NoError(t, err)
+	require.True(t, recovered)
+	require.Equal(t, []int64{62}, attempted)
 }
 
 func TestOpenAISchedulerExhaustionProbeSkipsTempCoolingAccount(t *testing.T) {

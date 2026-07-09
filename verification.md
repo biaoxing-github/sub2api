@@ -4134,6 +4134,42 @@ WSv2 上游头部在该模式下按 Codex Desktop 画像重建：默认 `User-Ag
 - PASS：`http://127.0.0.1:8080/health` 返回 `{"status":"ok"}`；未登录访问 `/api/v1/admin/token-cost/health` 与 `/api/v1/admin/token-cost/state` 返回 401，鉴权保护正常。
 - LIMIT：本地 `ADMIN_PASSWORD` 为空，登录接口拒绝空密码，因此未执行 authenticated token-cost state API 读数；本轮未重启应用容器、未重启 PostgreSQL/Redis、未构建镜像、未部署、未提交。
 
+## 2026-07-09 07:58 +08:00 - NewApi 后台任务 request context 修复与 v0.1.146.2 发布
+
+- 根因：`StartFullCheckinJob` 与 `StartMonthlySyncJob` 把 `c.Request.Context()` 传入 goroutine；启动请求返回后 request context 被取消，后台全量签到和月度同步会被 `context canceled` 打断。
+- 修复：两个后台任务都改为使用 `context.WithoutCancel(ctx)` 后再进入 goroutine，保留 context value 但不继承 HTTP 请求取消信号。
+- RED：`go test ./internal/service -run 'TestNewAPICheckinStart(FullCheckin|MonthlySync)JobDetachesFromRequestContext' -count=1` 修复前失败，全量签到 `exitCode=-1`，月度同步 `error=context canceled`。
+- PASS：修复后同一红测转绿，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 1.091s`。
+- PASS：`go test ./internal/service -run NewAPICheckin -count=1` 通过。
+- PASS：`go test ./internal/handler/admin -run NewAPICheckin -count=1` 通过。
+- PASS：`go test ./internal/server/routes ./cmd/server -run TestNonExistent -count=0` 通过。
+- PASS：`git diff --check -- backend/internal/service/newapi_checkin_service.go backend/internal/service/newapi_checkin_service_test.go` 通过。
+- PASS：提交 `b5ae4937387f fix(admin): 修复 NewApi 后台任务请求取消` 已创建。
+- PASS：不可变镜像 `sub2api:v0.1.146.2` 已构建，镜像 ID 为 `sha256:31cb8b2c420c754c4b67cccc75e8d3f1563244d841b18b33c672088217bd2de6`，二进制版本输出为 `Sub2API v0.1.146 (image: v0.1.146.2, commit: b5ae4937387f, built: 2026-07-08T23:53:01Z)`。
+- PASS：候选 green `18082` 通过 `/health`、静态资源、未登录 admin 401、未登录 `/responses` 401、未登录 `/v1/responses` 401、容器 healthy 和关键日志扫描。
+- PASS：代理已从 `sub2api-blue:8080` 切到 `sub2api-green:8080`，`nginx -t` 与 `nginx -s reload` 成功。
+- PASS：切流后 `http://127.0.0.1:8080/health`、`http://127.0.0.1:18081/health`、`http://127.0.0.1:18082/health` 均返回 200。
+- PASS：切流后未登录 `GET /api/v1/admin/users`、`POST /api/v1/admin/newapi-checkin/run-full-checkin`、`POST /api/v1/admin/newapi-checkin/sync-monthly`、`POST /responses`、`POST /v1/responses` 均返回 401。
+- PASS：65 秒观察后，active green 运行 `sub2api:v0.1.146.2` 且 `healthy Status=running Restart=0`；green/proxy 最近 120 秒关键日志命中 0。
+- Current state：active green `sub2api:v0.1.146.2`；rollback blue `sub2api:v0.1.146.1`。
+- OBSERVE：发布脚本在候选日志扫描阶段被 Docker 启动 WARN stderr 触发 `NativeCommandError` 停止；候选验证已通过，随后手动完成日志扫描、切流和观察。
+- LIMIT：部署 `.env` 没有可用于非交互登录的 `ADMIN_PASSWORD` 明文值，未执行已认证后台任务 API body；没有执行 Git push。
+
+## 2026-07-09 09:09 +08:00 - NewApi 余额符号与月度回填修复发布到 v0.1.146.3
+
+- 根因：部分站点状态上游返回 `custom_currency_symbol=¤`，总余额/已用展示直接信任该占位符，导致页面前缀异常；同时“刷新当前站点余额/签到”在签到接口未返回奖励时，没有用当天月度记录回填 `quota_awarded` 与历史展示。
+- 修复：`getNewAPIDisplaySymbol` 过滤通用货币占位符并回退默认美元符号；新增 `applyMonthlyAwardToCheckinLocked` 和历史/余额/月度统一展示文本规范化，使当天月度记录可以补齐签到奖励并修正旧 `¤...` 展示值。
+- PASS：`go test ./internal/service -run 'TestNewAPICheckin(DisplaySymbolFallsBack|RefreshSiteBalancesUsesMonthlyRecordForTodayAward|HistoryUsesMonthlyRecordForExistingTodayAward)' -count=1` 通过，输出 `ok github.com/Wei-Shaw/sub2api/internal/service 0.050s`。
+- PASS：候选 blue `18083` 通过 `/health`、`/admin/tools`、未登录 `GET /api/v1/admin/users`、未登录 `POST /responses`、未登录 `POST /v1/responses`，状态符合预期。
+- PASS：`docker exec sub2api-blue /app/sub2api --version` 输出 `Sub2API v0.1.146 (image: v0.1.146.3, commit: d4c107435861, built: 2026-07-09T00:34:16Z)`；容器 `Image=sub2api:v0.1.146.3 Health=healthy Restart=0`。
+- PASS：候选 blue 关键日志扫描 `panic|fatal|migration.*fail|checksum|pq:|bind:|address already in use|listen tcp|rebuild failed` 命中 0。
+- PASS：代理已从 `sub2api-green:8080` 切到 `sub2api-blue:8080`，`nginx -t` 与 `nginx -s reload` 成功。
+- PASS：切流后 `http://127.0.0.1:8080/health`、`http://127.0.0.1:18081/health`、`http://127.0.0.1:18083/health` 均返回 200。
+- PASS：切流后未登录 `GET /api/v1/admin/users`、`POST /api/v1/admin/newapi-checkin/run-full-checkin`、`POST /responses`、`POST /v1/responses` 均返回 401。
+- PASS：65 秒观察后，active blue 运行 `sub2api:v0.1.146.3` 且 `healthy Status=running Restart=0`；blue/proxy 最近 75 秒关键日志命中 0。
+- Current state：active blue `sub2api:v0.1.146.3`；rollback green `sub2api:v0.1.146.2`。
+- LIMIT：部署 `.env` 没有可用于非交互登录的 `ADMIN_PASSWORD` 明文值，未执行已认证 NewApi 页面点击或后台 API body 读取；没有执行 Git push。
+
 ## 2026-07-08 09:10 +08:00 - v0.1.143.4 SQL 工具箱发布验证
 
 - PASS：功能提交 `c7718ed4d2db` 已存在，提交范围为 NewApi 签到 SQL 迁移、Token 成本 SQL 集成、管理端工具箱 tab、测试和过程记录。
@@ -4290,3 +4326,76 @@ Verification:
 
 Limit:
 - Noninteractive authenticated admin state read could not run because deploy .env has no readable ADMIN_PASSWORD value; no password or access token was printed.
+
+## Grok OpenAI-compatible backend absorption - 2026-07-09T10:40:00+08:00
+
+Actor: Devil
+
+Scope:
+- Absorb the minimum Grok backend slice from historical sub2api branch code so Grok groups can schedule Grok accounts through the existing OpenAI-compatible `/v1/responses`, `/v1/messages`, and `/v1/chat/completions` flow.
+
+Verification:
+- `go test ./internal/service -run 'TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields|TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken|TestOpenAIGatewayServiceListSchedulableAccountsUsesRequestedPlatform|TestOpenAIGatewayServiceGetAccessTokenUsesGrokOAuthCredential|TestOpenAISchedulerExhaustionProbeUsesRequestedGrokPlatform'`
+- `go test ./internal/service -run 'TestOpenAISchedulerExhaustionProbeFiniteTriesEachCandidateTwice|TestOpenAISchedulerExhaustionProbeStopsOnSuccessAndClearsRuntimeBlock'`
+- `go test ./internal/service -run TestDoesNotExist`
+- `go test ./internal/server/routes -run 'TestGatewayRoutesGrokMessagesCountTokensReturnsOpenAICompatible404|TestGatewayRoutesOpenAIResponsesCompactPathIsRegistered|TestGatewayRoutesOpenAIImagesPathsAreRegistered'`
+- `go test ./internal/handler/... -run TestDoesNotExist`
+
+Observed result:
+- Grok platform is now threaded through OpenAI-compatible account selection, sticky-session recheck, and scheduler exhaustion probing.
+- Grok OAuth accounts now read `access_token` from Grok credentials and `/responses` requests branch to xAI-specific forwarding.
+- Admin backend now accepts `platform=grok` for group create/update and returns Grok default model candidates.
+
+Limit:
+- This round did not add a full admin frontend Grok creation flow; creating or editing Grok accounts/groups still depends on backend API or existing data until the UI branch is absorbed separately.
+
+## Grok admin frontend integration - 2026-07-09T16:00:00+08:00
+
+Actor: Devil
+
+Scope:
+- Integrate the Grok admin frontend slice so Grok can be selected in account creation, OAuth authorization, refresh-token import, and re-authorization flows.
+- Wire the existing Grok OAuth admin API into the shared admin API export and add missing xAI OAuth package helpers required by the backend Grok OAuth service.
+
+Verification:
+- `npm run typecheck`
+- `go test ./internal/service -run 'TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields|TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken|TestOpenAIGatewayServiceListSchedulableAccountsUsesRequestedPlatform|TestOpenAIGatewayServiceGetAccessTokenUsesGrokOAuthCredential|TestOpenAISchedulerExhaustionProbeUsesRequestedGrokPlatform'`
+- `go test ./internal/server/routes -run 'TestGatewayRoutesGrokMessagesCountTokensReturnsOpenAICompatible404|TestGatewayRoutesOpenAIResponsesCompactPathIsRegistered|TestGatewayRoutesOpenAIImagesPathsAreRegistered'`
+- `go test ./internal/handler/... -run TestDoesNotExist`
+- `go test ./cmd/server -run TestDoesNotExist`
+- `git diff --check`
+
+Observed result:
+- Frontend typecheck passed after adding Grok platform/type/i18n/color/API/composable integration.
+- Grok account creation now exposes OAuth-only selection, Grok auth URL generation, code exchange, and manual refresh-token validation paths.
+- Account re-authorization modals now route Grok accounts through Grok OAuth state, auth URL, and code exchange instead of falling back to Anthropic.
+- Backend focused service/routes/handler/server compile gates passed after adding xAI OAuth helpers used by Grok OAuth service and token client.
+
+Limit:
+- This round did not commit, build, deploy, or perform authenticated browser click-through with a real Grok account.
+
+## Grok API Key account support - 2026-07-09T16:28:19+08:00
+
+Actor: Devil
+
+Scope:
+- Add Grok API Key account support on top of the Grok admin frontend integration.
+- Let Grok API Key credentials use `credentials.api_key` for gateway access tokens instead of the OpenAI-specific `openai_api_key` field.
+- Expose Grok API Key selection and xAI API Key/base URL hints in the account creation and edit forms.
+
+Verification:
+- RED before implementation: `go test ./internal/service -run TestOpenAIGatewayServiceGetAccessTokenUsesGrokAPIKeyCredential` failed with `api_key not found in credentials`.
+- `npm run typecheck`
+- `go test ./internal/service -run 'TestOpenAIGatewayServiceGetAccessTokenUsesGrokOAuthCredential|TestOpenAIGatewayServiceGetAccessTokenUsesGrokAPIKeyCredential|TestBuildGrokResponsesRequestUsesAccountBaseURLAndBearerToken|TestOpenAIGatewayServiceListSchedulableAccountsUsesRequestedPlatform'`
+- `go test ./internal/server/routes -run 'TestGatewayRoutesGrokMessagesCountTokensReturnsOpenAICompatible404|TestGatewayRoutesOpenAIResponsesCompactPathIsRegistered|TestGatewayRoutesOpenAIImagesPathsAreRegistered'`
+- `go test ./internal/handler/... -run TestDoesNotExist`
+- `go test ./cmd/server -run TestDoesNotExist`
+- `git diff --check -- frontend/src/components/account/EditAccountModal.vue frontend/src/components/account/CreateAccountModal.vue frontend/src/components/account/AccountAPIKeyCredentialsFields.vue frontend/src/i18n/locales/en.ts frontend/src/i18n/locales/zh.ts backend/internal/service/openai_gateway_service.go backend/internal/service/openai_gateway_service_grok_test.go`
+
+Observed result:
+- Grok API Key accounts now return token type `apikey` from `GetAccessToken` and forward the stored xAI key through the existing OpenAI-compatible gateway path.
+- Account creation now allows selecting Grok API Key with xAI API Key wording and `https://api.x.ai/v1` as the Grok default base URL.
+- Account editing now shows the Grok base URL hint and preserves the Grok default base URL instead of falling back to Anthropic defaults.
+
+Limit:
+- This round did not commit, build, deploy, or perform authenticated browser click-through with a real Grok API Key account.

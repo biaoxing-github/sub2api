@@ -77,6 +77,7 @@ const supportsOpenAICodexCliUserAgent = computed(() => props.platform === 'opena
 
 const baseUrlPlaceholder = computed(() => {
   if (props.platform === 'openai') return 'https://api.openai.com'
+  if (props.platform === 'grok') return 'https://api.x.ai/v1'
   if (props.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
   if (props.platform === 'antigravity') return 'https://cloudcode-pa.googleapis.com'
   return 'https://api.anthropic.com'
@@ -84,6 +85,7 @@ const baseUrlPlaceholder = computed(() => {
 
 const apiKeyPlaceholder = computed(() => {
   if (props.platform === 'openai') return 'sk-proj-...'
+  if (props.platform === 'grok') return 'xai-...'
   if (props.platform === 'gemini') return 'AIza...'
   if (props.platform === 'antigravity') return 'sk-...'
   return 'sk-ant-...'

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
 const (
@@ -22,6 +23,7 @@ const (
 // OpenAISchedulerExhaustionProbeOptions 描述调度耗尽后的小请求探测范围。
 type OpenAISchedulerExhaustionProbeOptions struct {
 	GroupID        *int64
+	Platform       string
 	RequestedModel string
 	RequireCompact bool
 	Infinite       bool
@@ -129,10 +131,11 @@ func (s *OpenAIGatewayService) listOpenAISchedulerExhaustionProbeCandidates(ctx 
 	if s == nil || s.accountRepo == nil {
 		return nil, errors.New("openai account repository is nil")
 	}
+	platform := normalizeOpenAICompatiblePlatform(strings.TrimSpace(opts.Platform))
 	var accounts []Account
 	var err error
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-		accounts, err = s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+		accounts, err = s.accountRepo.ListByPlatform(ctx, platform)
 	} else if opts.GroupID != nil {
 		accounts, err = s.accountRepo.ListByGroup(ctx, *opts.GroupID)
 	} else {
@@ -144,15 +147,15 @@ func (s *OpenAIGatewayService) listOpenAISchedulerExhaustionProbeCandidates(ctx 
 
 	candidates := make([]Account, 0, len(accounts))
 	for _, account := range accounts {
-		if isOpenAISchedulerExhaustionProbeCandidate(ctx, &account, opts.RequestedModel, opts.RequireCompact) {
+		if isOpenAISchedulerExhaustionProbeCandidate(ctx, &account, platform, opts.RequestedModel, opts.RequireCompact) {
 			candidates = append(candidates, account)
 		}
 	}
 	return candidates, nil
 }
 
-func isOpenAISchedulerExhaustionProbeCandidate(ctx context.Context, account *Account, requestedModel string, requireCompact bool) bool {
-	if account == nil || !account.IsOpenAI() || !account.IsActive() || !account.Schedulable {
+func isOpenAISchedulerExhaustionProbeCandidate(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool) bool {
+	if account == nil || !isOpenAICompatibleAccountForPlatform(account, platform) || !account.IsActive() || !account.Schedulable {
 		return false
 	}
 	if account.AutoPauseOnExpired && account.ExpiresAt != nil && !time.Now().Before(*account.ExpiresAt) {
@@ -182,6 +185,9 @@ func isOpenAISchedulerExhaustionProbeCandidate(ctx context.Context, account *Acc
 func (s *OpenAIGatewayService) probeOpenAISchedulerExhaustionAccount(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
 	if s.openAISchedulerExhaustionProbeFunc != nil {
 		return s.openAISchedulerExhaustionProbeFunc(ctx, account, requestedModel, requireCompact)
+	}
+	if account != nil && account.IsGrok() {
+		return s.sendGrokSchedulerExhaustionProbe(ctx, account, requestedModel)
 	}
 	return s.sendOpenAISchedulerExhaustionProbe(ctx, account, requestedModel, requireCompact)
 }
@@ -287,6 +293,70 @@ func (s *OpenAIGatewayService) openAISchedulerExhaustionProbeURL(account *Accoun
 		targetURL = appendOpenAIResponsesRequestPathSuffix(targetURL, "/compact")
 	}
 	return targetURL, nil
+}
+
+func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Context, account *Account, requestedModel string) error {
+	if s == nil || s.httpUpstream == nil {
+		return errors.New("grok scheduler exhaustion probe upstream is nil")
+	}
+	if account == nil {
+		return errors.New("grok scheduler exhaustion probe account is nil")
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, openaiResponsesProbeTimeout)
+	defer cancel()
+
+	token, _, err := s.GetAccessToken(probeCtx, account)
+	if err != nil {
+		return fmt.Errorf("get grok probe token for account %d: %w", account.ID, err)
+	}
+
+	probeModel := requestedModel
+	if strings.TrimSpace(probeModel) == "" {
+		probeModel = "grok-4.3"
+	}
+	upstreamProbeModel := strings.TrimSpace(account.GetMappedModel(probeModel))
+	if upstreamProbeModel == "" {
+		upstreamProbeModel = probeModel
+	}
+	patchedBody, err := patchGrokResponsesBody(openaiResponsesProbePayload(probeModel), upstreamProbeModel)
+	if err != nil {
+		return fmt.Errorf("build grok scheduler exhaustion probe body: %w", err)
+	}
+	req, err := buildGrokResponsesRequest(probeCtx, nil, account, patchedBody, token)
+	if err != nil {
+		return fmt.Errorf("build grok scheduler exhaustion probe request: %w", err)
+	}
+	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	req.Header.Set("accept", "application/json")
+
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+
+	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	if err != nil {
+		return fmt.Errorf("grok scheduler exhaustion probe request failed for account %d: %w", account.ID, err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, openAISchedulerExhaustionProbeBodyReadLimit))
+	if readErr != nil {
+		return fmt.Errorf("read grok scheduler exhaustion probe response for account %d: %w", account.ID, readErr)
+	}
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		s.updateGrokUsageSnapshot(probeCtx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
+		return nil
+	}
+
+	s.updateGrokUsageSnapshot(probeCtx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
+	s.handleGrokAccountUpstreamError(probeCtx, account, resp.StatusCode, resp.Header, responseBody)
+	bodyText := strings.TrimSpace(truncateForLog(responseBody, 512))
+	if bodyText == "" {
+		return fmt.Errorf("grok scheduler exhaustion probe failed for account %d: status %d", account.ID, resp.StatusCode)
+	}
+	return fmt.Errorf("grok scheduler exhaustion probe failed for account %d: status %d body %s", account.ID, resp.StatusCode, bodyText)
 }
 
 func (s *OpenAIGatewayService) recoverOpenAISchedulerExhaustionAccount(ctx context.Context, account *Account) error {

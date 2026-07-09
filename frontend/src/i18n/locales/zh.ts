@@ -2230,6 +2230,7 @@ export default {
         openai: 'OpenAI',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        grok: 'Grok',
       },
       saving: '保存中...',
       noGroups: '暂无分组',
@@ -3392,6 +3393,7 @@ export default {
         anthropic: 'Anthropic',
         gemini: 'Gemini',
         antigravity: 'Antigravity',
+        grok: 'Grok',
       },
       types: {
         oauth: 'OAuth',
@@ -3400,6 +3402,8 @@ export default {
         googleOauth: 'Google OAuth',
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
+        grokOauth: 'Grok OAuth',
+        grokApiKey: 'xAI API Key',
         antigravityApikey: '通过 Base URL + API Key 连接',
         upstream: '对接上游',
         upstreamDesc: '通过 Base URL + API Key 连接上游',
@@ -4158,6 +4162,30 @@ export default {
           validateAndCreate: '验证并创建账号',
           pleaseEnterRefreshToken: '请输入 Refresh Token',
           failedToValidateRT: '验证 Refresh Token 失败'
+        },
+        grok: {
+          title: 'Grok 账户授权',
+          followSteps: '请按照以下步骤完成 Grok 账户的授权：',
+          step1GenerateUrl: '生成授权链接',
+          generateAuthUrl: '生成授权链接',
+          step2OpenUrl: '在浏览器中打开链接并完成授权',
+          openUrlDesc: '请在新标签页中打开授权链接，登录您的 xAI 账户并授权。',
+          importantNotice: '重要提示：授权完成后，请复制完整回调链接或其中的 code，系统会自动解析 state。',
+          step3EnterCode: '输入授权链接或 Code',
+          authCodeDesc: '授权完成后，请复制浏览器跳转后的完整回调链接，或仅复制 code 参数的值。',
+          authCode: '授权链接或 Code',
+          authCodePlaceholder: '方式1：复制完整回调链接\n方式2：仅复制 code 参数的值',
+          authCodeHint: '推荐直接粘贴完整回调链接，系统会自动提取 code 和 state。',
+          refreshTokenAuth: '手动输入 RT',
+          refreshTokenDesc: '输入您已有的 Grok Refresh Token，支持批量输入（每行一个），系统将自动验证并创建账号。',
+          refreshTokenPlaceholder: '粘贴您的 Grok Refresh Token...\n支持多个，每行一个',
+          validating: '验证中...',
+          validateAndCreate: '验证并创建账号',
+          pleaseEnterRefreshToken: '请输入 Refresh Token',
+          failedToGenerateUrl: '生成 Grok 授权链接失败',
+          missingExchangeParams: '缺少 code / session_id / state',
+          failedToExchangeCode: 'Grok 授权码兑换失败',
+          failedToValidateRT: '验证 Refresh Token 失败'
         }
       },
       // Gemini specific (platform-wide)
@@ -4295,10 +4323,15 @@ export default {
           now: '现在'
         }
       },
+      grok: {
+        baseUrlHint: '默认使用 xAI 官方 API 地址 https://api.x.ai/v1',
+        apiKeyHint: '您的 xAI API Key'
+      },
       // Re-Auth Modal
       reAuthorizeAccount: '重新授权账号',
       claudeCodeAccount: 'Claude Code 账号',
       openaiAccount: 'OpenAI 账号',
+      grokAccount: 'Grok 账号',
       geminiAccount: 'Gemini 账号',
       antigravityAccount: 'Antigravity 账号',
       inputMethod: '输入方式',

@@ -170,7 +170,7 @@ func (s *OpenAIGatewayService) listSchedulingPoolAccounts(ctx context.Context, g
 	}
 
 	if platform == PlatformOpenAI {
-		accounts, err := s.listSchedulableAccounts(ctx, groupID)
+		accounts, err := s.listSchedulableAccounts(ctx, groupID, platform)
 		return accounts, false, err
 	}
 
