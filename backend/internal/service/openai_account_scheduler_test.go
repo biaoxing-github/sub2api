@@ -51,10 +51,14 @@ func (r schedulerPrivacyGroupRepo) GetByID(ctx context.Context, id int64) (*Grou
 }
 
 func (r schedulerGroupAwareOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
+}
+
+func (r schedulerGroupAwareOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {
 		account := acc
-		if acc.Platform == platform && isAccountInRequestedGroup(&account, &groupID) {
+		if schedulerTestPlatformIn(acc.Platform, platforms) && isAccountInRequestedGroup(&account, &groupID) {
 			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
 		}
 	}
@@ -62,10 +66,14 @@ func (r schedulerGroupAwareOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatfor
 }
 
 func (r schedulerGroupAwareOpenAIAccountRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.ListSchedulableUngroupedByPlatforms(ctx, []string{platform})
+}
+
+func (r schedulerGroupAwareOpenAIAccountRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {
 		account := acc
-		if acc.Platform == platform && isAccountInRequestedGroup(&account, nil) {
+		if schedulerTestPlatformIn(acc.Platform, platforms) && isAccountInRequestedGroup(&account, nil) {
 			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
 		}
 	}
@@ -99,9 +107,13 @@ func (r schedulerTestOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (
 }
 
 func (r schedulerTestOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
+}
+
+func (r schedulerTestOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {
-		if acc.Platform == platform {
+		if schedulerTestPlatformIn(acc.Platform, platforms) {
 			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
 		}
 	}
@@ -109,9 +121,13 @@ func (r schedulerTestOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx 
 }
 
 func (r schedulerTestOpenAIAccountRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.ListSchedulableByPlatforms(ctx, []string{platform})
+}
+
+func (r schedulerTestOpenAIAccountRepo) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {
-		if acc.Platform == platform {
+		if schedulerTestPlatformIn(acc.Platform, platforms) {
 			result = append(result, schedulerTestEnsureOpenAIAPIKeyCredentials(acc))
 		}
 	}
@@ -120,6 +136,19 @@ func (r schedulerTestOpenAIAccountRepo) ListSchedulableByPlatform(ctx context.Co
 
 func (r schedulerTestOpenAIAccountRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
 	return r.ListSchedulableByPlatform(ctx, platform)
+}
+
+func (r schedulerTestOpenAIAccountRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.ListSchedulableByPlatforms(ctx, platforms)
+}
+
+func schedulerTestPlatformIn(platform string, platforms []string) bool {
+	for _, item := range platforms {
+		if platform == item {
+			return true
+		}
+	}
+	return false
 }
 
 type schedulerTestConcurrencyCache struct {

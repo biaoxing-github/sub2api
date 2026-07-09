@@ -290,7 +290,11 @@ func (r *manualProbeSchedulingPoolRepo) GetByID(ctx context.Context, id int64) (
 }
 
 func (r *manualProbeSchedulingPoolRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
-	if r.account == nil || r.account.Platform != platform || !r.account.IsSchedulable() {
+	return r.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
+}
+
+func (r *manualProbeSchedulingPoolRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
+	if r.account == nil || !schedulingPoolPlatformIn(r.account.Platform, platforms) || !r.account.IsSchedulable() {
 		return nil, nil
 	}
 	account := *r.account
@@ -301,8 +305,16 @@ func (r *manualProbeSchedulingPoolRepo) ListSchedulableUngroupedByPlatform(ctx c
 	return r.ListSchedulableByGroupIDAndPlatform(ctx, 0, platform)
 }
 
+func (r *manualProbeSchedulingPoolRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatforms(ctx, 0, platforms)
+}
+
 func (r *manualProbeSchedulingPoolRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
 	return r.ListSchedulableByGroupIDAndPlatform(ctx, 0, platform)
+}
+
+func (r *manualProbeSchedulingPoolRepo) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatforms(ctx, 0, platforms)
 }
 
 func (r *manualProbeSchedulingPoolRepo) ClearError(ctx context.Context, id int64) error {
@@ -448,9 +460,41 @@ func (r schedulingPoolPathHealthAccountRepo) GetByID(ctx context.Context, id int
 }
 
 func (r schedulingPoolPathHealthAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
+}
+
+func (r schedulingPoolPathHealthAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
 	result := make([]Account, 0, len(r.listed))
 	for _, account := range r.listed {
-		if account.Platform == platform && isAccountInRequestedGroup(&account, &groupID) {
+		if schedulingPoolPlatformIn(account.Platform, platforms) && isAccountInRequestedGroup(&account, &groupID) {
+			result = append(result, account)
+		}
+	}
+	return result, nil
+}
+
+func (r schedulingPoolPathHealthAccountRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.ListSchedulableByPlatforms(ctx, []string{platform})
+}
+
+func (r schedulingPoolPathHealthAccountRepo) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	result := make([]Account, 0, len(r.listed))
+	for _, account := range r.listed {
+		if schedulingPoolPlatformIn(account.Platform, platforms) {
+			result = append(result, account)
+		}
+	}
+	return result, nil
+}
+
+func (r schedulingPoolPathHealthAccountRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.ListSchedulableUngroupedByPlatforms(ctx, []string{platform})
+}
+
+func (r schedulingPoolPathHealthAccountRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	result := make([]Account, 0, len(r.listed))
+	for _, account := range r.listed {
+		if schedulingPoolPlatformIn(account.Platform, platforms) && isAccountInRequestedGroup(&account, nil) {
 			result = append(result, account)
 		}
 	}

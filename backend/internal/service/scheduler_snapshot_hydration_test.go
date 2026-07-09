@@ -60,6 +60,49 @@ func (c *snapshotHydrationCache) SetOutboxWatermark(ctx context.Context, id int6
 	return nil
 }
 
+func TestSchedulerSnapshotDefaultBucketsIncludesOpenAIMixedBuckets(t *testing.T) {
+	t.Parallel()
+
+	svc := NewSchedulerSnapshotService(nil, nil, nil, snapshotBucketGroupRepo{
+		groups: []Group{
+			{ID: 12, Platform: PlatformOpenAI, Status: StatusActive},
+		},
+	}, nil)
+
+	buckets, err := svc.defaultBuckets(context.Background())
+	if err != nil {
+		t.Fatalf("defaultBuckets error: %v", err)
+	}
+
+	if !snapshotBucketListContains(buckets, SchedulerBucket{GroupID: 0, Platform: PlatformOpenAI, Mode: SchedulerModeMixed}) {
+		t.Fatalf("expected root OpenAI mixed bucket in %#v", buckets)
+	}
+	if !snapshotBucketListContains(buckets, SchedulerBucket{GroupID: 12, Platform: PlatformOpenAI, Mode: SchedulerModeMixed}) {
+		t.Fatalf("expected group OpenAI mixed bucket in %#v", buckets)
+	}
+}
+
+func TestSchedulerSnapshotRebuildBucketsForPlatformIncludesOpenAIMixedBucket(t *testing.T) {
+	t.Parallel()
+
+	cache := &snapshotBucketRecordingCache{}
+	svc := NewSchedulerSnapshotService(cache, nil, snapshotBucketAccountRepo{}, nil, nil)
+
+	if err := svc.rebuildBucketsForPlatform(context.Background(), PlatformOpenAI, []int64{12}, "test", nil); err != nil {
+		t.Fatalf("rebuildBucketsForPlatform error: %v", err)
+	}
+
+	if !snapshotBucketListContains(cache.setBuckets, SchedulerBucket{GroupID: 12, Platform: PlatformOpenAI, Mode: SchedulerModeSingle}) {
+		t.Fatalf("expected OpenAI single bucket in %#v", cache.setBuckets)
+	}
+	if !snapshotBucketListContains(cache.setBuckets, SchedulerBucket{GroupID: 12, Platform: PlatformOpenAI, Mode: SchedulerModeForced}) {
+		t.Fatalf("expected OpenAI forced bucket in %#v", cache.setBuckets)
+	}
+	if !snapshotBucketListContains(cache.setBuckets, SchedulerBucket{GroupID: 12, Platform: PlatformOpenAI, Mode: SchedulerModeMixed}) {
+		t.Fatalf("expected OpenAI mixed bucket in %#v", cache.setBuckets)
+	}
+}
+
 func TestOpenAISelectAccountWithLoadAwareness_HydratesSelectedAccountFromSchedulerSnapshot(t *testing.T) {
 	cache := &snapshotHydrationCache{
 		snapshot: []*Account{
@@ -185,4 +228,83 @@ func TestGatewaySelectAccountWithLoadAwareness_HydratesSelectedAccountFromSchedu
 	if got := result.Account.GetCredential("api_key"); got != "anthropic-live-key" {
 		t.Fatalf("expected hydrated api key, got %q", got)
 	}
+}
+
+type snapshotBucketRecordingCache struct {
+	setBuckets []SchedulerBucket
+}
+
+func (c *snapshotBucketRecordingCache) GetSnapshot(ctx context.Context, bucket SchedulerBucket) ([]*Account, bool, error) {
+	return nil, false, nil
+}
+
+func (c *snapshotBucketRecordingCache) SetSnapshot(ctx context.Context, bucket SchedulerBucket, accounts []Account) error {
+	c.setBuckets = append(c.setBuckets, bucket)
+	return nil
+}
+
+func (c *snapshotBucketRecordingCache) GetAccount(ctx context.Context, accountID int64) (*Account, error) {
+	return nil, nil
+}
+
+func (c *snapshotBucketRecordingCache) SetAccount(ctx context.Context, account *Account) error {
+	return nil
+}
+
+func (c *snapshotBucketRecordingCache) DeleteAccount(ctx context.Context, accountID int64) error {
+	return nil
+}
+
+func (c *snapshotBucketRecordingCache) UpdateLastUsed(ctx context.Context, updates map[int64]time.Time) error {
+	return nil
+}
+
+func (c *snapshotBucketRecordingCache) TryLockBucket(ctx context.Context, bucket SchedulerBucket, ttl time.Duration) (bool, error) {
+	return true, nil
+}
+
+func (c *snapshotBucketRecordingCache) UnlockBucket(ctx context.Context, bucket SchedulerBucket) error {
+	return nil
+}
+
+func (c *snapshotBucketRecordingCache) ListBuckets(ctx context.Context) ([]SchedulerBucket, error) {
+	return nil, nil
+}
+
+func (c *snapshotBucketRecordingCache) GetOutboxWatermark(ctx context.Context) (int64, error) {
+	return 0, nil
+}
+
+func (c *snapshotBucketRecordingCache) SetOutboxWatermark(ctx context.Context, id int64) error {
+	return nil
+}
+
+type snapshotBucketAccountRepo struct {
+	AccountRepository
+}
+
+func (snapshotBucketAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	return nil, nil
+}
+
+func (snapshotBucketAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
+	return nil, nil
+}
+
+type snapshotBucketGroupRepo struct {
+	GroupRepository
+	groups []Group
+}
+
+func (r snapshotBucketGroupRepo) ListActive(ctx context.Context) ([]Group, error) {
+	return r.groups, nil
+}
+
+func snapshotBucketListContains(buckets []SchedulerBucket, want SchedulerBucket) bool {
+	for _, bucket := range buckets {
+		if bucket == want {
+			return true
+		}
+	}
+	return false
 }

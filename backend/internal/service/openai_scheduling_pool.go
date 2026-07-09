@@ -204,6 +204,9 @@ func openAIAccountSchedulingPoolPlatformAllowed(account *Account, platform strin
 	if account == nil {
 		return false
 	}
+	if platform == PlatformOpenAI {
+		return isOpenAICompatibleAccountForPlatform(account, platform)
+	}
 	if useMixed {
 		if account.Platform == platform {
 			return true

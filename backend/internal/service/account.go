@@ -2365,6 +2365,9 @@ func (a *Account) GetOpenAISessionID() string {
 }
 
 func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
+	if capability == "" {
+		return true
+	}
 	if !a.IsOpenAI() {
 		return false
 	}

@@ -96,6 +96,9 @@ const filteredGroups = computed(() => {
       result = result.filter(
         (g) => g.platform === 'antigravity' || g.platform === 'anthropic' || g.platform === 'gemini'
       )
+    } else if (props.platform === 'grok') {
+      // Grok 使用 OpenAI 兼容请求协议，可绑定到 OpenAI 分组统一调度。
+      result = result.filter((g) => g.platform === 'grok' || g.platform === 'openai')
     } else {
       // 默认：只能选择同 platform 的分组
       result = result.filter((g) => g.platform === props.platform)

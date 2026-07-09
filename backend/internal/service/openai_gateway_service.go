@@ -2332,7 +2332,7 @@ func isOpenAIAccountEligibleForRequest(ctx context.Context, account *Account, re
 	if account == nil || !isOpenAICompatibleAccountForPlatform(account, requestPlatform) || !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 		return false
 	}
-	if account.IsOpenAIApiKey() && len(account.GetAPIKeys()) == 0 {
+	if account.IsOpenAICompatible() && account.Type == AccountTypeAPIKey && len(account.GetAPIKeys()) == 0 {
 		return false
 	}
 	if account.IsOpenAI() {
@@ -3155,6 +3155,15 @@ func normalizeOpenAICompatiblePlatform(platform string) string {
 	return PlatformOpenAI
 }
 
+func openAICompatibleAccountPlatforms(platform string) []string {
+	platform = normalizeOpenAICompatiblePlatform(strings.TrimSpace(platform))
+	if platform == PlatformOpenAI {
+		// Grok 账号使用 OpenAI 兼容请求协议，允许作为 OpenAI 分组的候选账号。
+		return []string{PlatformOpenAI, PlatformGrok}
+	}
+	return []string{platform}
+}
+
 type openAICompatiblePlatformCtxKey struct{}
 
 func withOpenAICompatiblePlatform(ctx context.Context, platform string) context.Context {
@@ -3178,7 +3187,12 @@ func isOpenAICompatibleAccountForPlatform(account *Account, platform string) boo
 	if account == nil || !account.IsOpenAICompatible() {
 		return false
 	}
-	return normalizeOpenAICompatiblePlatform(account.Platform) == normalizeOpenAICompatiblePlatform(strings.TrimSpace(platform))
+	for _, candidatePlatform := range openAICompatibleAccountPlatforms(platform) {
+		if account.Platform == candidatePlatform {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, error) {
@@ -3192,9 +3206,16 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 		accounts, _, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)
 		return accounts, err
 	}
+	platforms := openAICompatibleAccountPlatforms(platform)
 	var accounts []Account
 	var err error
-	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+	if len(platforms) > 1 && s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
+	} else if len(platforms) > 1 && groupID != nil {
+		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, platforms)
+	} else if len(platforms) > 1 {
+		accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, platforms)
+	} else if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
 		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
 	} else if groupID != nil {
 		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, platform)
