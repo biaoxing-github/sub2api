@@ -4511,3 +4511,34 @@ Observed result:
 Limit:
 - Full `go test -tags unit ./internal/service` was not used as a verification gate because existing unrelated token refresh unit tests currently do not compile against the `NewTokenRefreshService` signature.
 - This round did not commit, build, deploy, or push.
+
+## GPT-5.6 visibility release v0.1.146.5 - 2026-07-09T19:09:08+08:00
+
+Actor: Devil
+
+Scope:
+- Diagnose why GPT-5.6 models were not visible in the admin model selector.
+- Deploy already-built image `sub2api:v0.1.146.5` from commit `eff26f02c454` to the idle blue container.
+- Switch active traffic from green `sub2api:v0.1.146.4` to blue `sub2api:v0.1.146.5` after candidate verification.
+
+Root cause:
+- The GPT-5.6 code was present in `eff26f02c454` and image `sub2api:v0.1.146.5`, but the live proxy still pointed to `sub2api-green:8080`, which was running `sub2api:v0.1.146.4`.
+
+Verification:
+- PASS: `docker image inspect sub2api:v0.1.146.5` showed `Version=v0.1.146.5` and `Revision=eff26f02c454dfee2ab588e752542aefe6a489fc`.
+- PASS: recreated only idle `sub2api-blue` with `SUB2API_BLUE_IMAGE=sub2api:v0.1.146.5`.
+- PASS: `http://127.0.0.1:18083/health` returned `200 {"status":"ok"}` and blue stayed `healthy`, restart count 0.
+- PASS: candidate protected checks returned 401 for `GET /api/v1/admin/users`, `POST /responses`, and `POST /v1/responses`.
+- PASS: public active health passed on `8080`, proxy bypass health passed on `18081`, and candidate health passed on `18083`.
+- PASS: `GET /assets/ModelWhitelistSelector.vue_vue_type_script_setup_true_lang-BCLhTQ0Z.js` returned `200 text/javascript` and contained `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `GPT-5.6 Sol`, `GPT-5.6 Terra`, and `GPT-5.6 Luna`.
+- PASS: `docker exec sub2api-proxy nginx -t` passed and `docker exec sub2api-proxy nginx -s reload` succeeded.
+- PASS: post-cutover 65-second blue/proxy critical log window had 0 matches, and blue stayed healthy with restart count 0.
+
+Observed result:
+- Active upstream is now `sub2api-blue:8080`.
+- Online image is now `sub2api:v0.1.146.5`.
+- Rollback target is `sub2api-green:8080` on `sub2api:v0.1.146.4`.
+
+Limit:
+- Authenticated browser click-through was not run because no reusable noninteractive admin login state was available.
+- If a browser tab still shows the old list, it is using a cached route chunk and should reload the page.
