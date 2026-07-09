@@ -265,6 +265,123 @@ func TestNewAPICheckinStartMonthlySyncJobDetachesFromRequestContext(t *testing.T
 	require.Len(t, repo.monthly, 1)
 }
 
+func TestNewAPICheckinDisplaySymbolFallsBackForGenericCurrencyPlaceholder(t *testing.T) {
+	quota := int64(95661050)
+	got := formatNewAPIDisplayAmount(&quota, NewAPICheckinSiteStatus{
+		QuotaDisplayType:     "USD",
+		QuotaPerUnit:         500000,
+		CustomCurrencySymbol: "¤",
+	})
+
+	require.Equal(t, "$191.3221", got)
+}
+
+func TestNewAPICheckinRefreshSiteBalancesUsesMonthlyRecordForTodayAward(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_display_type":"USD","quota_per_unit":500000}}`))
+		case r.URL.Path == "/api/user/checkin" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"success":false,"message":"今日已签到","data":{}}`))
+		case r.URL.Path == "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"username":"demo-user","display_name":"Demo User","quota":95661050,"used_quota":457142}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{
+			{
+				"name":     "demo",
+				"enabled":  true,
+				"base_url": upstream.URL,
+				"accounts": []map[string]any{
+					{"name": "alpha", "user_id": "1001", "access_key": "key-a"},
+				},
+			},
+		},
+	})
+	awarded := int64(50000)
+	repo.monthly = []NewAPICheckinMonthlyRecord{
+		{
+			Site:                     "demo",
+			UserID:                   "1001",
+			AccountName:              "alpha",
+			Month:                    "2026-07",
+			CheckinDate:              "2026-07-08",
+			QuotaAwarded:             &awarded,
+			QuotaAwardedDisplay:      "¤0.1",
+			QuotaAwardedDisplayValue: 0.1,
+			FetchedAt:                "2026-07-08 09:00:00",
+			Source:                   "manual-sync",
+		},
+	}
+
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+	result, err := svc.RefreshSiteBalances(context.Background(), "demo")
+	require.NoError(t, err)
+
+	require.Len(t, result.Accounts, 1)
+	require.NotNil(t, result.Accounts[0].QuotaAwarded)
+	require.Equal(t, awarded, *result.Accounts[0].QuotaAwarded)
+	require.Equal(t, "$0.1", result.Accounts[0].QuotaAwardedDisplay)
+	require.NotNil(t, result.Balances.Accounts[0].QuotaAwarded)
+	require.Equal(t, awarded, *result.Balances.Accounts[0].QuotaAwarded)
+	require.Len(t, result.History.Entries, 1)
+	require.NotNil(t, result.History.Entries[0].QuotaAwarded)
+	require.Equal(t, awarded, *result.History.Entries[0].QuotaAwarded)
+	require.Equal(t, "$0.1", result.History.Entries[0].QuotaAwardedDisplay)
+	require.Equal(t, awarded, result.LastRun.QuotaAwardedTotal)
+}
+
+func TestNewAPICheckinHistoryUsesMonthlyRecordForExistingTodayAward(t *testing.T) {
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{"sites": []map[string]any{}})
+	repo.history = NewAPICheckinHistoryPayload{
+		Entries: []NewAPICheckinHistoryEntry{
+			{
+				Date:                "2026-07-08",
+				RecordedAt:          "2026-07-08 09:10:00",
+				Site:                "demo",
+				Account:             "alpha",
+				UserID:              "1001",
+				CheckedInToday:      true,
+				CheckinStatus:       "今日已签到",
+				BalanceDisplay:      "¤191.3221",
+				UsedDisplay:         "¤0.91434",
+				BalanceDisplayValue: 191.3221,
+				UsedDisplayValue:    0.91434,
+			},
+		},
+	}
+	awarded := int64(50000)
+	repo.monthly = []NewAPICheckinMonthlyRecord{
+		{
+			Site:                     "demo",
+			UserID:                   "1001",
+			Month:                    "2026-07",
+			CheckinDate:              "2026-07-08",
+			QuotaAwarded:             &awarded,
+			QuotaAwardedDisplay:      "¤0.1",
+			QuotaAwardedDisplayValue: 0.1,
+		},
+	}
+
+	svc := newTestNewAPICheckinService(t, repo, nil)
+	history, err := svc.History(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, history.Entries, 1)
+	require.NotNil(t, history.Entries[0].QuotaAwarded)
+	require.Equal(t, awarded, *history.Entries[0].QuotaAwarded)
+	require.Equal(t, "$0.1", history.Entries[0].QuotaAwardedDisplay)
+	require.Equal(t, "$191.3221", history.Entries[0].BalanceDisplay)
+	require.Equal(t, "$0.91434", history.Entries[0].UsedDisplay)
+	require.Equal(t, 0.1, history.DailySummaries[0]["quota_awarded_display_value"])
+}
+
 type memoryNewAPICheckinRepository struct {
 	config  NewAPICheckinConfig
 	report  NewAPICheckinReport

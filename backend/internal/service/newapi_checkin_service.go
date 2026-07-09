@@ -1194,6 +1194,10 @@ func (s *NewAPICheckinService) RunFullCheckin(ctx context.Context) (NewAPIChecki
 			siteStatuses[task.site.Name] = status
 		}
 		checkin := s.queryCheckinStatusLocked(ctx, task.site, task.account, status)
+		checkin, err = s.applyMonthlyAwardToCheckinLocked(ctx, task.site, task.account, checkin, status)
+		if err != nil {
+			return NewAPICheckinReport{}, err
+		}
 		self := s.queryAccountSelfLocked(ctx, task.site, task.account, status)
 		row := s.buildBalanceAccount(task.site, task.account, self, checkin, status, s.nowText())
 		refreshedRows = append(refreshedRows, row)
@@ -1411,6 +1415,10 @@ func (s *NewAPICheckinService) refreshAccountBalanceLocked(ctx context.Context, 
 		cache.SiteStatuses[site.Name] = status
 	}
 	checkin := s.queryCheckinStatusLocked(ctx, site, account, status)
+	checkin, err = s.applyMonthlyAwardToCheckinLocked(ctx, site, account, checkin, status)
+	if err != nil {
+		return NewAPICheckinRefreshAccountResult{}, err
+	}
 	self := s.queryAccountSelfLocked(ctx, site, account, status)
 	row := s.buildBalanceAccount(site, account, self, checkin, status, s.nowText())
 	cache.Accounts = replaceNewAPIBalanceRows(cache.Accounts, []NewAPICheckinBalanceAccount{row})
@@ -1484,6 +1492,10 @@ func (s *NewAPICheckinService) refreshSiteBalancesLocked(ctx context.Context, si
 			continue
 		}
 		checkin := s.queryCheckinStatusLocked(ctx, site, account, status)
+		checkin, err = s.applyMonthlyAwardToCheckinLocked(ctx, site, account, checkin, status)
+		if err != nil {
+			return NewAPICheckinRefreshSiteResult{}, err
+		}
 		self := s.queryAccountSelfLocked(ctx, site, account, status)
 		row := s.buildBalanceAccount(site, account, self, checkin, status, s.nowText())
 		refreshed = append(refreshed, row)
@@ -1731,6 +1743,78 @@ func (s *NewAPICheckinService) queryMonthlyRecordsLocked(ctx context.Context, si
 	return records
 }
 
+func (s *NewAPICheckinService) applyMonthlyAwardToCheckinLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount, checkin NewAPICheckinStatusResult, status NewAPICheckinSiteStatus) (NewAPICheckinStatusResult, error) {
+	if checkin.QuotaAwarded != nil && *checkin.QuotaAwarded != 0 {
+		return checkin, nil
+	}
+	record, ok, err := s.monthlyRecordForCheckinLocked(ctx, site.Name, account.UserID, firstNonEmpty(checkin.CheckinDate, s.todayText()))
+	if err != nil || !ok || record.QuotaAwarded == nil {
+		return checkin, err
+	}
+	checkin.QuotaAwarded = record.QuotaAwarded
+	checkin.QuotaAwardedDisplay = firstNonEmpty(normalizeNewAPIDisplayText(record.QuotaAwardedDisplay), formatNewAPIDisplayAmount(record.QuotaAwarded, status))
+	checkin.CheckinOK = true
+	checkin.CheckedInToday = true
+	if checkin.CheckinStatus == "" || checkin.CheckinStatus == "签到查询失败" {
+		checkin.CheckinStatus = "今日已签到"
+		checkin.CheckinStatusTone = "warn"
+	}
+	if checkin.CheckinMessage == "" || checkin.CheckinMessage == "签到查询失败" {
+		checkin.CheckinMessage = "月度记录已确认今日签到"
+	}
+	return checkin, nil
+}
+
+func (s *NewAPICheckinService) monthlyRecordForCheckinLocked(ctx context.Context, siteName, userID, checkinDate string) (NewAPICheckinMonthlyRecord, bool, error) {
+	store, err := s.loadMonthlyStoreLocked(ctx)
+	if err != nil {
+		return NewAPICheckinMonthlyRecord{}, false, err
+	}
+	for _, record := range store.Records {
+		if record.Site == siteName && record.UserID == userID && record.CheckinDate == checkinDate {
+			return record, true, nil
+		}
+	}
+	return NewAPICheckinMonthlyRecord{}, false, nil
+}
+
+func applyMonthlyAwardsToHistoryEntries(entries []NewAPICheckinHistoryEntry, records []NewAPICheckinMonthlyRecord) []NewAPICheckinHistoryEntry {
+	monthlyByKey := map[string]NewAPICheckinMonthlyRecord{}
+	for _, record := range records {
+		monthlyByKey[record.Site+"\x00"+record.UserID+"\x00"+record.CheckinDate] = record
+	}
+	for idx := range entries {
+		entry := &entries[idx]
+		record, ok := monthlyByKey[entry.Site+"\x00"+entry.UserID+"\x00"+entry.Date]
+		if !ok || record.QuotaAwarded == nil {
+			continue
+		}
+		if entry.QuotaAwarded == nil || *entry.QuotaAwarded == 0 {
+			entry.QuotaAwarded = record.QuotaAwarded
+			entry.QuotaAwardedDisplay = firstNonEmpty(normalizeNewAPIDisplayText(record.QuotaAwardedDisplay), entry.QuotaAwardedDisplay)
+			entry.QuotaAwardedDisplayValue = firstNonZeroFloat64(record.QuotaAwardedDisplayValue, displayAmountValue(entry.QuotaAwardedDisplay))
+			entry.CheckedInToday = true
+			if entry.CheckinStatus == "" || entry.CheckinStatus == "签到查询失败" {
+				entry.CheckinStatus = "今日已签到"
+				entry.CheckinStatusTone = "warn"
+			}
+			if entry.CheckinMessage == "" || entry.CheckinMessage == "签到查询失败" {
+				entry.CheckinMessage = "月度记录已确认今日签到"
+			}
+		}
+	}
+	return entries
+}
+
+func firstNonZeroFloat64(values ...float64) float64 {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
 func (s *NewAPICheckinService) requestJSONLocked(ctx context.Context, method, url, baseURL string, headers map[string]string) newAPICheckinAPIResult {
 	var body io.Reader
 	if method == http.MethodPost {
@@ -1950,6 +2034,9 @@ func (s *NewAPICheckinService) rebuildReportLocked(report NewAPICheckinReport) N
 	}
 	for idx := range report.AccountResults {
 		row := &report.AccountResults[idx]
+		row.QuotaAwardedDisplay = normalizeNewAPIDisplayText(row.QuotaAwardedDisplay)
+		row.RemainingQuotaDisplay = normalizeNewAPIDisplayText(row.RemainingQuotaDisplay)
+		row.UsedQuotaDisplay = normalizeNewAPIDisplayText(row.UsedQuotaDisplay)
 		if row.CheckinStatus == "" {
 			row.CheckinStatus = classifyNewAPICheckinStatus(*row).status
 			row.CheckinStatusTone = classifyNewAPICheckinStatus(*row).tone
@@ -2006,6 +2093,11 @@ func (s *NewAPICheckinService) rebuildBalancePayloadLocked(cache NewAPICheckinBa
 	siteOrder := []string{}
 	displayTotals := map[string]map[string]any{}
 	var quotaTotal, usedTotal, enabledQuota, enabledUsed int64
+	for idx := range cache.Accounts {
+		cache.Accounts[idx].QuotaDisplay = normalizeNewAPIDisplayText(cache.Accounts[idx].QuotaDisplay)
+		cache.Accounts[idx].UsedQuotaDisplay = normalizeNewAPIDisplayText(cache.Accounts[idx].UsedQuotaDisplay)
+		cache.Accounts[idx].QuotaAwardedDisplay = normalizeNewAPIDisplayText(cache.Accounts[idx].QuotaAwardedDisplay)
+	}
 	for _, row := range cache.Accounts {
 		if _, ok := siteMap[row.Site]; !ok {
 			siteOrder = append(siteOrder, row.Site)
@@ -2308,10 +2400,20 @@ func (s *NewAPICheckinService) buildHistoryPayloadLocked(ctx context.Context) (N
 	if err != nil {
 		return NewAPICheckinHistoryPayload{}, err
 	}
+	monthlyStore, err := s.loadMonthlyStoreLocked(ctx)
+	if err != nil {
+		return NewAPICheckinHistoryPayload{}, err
+	}
+	payload.Entries = applyMonthlyAwardsToHistoryEntries(payload.Entries, monthlyStore.Records)
 	return s.buildHistoryPayloadFromEntriesLocked(payload.Entries), nil
 }
 
 func (s *NewAPICheckinService) buildHistoryPayloadFromEntriesLocked(entries []NewAPICheckinHistoryEntry) NewAPICheckinHistoryPayload {
+	for idx := range entries {
+		entries[idx].QuotaAwardedDisplay = normalizeNewAPIDisplayText(entries[idx].QuotaAwardedDisplay)
+		entries[idx].BalanceDisplay = normalizeNewAPIDisplayText(entries[idx].BalanceDisplay)
+		entries[idx].UsedDisplay = normalizeNewAPIDisplayText(entries[idx].UsedDisplay)
+	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Date == entries[j].Date {
 			if entries[i].Site == entries[j].Site {
@@ -2356,6 +2458,7 @@ func (s *NewAPICheckinService) buildMonthlyPayloadLocked(ctx context.Context, mo
 		if userID != "" && record.UserID != userID {
 			continue
 		}
+		record.QuotaAwardedDisplay = normalizeNewAPIDisplayText(record.QuotaAwardedDisplay)
 		records = append(records, record)
 	}
 	months := make([]string, 0, len(monthSet))
@@ -2904,13 +3007,34 @@ func formatNewAPIDisplayAmount(quota *int64, status NewAPICheckinSiteStatus) str
 }
 
 func getNewAPIDisplaySymbol(status NewAPICheckinSiteStatus) string {
-	if status.CustomCurrencySymbol != "" {
-		return status.CustomCurrencySymbol
+	customSymbol := strings.TrimSpace(status.CustomCurrencySymbol)
+	if isNewAPIGenericCurrencyPlaceholder(customSymbol) {
+		customSymbol = ""
+	}
+	if customSymbol != "" {
+		return customSymbol
 	}
 	if strings.EqualFold(status.QuotaDisplayType, "USD") || status.QuotaDisplayType == "" {
 		return newAPICheckinDefaultSymbol
 	}
 	return status.QuotaDisplayType
+}
+
+func isNewAPIGenericCurrencyPlaceholder(symbol string) bool {
+	return symbol == "¤" || symbol == "�"
+}
+
+func normalizeNewAPIDisplayText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	for _, symbol := range []string{"¤", "�"} {
+		if strings.HasPrefix(value, symbol) {
+			return newAPICheckinDefaultSymbol + strings.TrimSpace(strings.TrimPrefix(value, symbol))
+		}
+	}
+	return value
 }
 
 func formatDisplayTotal(value float64, symbol string) string {
