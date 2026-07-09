@@ -983,6 +983,16 @@ func TestApplyCodexOAuthTransform_EmptyInput(t *testing.T) {
 
 func TestNormalizeCodexModel_Gpt53(t *testing.T) {
 	cases := map[string]string{
+		"gpt-5.6-sol":               "gpt-5.6-sol",
+		"gpt5.6sol":                 "gpt-5.6-sol",
+		"openai/gpt5.6sol":          "gpt-5.6-sol",
+		"gpt-5.6-sol-high":          "gpt-5.6-sol",
+		"gpt-5.6-terra":             "gpt-5.6-terra",
+		"gpt5.6terra":               "gpt-5.6-terra",
+		"gpt-5.6-terra-medium":      "gpt-5.6-terra",
+		"gpt-5.6-luna":              "gpt-5.6-luna",
+		"gpt5.6luna":                "gpt-5.6-luna",
+		"gpt-5.6-luna-2026-07-08":   "gpt-5.6-luna",
 		"gpt-5.4":                   "gpt-5.4",
 		"gpt5.5":                    "gpt-5.5",
 		"openai/gpt5.5":             "gpt-5.5",

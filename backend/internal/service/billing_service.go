@@ -269,10 +269,28 @@ func (s *BillingService) initFallbackPricing() {
 	// GPT-5.5 / GPT-5.5 Pro 暂无独立定价，回退到 GPT-5.4
 	s.fallbackPrices["gpt-5.5"] = s.fallbackPrices["gpt-5.4"]
 	s.fallbackPrices["gpt-5.5-pro"] = s.fallbackPrices["gpt-5.4"]
-	// GPT-5.6 Sol/Terra/Luna 暂无独立定价，沿用 GPT-5.4 兜底价格。
-	s.fallbackPrices["gpt-5.6-sol"] = s.fallbackPrices["gpt-5.4"]
-	s.fallbackPrices["gpt-5.6-terra"] = s.fallbackPrices["gpt-5.4"]
-	s.fallbackPrices["gpt-5.6-luna"] = s.fallbackPrices["gpt-5.4"]
+	// GPT-5.6 Sol/Terra/Luna（业务指定价格）
+	s.fallbackPrices["gpt-5.6-sol"] = &ModelPricing{
+		InputPricePerToken:         5e-6,  // $5 per MTok
+		OutputPricePerToken:        30e-6, // $30 per MTok
+		CacheCreationPricePerToken: 5e-6,  // 未给独立缓存写入价时按输入价计费
+		CacheReadPricePerToken:     5e-6,  // 未给独立缓存读取价时按输入价计费
+		SupportsCacheBreakdown:     false,
+	}
+	s.fallbackPrices["gpt-5.6-terra"] = &ModelPricing{
+		InputPricePerToken:         2.5e-6, // $2.5 per MTok
+		OutputPricePerToken:        15e-6,  // $15 per MTok
+		CacheCreationPricePerToken: 2.5e-6, // 未给独立缓存写入价时按输入价计费
+		CacheReadPricePerToken:     2.5e-6, // 未给独立缓存读取价时按输入价计费
+		SupportsCacheBreakdown:     false,
+	}
+	s.fallbackPrices["gpt-5.6-luna"] = &ModelPricing{
+		InputPricePerToken:         1e-6, // $1 per MTok
+		OutputPricePerToken:        6e-6, // $6 per MTok
+		CacheCreationPricePerToken: 1e-6, // 未给独立缓存写入价时按输入价计费
+		CacheReadPricePerToken:     1e-6, // 未给独立缓存读取价时按输入价计费
+		SupportsCacheBreakdown:     false,
+	}
 
 	s.fallbackPrices["gpt-5.4-mini"] = &ModelPricing{
 		InputPricePerToken:     7.5e-7,
@@ -721,8 +739,7 @@ func isOpenAIGPT54Model(model string) bool {
 	// normalizeCodexModel 的默认兜底把非 OpenAI 模型（claude-*、gemini-*、gpt-4o）
 	// 误识别为 gpt-5.4。
 	normalized := normalizeKnownOpenAICodexModel(model)
-	return normalized == "gpt-5.4" || normalized == "gpt-5.5" || normalized == "gpt-5.5-pro" ||
-		normalized == "gpt-5.6-sol" || normalized == "gpt-5.6-terra" || normalized == "gpt-5.6-luna"
+	return normalized == "gpt-5.4" || normalized == "gpt-5.5" || normalized == "gpt-5.5-pro"
 }
 
 // CalculateCostWithConfig 使用配置中的默认倍率计算费用

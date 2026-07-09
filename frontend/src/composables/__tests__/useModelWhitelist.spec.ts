@@ -4,7 +4,7 @@ vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn()
 }))
 
-import { buildModelMappingObject, getModelsByPlatform, splitModelMappingObject } from '../useModelWhitelist'
+import { buildModelMappingObject, getModelsByPlatform, getPresetMappingsByPlatform, splitModelMappingObject } from '../useModelWhitelist'
 
 describe('useModelWhitelist', () => {
   it('openai 模型列表包含 GPT-5.4 官方快照', () => {
@@ -14,6 +14,25 @@ describe('useModelWhitelist', () => {
     expect(models).toContain('gpt-5.4-mini')
     expect(models).toContain('gpt-5.4-2026-03-05')
     expect(models).toContain('codex-auto-review')
+  })
+
+  it('openai 模型列表加载 GPT-5.6 新模型', () => {
+    const models = getModelsByPlatform('openai')
+
+    expect(models).toContain('gpt-5.6-sol')
+    expect(models).toContain('gpt-5.6-terra')
+    expect(models).toContain('gpt-5.6-luna')
+    expect(models.indexOf('gpt-5.6-sol')).toBeLessThan(models.indexOf('gpt-5.5'))
+  })
+
+  it('openai 预设映射包含 GPT-5.6 新模型', () => {
+    const presets = getPresetMappingsByPlatform('openai')
+
+    expect(presets.map(item => item.to)).toEqual(expect.arrayContaining([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
+    ]))
   })
 
   it('openai 模型列表不再暴露已下线的 ChatGPT 登录 Codex 模型', () => {
@@ -54,6 +73,24 @@ describe('useModelWhitelist', () => {
 
     expect(models.indexOf('gemini-3.1-flash-image')).toBeLessThan(models.indexOf('gemini-2.5-flash'))
     expect(models.indexOf('gemini-2.5-flash-image')).toBeLessThan(models.indexOf('gemini-2.5-flash-lite'))
+  })
+
+  it('grok 模型列表和预设映射不回退到 Claude 默认模型', () => {
+    const models = getModelsByPlatform('grok')
+    const presets = getPresetMappingsByPlatform('grok')
+
+    expect(models[0]).toBe('grok-4.5')
+    expect(models).toContain('grok-4.5')
+    expect(models).toContain('grok-4.3')
+    expect(models).not.toContain('claude-sonnet-4-6')
+    expect(presets.map(item => item.to)).toEqual(expect.arrayContaining([
+      'grok-4.5',
+      'grok-4.3',
+      'grok-build-0.1',
+      'grok-4.20-0309-reasoning'
+    ]))
+    expect(presets.find(item => item.from === 'grok-latest')?.to).toBe('grok-4.5')
+    expect(presets.some(item => item.to.startsWith('claude-'))).toBe(false)
   })
 
   it('whitelist 模式会忽略通配符条目', () => {

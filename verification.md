@@ -4431,3 +4431,83 @@ Observed result:
 Limit:
 - No Git push was run.
 - No authenticated admin browser click-through or real Grok/xAI upstream request was run because the deployment environment does not expose a non-interactive admin password in `.env`.
+
+## GPT-5.6 model loading absorption - 2026-07-09T16:56:00+08:00
+
+Actor: Devil
+
+Scope:
+- Load the v0.1.146 GPT-5.6 OpenAI model family into frontend model whitelist/preset mapping.
+- Complete backend pricing fallback so `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` can be priced when the remote catalog has not caught up.
+- Align Codex OAuth model normalization tables with the v0.1.146 GPT-5.6 model entries.
+
+Verification:
+- RED before implementation: `npm run test:run -- src/composables/__tests__/useModelWhitelist.spec.ts` failed because the OpenAI whitelist and presets did not include `gpt-5.6-sol`.
+- RED before implementation: `go test ./internal/service -run 'TestGetModelPricing_Gpt56UsesStaticFallbackWhenRemoteMissing|TestNormalizeCodexModel_Gpt53' -count=1` failed because `PricingService.GetModelPricing("gpt-5.6-*")` returned nil.
+- PASS: `npm run test:run -- src/composables/__tests__/useModelWhitelist.spec.ts`.
+- PASS: `npm run typecheck`.
+- PASS: `go test ./internal/service -run 'TestGetModelPricing_Gpt56UsesStaticFallbackWhenRemoteMissing|TestGetModelPricing_Gpt54UsesStaticFallbackWhenRemoteMissing|TestGetModelPricing_OpenAICompactAliasUsesStaticFallback|TestNormalizeCodexModel_Gpt53' -count=1`.
+- PASS: `go test ./internal/pkg/openai -run 'TestDefaultModelsIncludeGPT56Family|TestCodexBaseInstructionsForModel' -count=1`.
+- PASS: `go test ./internal/handler/admin -run 'TestAccountHandlerGetAvailableModels_OpenAIOAuthPassthroughFallsBackToDefaults|TestAccountHandlerGetAvailableModels_OpenAIOAuthUsesExplicitModelMapping' -count=1`.
+- PASS: `git diff --check` returned exit 0 with existing LF/CRLF warnings for `.codegraph/daemon.pid` and `docs/releases/v0.1.146.4.md`.
+
+Limit:
+- This round did not commit, build, deploy, or push.
+
+## Grok default model and Grok 4.5 loading - 2026-07-09T17:12:49+08:00
+
+Actor: Devil
+
+Scope:
+- Fix Grok account model loading so frontend Grok whitelist/preset selection uses Grok models instead of falling back to Claude defaults.
+- Add `grok-4.5` as the first Grok/xAI default model in backend defaults and frontend Grok whitelist.
+- Map `grok` and `grok-latest` aliases to `grok-4.5` consistently in backend xAI defaults and frontend presets.
+
+Verification:
+- RED before implementation: `npm run test:run -- src/composables/__tests__/useModelWhitelist.spec.ts` failed because Grok frontend platform selection did not load Grok-specific model/preset branches.
+- RED before implementation: `go test ./internal/pkg/xai -run TestDefaultModelsIncludeGrok45AsDefaultAliasTarget -count=1` failed because the backend xAI default first model and aliases still targeted `grok-4.3`.
+- PASS: `gofmt -w internal\pkg\xai\models.go internal\pkg\xai\models_test.go`.
+- PASS: `go test ./internal/pkg/xai -run TestDefaultModelsIncludeGrok45AsDefaultAliasTarget -count=1` -> `ok github.com/Wei-Shaw/sub2api/internal/pkg/xai 0.035s`.
+- PASS: `npm run test:run -- src/composables/__tests__/useModelWhitelist.spec.ts` -> 1 file passed, 14 tests passed.
+- PASS: `npm run typecheck`.
+- PASS: `git diff --check -- backend/internal/pkg/xai/models.go backend/internal/pkg/xai/models_test.go frontend/src/composables/useModelWhitelist.ts frontend/src/composables/__tests__/useModelWhitelist.spec.ts`.
+
+Observed result:
+- Grok model selection now starts with `grok-4.5`, keeps `grok-4.3`, and does not include Claude fallback entries.
+- Grok preset mappings now include `grok-4.5`, and `grok` / `grok-latest` resolve to `grok-4.5`.
+- Backend xAI `/models` defaults include `grok-4.5` first, and the default alias mapping resolves `grok` / `grok-latest` to `grok-4.5`.
+
+Limit:
+- This round did not commit, build, deploy, push, or run a real authenticated Grok upstream request.
+
+## GPT-5.6 tier pricing correction - 2026-07-09T17:13:34+08:00
+
+Actor: Devil
+
+Scope:
+- Replace the temporary GPT-5.6 -> GPT-5.4 fallback pricing with explicit GPT-5.6 Sol/Terra/Luna tier prices.
+- Keep `PricingService` dynamic-price fallback and `BillingService` actual charging fallback aligned.
+
+Verification:
+- RED: `go test ./internal/service -run 'TestGetModelPricing_Gpt56UsesTierStaticFallbackWhenRemoteMissing' -count=1` failed before implementation because Sol and Luna still returned GPT-5.4 input price `2.5e-6`.
+- RED: file-level `go test -tags unit ... billing_service_test.go ... -run 'TestGetModelPricing_GPT56UsesTierFallbackPricing' -count=1` failed before implementation because BillingService still returned GPT-5.4 input price for Sol/Luna.
+- RED: after adding the long-context assertion, the same BillingService target test failed because GPT-5.6 still inherited GPT-5.4 `LongContextInputThreshold=272000` through `applyModelSpecificPricingPolicy`.
+- PASS: `gofmt -w internal/service/pricing_service.go internal/service/pricing_service_test.go internal/service/billing_service.go internal/service/billing_service_test.go`.
+- PASS: `go test ./internal/service -run 'TestGetModelPricing_Gpt56UsesTierStaticFallbackWhenRemoteMissing' -count=1`.
+- PASS: file-level BillingService target test `go test -tags unit ... -run 'TestGetModelPricing_GPT56UsesTierFallbackPricing|TestGetModelPricing_OpenAIGPT54Fallback|TestGetModelPricing_OpenAIGPT55ProFallback' -count=1`.
+- PASS: `go test ./internal/service -run 'TestGetModelPricing_Gpt56UsesTierStaticFallbackWhenRemoteMissing|TestGetModelPricing_Gpt54UsesStaticFallbackWhenRemoteMissing|TestGetModelPricing_OpenAICompactAliasUsesStaticFallback|TestNormalizeCodexModel_Gpt53' -count=1`.
+- PASS: `go test ./internal/pkg/openai -run 'TestDefaultModelsIncludeGPT56Family|TestCodexBaseInstructionsForModel' -count=1`.
+- PASS: `go test ./internal/handler/admin -run 'TestAccountHandlerGetAvailableModels_OpenAIOAuthPassthroughFallsBackToDefaults|TestAccountHandlerGetAvailableModels_OpenAIOAuthUsesExplicitModelMapping' -count=1`.
+- PASS: `npm run test:run -- src/composables/__tests__/useModelWhitelist.spec.ts` -> 1 file passed, 14 tests passed.
+- PASS: `npm run typecheck`.
+- PASS: `git diff --check` returned exit 0 with existing LF/CRLF warnings only.
+
+Observed result:
+- `gpt-5.6-sol` static fallback now uses input `5e-6`, output `30e-6`.
+- `gpt-5.6-terra` static fallback now uses input `2.5e-6`, output `15e-6`.
+- `gpt-5.6-luna` static fallback now uses input `1e-6`, output `6e-6`.
+- GPT-5.6 tiers no longer inherit GPT-5.4 long-context fallback rules; GPT-5.4 and GPT-5.5 fallback tests still pass.
+
+Limit:
+- Full `go test -tags unit ./internal/service` was not used as a verification gate because existing unrelated token refresh unit tests currently do not compile against the `NewTokenRefreshService` signature.
+- This round did not commit, build, deploy, or push.

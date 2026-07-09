@@ -110,16 +110,26 @@ func TestGetModelPricing_FallbackMatchesByFamily(t *testing.T) {
 	}
 }
 
-func TestGetModelPricing_GPT56FallsBackToGPT54Pricing(t *testing.T) {
+func TestGetModelPricing_GPT56UsesTierFallbackPricing(t *testing.T) {
 	svc := newTestBillingService()
-	gpt54, err := svc.GetModelPricing("gpt-5.4")
-	require.NoError(t, err)
 
-	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
-		t.Run(model, func(t *testing.T) {
-			pricing, err := svc.GetModelPricing(model)
+	tests := []struct {
+		model       string
+		inputPrice  float64
+		outputPrice float64
+	}{
+		{model: "gpt-5.6-sol", inputPrice: 5e-6, outputPrice: 30e-6},
+		{model: "gpt-5.6-terra", inputPrice: 2.5e-6, outputPrice: 15e-6},
+		{model: "gpt-5.6-luna", inputPrice: 1e-6, outputPrice: 6e-6},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			pricing, err := svc.GetModelPricing(tt.model)
 			require.NoError(t, err)
-			require.Same(t, gpt54, pricing)
+			require.InDelta(t, tt.inputPrice, pricing.InputPricePerToken, 1e-12)
+			require.InDelta(t, tt.outputPrice, pricing.OutputPricePerToken, 1e-12)
+			require.Zero(t, pricing.LongContextInputThreshold)
 		})
 	}
 }
