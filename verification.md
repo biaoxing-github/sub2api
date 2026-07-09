@@ -4399,3 +4399,35 @@ Observed result:
 
 Limit:
 - This round did not commit, build, deploy, or perform authenticated browser click-through with a real Grok API Key account.
+
+## Grok OAuth/API Key release v0.1.146.4 - 2026-07-09T16:54:00+08:00
+
+Actor: Devil
+
+Scope:
+- Commit the Grok OAuth/API Key integration and deploy it through the blue-green release path.
+- Build immutable image `sub2api:v0.1.146.4` from committed code commit `dc4bc0971d95`.
+- Deploy the new image to idle green, validate candidate smoke, cut the proxy from blue to green, and observe post-cutover health/logs.
+
+Verification:
+- Code commit: `dc4bc0971d95 feat(grok): 接入 Grok OAuth 和 API Key`.
+- First docker build attempt with the default Tsinghua Alpine apk mirror failed before image export with `Connection refused` and missing `git/tzdata`; no image tag was produced.
+- Retry docker build with `ALPINE_APK_REPOSITORY=https://mirrors.aliyun.com/alpine`: passed, including frontend `pnpm run build` and backend release build.
+- Image inspect: `sub2api:v0.1.146.4` -> `sha256:36b619c43989ddc0db962e32ee6a9f0ac2a77d0483f5ac1aee36903e4629c639`, label revision `dc4bc0971d95`.
+- Image version: `Sub2API v0.1.146 (image: v0.1.146.4, commit: dc4bc0971d95, built: 2026-07-09T08:37:52Z)`.
+- Candidate green `18082`: `/health` 200, `/admin/tools` 200, unauthenticated `GET /api/v1/admin/users` 401, `POST /responses` 401, `POST /v1/responses` 401.
+- Candidate green state: `Image=sub2api:v0.1.146.4 Health=healthy Status=running Restart=0`; active blue stayed `sub2api:v0.1.146.3 Health=healthy Status=running Restart=0`.
+- Candidate first log scan found one `service/openai_request_snapshot` cleanup `pq: canceling statement due to user request`; a fresh 75-second candidate window then had zero critical matches and health remained 200.
+- Proxy cutover: `active.conf` switched from `sub2api-blue:8080` to `sub2api-green:8080`; `docker exec sub2api-proxy nginx -t` and `nginx -s reload` passed.
+- Post-cutover `8080`, `18081`, and `18082` health checks returned 200.
+- Post-cutover unauthenticated `GET /api/v1/admin/users`, `POST /api/v1/admin/grok/oauth/auth-url`, `POST /responses`, and `POST /v1/responses` returned 401.
+- After a 65-second observation window, active green remained `sub2api:v0.1.146.4` with `healthy Status=running Restart=0`; rollback blue remained `sub2api:v0.1.146.3` with `healthy Status=running Restart=0`; green/proxy critical log matches were 0.
+
+Observed result:
+- Grok OAuth/API Key integration is now active behind the public proxy on green.
+- The public gateway remains protected for unauthenticated OpenAI-compatible and Grok OAuth admin routes.
+- Rollback target remains blue `sub2api:v0.1.146.3`.
+
+Limit:
+- No Git push was run.
+- No authenticated admin browser click-through or real Grok/xAI upstream request was run because the deployment environment does not expose a non-interactive admin password in `.env`.
