@@ -627,6 +627,137 @@ func TestAPIKeyAuthIPRestrictionCanTrustForwardedClientIPForReverseProxy(t *test
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestAPIKeyAuthGoogleEnforcesIPRestriction(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	user := &service.User{
+		ID:          7,
+		Role:        service.RoleUser,
+		Status:      service.StatusActive,
+		Balance:     10,
+		Concurrency: 3,
+	}
+	apiKey := &service.APIKey{
+		ID:          100,
+		UserID:      user.ID,
+		Key:         "google-ip",
+		Status:      service.StatusActive,
+		User:        user,
+		IPWhitelist: []string{"1.2.3.4"},
+	}
+	apiKeyRepo := &stubApiKeyRepo{
+		getByKey: func(ctx context.Context, key string) (*service.APIKey, error) {
+			if key != apiKey.Key {
+				return nil, service.ErrAPIKeyNotFound
+			}
+			clone := *apiKey
+			return &clone, nil
+		},
+	}
+
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
+	router := newAuthGoogleTestRouter(apiKeyService, nil, cfg)
+	require.NoError(t, router.SetTrustedProxies(nil))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1beta/models", nil)
+	req.RemoteAddr = "9.9.9.9:12345"
+	req.Header.Set("x-goog-api-key", apiKey.Key)
+	req.Header.Set("X-Forwarded-For", "1.2.3.4")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, w.Body.String(), "PERMISSION_DENIED")
+}
+
+func TestAPIKeyAuthGoogleEnforcesRuntimeExpiryAndQuota(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Now().Add(-time.Minute)
+	tests := []struct {
+		name       string
+		mutateKey  func(*service.APIKey)
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name: "expired status is forbidden",
+			mutateKey: func(apiKey *service.APIKey) {
+				apiKey.Status = service.StatusAPIKeyExpired
+			},
+			wantStatus: http.StatusForbidden,
+			wantBody:   "API key 已过期",
+		},
+		{
+			name: "quota exhausted status is rate limited",
+			mutateKey: func(apiKey *service.APIKey) {
+				apiKey.Status = service.StatusAPIKeyQuotaExhausted
+			},
+			wantStatus: http.StatusTooManyRequests,
+			wantBody:   "API key 额度已用完",
+		},
+		{
+			name: "runtime expiry is forbidden",
+			mutateKey: func(apiKey *service.APIKey) {
+				apiKey.ExpiresAt = &now
+			},
+			wantStatus: http.StatusForbidden,
+			wantBody:   "API key 已过期",
+		},
+		{
+			name: "runtime quota exhausted is rate limited",
+			mutateKey: func(apiKey *service.APIKey) {
+				apiKey.Quota = 1
+				apiKey.QuotaUsed = 1
+			},
+			wantStatus: http.StatusTooManyRequests,
+			wantBody:   "API key 额度已用完",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			user := &service.User{
+				ID:          7,
+				Role:        service.RoleUser,
+				Status:      service.StatusActive,
+				Balance:     10,
+				Concurrency: 3,
+			}
+			apiKey := &service.APIKey{
+				ID:     100,
+				UserID: user.ID,
+				Key:    "google-quota",
+				Status: service.StatusActive,
+				User:   user,
+			}
+			tt.mutateKey(apiKey)
+			apiKeyRepo := &stubApiKeyRepo{
+				getByKey: func(ctx context.Context, key string) (*service.APIKey, error) {
+					if key != apiKey.Key {
+						return nil, service.ErrAPIKeyNotFound
+					}
+					clone := *apiKey
+					return &clone, nil
+				},
+			}
+
+			cfg := &config.Config{RunMode: config.RunModeStandard}
+			apiKeyService := service.NewAPIKeyService(apiKeyRepo, nil, nil, nil, nil, nil, cfg)
+			router := newAuthGoogleTestRouter(apiKeyService, nil, cfg)
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/v1beta/models", nil)
+			req.Header.Set("x-goog-api-key", apiKey.Key)
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			require.Contains(t, w.Body.String(), tt.wantBody)
+		})
+	}
+}
+
 func TestAPIKeyAuthTouchesLastUsedOnSuccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -772,6 +903,15 @@ func newAuthTestRouter(apiKeyService *service.APIKeyService, subscriptionService
 	router := gin.New()
 	router.Use(gin.HandlerFunc(NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, cfg)))
 	router.GET("/t", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	return router
+}
+
+func newAuthGoogleTestRouter(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) *gin.Engine {
+	router := gin.New()
+	router.Use(gin.HandlerFunc(APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, cfg)))
+	router.GET("/v1beta/models", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	return router

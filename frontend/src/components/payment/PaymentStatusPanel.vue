@@ -178,6 +178,7 @@ let statusPoller: PaymentStatusPoller | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 let verifyAttempts = 0
 let lastVerifyAt = 0
+let pollInFlight = false
 
 const VERIFY_RETRY_INTERVAL_MS = 15000
 const VERIFY_RETRY_MAX_ATTEMPTS = 6
@@ -270,23 +271,30 @@ async function tryRecoverPendingOrder(order: PaymentOrder): Promise<PaymentOrder
 
 async function pollStatus(): Promise<void | false> {
   if (!props.orderId || outcome.value) return
-  let order = await paymentStore.pollOrderStatus(props.orderId)
-  if (!order) return
-  order = await tryRecoverPendingOrder(order)
-  if (isSuccessStatus(order.status)) {
-    cleanup()
-    paidOrder.value = order
-    setOutcome('success')
-    emit('success')
-    return false
-  } else if (order.status === 'CANCELLED') {
-    cleanup()
-    setOutcome('cancelled')
-    return false
-  } else if (order.status === 'EXPIRED' || order.status === 'FAILED') {
-    cleanup()
-    setOutcome('expired')
-    return false
+  if (pollInFlight) return
+  pollInFlight = true
+  try {
+    let order = await paymentStore.pollOrderStatus(props.orderId)
+    if (!order || outcome.value) return
+    order = await tryRecoverPendingOrder(order)
+    if (outcome.value) return
+    if (isSuccessStatus(order.status)) {
+      cleanup()
+      paidOrder.value = order
+      setOutcome('success')
+      emit('success')
+      return false
+    } else if (order.status === 'CANCELLED') {
+      cleanup()
+      setOutcome('cancelled')
+      return false
+    } else if (order.status === 'EXPIRED' || order.status === 'FAILED') {
+      cleanup()
+      setOutcome('expired')
+      return false
+    }
+  } finally {
+    pollInFlight = false
   }
 }
 

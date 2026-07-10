@@ -188,7 +188,8 @@ apiClient.interceptors.response.use(
             const refreshResponse = await axios.post(
               `${API_BASE_URL}/auth/refresh`,
               { refresh_token: refreshToken },
-              { headers: { 'Content-Type': 'application/json' } }
+              // 裸 axios 默认无限等待；刷新请求挂起会让 401 重试队列永久卡住。
+              { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
             )
 
             const refreshData = refreshResponse.data as ApiResponse<{

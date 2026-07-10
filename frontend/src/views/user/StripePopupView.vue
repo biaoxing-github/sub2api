@@ -83,23 +83,38 @@ const success = ref(false)
 const hint = ref(t('payment.stripePopup.redirecting'))
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let initTimeoutTimer: ReturnType<typeof setTimeout> | null = null
+let messageHandler: ((event: MessageEvent) => void) | null = null
 
 function closeWindow() { window.close() }
 
+function clearInitTimeout() {
+  if (initTimeoutTimer) {
+    clearTimeout(initTimeoutTimer)
+    initTimeoutTimer = null
+  }
+}
+
 onMounted(() => {
-  const handler = (event: MessageEvent) => {
+  messageHandler = (event: MessageEvent) => {
     if (event.origin !== window.location.origin) return
     if (event.data?.type !== 'STRIPE_POPUP_INIT') return
-    window.removeEventListener('message', handler)
+    clearInitTimeout()
+    if (messageHandler) {
+      window.removeEventListener('message', messageHandler)
+      messageHandler = null
+    }
     initStripe(event.data.clientSecret, event.data.publishableKey)
   }
-  window.addEventListener('message', handler)
+  if (messageHandler) {
+    window.addEventListener('message', messageHandler)
+  }
 
   if (window.opener) {
     window.opener.postMessage({ type: 'STRIPE_POPUP_READY' }, window.location.origin)
   }
 
-  setTimeout(() => {
+  initTimeoutTimer = setTimeout(() => {
     if (!error.value && !success.value) {
       error.value = t('payment.stripePopup.timeout')
     }
@@ -107,7 +122,12 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  clearInitTimeout()
+  if (messageHandler) {
+    window.removeEventListener('message', messageHandler)
+    messageHandler = null
+  }
 })
 
 async function initStripe(clientSecret: string, publishableKey: string) {
@@ -148,23 +168,28 @@ async function initStripe(clientSecret: string, publishableKey: string) {
 }
 
 function startPolling() {
+  let inFlight = false
   pollTimer = setInterval(async () => {
+    if (inFlight) return
+    inFlight = true
     try {
-      const token = document.cookie.split('; ').find(c => c.startsWith('token='))?.split('=')[1]
-        || localStorage.getItem('token') || ''
+      const token = localStorage.getItem('auth_token') || ''
       const res = await fetch('/api/v1/payment/orders/' + orderId, {
         headers: token ? { Authorization: 'Bearer ' + token } : {},
         credentials: 'include',
       })
       if (!res.ok) return
       const data = await res.json()
+      if (!pollTimer) return
       const status = data?.data?.status
       if (status === 'COMPLETED' || status === 'PAID') {
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
         success.value = true
         setTimeout(closeWindow, 2000)
       }
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally {
+      inFlight = false
+    }
   }, 3000)
 }
 </script>
