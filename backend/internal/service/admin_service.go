@@ -130,10 +130,12 @@ type CreateUserInput struct {
 	Password      string
 	Username      string
 	Notes         string
+	Role          string // 空字符串表示使用默认角色 user；合法值为 admin/user。
 	Balance       float64
 	Concurrency   int
 	RPMLimit      int
 	AllowedGroups []int64
+	ActorAdminID  int64 // 执行操作的管理员 ID，用于权限变更审计。
 }
 
 type UpdateUserInput struct {
@@ -141,6 +143,7 @@ type UpdateUserInput struct {
 	Password      string
 	Username      *string
 	Notes         *string
+	Role          string   // 空字符串表示不修改；合法值为 admin/user。
 	Balance       *float64 // 使用指针区分"未提供"和"设置为0"
 	Concurrency   *int     // 使用指针区分"未提供"和"设置为0"
 	RPMLimit      *int     // 使用指针区分"未提供"和"设置为0"
@@ -149,6 +152,8 @@ type UpdateUserInput struct {
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
 	GroupRates map[int64]*float64
+	// ActorAdminID 是执行操作的管理员 ID，用于自降级保护和权限变更审计。
+	ActorAdminID int64
 }
 
 type AdminBindAuthIdentityInput struct {
@@ -721,12 +726,27 @@ func (s *adminServiceImpl) GetUserIncludeDeleted(ctx context.Context, id int64) 
 	return user, nil
 }
 
+// normalizeUserRole 校验并归一化角色；空字符串使用 fallback。
+func normalizeUserRole(role, fallback string) (string, error) {
+	if role == "" {
+		return fallback, nil
+	}
+	if role != RoleAdmin && role != RoleUser {
+		return "", fmt.Errorf("invalid role: %q (must be %s or %s)", role, RoleAdmin, RoleUser)
+	}
+	return role, nil
+}
+
 func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInput) (*User, error) {
+	role, err := normalizeUserRole(input.Role, RoleUser)
+	if err != nil {
+		return nil, err
+	}
 	user := &User{
 		Email:         input.Email,
 		Username:      input.Username,
 		Notes:         input.Notes,
-		Role:          RoleUser, // Always create as regular user, never admin
+		Role:          role,
 		Balance:       input.Balance,
 		Concurrency:   input.Concurrency,
 		RPMLimit:      input.RPMLimit,
@@ -739,8 +759,28 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		return nil, err
 	}
+	if user.Role == RoleAdmin {
+		logger.LegacyPrintf("service.admin", "audit: admin user created actor_admin_id=%d target_user_id=%d", input.ActorAdminID, user.ID)
+	}
 	s.assignDefaultSubscriptions(ctx, user.ID)
 	return user, nil
+}
+
+// ensureNotLastAdmin 确认降级目标之外仍有管理员，避免后台失去可登录管理员。
+func (s *adminServiceImpl) ensureNotLastAdmin(ctx context.Context) error {
+	includeSubscriptions := false
+	_, result, err := s.userRepo.ListWithFilters(
+		ctx,
+		pagination.PaginationParams{Page: 1, PageSize: 1},
+		UserListFilters{Role: RoleAdmin, IncludeSubscriptions: &includeSubscriptions},
+	)
+	if err != nil {
+		return fmt.Errorf("count admin users: %w", err)
+	}
+	if result == nil || result.Total <= 1 {
+		return errors.New("cannot demote the last admin user")
+	}
+	return nil
 }
 
 func (s *adminServiceImpl) assignDefaultSubscriptions(ctx context.Context, userID int64) {
@@ -805,6 +845,22 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		user.Status = input.Status
 	}
 
+	if input.Role != "" {
+		role, err := normalizeUserRole(input.Role, user.Role)
+		if err != nil {
+			return nil, err
+		}
+		if user.Role == RoleAdmin && role == RoleUser {
+			if input.ActorAdminID != 0 && input.ActorAdminID == id {
+				return nil, errors.New("cannot demote yourself from admin")
+			}
+			if err := s.ensureNotLastAdmin(ctx); err != nil {
+				return nil, err
+			}
+		}
+		user.Role = role
+	}
+
 	if input.Concurrency != nil {
 		user.Concurrency = *input.Concurrency
 	}
@@ -819,6 +875,16 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 
 	if err := s.userRepo.Update(ctx, user); err != nil {
 		return nil, err
+	}
+	if user.Role != oldRole {
+		logger.LegacyPrintf(
+			"service.admin",
+			"audit: user role changed actor_admin_id=%d target_user_id=%d old_role=%s new_role=%s",
+			input.ActorAdminID,
+			user.ID,
+			oldRole,
+			user.Role,
+		)
 	}
 
 	groupRatesChanged := false

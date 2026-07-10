@@ -48,3 +48,21 @@ func TestResolveModelDimensionExpression(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveUserBreakdownOrderByUsesAllowlist(t *testing.T) {
+	t.Parallel()
+
+	for _, allowed := range []string{
+		"total_tokens",
+		"input_tokens",
+		"output_tokens",
+		"cache_tokens",
+		"requests",
+		"cost",
+		"actual_cost",
+	} {
+		require.Equal(t, allowed, resolveUserBreakdownOrderBy(allowed))
+	}
+	require.Equal(t, "actual_cost", resolveUserBreakdownOrderBy(""))
+	require.Equal(t, "actual_cost", resolveUserBreakdownOrderBy("actual_cost DESC; DROP TABLE users"))
+}

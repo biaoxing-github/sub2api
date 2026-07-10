@@ -1,6 +1,9 @@
 package service
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type OpsSystemLog struct {
 	ID              int64          `json:"id"`
@@ -125,6 +128,8 @@ type OpsErrorLogFilter struct {
 
 	// ExcludeCountTokens drops count_tokens probe errors from user-facing lists.
 	ExcludeCountTokens bool
+	// IncludeRecoveredUpstream 允许上游专用列表展示状态码小于 400 的已恢复错误。
+	IncludeRecoveredUpstream bool
 
 	// ErrorPhasesAny/ErrorTypesAny map user-facing categories to plain ANY filters.
 	ErrorPhasesAny []string
@@ -136,8 +141,16 @@ type OpsErrorLogFilter struct {
 	// - all: show everything
 	View string
 
-	Page     int
-	PageSize int
+	Page      int
+	PageSize  int
+	SortBy    string
+	SortOrder string
+}
+
+// SetSort 归一化外部排序参数；列白名单在 repository 层应用。
+func (f *OpsErrorLogFilter) SetSort(sortBy, sortOrder string) {
+	f.SortBy = strings.TrimSpace(sortBy)
+	f.SortOrder = strings.TrimSpace(sortOrder)
 }
 
 type OpsErrorLogList struct {

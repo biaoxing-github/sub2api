@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-full min-h-0 flex-col bg-white dark:bg-dark-900">
+  <div class="flex h-full min-h-0 flex-col" :class="flat ? '' : 'bg-white dark:bg-dark-900'">
     <!-- Loading State -->
     <div v-if="loading" class="flex flex-1 items-center justify-center py-10">
       <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-primary-600"></div>
@@ -292,6 +292,7 @@ interface Props {
   loading: boolean
   page: number
   pageSize: number
+  flat?: boolean
 }
 
 interface Emits {
@@ -300,7 +301,7 @@ interface Emits {
   (e: 'update:pageSize', value: number): void
 }
 
-defineProps<Props>()
+withDefaults(defineProps<Props>(), { flat: false })
 const emit = defineEmits<Emits>()
 
 function getStatusClass(code: number): string {

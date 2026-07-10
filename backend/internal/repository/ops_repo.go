@@ -63,6 +63,30 @@ func NewOpsRepository(db *sql.DB) service.OpsRepository {
 	return &opsRepository{db: db}
 }
 
+// opsErrorLogsOrderBy 仅允许已知列表列参与排序，并用 id 保证分页稳定。
+func opsErrorLogsOrderBy(filter *service.OpsErrorLogFilter) string {
+	sortBy := ""
+	sortOrder := ""
+	if filter != nil {
+		sortBy = strings.ToLower(strings.TrimSpace(filter.SortBy))
+		sortOrder = strings.ToLower(strings.TrimSpace(filter.SortOrder))
+	}
+
+	column := "e.created_at"
+	switch sortBy {
+	case "model":
+		column = "COALESCE(NULLIF(TRIM(e.requested_model), ''), e.model)"
+	case "status_code":
+		column = "COALESCE(e.upstream_status_code, e.status_code, 0)"
+	}
+
+	direction := "DESC"
+	if sortOrder == "asc" {
+		direction = "ASC"
+	}
+	return fmt.Sprintf("%s %s, e.id %s", column, direction, direction)
+}
+
 func (r *opsRepository) InsertErrorLog(ctx context.Context, input *service.OpsInsertErrorLogInput) (int64, error) {
 	if r == nil || r.db == nil {
 		return 0, fmt.Errorf("nil ops repository")
@@ -241,8 +265,8 @@ LEFT JOIN users u ON e.user_id = u.id
 LEFT JOIN users u2 ON e.resolved_by_user_id = u2.id
 LEFT JOIN api_keys ak ON ak.id = e.api_key_id
 ` + where + `
-ORDER BY e.created_at DESC
-LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
+	ORDER BY ` + opsErrorLogsOrderBy(filter) + `
+	LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 
 	rows, err := r.db.QueryContext(ctx, selectSQL, argsWithLimit...)
 	if err != nil {
@@ -861,9 +885,10 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		modelFuzzy = filter.ModelFuzzy
 		excludeCountTokens = filter.ExcludeCountTokens
 	}
-	// Keep list endpoints scoped to client errors unless explicitly filtering upstream phase.
-	if phaseFilter != "upstream" {
-		clauses = append(clauses, "COALESCE(e.status_code, 0) >= 400")
+	// 普通错误列表只展示客户端可见失败；仅上游专用列表可显式包含恢复态记录。
+	// cyber_policy 可能在 SSE 已建立后以 HTTP 200 到达，仍属于客户端可见失败。
+	if phaseFilter != "upstream" || filter == nil || !filter.IncludeRecoveredUpstream {
+		clauses = append(clauses, "(COALESCE(e.status_code, 0) >= 400 OR e.error_type = 'cyber_policy')")
 	}
 
 	if filter.StartTime != nil && !filter.StartTime.IsZero() {

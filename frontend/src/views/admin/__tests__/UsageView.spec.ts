@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import UsageView from '../UsageView.vue'
 
-const { list, getStats, getSnapshotV2, getById } = vi.hoisted(() => {
+const { list, getStats, getSnapshotV2, getModelStats, getById, listErrorLogs, rankingReload } = vi.hoisted(() => {
   vi.stubGlobal('localStorage', {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
@@ -14,7 +14,10 @@ const { list, getStats, getSnapshotV2, getById } = vi.hoisted(() => {
     list: vi.fn(),
     getStats: vi.fn(),
     getSnapshotV2: vi.fn(),
+    getModelStats: vi.fn(),
     getById: vi.fn(),
+    listErrorLogs: vi.fn(),
+    rankingReload: vi.fn(),
   }
 })
 
@@ -23,6 +26,9 @@ const messages: Record<string, string> = {
   'admin.dashboard.day': 'Day',
   'admin.dashboard.hour': 'Hour',
   'admin.usage.failedToLoadUser': 'Failed to load user',
+  'usage.tabs.usage': 'Usage',
+  'usage.tabs.errors': 'Errors',
+  'usage.tabs.ranking': 'Ranking',
 }
 
 const formatLocalDate = (date: Date): string => {
@@ -40,6 +46,7 @@ vi.mock('@/api/admin', () => ({
     },
     dashboard: {
       getSnapshotV2,
+      getModelStats,
     },
     users: {
       getById,
@@ -51,6 +58,10 @@ vi.mock('@/api/admin/usage', () => ({
   adminUsageAPI: {
     list: vi.fn(),
   },
+}))
+
+vi.mock('@/api/admin/ops', () => ({
+  listErrorLogs,
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -104,6 +115,12 @@ const GroupDistributionChartStub = {
     </div>
   `,
 }
+const UserTokenRankingStub = {
+  methods: {
+    reload: rankingReload,
+  },
+  template: '<div data-testid="ranking-stub" />',
+}
 
 describe('admin UsageView distribution metric toggles', () => {
   beforeEach(() => {
@@ -111,7 +128,10 @@ describe('admin UsageView distribution metric toggles', () => {
     list.mockReset()
     getStats.mockReset()
     getSnapshotV2.mockReset()
+    getModelStats.mockReset()
     getById.mockReset()
+    listErrorLogs.mockReset()
+    rankingReload.mockReset()
 
     list.mockResolvedValue({
       items: [],
@@ -132,6 +152,13 @@ describe('admin UsageView distribution metric toggles', () => {
       trend: [],
       models: [],
       groups: [],
+    })
+    getModelStats.mockResolvedValue({ models: [] })
+    listErrorLogs.mockResolvedValue({
+      items: [{ id: 1 }],
+      total: 1,
+      page: 1,
+      page_size: 20,
     })
   })
 
@@ -157,6 +184,7 @@ describe('admin UsageView distribution metric toggles', () => {
           TokenUsageTrend: true,
           ModelDistributionChart: ModelDistributionChartStub,
           GroupDistributionChart: GroupDistributionChartStub,
+          OpsErrorLogTable: true,
         },
       },
     })
@@ -192,5 +220,113 @@ describe('admin UsageView distribution metric toggles', () => {
     expect(modelChart.find('.metric').text()).toBe('actual_cost')
     expect(groupChart.find('.metric').text()).toBe('actual_cost')
     expect(getSnapshotV2).toHaveBeenCalledTimes(1)
+  })
+
+  it('提供用量、错误和用户排行三个明细标签', async () => {
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          UsageStatsCards: true,
+          UsageFilters: UsageFiltersStub,
+          UsageTable: true,
+          UsageExportProgress: true,
+          UsageCleanupDialog: true,
+          UserBalanceHistoryModal: true,
+          Pagination: true,
+          Select: true,
+          DateRangePicker: true,
+          Icon: true,
+          TokenUsageTrend: true,
+          ModelDistributionChart: true,
+          GroupDistributionChart: true,
+          EndpointDistributionChart: true,
+          OpsErrorLogTable: true,
+          OpsErrorDetailModal: true,
+          UserTokenRanking: true
+        }
+      }
+    })
+
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid="usage-detail-tab"]')).toHaveLength(3)
+  })
+
+  it('每次进入错误标签都重新查询最新数据', async () => {
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          UsageStatsCards: true,
+          UsageFilters: UsageFiltersStub,
+          UsageTable: true,
+          UsageExportProgress: true,
+          UsageCleanupDialog: true,
+          UserBalanceHistoryModal: true,
+          Pagination: true,
+          Select: true,
+          DateRangePicker: true,
+          Icon: true,
+          TokenUsageTrend: true,
+          ModelDistributionChart: true,
+          GroupDistributionChart: true,
+          EndpointDistributionChart: true,
+          OpsErrorLogTable: true,
+          OpsErrorDetailModal: true,
+          UserTokenRanking: UserTokenRankingStub,
+        },
+      },
+    })
+
+    const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
+    await tabs[1].trigger('click')
+    await flushPromises()
+    expect(listErrorLogs).toHaveBeenCalledTimes(1)
+
+    await tabs[0].trigger('click')
+    await tabs[1].trigger('click')
+    await flushPromises()
+    expect(listErrorLogs).toHaveBeenCalledTimes(2)
+  })
+
+  it('排行首次进入懒挂载，后续进入主动刷新', async () => {
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          UsageStatsCards: true,
+          UsageFilters: UsageFiltersStub,
+          UsageTable: true,
+          UsageExportProgress: true,
+          UsageCleanupDialog: true,
+          UserBalanceHistoryModal: true,
+          Pagination: true,
+          Select: true,
+          DateRangePicker: true,
+          Icon: true,
+          TokenUsageTrend: true,
+          ModelDistributionChart: true,
+          GroupDistributionChart: true,
+          EndpointDistributionChart: true,
+          OpsErrorLogTable: true,
+          OpsErrorDetailModal: true,
+          UserTokenRanking: UserTokenRankingStub,
+        },
+      },
+    })
+
+    expect(wrapper.find('[data-testid="ranking-stub"]').exists()).toBe(false)
+    const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
+    await tabs[2].trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ranking-stub"]').exists()).toBe(true)
+    expect(rankingReload).not.toHaveBeenCalled()
+
+    await tabs[0].trigger('click')
+    await tabs[2].trigger('click')
+    await flushPromises()
+    expect(rankingReload).toHaveBeenCalledTimes(1)
   })
 })

@@ -81,6 +81,9 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
   user_id?: number
   exact_total?: boolean
   billing_mode?: string
+  error_phase?: string
+  error_category?: string
+  status_code?: number | null
   sort_by?: string
   sort_order?: 'asc' | 'desc'
 }
