@@ -157,6 +157,75 @@ func TestChatCompletionsToResponses_ReasoningEffort(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
+func TestChatCompletionsToResponses_ResponseFormat(t *testing.T) {
+	tests := []struct {
+		name           string
+		responseFormat string
+		wantTextFormat string
+	}{
+		{
+			name:           "json_object",
+			responseFormat: `{"type":"json_object"}`,
+			wantTextFormat: `{
+				"type":"json_object"
+			}`,
+		},
+		{
+			name: "json_schema",
+			responseFormat: `{
+				"type":"json_schema",
+				"json_schema":{
+					"name":"answer",
+					"schema":{
+						"type":"object",
+						"properties":{"ok":{"type":"boolean"}},
+						"required":["ok"],
+						"additionalProperties":false
+					},
+					"strict":true
+				}
+			}`,
+			wantTextFormat: `{
+				"type":"json_schema",
+				"name":"answer",
+				"schema":{
+					"type":"object",
+					"properties":{"ok":{"type":"boolean"}},
+					"required":["ok"],
+					"additionalProperties":false
+				},
+				"strict":true
+			}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ChatCompletionsRequest
+			require.NoError(t, json.Unmarshal([]byte(`{
+				"model":"gpt-4o",
+				"messages":[{"role":"user","content":"Return JSON"}],
+				"response_format":`+tt.responseFormat+`
+			}`), &req))
+
+			resp, err := ChatCompletionsToResponses(&req)
+			require.NoError(t, err)
+
+			payload, err := json.Marshal(resp)
+			require.NoError(t, err)
+			var serialized struct {
+				Text *struct {
+					Format json.RawMessage `json:"format"`
+				} `json:"text"`
+			}
+			require.NoError(t, json.Unmarshal(payload, &serialized))
+			require.NotNil(t, serialized.Text)
+			require.NotEmpty(t, serialized.Text.Format)
+			assert.JSONEq(t, tt.wantTextFormat, string(serialized.Text.Format))
+		})
+	}
+}
+
 func TestChatCompletionsToResponses_ImageURL(t *testing.T) {
 	content := `[{"type":"text","text":"Describe this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,abc123"}}]`
 	req := &ChatCompletionsRequest{

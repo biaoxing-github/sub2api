@@ -364,9 +364,10 @@ func TestOpenAIForwardErrorAlreadyCommunicated_HeartbeatIsNotRealOutput(t *testi
 
 	_, err := fmt.Fprint(c.Writer, ":\n\n")
 	require.NoError(t, err)
+	writerSizeBeforeForward := c.Writer.Size()
 
 	require.False(t, service.OpenAIRealClientOutputStarted(c))
-	require.False(t, openAIForwardErrorAlreadyCommunicated(c, errors.New("upstream response failed: boom")))
+	require.False(t, openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, errors.New("upstream response failed: boom")))
 }
 
 func TestOpenAIForwardErrorAlreadyCommunicated_ResponseFailedAfterOutput(t *testing.T) {
@@ -374,11 +375,50 @@ func TestOpenAIForwardErrorAlreadyCommunicated_ResponseFailedAfterOutput(t *test
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	writerSizeBeforeForward := c.Writer.Size()
 
 	c.Set("openai_real_client_output_started", true)
 
 	require.True(t, service.OpenAIRealClientOutputStarted(c))
-	require.True(t, openAIForwardErrorAlreadyCommunicated(c, errors.New("upstream response failed: missing terminal event")))
+	require.True(t, openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, errors.New("upstream response failed: missing terminal event")))
+}
+
+func TestOpenAIForwardErrorAlreadyCommunicated_NonStreamingJSONResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	writerSizeBeforeForward := c.Writer.Size()
+
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error": gin.H{
+			"type":    "upstream_error",
+			"message": "context window exceeded",
+		},
+	})
+
+	require.False(t, service.OpenAIRealClientOutputStarted(c))
+	require.True(t, openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, errors.New("non-streaming openai protocol error: context window exceeded")))
+}
+
+func TestOpenAIForwardErrorAlreadyCommunicated_PreexistingJSONIsNotCurrentForwardOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	c.JSON(http.StatusBadRequest, gin.H{"error": "already written"})
+	writerSizeBeforeForward := c.Writer.Size()
+
+	require.False(t, service.OpenAIRealClientOutputStarted(c))
+	require.False(t, openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, errors.New("non-streaming openai protocol error: context window exceeded")))
+}
+
+func TestShouldRecordOpenAIErrorUsage(t *testing.T) {
+	require.False(t, shouldRecordOpenAIErrorUsage(nil))
+	require.False(t, shouldRecordOpenAIErrorUsage(&service.OpenAIForwardResult{}))
+	require.True(t, shouldRecordOpenAIErrorUsage(&service.OpenAIForwardResult{UsageObserved: true}))
+	require.True(t, shouldRecordOpenAIErrorUsage(&service.OpenAIForwardResult{ImageCount: 1}))
 }
 
 func TestOpenAIResponses_RejectsOversizedUpstreamBody(t *testing.T) {

@@ -404,7 +404,9 @@ func TestForwardAsChatCompletions_BufferedContextWindowResponseFailedReturnsErro
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.4")
 
 	require.Error(t, err)
-	require.Nil(t, result)
+	require.NotNil(t, result)
+	require.True(t, result.UsageObserved)
+	require.Equal(t, 1, result.Usage.InputTokens)
 	var failoverErr *UpstreamFailoverError
 	require.False(t, errors.As(err, &failoverErr))
 	require.Equal(t, http.StatusBadGateway, rec.Code)

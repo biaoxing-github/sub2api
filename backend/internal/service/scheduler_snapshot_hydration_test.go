@@ -6,6 +6,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
 type snapshotHydrationCache struct {
@@ -227,6 +229,67 @@ func TestGatewaySelectAccountWithLoadAwareness_HydratesSelectedAccountFromSchedu
 	}
 	if got := result.Account.GetCredential("api_key"); got != "anthropic-live-key" {
 		t.Fatalf("expected hydrated api key, got %q", got)
+	}
+}
+
+func TestGatewaySelectAccountWithLoadAwareness_HydratesRoutedStickyWaitPlan(t *testing.T) {
+	groupID := int64(42)
+	sessionHash := "sticky-session"
+	model := "claude-3-5-sonnet-20241022"
+	cache := &snapshotHydrationCache{
+		snapshot: []*Account{
+			{
+				ID:          9,
+				Platform:    PlatformAnthropic,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Priority:    1,
+				GroupIDs:    []int64{groupID},
+			},
+		},
+		accounts: map[int64]*Account{
+			9: {
+				ID:          9,
+				Platform:    PlatformAnthropic,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Priority:    1,
+				GroupIDs:    []int64{groupID},
+				Credentials: map[string]any{
+					"api_key": "anthropic-live-key",
+				},
+			},
+		},
+	}
+	group := &Group{
+		ID:                  groupID,
+		Status:              StatusActive,
+		Platform:            PlatformAnthropic,
+		Hydrated:            true,
+		ModelRoutingEnabled: true,
+		ModelRouting:        map[string][]int64{model: []int64{9}},
+	}
+	svc := &GatewayService{
+		schedulerSnapshot:  NewSchedulerSnapshotService(cache, nil, nil, nil, nil),
+		cache:              &stubGatewayCache{sessionBindings: map[string]int64{sessionHash: 9}},
+		cfg:                testConfig(),
+		concurrencyService: NewConcurrencyService(&stubConcurrencyCacheForTest{acquireResult: false, waitCount: 0}),
+	}
+	ctx := context.WithValue(context.Background(), ctxkey.Group, group)
+
+	result, err := svc.SelectAccountWithLoadAwareness(ctx, &groupID, sessionHash, model, nil, "", 0)
+	if err != nil {
+		t.Fatalf("SelectAccountWithLoadAwareness error: %v", err)
+	}
+	if result == nil || result.Account == nil || result.WaitPlan == nil {
+		t.Fatalf("expected wait-plan selection, got %+v", result)
+	}
+	if got := result.Account.GetCredential("api_key"); got != "anthropic-live-key" {
+		t.Fatalf("expected hydrated api key on sticky wait plan, got %q", got)
 	}
 }
 

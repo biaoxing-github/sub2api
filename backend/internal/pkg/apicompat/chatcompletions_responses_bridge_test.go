@@ -73,6 +73,72 @@ func TestResponsesToChatCompletionsRequest_InstructionsAndInputDeveloperRole(t *
 	assert.JSONEq(t, `"Hello"`, string(out.Messages[2].Content))
 }
 
+func TestResponsesToChatCompletionsRequest_TextFormat(t *testing.T) {
+	tests := []struct {
+		name               string
+		textFormat         string
+		wantResponseFormat string
+	}{
+		{
+			name:       "json_object",
+			textFormat: `{"type":"json_object"}`,
+			wantResponseFormat: `{
+				"type":"json_object"
+			}`,
+		},
+		{
+			name: "json_schema",
+			textFormat: `{
+				"type":"json_schema",
+				"name":"answer",
+				"schema":{
+					"type":"object",
+					"properties":{"ok":{"type":"boolean"}},
+					"required":["ok"],
+					"additionalProperties":false
+				},
+				"strict":true
+			}`,
+			wantResponseFormat: `{
+				"type":"json_schema",
+				"json_schema":{
+					"name":"answer",
+					"schema":{
+						"type":"object",
+						"properties":{"ok":{"type":"boolean"}},
+						"required":["ok"],
+						"additionalProperties":false
+					},
+					"strict":true
+				}
+			}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ResponsesRequest
+			require.NoError(t, json.Unmarshal([]byte(`{
+				"model":"gpt-4o",
+				"input":[{"role":"user","content":"Return JSON"}],
+				"text":{"format":`+tt.textFormat+`}
+			}`), &req))
+
+			out, err := ResponsesToChatCompletionsRequest(&req)
+			require.NoError(t, err)
+
+			payload, err := json.Marshal(out)
+			require.NoError(t, err)
+			var serialized struct {
+				ResponseFormat json.RawMessage `json:"response_format"`
+			}
+			require.NoError(t, json.Unmarshal(payload, &serialized))
+			require.NotEmpty(t, serialized.ResponseFormat)
+			assert.JSONEq(t, tt.wantResponseFormat, string(serialized.ResponseFormat))
+		})
+	}
+}
+
 func TestResponsesInputToChatMessages_ReasoningAndToolPairing(t *testing.T) {
 	input := json.RawMessage(`[
 		{"type":"reasoning","summary":[{"type":"summary_text","text":"plan"}]},

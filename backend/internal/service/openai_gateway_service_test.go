@@ -110,27 +110,36 @@ func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, u
 func (r stubOpenAIAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
 	for i := range r.accounts {
 		if r.accounts[i].ID == id {
-			return &r.accounts[i], nil
+			account := stubOpenAITestEnsureAPIKeyCredentials(r.accounts[i])
+			return &account, nil
 		}
 	}
 	return nil, errors.New("account not found")
 }
 
 func (r stubOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	return r.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
+}
+
+func (r stubOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {
-		if acc.Platform == platform {
-			result = append(result, acc)
+		if stubOpenAITestPlatformIn(acc.Platform, platforms) {
+			result = append(result, stubOpenAITestEnsureAPIKeyCredentials(acc))
 		}
 	}
 	return result, nil
 }
 
 func (r stubOpenAIAccountRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	return r.ListSchedulableByPlatforms(ctx, []string{platform})
+}
+
+func (r stubOpenAIAccountRepo) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {
-		if acc.Platform == platform {
-			result = append(result, acc)
+		if stubOpenAITestPlatformIn(acc.Platform, platforms) {
+			result = append(result, stubOpenAITestEnsureAPIKeyCredentials(acc))
 		}
 	}
 	return result, nil
@@ -138,6 +147,27 @@ func (r stubOpenAIAccountRepo) ListSchedulableByPlatform(ctx context.Context, pl
 
 func (r stubOpenAIAccountRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
 	return r.ListSchedulableByPlatform(ctx, platform)
+}
+
+func (r stubOpenAIAccountRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
+	return r.ListSchedulableByPlatforms(ctx, platforms)
+}
+
+func stubOpenAITestEnsureAPIKeyCredentials(account Account) Account {
+	if !account.IsOpenAIApiKey() || len(account.GetAPIKeys()) > 0 || account.Credentials != nil {
+		return account
+	}
+	account.Credentials = map[string]any{"api_key": fmt.Sprintf("stub-openai-test-key-%d", account.ID)}
+	return account
+}
+
+func stubOpenAITestPlatformIn(platform string, platforms []string) bool {
+	for _, item := range platforms {
+		if platform == item {
+			return true
+		}
+	}
+	return false
 }
 
 func TestOpenAIGatewayServiceHandleErrorResponseMaps413ToClient413(t *testing.T) {
@@ -173,6 +203,8 @@ func TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata(t *testin
 	require.Equal(t, string(OpenAIStreamActionRetryNextAccount), err.ActionMetadata["action_label"])
 	require.Equal(t, string(OpenAIStreamActionRetryNextAccount), err.ActionMetadata["stream_action"])
 	require.Equal(t, "request", err.ActionMetadata["avoidance_scope"])
+	require.Equal(t, "true", err.ActionMetadata["first_byte_cutover_allowed"])
+	require.Equal(t, "request_header_wait", err.ActionMetadata["first_byte_cutover_phase"])
 }
 
 func TestOpenAIHTTPResponsePolicyCarriesActionMetadata(t *testing.T) {
@@ -1480,11 +1512,19 @@ func TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover(t *test
 	originalBody := []byte(`{"model":"gpt-5.5","stream":false,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", codexDesktopUserAgent)
 
 	upstream := &httpUpstreamRecorder{err: errors.New("Post \"https://chatgpt.com/backend-api/codex/responses\": http2: timeout awaiting response headers")}
+	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:                     true,
+		FirstByteSlowThreshold:      30 * time.Second,
+		FirstByteSlowCountThreshold: 1,
+		FirstByteDegradedTTL:        5 * time.Minute,
+	})
 	svc := &OpenAIGatewayService{
-		cfg:          &config.Config{Gateway: config.GatewayConfig{OpenAIRequestHeaderTimeoutSeconds: 60}},
-		httpUpstream: upstream,
+		cfg:              &config.Config{Gateway: config.GatewayConfig{OpenAIRequestHeaderTimeoutSeconds: 60}},
+		httpUpstream:     upstream,
+		openaiPathHealth: pathHealth,
 	}
 	account := &Account{
 		ID:          123,
@@ -1506,10 +1546,35 @@ func TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover(t *test
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Equal(t, "true", failoverErr.ActionMetadata["first_byte_cutover_allowed"])
+	require.Equal(t, "10000", failoverErr.ActionMetadata["first_byte_wait_ms"])
+	require.Equal(t, "123", failoverErr.ActionMetadata["degraded_account_id"])
+	degradedBaseURL := failoverErr.ActionMetadata["degraded_base_url"]
+	require.NotEmpty(t, degradedBaseURL)
 	require.False(t, c.Writer.Written())
 	require.Empty(t, rec.Body.String())
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", upstream.lastReq.URL.String())
+
+	accountKey := OpenAIPathHealthKeyForAccount(account, string(OpenAIUpstreamTransportHTTPSSE))
+	accountSnapshot := pathHealth.Snapshot(accountKey)
+	require.True(t, pathHealth.IsFirstByteLatencyDegraded(accountKey))
+	require.Equal(t, int64(0), accountSnapshot.FailureCount)
+	require.Equal(t, int64(0), accountSnapshot.WindowFailures)
+	require.Equal(t, int64(1), accountSnapshot.FirstByteSlowCount)
+	require.Equal(t, int64(10000), accountSnapshot.LastFirstByteSlowMs)
+
+	baseURLKey := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), degradedBaseURL)
+	baseURLSnapshot := pathHealth.Snapshot(baseURLKey)
+	require.True(t, pathHealth.IsFirstByteLatencyDegraded(baseURLKey))
+	require.Equal(t, int64(0), baseURLSnapshot.FailureCount)
+	require.Equal(t, int64(1), baseURLSnapshot.FirstByteSlowCount)
+
+	bucketKey := OpenAIPathHealthBucketKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), degradedBaseURL)
+	bucketSnapshot := pathHealth.Snapshot(bucketKey)
+	require.True(t, pathHealth.IsFirstByteLatencyDegraded(bucketKey))
+	require.Equal(t, int64(0), bucketSnapshot.FailureCount)
+	require.Equal(t, int64(1), bucketSnapshot.FirstByteSlowCount)
 }
 
 func TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledReturnsFailoverWhenClientStillConnected(t *testing.T) {
@@ -1520,6 +1585,7 @@ func TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledReturnsFailoverW
 	originalBody := []byte(`{"model":"gpt-5.5","stream":false,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
 	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", codexDesktopUserAgent)
 
 	upstream := &httpUpstreamRecorder{err: context.Canceled}
 	svc := &OpenAIGatewayService{
@@ -1560,6 +1626,7 @@ func TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledDoesNotFailoverW
 	originalBody := []byte(`{"model":"gpt-5.5","stream":false,"instructions":"local-test-instructions","input":[{"type":"text","text":"hi"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(originalBody))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", codexDesktopUserAgent)
 	clientCtx, cancel := context.WithCancel(req.Context())
 	cancel()
 	c.Request = req.WithContext(clientCtx)
@@ -1588,9 +1655,8 @@ func TestOpenAIGatewayService_ForwardRequestPhaseContextCanceledDoesNotFailoverW
 	require.Nil(t, result)
 	var failoverErr *UpstreamFailoverError
 	require.False(t, errors.As(err, &failoverErr))
-	require.True(t, c.Writer.Written())
-	require.Equal(t, http.StatusBadGateway, rec.Code)
-	require.Contains(t, rec.Body.String(), "Upstream request failed")
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 	require.NotNil(t, upstream.lastReq)
 	require.Equal(t, "https://chatgpt.com/backend-api/codex/responses", upstream.lastReq.URL.String())
 }
@@ -4491,7 +4557,7 @@ func TestHandleSSEToJSON_CompletedEventReturnsJSON(t *testing.T) {
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, body, "gpt-4o", "gpt-4o")
+	usage, err := svc.handleSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-4o", "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 7, usage.InputTokens)
@@ -4520,7 +4586,7 @@ func TestHandlePassthroughSSEToJSON_CompletedEventReturnsJSONContentType(t *test
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handlePassthroughSSEToJSON(resp, c, body, "gpt-5.4", "gpt-5.4")
+	usage, err := svc.handlePassthroughSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-5.4", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 5, usage.InputTokens)
@@ -4619,7 +4685,7 @@ func TestHandleSSEToJSON_ReconstructsImageGenerationOutputItemDone(t *testing.T)
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, body, "gpt-5.4", "gpt-5.4")
+	usage, err := svc.handleSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-5.4", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 4, usage.ImageOutputTokens)
@@ -4645,7 +4711,7 @@ func TestHandleSSEToJSON_NoFinalResponseKeepsSSEBody(t *testing.T) {
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, body, "gpt-4o", "gpt-4o")
+	usage, err := svc.handleSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-4o", "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 0, usage.InputTokens)
@@ -4669,7 +4735,7 @@ func TestHandleSSEToJSON_ResponseFailedReturnsProtocolError(t *testing.T) {
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, body, "gpt-4o", "gpt-4o")
+	usage, err := svc.handleSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-4o", "gpt-4o")
 	require.Nil(t, usage)
 	require.Error(t, err)
 	require.Equal(t, http.StatusBadGateway, rec.Code)

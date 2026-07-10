@@ -33,7 +33,8 @@ import {
   listBatchTestNonAPIKeyRuns,
   refreshUpstreamBalance,
   refreshUpstreamBalances,
-  restoreAccountAPIKeyState
+  restoreAccountAPIKeyState,
+  syncFromCrs
 } from '@/api/admin/accounts'
 
 describe('admin accounts api usage summary', () => {
@@ -130,6 +131,30 @@ describe('admin accounts api usage summary', () => {
     })
     expect(post).toHaveBeenNthCalledWith(2, '/admin/accounts/26/refresh-upstream-balance', undefined, {
       timeout: 120000,
+    })
+  })
+
+  it('uses an extended timeout for CRS sync requests', async () => {
+    const params = {
+      base_url: 'https://crs.example.com',
+      username: 'admin',
+      password: 'secret',
+      sync_proxies: true,
+      selected_account_ids: ['crs-account-1'],
+    }
+    const response = {
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      items: [],
+    }
+    post.mockResolvedValueOnce({ data: response })
+
+    await expect(syncFromCrs(params)).resolves.toEqual(response)
+
+    expect(post).toHaveBeenCalledWith('/admin/accounts/sync/crs', params, {
+      timeout: 180000,
     })
   })
 

@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 func TestOpenAIPathHealthCircuitBreakerTransitions(t *testing.T) {
@@ -363,6 +365,83 @@ func TestOpenAIPathHealthScoreBoostUsesHeaderWait(t *testing.T) {
 	}
 }
 
+func TestOpenAIPathHealthFirstByteSlowDegradesAndRecovers(t *testing.T) {
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:                       true,
+		FirstByteSlowThreshold:        30 * time.Second,
+		FirstByteSlowWindow:           2 * time.Minute,
+		FirstByteSlowCountThreshold:   3,
+		FirstByteDegradedTTL:          5 * time.Minute,
+		FirstByteRecoverySuccessCount: 3,
+		EWMAAlpha:                     1,
+	})
+	now := time.Unix(700, 0).UTC()
+	tracker.now = func() time.Time { return now }
+	key := OpenAIPathHealthKey{AccountID: 16}
+	slowTTFT := 31_000
+
+	tracker.RecordSuccess(key, &slowTTFT, nil)
+	tracker.RecordSuccess(key, &slowTTFT, nil)
+	if tracker.IsFirstByteLatencyDegraded(key) {
+		t.Fatal("first byte latency degraded before threshold")
+	}
+
+	tracker.RecordSuccess(key, &slowTTFT, nil)
+	snapshot := tracker.Snapshot(key)
+	if !tracker.IsFirstByteLatencyDegraded(key) {
+		t.Fatal("first byte latency degraded = false, want true")
+	}
+	if snapshot.FirstByteSlowCount != 3 {
+		t.Fatalf("FirstByteSlowCount = %d, want 3", snapshot.FirstByteSlowCount)
+	}
+	if snapshot.FirstByteDegradedUntil == nil || !snapshot.FirstByteDegradedUntil.Equal(now.Add(5*time.Minute)) {
+		t.Fatalf("FirstByteDegradedUntil = %v, want %v", snapshot.FirstByteDegradedUntil, now.Add(5*time.Minute))
+	}
+
+	fastTTFT := 800
+	tracker.RecordSuccess(key, &fastTTFT, nil)
+	tracker.RecordSuccess(key, &fastTTFT, nil)
+	if !tracker.IsFirstByteLatencyDegraded(key) {
+		t.Fatal("first byte latency degradation cleared before recovery threshold")
+	}
+	tracker.RecordSuccess(key, &fastTTFT, nil)
+	if tracker.IsFirstByteLatencyDegraded(key) {
+		t.Fatal("first byte latency degradation still active after recovery successes")
+	}
+}
+
+func TestOpenAIPathHealthFirstByteSlowSampleDegradesWithoutHardFailure(t *testing.T) {
+	tracker := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:                     true,
+		CircuitBreakerEnabled:       true,
+		FirstByteSlowThreshold:      30 * time.Second,
+		FirstByteSlowCountThreshold: 1,
+		FirstByteDegradedTTL:        5 * time.Minute,
+	})
+	now := time.Unix(710, 0).UTC()
+	tracker.now = func() time.Time { return now }
+	key := OpenAIPathHealthKey{AccountID: 17}
+
+	tracker.RecordFirstByteSlow(key, 31_000)
+	snapshot := tracker.Snapshot(key)
+
+	if !tracker.IsFirstByteLatencyDegraded(key) {
+		t.Fatal("first byte latency degraded = false, want true")
+	}
+	if snapshot.State != OpenAIPathHealthStateHealthy {
+		t.Fatalf("state = %q, want healthy", snapshot.State)
+	}
+	if snapshot.FailureCount != 0 || snapshot.WindowFailures != 0 || snapshot.ConsecutiveFailures != 0 {
+		t.Fatalf("failure counters = total:%d window:%d consecutive:%d, want all zero", snapshot.FailureCount, snapshot.WindowFailures, snapshot.ConsecutiveFailures)
+	}
+	if snapshot.Samples != 1 {
+		t.Fatalf("Samples = %d, want 1", snapshot.Samples)
+	}
+	if snapshot.FirstByteSlowCount != 1 || snapshot.LastFirstByteSlowMs != 31_000 {
+		t.Fatalf("first byte slow snapshot = count:%d ms:%d, want 1/31000", snapshot.FirstByteSlowCount, snapshot.LastFirstByteSlowMs)
+	}
+}
+
 func TestOpenAIPathHealthDefaultTransportMatchesHTTPSSE(t *testing.T) {
 	key := OpenAIPathHealthKeyForAccount(&Account{ID: 1}, string(OpenAIUpstreamTransportAny))
 	if key.Transport != string(OpenAIUpstreamTransportHTTPSSE) {
@@ -415,5 +494,47 @@ func TestOpenAIPathHealthBucketKeyForAccountClearsAccountID(t *testing.T) {
 	}
 	if key.Transport != string(OpenAIUpstreamTransportHTTPSSE) {
 		t.Fatalf("Transport = %q", key.Transport)
+	}
+}
+
+func TestOrderedOpenAIRequestBaseURLsDemotesFirstByteDegradedURL(t *testing.T) {
+	account := &Account{
+		ID:          7201,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"request_base_urls": []any{
+				"https://slow.example.com/v1",
+				"https://fast.example.com/v1",
+			},
+		},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIFastLane.Enabled = true
+	cfg.Gateway.OpenAIFastLane.MinSamples = 1
+	cfg.Gateway.OpenAIFastLane.TTFTWeight = 1
+	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:                     true,
+		FirstByteSlowThreshold:      30 * time.Second,
+		FirstByteSlowCountThreshold: 3,
+		EWMAAlpha:                   1,
+	})
+	slowKey := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), "https://slow.example.com/v1")
+	slowTTFT := 31_000
+	for i := 0; i < 3; i++ {
+		pathHealth.RecordSuccess(slowKey, &slowTTFT, nil)
+	}
+	svc := &OpenAIGatewayService{
+		cfg:              cfg,
+		openaiPathHealth: pathHealth,
+	}
+
+	ordered := svc.orderedOpenAIRequestBaseURLsForForward(account, OpenAIUpstreamTransportHTTPSSE)
+
+	if len(ordered) != 2 || ordered[0] != "https://fast.example.com/v1" || ordered[1] != "https://slow.example.com/v1" {
+		t.Fatalf("ordered base URLs = %#v, want fast URL before degraded slow URL", ordered)
 	}
 }

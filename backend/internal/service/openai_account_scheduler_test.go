@@ -2492,6 +2492,55 @@ func TestBuildOpenAIAccountLoadPlanFastLanePathHealthTTFTBoostPrefersLowerTTFT(t
 	require.Greater(t, fastScore.score, slowScore.score)
 }
 
+func TestBuildOpenAIAccountLoadPlanFastLaneFirstByteDegradationDemotesCandidate(t *testing.T) {
+	groupID := int64(42)
+	accounts := []*Account{
+		{ID: 6221, Name: "slow-first-byte", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+		{ID: 6222, Name: "healthy-first-byte", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 1},
+	}
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIPathHealth.Enabled = true
+	cfg.Gateway.OpenAIPathHealth.CircuitBreakerEnabled = true
+	cfg.Gateway.OpenAIWS.LBTopK = 2
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Priority = 1
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Queue = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.ErrorRate = 0
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.TTFT = 0
+	cfg.Gateway.OpenAIFastLane.Enabled = true
+	cfg.Gateway.OpenAIFastLane.TTFTWeight = 1
+	cfg.Gateway.OpenAIFastLane.MinSamples = 1
+	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
+		Enabled:                     true,
+		FirstByteSlowThreshold:      30 * time.Second,
+		FirstByteSlowCountThreshold: 3,
+		EWMAAlpha:                   1,
+	})
+	slowTTFT := 31_000
+	for i := 0; i < 3; i++ {
+		pathHealth.RecordSuccess(OpenAIPathHealthKeyForAccount(accounts[0], string(OpenAIUpstreamTransportHTTPSSE)), &slowTTFT, nil)
+	}
+	scheduler := &defaultOpenAIAccountScheduler{
+		service: &OpenAIGatewayService{
+			cfg:              cfg,
+			openaiPathHealth: pathHealth,
+		},
+		stats: newOpenAIAccountRuntimeStats(),
+	}
+	loadMap := map[int64]*AccountLoadInfo{
+		6221: {AccountID: 6221, LoadRate: 0},
+		6222: {AccountID: 6222, LoadRate: 0},
+	}
+
+	plan := scheduler.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{GroupID: &groupID, RequiredTransport: OpenAIUpstreamTransportHTTPSSE}, accounts, loadMap)
+
+	require.Len(t, plan.candidates, 2)
+	slowScore := findOpenAIAccountCandidateScore(t, plan.candidates, 6221)
+	healthyScore := findOpenAIAccountCandidateScore(t, plan.candidates, 6222)
+	require.Equal(t, OpenAIPathHealthStateDegraded, slowScore.pathState)
+	require.Less(t, slowScore.score, healthyScore.score)
+}
+
 func findOpenAIAccountCandidateScore(t *testing.T, candidates []openAIAccountCandidateScore, accountID int64) openAIAccountCandidateScore {
 	t.Helper()
 	for _, candidate := range candidates {

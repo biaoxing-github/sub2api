@@ -24,6 +24,15 @@ const (
 	OpenAIPathFailureOther              = "other"
 )
 
+const (
+	// 首字节慢降级默认对齐 juhe-ai speed_first 的短窗口观测，不计入硬故障熔断。
+	defaultOpenAIFirstByteSlowThreshold        = 30 * time.Second
+	defaultOpenAIFirstByteSlowWindow           = 2 * time.Minute
+	defaultOpenAIFirstByteSlowCountThreshold   = int64(3)
+	defaultOpenAIFirstByteDegradedTTL          = 5 * time.Minute
+	defaultOpenAIFirstByteRecoverySuccessCount = int64(3)
+)
+
 type OpenAIPathHealthKey struct {
 	AccountID int64
 	ProxyID   int64
@@ -54,6 +63,18 @@ type OpenAIPathHealthRecord struct {
 	LastFailureAt           *time.Time          `json:"last_failure_at,omitempty"`
 	CooldownUntil           *time.Time          `json:"cooldown_until,omitempty"`
 	ConsecutiveSuccesses    int64               `json:"consecutive_successes"`
+	// FirstByteSlowCount 记录当前慢首字节窗口内命中的慢样本数量。
+	FirstByteSlowCount int64 `json:"first_byte_slow_count,omitempty"`
+	// FirstByteSlowWindowAt 是慢首字节统计窗口的起点。
+	FirstByteSlowWindowAt *time.Time `json:"first_byte_slow_window_started_at,omitempty"`
+	// LastFirstByteSlowMs 记录最近一次慢首字节耗时，便于运维排查。
+	LastFirstByteSlowMs int64 `json:"last_first_byte_slow_ms,omitempty"`
+	// LastFirstByteSlowAt 记录最近一次慢首字节发生时间。
+	LastFirstByteSlowAt *time.Time `json:"last_first_byte_slow_at,omitempty"`
+	// FirstByteDegradedUntil 表示首字节慢降级的 TTL，调度只降权不熔断。
+	FirstByteDegradedUntil *time.Time `json:"first_byte_degraded_until,omitempty"`
+	// FirstByteRecoveryCount 记录降级期间连续快首字节恢复次数。
+	FirstByteRecoveryCount int64 `json:"first_byte_recovery_success_count,omitempty"`
 }
 
 type OpenAIPathHealthOptions struct {
@@ -65,6 +86,16 @@ type OpenAIPathHealthOptions struct {
 	OpenFailureThreshold     int64
 	HalfOpenMaxProbes        int64
 	EWMAAlpha                float64
+	// FirstByteSlowThreshold 是首字节超过多少时视为慢样本。
+	FirstByteSlowThreshold time.Duration
+	// FirstByteSlowWindow 是慢样本累计窗口。
+	FirstByteSlowWindow time.Duration
+	// FirstByteSlowCountThreshold 是窗口内触发降级的慢样本数。
+	FirstByteSlowCountThreshold int64
+	// FirstByteDegradedTTL 是慢首字节降级持续时间。
+	FirstByteDegradedTTL time.Duration
+	// FirstByteRecoverySuccessCount 是清除降级所需的连续快样本数。
+	FirstByteRecoverySuccessCount int64
 }
 
 type OpenAIPathHealthTracker struct {
@@ -92,6 +123,21 @@ func NewOpenAIPathHealthTracker(options OpenAIPathHealthOptions) *OpenAIPathHeal
 	}
 	if options.EWMAAlpha <= 0 || options.EWMAAlpha > 1 {
 		options.EWMAAlpha = 0.2
+	}
+	if options.FirstByteSlowThreshold <= 0 {
+		options.FirstByteSlowThreshold = defaultOpenAIFirstByteSlowThreshold
+	}
+	if options.FirstByteSlowWindow <= 0 {
+		options.FirstByteSlowWindow = defaultOpenAIFirstByteSlowWindow
+	}
+	if options.FirstByteSlowCountThreshold <= 0 {
+		options.FirstByteSlowCountThreshold = defaultOpenAIFirstByteSlowCountThreshold
+	}
+	if options.FirstByteDegradedTTL <= 0 {
+		options.FirstByteDegradedTTL = defaultOpenAIFirstByteDegradedTTL
+	}
+	if options.FirstByteRecoverySuccessCount <= 0 {
+		options.FirstByteRecoverySuccessCount = defaultOpenAIFirstByteRecoverySuccessCount
 	}
 	return &OpenAIPathHealthTracker{
 		options: options,
@@ -193,7 +239,9 @@ func (t *OpenAIPathHealthTracker) Snapshot(key OpenAIPathHealthKey) OpenAIPathHe
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	record := t.ensureLocked(key)
-	t.refreshStateLocked(record, t.now())
+	now := t.now()
+	t.refreshStateLocked(record, now)
+	t.refreshFirstByteLatencyLocked(record, now)
 	return cloneOpenAIPathHealthRecord(record)
 }
 
@@ -207,6 +255,7 @@ func (t *OpenAIPathHealthTracker) RecordSuccess(key OpenAIPathHealthKey, ttftMs 
 	record := t.ensureLocked(key)
 	now := t.now()
 	t.refreshStateLocked(record, now)
+	t.refreshFirstByteLatencyLocked(record, now)
 	record.SuccessCount++
 	record.Samples++
 	record.ConsecutiveFailures = 0
@@ -219,11 +268,28 @@ func (t *OpenAIPathHealthTracker) RecordSuccess(key OpenAIPathHealthKey, ttftMs 
 	if headerWaitMs != nil && *headerWaitMs > 0 {
 		record.HeaderWaitEWMAMs = updateOpenAIPathEWMA(record.HeaderWaitEWMAMs, float64(*headerWaitMs), t.options.EWMAAlpha)
 	}
+	t.recordFirstByteLatencyLocked(record, now, ttftMs)
 	if record.State == OpenAIPathHealthStateHalfOpen && record.ConsecutiveSuccesses >= t.options.HalfOpenMaxProbes {
 		record.State = OpenAIPathHealthStateHealthy
 		record.CooldownUntil = nil
 		record.LastFailureReason = ""
 	}
+}
+
+// RecordFirstByteSlow 记录输出前首字节等待过慢的样本，只触发慢首字节降级，不增加硬故障计数。
+func (t *OpenAIPathHealthTracker) RecordFirstByteSlow(key OpenAIPathHealthKey, ttftMs int) {
+	if t == nil || !t.options.Enabled || ttftMs <= 0 {
+		return
+	}
+	key = normalizeOpenAIPathHealthKey(key)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	record := t.ensureLocked(key)
+	now := t.now()
+	t.refreshStateLocked(record, now)
+	t.refreshFirstByteLatencyLocked(record, now)
+	record.Samples++
+	t.recordFirstByteSlowLocked(record, now, ttftMs)
 }
 
 // MarkHealthy 清除指定线路的窗口故障和熔断状态，用于人工探测已经证明该线路可用的场景。
@@ -243,6 +309,12 @@ func (t *OpenAIPathHealthTracker) MarkHealthy(key OpenAIPathHealthKey) {
 	record.LastFailureReason = ""
 	record.LastActionLabel = ""
 	record.ConsecutiveSuccesses++
+	record.FirstByteSlowCount = 0
+	record.FirstByteSlowWindowAt = nil
+	record.LastFirstByteSlowMs = 0
+	record.LastFirstByteSlowAt = nil
+	record.FirstByteDegradedUntil = nil
+	record.FirstByteRecoveryCount = 0
 }
 
 func (t *OpenAIPathHealthTracker) RecordFailure(key OpenAIPathHealthKey, reason string, headerWaitMs *int64) {
@@ -263,6 +335,7 @@ func (t *OpenAIPathHealthTracker) RecordFailureWithAction(key OpenAIPathHealthKe
 	record := t.ensureLocked(key)
 	now := t.now()
 	t.refreshStateLocked(record, now)
+	t.refreshFirstByteLatencyLocked(record, now)
 	countsForCircuit := openAIPathFailureCountsForCircuit(reason)
 	if countsForCircuit {
 		t.prepareFailureWindowLocked(record, now)
@@ -344,6 +417,15 @@ func (t *OpenAIPathHealthTracker) IsOpenCircuit(key OpenAIPathHealthKey) bool {
 	return snapshot.State == OpenAIPathHealthStateOpenCircuit
 }
 
+// IsFirstByteLatencyDegraded 判断指定路径是否处于慢首字节降级期。
+func (t *OpenAIPathHealthTracker) IsFirstByteLatencyDegraded(key OpenAIPathHealthKey) bool {
+	if t == nil || !t.options.Enabled {
+		return false
+	}
+	snapshot := t.Snapshot(key)
+	return snapshot.FirstByteDegradedUntil != nil
+}
+
 func (t *OpenAIPathHealthTracker) ScoreBoost(key OpenAIPathHealthKey, minSamples int64, ttftWeight, headerWaitWeight float64) (boost float64, hasSample bool) {
 	snapshot := t.Snapshot(key)
 	if snapshot.State == OpenAIPathHealthStateOpenCircuit {
@@ -400,6 +482,65 @@ func (t *OpenAIPathHealthTracker) refreshStateLocked(record *OpenAIPathHealthRec
 		record.State = OpenAIPathHealthStateHalfOpen
 		record.CooldownUntil = nil
 		record.ConsecutiveSuccesses = 0
+	}
+}
+
+// refreshFirstByteLatencyLocked 清理过期的首字节慢窗口和降级 TTL。
+func (t *OpenAIPathHealthTracker) refreshFirstByteLatencyLocked(record *OpenAIPathHealthRecord, now time.Time) {
+	if record == nil {
+		return
+	}
+	if record.FirstByteSlowWindowAt != nil && now.Sub(*record.FirstByteSlowWindowAt) > t.options.FirstByteSlowWindow {
+		record.FirstByteSlowCount = 0
+		record.FirstByteSlowWindowAt = nil
+	}
+	if record.FirstByteDegradedUntil != nil && !now.Before(*record.FirstByteDegradedUntil) {
+		record.FirstByteDegradedUntil = nil
+		record.FirstByteRecoveryCount = 0
+		record.FirstByteSlowCount = 0
+		record.FirstByteSlowWindowAt = nil
+	}
+}
+
+// recordFirstByteLatencyLocked 将成功请求的首字节耗时转成“慢降级/快恢复”信号。
+func (t *OpenAIPathHealthTracker) recordFirstByteLatencyLocked(record *OpenAIPathHealthRecord, now time.Time, ttftMs *int) {
+	if record == nil || ttftMs == nil || *ttftMs <= 0 {
+		return
+	}
+	if time.Duration(*ttftMs)*time.Millisecond < t.options.FirstByteSlowThreshold {
+		if record.FirstByteDegradedUntil != nil {
+			record.FirstByteRecoveryCount++
+			if record.FirstByteRecoveryCount >= t.options.FirstByteRecoverySuccessCount {
+				record.FirstByteDegradedUntil = nil
+				record.FirstByteRecoveryCount = 0
+				record.FirstByteSlowCount = 0
+				record.FirstByteSlowWindowAt = nil
+			}
+		}
+		return
+	}
+
+	t.recordFirstByteSlowLocked(record, now, *ttftMs)
+}
+
+// recordFirstByteSlowLocked 直接累计已判定为慢的首字节样本，用于输出前主动切换场景。
+func (t *OpenAIPathHealthTracker) recordFirstByteSlowLocked(record *OpenAIPathHealthRecord, now time.Time, ttftMs int) {
+	if record == nil || ttftMs <= 0 {
+		return
+	}
+	if record.FirstByteSlowWindowAt == nil || now.Sub(*record.FirstByteSlowWindowAt) > t.options.FirstByteSlowWindow {
+		started := now
+		record.FirstByteSlowWindowAt = &started
+		record.FirstByteSlowCount = 0
+	}
+	record.FirstByteSlowCount++
+	record.FirstByteRecoveryCount = 0
+	record.LastFirstByteSlowMs = int64(ttftMs)
+	slowAt := now
+	record.LastFirstByteSlowAt = &slowAt
+	if record.FirstByteSlowCount >= t.options.FirstByteSlowCountThreshold {
+		degradedUntil := now.Add(t.options.FirstByteDegradedTTL)
+		record.FirstByteDegradedUntil = &degradedUntil
 	}
 }
 
@@ -559,6 +700,18 @@ func cloneOpenAIPathHealthRecord(record *OpenAIPathHealthRecord) OpenAIPathHealt
 	if record.CooldownUntil != nil {
 		v := *record.CooldownUntil
 		out.CooldownUntil = &v
+	}
+	if record.FirstByteSlowWindowAt != nil {
+		v := *record.FirstByteSlowWindowAt
+		out.FirstByteSlowWindowAt = &v
+	}
+	if record.LastFirstByteSlowAt != nil {
+		v := *record.LastFirstByteSlowAt
+		out.LastFirstByteSlowAt = &v
+	}
+	if record.FirstByteDegradedUntil != nil {
+		v := *record.FirstByteDegradedUntil
+		out.FirstByteDegradedUntil = &v
 	}
 	return out
 }

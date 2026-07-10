@@ -33,6 +33,10 @@ const (
 	// ops_error_logger 中间件检查此 key，为 true 时跳过错误记录。
 	OpsSkipPassthroughKey = "ops_skip_passthrough"
 
+	// OpsStreamErrorKey 保存已经固化为 HTTP 200 的 SSE 流内错误。
+	// 这类错误只能通过 in-band SSE error 帧返回，wire 状态码不会进入 status>=400 采集路径。
+	OpsStreamErrorKey = "ops_stream_error"
+
 	// ResponseCommittedKey 由 handleErrorResponse 系列函数在写完 HTTP 错误响应后设置。
 	// ensureForwardErrorResponse 检查此 key，为 true 时跳过兜底写入，避免在已完成的 JSON 后追加 SSE。
 	ResponseCommittedKey = "response_committed"
@@ -86,6 +90,44 @@ func HasOpsClientBusinessLimited(c *gin.Context) bool {
 	}
 	marked, _ := v.(bool)
 	return marked
+}
+
+// OpsStreamError 描述网关在响应状态已固化后通过 SSE 帧返回的错误。
+type OpsStreamError struct {
+	// ErrType 是对客错误类型，例如 rate_limit_error、upstream_error。
+	ErrType string
+	// Message 是对客错误消息。
+	Message string
+	// IntendedStatus 是未固化时本应返回的 HTTP 状态码，仅用于 ops 分级。
+	IntendedStatus int
+}
+
+// MarkOpsStreamError 记录一次流内错误，首个标记保留为根因，后续兜底错误不覆盖。
+func MarkOpsStreamError(c *gin.Context, errType, message string, intendedStatus int) {
+	if c == nil {
+		return
+	}
+	if _, exists := c.Get(OpsStreamErrorKey); exists {
+		return
+	}
+	c.Set(OpsStreamErrorKey, OpsStreamError{
+		ErrType:        strings.TrimSpace(errType),
+		Message:        strings.TrimSpace(message),
+		IntendedStatus: intendedStatus,
+	})
+}
+
+// GetOpsStreamError 返回本请求已标记的流内错误。
+func GetOpsStreamError(c *gin.Context) (OpsStreamError, bool) {
+	if c == nil {
+		return OpsStreamError{}, false
+	}
+	v, ok := c.Get(OpsStreamErrorKey)
+	if !ok {
+		return OpsStreamError{}, false
+	}
+	streamErr, ok := v.(OpsStreamError)
+	return streamErr, ok
 }
 
 // SetOpsUpstreamError is the exported wrapper for setOpsUpstreamError, used by

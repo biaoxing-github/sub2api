@@ -286,6 +286,10 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			pathState = snapshot.State
 			bucketSnapshot := s.service.openaiPathHealth.Snapshot(bucketKey)
 			pathState = openAIPathHealthWorseState(pathState, bucketSnapshot.State)
+			firstByteDegraded := snapshot.FirstByteDegradedUntil != nil || bucketSnapshot.FirstByteDegradedUntil != nil
+			if firstByteDegraded && pathState == OpenAIPathHealthStateHealthy {
+				pathState = OpenAIPathHealthStateDegraded
+			}
 			minSamples := int64(s.service.openAIFastLaneMinSamples())
 			ttftWeight := s.service.openAIFastLaneTTFTWeight()
 			headerWaitWeight := s.service.openAIFastLaneHeaderWaitWeight()

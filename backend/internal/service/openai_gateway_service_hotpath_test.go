@@ -678,6 +678,20 @@ func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 			wantValue: "xhigh",
 		},
 		{
+			name:      "保留 GPT-5.6 max 强度",
+			body:      []byte(`{"reasoning":{"effort":"max"}}`),
+			model:     "gpt-5.6-luna",
+			wantNil:   false,
+			wantValue: "max",
+		},
+		{
+			name:      "保留 GPT-5.6 ultra 强度",
+			body:      []byte(`{"reasoning":{"effort":"ultra"}}`),
+			model:     "gpt-5.6-sol",
+			wantNil:   false,
+			wantValue: "ultra",
+		},
+		{
 			name:    "minimal 归一化为空",
 			body:    []byte(`{"reasoning":{"effort":"minimal"}}`),
 			model:   "gpt-5-high",
@@ -689,6 +703,13 @@ func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 			model:     "gpt-5-high",
 			wantNil:   false,
 			wantValue: "high",
+		},
+		{
+			name:      "从 GPT-5.6 模型后缀推导 ultra",
+			body:      []byte(`{"input":"hi"}`),
+			model:     "gpt-5.6-terra-ultra",
+			wantNil:   false,
+			wantValue: "ultra",
 		},
 		{
 			name:    "未知后缀不返回",
