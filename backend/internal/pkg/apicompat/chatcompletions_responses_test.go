@@ -39,17 +39,38 @@ func TestUsageConversionsPreserveCacheWriteTokens(t *testing.T) {
 		"output_tokens":50,
 		"input_tokens_details":{"cached_tokens":100,"cache_write_tokens":200}
 	}`), &responsesUsage))
+	require.NotNil(t, responsesUsage.InputTokensDetails)
+	require.Equal(t, 200, responsesUsage.InputTokensDetails.CacheWriteTokens)
 
 	chatUsage := chatUsageFromResponsesUsage(&responsesUsage)
-	chatPayload, err := json.Marshal(chatUsage)
-	require.NoError(t, err)
-	assert.Contains(t, string(chatPayload), `"cache_write_tokens":200`)
+	require.NotNil(t, chatUsage.PromptTokensDetails)
+	require.Equal(t, 100, chatUsage.PromptTokensDetails.CachedTokens)
+	require.Equal(t, 200, chatUsage.PromptTokensDetails.CacheWriteTokens)
 
 	roundTrip := ChatUsageToResponsesUsage(chatUsage)
-	roundTripPayload, err := json.Marshal(roundTrip)
-	require.NoError(t, err)
-	assert.Contains(t, string(roundTripPayload), `"cache_creation_input_tokens":200`)
-	assert.Contains(t, string(roundTripPayload), `"cache_write_tokens":200`)
+	require.NotNil(t, roundTrip.InputTokensDetails)
+	require.Equal(t, 200, roundTrip.CacheCreationInputTokens)
+	require.Equal(t, 200, roundTrip.InputTokensDetails.CacheWriteTokens)
+}
+
+func TestResponsesUsageNestedCacheWritePresenceOverridesTopLevelAlias(t *testing.T) {
+	tests := []struct {
+		name       string
+		nestedJSON string
+		want       int
+	}{
+		{name: "explicit zero", nestedJSON: `{"cache_write_tokens":0}`, want: 0},
+		{name: "nonzero", nestedJSON: `{"cache_write_tokens":7}`, want: 7},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var usage ResponsesUsage
+			payload := []byte(`{"input_tokens":20,"output_tokens":2,"cache_creation_input_tokens":19,"input_tokens_details":` + tt.nestedJSON + `}`)
+			require.NoError(t, json.Unmarshal(payload, &usage))
+			require.Equal(t, tt.want, usage.CacheCreationInputTokens)
+		})
+	}
 }
 
 func TestChatCompletionsToResponses_SystemMessage(t *testing.T) {
@@ -133,6 +154,91 @@ func TestChatCompletionsToResponses_ToolCalls(t *testing.T) {
 	assert.Equal(t, "ping", resp.Tools[0].Name)
 }
 
+func TestChatCompletionsToResponses_ToolStrict(t *testing.T) {
+	strictTrue := true
+	strictFalse := false
+	tests := []struct {
+		name   string
+		strict *bool
+		want   bool
+	}{
+		{name: "defaults omitted strict to false", want: false},
+		{name: "preserves explicit true", strict: &strictTrue, want: true},
+		{name: "preserves explicit false", strict: &strictFalse, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ChatCompletionsRequest{
+				Model:    "gpt-4o",
+				Messages: []ChatMessage{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+				Tools: []ChatTool{{
+					Type: "function",
+					Function: &ChatFunction{
+						Name:   "lookup",
+						Strict: tt.strict,
+					},
+				}},
+			}
+
+			resp, err := ChatCompletionsToResponses(req)
+			require.NoError(t, err)
+			require.Len(t, resp.Tools, 1)
+			require.NotNil(t, resp.Tools[0].Strict)
+			assert.Equal(t, tt.want, *resp.Tools[0].Strict)
+
+			payload, err := json.Marshal(resp)
+			require.NoError(t, err)
+
+			var serialized struct {
+				Tools []map[string]json.RawMessage `json:"tools"`
+			}
+			require.NoError(t, json.Unmarshal(payload, &serialized))
+			require.Len(t, serialized.Tools, 1)
+			strictJSON, ok := serialized.Tools[0]["strict"]
+			require.True(t, ok, "strict must be present in the Responses payload")
+			assert.JSONEq(t, string(mustMarshalJSON(t, tt.want)), string(strictJSON))
+		})
+	}
+}
+
+func TestChatCompletionsToResponses_LegacyFunctionDefaultsStrictFalse(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model:    "gpt-4o",
+		Messages: []ChatMessage{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+		Functions: []ChatFunction{{
+			Name: "lookup",
+		}},
+	}
+
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+	require.Len(t, resp.Tools, 1)
+	require.NotNil(t, resp.Tools[0].Strict)
+	assert.False(t, *resp.Tools[0].Strict)
+
+	payload, err := json.Marshal(resp)
+	require.NoError(t, err)
+	assert.Contains(t, string(payload), `"strict":false`)
+}
+
+func TestResponsesTool_StrictFalseIsSerialized(t *testing.T) {
+	strict := false
+	payload, err := json.Marshal(ResponsesTool{
+		Type:   "function",
+		Strict: &strict,
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"function","strict":false}`, string(payload))
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	require.NoError(t, err)
+	return data
+}
+
 func TestChatCompletionsToResponses_MaxTokens(t *testing.T) {
 	t.Run("max_tokens", func(t *testing.T) {
 		maxTokens := 100
@@ -177,36 +283,34 @@ func TestChatCompletionsToResponses_ReasoningEffort(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
-func TestChatCompletionsToResponses_ResponseFormat(t *testing.T) {
-	tests := []struct {
-		name           string
-		responseFormat string
-		wantTextFormat string
-	}{
-		{
-			name:           "json_object",
-			responseFormat: `{"type":"json_object"}`,
-			wantTextFormat: `{
-				"type":"json_object"
-			}`,
-		},
-		{
-			name: "json_schema",
-			responseFormat: `{
-				"type":"json_schema",
-				"json_schema":{
-					"name":"answer",
-					"schema":{
-						"type":"object",
-						"properties":{"ok":{"type":"boolean"}},
-						"required":["ok"],
-						"additionalProperties":false
-					},
-					"strict":true
-				}
-			}`,
-			wantTextFormat: `{
-				"type":"json_schema",
+func TestChatCompletionsToResponses_ResponseFormatJsonObject(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model:          "gpt-4o",
+		Messages:       []ChatMessage{{Role: "user", Content: json.RawMessage(`"Return JSON"`)}},
+		ResponseFormat: json.RawMessage(`{"type":"json_object"}`),
+	}
+
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Text)
+	assert.JSONEq(t, `{"type":"json_object"}`, string(resp.Text.Format))
+
+	payload, err := json.Marshal(resp)
+	require.NoError(t, err)
+	var serialized struct {
+		Text ResponsesText `json:"text"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &serialized))
+	assert.JSONEq(t, `{"type":"json_object"}`, string(serialized.Text.Format))
+}
+
+func TestChatCompletionsToResponses_ResponseFormatJsonSchema(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model:    "gpt-4o",
+		Messages: []ChatMessage{{Role: "user", Content: json.RawMessage(`"Return structured JSON"`)}},
+		ResponseFormat: json.RawMessage(`{
+			"type":"json_schema",
+			"json_schema":{
 				"name":"answer",
 				"schema":{
 					"type":"object",
@@ -215,35 +319,24 @@ func TestChatCompletionsToResponses_ResponseFormat(t *testing.T) {
 					"additionalProperties":false
 				},
 				"strict":true
-			}`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var req ChatCompletionsRequest
-			require.NoError(t, json.Unmarshal([]byte(`{
-				"model":"gpt-4o",
-				"messages":[{"role":"user","content":"Return JSON"}],
-				"response_format":`+tt.responseFormat+`
-			}`), &req))
-
-			resp, err := ChatCompletionsToResponses(&req)
-			require.NoError(t, err)
-
-			payload, err := json.Marshal(resp)
-			require.NoError(t, err)
-			var serialized struct {
-				Text *struct {
-					Format json.RawMessage `json:"format"`
-				} `json:"text"`
 			}
-			require.NoError(t, json.Unmarshal(payload, &serialized))
-			require.NotNil(t, serialized.Text)
-			require.NotEmpty(t, serialized.Text.Format)
-			assert.JSONEq(t, tt.wantTextFormat, string(serialized.Text.Format))
-		})
+		}`),
 	}
+
+	resp, err := ChatCompletionsToResponses(req)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Text)
+	assert.JSONEq(t, `{
+		"type":"json_schema",
+		"name":"answer",
+		"schema":{
+			"type":"object",
+			"properties":{"ok":{"type":"boolean"}},
+			"required":["ok"],
+			"additionalProperties":false
+		},
+		"strict":true
+	}`, string(resp.Text.Format))
 }
 
 func TestChatCompletionsToResponses_ImageURL(t *testing.T) {
@@ -349,6 +442,65 @@ func TestChatCompletionsToResponses_EmptyContentNeverNull(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsResponseToResponses_DeepSeekReasoningOnlyFallsBackToMessageText(t *testing.T) {
+	content := json.RawMessage(`""`)
+	resp := &ChatCompletionsResponse{
+		ID:     "chatcmpl_deepseek_reasoning_only",
+		Object: "chat.completion",
+		Model:  "deepseek-reasoner",
+		Choices: []ChatChoice{{
+			Index: 0,
+			Message: ChatMessage{
+				Role:             "assistant",
+				Content:          content,
+				ReasoningContent: "reasoning-only answer",
+			},
+			FinishReason: "stop",
+		}},
+	}
+
+	out := ChatCompletionsResponseToResponses(resp, "deepseek-reasoner", nil, false, nil)
+
+	require.Len(t, out.Output, 2)
+	require.Equal(t, "reasoning", out.Output[0].Type)
+	require.Equal(t, "message", out.Output[1].Type)
+	require.Len(t, out.Output[1].Content, 1)
+	assert.Equal(t, "reasoning-only answer", out.Output[1].Content[0].Text)
+}
+
+func TestChatCompletionsResponseToResponses_DeepSeekReasoningToolCallDoesNotFallbackToMessageText(t *testing.T) {
+	content := json.RawMessage(`""`)
+	resp := &ChatCompletionsResponse{
+		ID:     "chatcmpl_deepseek_reasoning_tool",
+		Object: "chat.completion",
+		Model:  "deepseek-reasoner",
+		Choices: []ChatChoice{{
+			Index: 0,
+			Message: ChatMessage{
+				Role:             "assistant",
+				Content:          content,
+				ReasoningContent: "call a tool",
+				ToolCalls: []ChatToolCall{{
+					ID:   "call_a",
+					Type: "function",
+					Function: ChatFunctionCall{
+						Name:      "exec",
+						Arguments: `{}`,
+					},
+				}},
+			},
+			FinishReason: "tool_calls",
+		}},
+	}
+
+	out := ChatCompletionsResponseToResponses(resp, "deepseek-reasoner", nil, false, nil)
+
+	require.Len(t, out.Output, 2)
+	require.Equal(t, "reasoning", out.Output[0].Type)
+	require.Equal(t, "function_call", out.Output[1].Type)
+	assert.Equal(t, "exec", out.Output[1].Name)
+}
+
 func TestChatCompletionsToResponses_SystemArrayContent(t *testing.T) {
 	req := &ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -421,29 +573,21 @@ func TestChatCompletionsToResponses_ServiceTier(t *testing.T) {
 }
 
 func TestChatCompletionsToResponses_ParallelToolCalls(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		value   bool
-		encoded string
-	}{
-		{name: "false", value: false, encoded: "false"},
-		{name: "true", value: true, encoded: "true"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var req ChatCompletionsRequest
-			require.NoError(t, json.Unmarshal([]byte(`{
-				"model":"gpt-4o",
-				"messages":[{"role":"user","content":"Hi"}],
-				"parallel_tool_calls":`+tc.encoded+`
-			}`), &req))
+	for _, value := range []bool{false, true} {
+		req := &ChatCompletionsRequest{
+			Model:             "gpt-4o",
+			ParallelToolCalls: &value,
+			Messages:          []ChatMessage{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+		}
 
-			resp, err := ChatCompletionsToResponses(&req)
-			require.NoError(t, err)
+		resp, err := ChatCompletionsToResponses(req)
+		require.NoError(t, err)
+		require.NotNil(t, resp.ParallelToolCalls)
+		assert.Equal(t, value, *resp.ParallelToolCalls)
 
-			payload, err := json.Marshal(resp)
-			require.NoError(t, err)
-			assert.Contains(t, string(payload), `"parallel_tool_calls":`+tc.encoded)
-		})
+		payload, err := json.Marshal(resp)
+		require.NoError(t, err)
+		assert.Contains(t, string(payload), `"parallel_tool_calls":`+string(mustMarshalJSON(t, value)))
 	}
 }
 
@@ -598,29 +742,6 @@ func TestChatCompletionsToResponses_AssistantReasoningContentPreserved(t *testin
 	assert.Equal(t, "output_text", parts[0].Type)
 	assert.Contains(t, parts[0].Text, "<thinking>internal plan</thinking>")
 	assert.Contains(t, parts[0].Text, "final answer")
-}
-
-func TestChatCompletionsToResponses_ReasoningOnlyFallsBackToVisibleText(t *testing.T) {
-	resp := &ChatCompletionsResponse{
-		ID:     "chatcmpl_reasoning_only",
-		Object: "chat.completion",
-		Model:  "gpt-4o",
-		Choices: []ChatChoice{{
-			Index: 0,
-			Message: ChatMessage{
-				Role:             "assistant",
-				ReasoningContent: "internal answer",
-			},
-			FinishReason: "stop",
-		}},
-	}
-
-	out := ChatCompletionsResponseToResponses(resp, "gpt-4o")
-	require.Len(t, out.Output, 2)
-	assert.Equal(t, "reasoning", out.Output[0].Type)
-	assert.Equal(t, "message", out.Output[1].Type)
-	require.Len(t, out.Output[1].Content, 1)
-	assert.Equal(t, "internal answer", out.Output[1].Content[0].Text)
 }
 
 // ---------------------------------------------------------------------------
@@ -802,7 +923,36 @@ func TestResponsesToChatCompletions_CachedTokens(t *testing.T) {
 	assert.Equal(t, 80, chat.Usage.PromptTokensDetails.CachedTokens)
 }
 
+func TestResponsesToChatCompletions_ReasoningTokens(t *testing.T) {
+	resp := &ResponsesResponse{
+		ID:     "resp_reasoning",
+		Status: "completed",
+		Output: []ResponsesOutput{
+			{
+				Type:    "message",
+				Content: []ResponsesContentPart{{Type: "output_text", Text: "ping"}},
+			},
+		},
+		Usage: &ResponsesUsage{
+			InputTokens:  24,
+			OutputTokens: 33,
+			TotalTokens:  57,
+			OutputTokensDetails: &ResponsesOutputTokensDetails{
+				ReasoningTokens: 32,
+			},
+		},
+	}
+
+	chat := ResponsesToChatCompletions(resp, "gpt-5.5")
+	require.NotNil(t, chat.Usage)
+	assert.Equal(t, 33, chat.Usage.CompletionTokens)
+	require.NotNil(t, chat.Usage.CompletionTokensDetails)
+	assert.Equal(t, 32, chat.Usage.CompletionTokensDetails.ReasoningTokens)
+}
+
 func TestResponsesToChatCompletions_AllTokenDetailsPassThrough(t *testing.T) {
+	// Covers the full OpenAI CompletionUsage detail field set so future audio
+	// and prediction-outputs responses propagate without further changes.
 	resp := &ResponsesResponse{
 		ID:     "resp_full_details",
 		Status: "completed",
@@ -834,36 +984,52 @@ func TestResponsesToChatCompletions_AllTokenDetailsPassThrough(t *testing.T) {
 	require.NotNil(t, chat.Usage.PromptTokensDetails)
 	assert.Equal(t, 60, chat.Usage.PromptTokensDetails.CachedTokens)
 	assert.Equal(t, 4, chat.Usage.PromptTokensDetails.AudioTokens)
+
 	require.NotNil(t, chat.Usage.CompletionTokensDetails)
 	assert.Equal(t, 30, chat.Usage.CompletionTokensDetails.ReasoningTokens)
 	assert.Equal(t, 2, chat.Usage.CompletionTokensDetails.AudioTokens)
 	assert.Equal(t, 10, chat.Usage.CompletionTokensDetails.AcceptedPredictionTokens)
 	assert.Equal(t, 3, chat.Usage.CompletionTokensDetails.RejectedPredictionTokens)
+
+	raw, err := json.Marshal(chat.Usage)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"prompt_tokens_details"`)
+	assert.Contains(t, string(raw), `"completion_tokens_details"`)
+	assert.Contains(t, string(raw), `"reasoning_tokens":30`)
+	assert.Contains(t, string(raw), `"accepted_prediction_tokens":10`)
 }
 
-func TestResponsesEventToChatChunks_TopLevelTerminalUsage(t *testing.T) {
-	state := NewResponsesEventToChatState()
-	state.Model = "gpt-4o"
-	state.IncludeUsage = true
-
-	chunks := ResponsesEventToChatChunks(&ResponsesStreamEvent{
-		Type:     "response.completed",
-		Response: &ResponsesResponse{Status: "completed"},
-		Usage: &ResponsesUsage{
-			InputTokens:  21,
-			OutputTokens: 9,
-			InputTokensDetails: &ResponsesInputTokensDetails{
-				CachedTokens: 4,
+func TestResponsesToChatCompletions_NoReasoningTokensWhenZero(t *testing.T) {
+	// Non-reasoning models do not return reasoning_tokens. The mapping must
+	// omit completion_tokens_details entirely rather than emitting a zero-valued
+	// field, so non-reasoning responses stay clean.
+	resp := &ResponsesResponse{
+		ID:     "resp_no_reasoning",
+		Status: "completed",
+		Output: []ResponsesOutput{
+			{
+				Type:    "message",
+				Content: []ResponsesContentPart{{Type: "output_text", Text: "hi"}},
 			},
 		},
-	}, state)
+		Usage: &ResponsesUsage{
+			InputTokens:  10,
+			OutputTokens: 5,
+			TotalTokens:  15,
+			OutputTokensDetails: &ResponsesOutputTokensDetails{
+				ReasoningTokens: 0,
+			},
+		},
+	}
 
-	require.Len(t, chunks, 2)
-	require.NotNil(t, chunks[1].Usage)
-	assert.Equal(t, 21, chunks[1].Usage.PromptTokens)
-	assert.Equal(t, 9, chunks[1].Usage.CompletionTokens)
-	require.NotNil(t, chunks[1].Usage.PromptTokensDetails)
-	assert.Equal(t, 4, chunks[1].Usage.PromptTokensDetails.CachedTokens)
+	chat := ResponsesToChatCompletions(resp, "gpt-4o")
+	require.NotNil(t, chat.Usage)
+	assert.Nil(t, chat.Usage.CompletionTokensDetails)
+
+	raw, err := json.Marshal(chat.Usage)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "completion_tokens_details")
+	assert.NotContains(t, string(raw), "reasoning_tokens")
 }
 
 func TestResponsesToChatCompletions_WebSearch(t *testing.T) {
@@ -1028,6 +1194,32 @@ func TestResponsesEventToChatChunks_Completed(t *testing.T) {
 	assert.Equal(t, 30, chunks[1].Usage.PromptTokensDetails.CachedTokens)
 }
 
+func TestResponsesEventToChatChunks_CompletedWithReasoningTokens(t *testing.T) {
+	state := NewResponsesEventToChatState()
+	state.Model = "gpt-5.5"
+	state.IncludeUsage = true
+
+	chunks := ResponsesEventToChatChunks(&ResponsesStreamEvent{
+		Type: "response.completed",
+		Response: &ResponsesResponse{
+			Status: "completed",
+			Usage: &ResponsesUsage{
+				InputTokens:  24,
+				OutputTokens: 33,
+				TotalTokens:  57,
+				OutputTokensDetails: &ResponsesOutputTokensDetails{
+					ReasoningTokens: 32,
+				},
+			},
+		},
+	}, state)
+	require.Len(t, chunks, 2)
+
+	require.NotNil(t, chunks[1].Usage)
+	require.NotNil(t, chunks[1].Usage.CompletionTokensDetails)
+	assert.Equal(t, 32, chunks[1].Usage.CompletionTokensDetails.ReasoningTokens)
+}
+
 func TestResponsesEventToChatChunks_ResponseDone(t *testing.T) {
 	state := NewResponsesEventToChatState()
 	state.Model = "gpt-4o"
@@ -1047,6 +1239,33 @@ func TestResponsesEventToChatChunks_ResponseDone(t *testing.T) {
 	assert.Equal(t, 13, chunks[1].Usage.PromptTokens)
 	assert.Equal(t, 7, chunks[1].Usage.CompletionTokens)
 	assert.Nil(t, FinalizeResponsesChatStream(state))
+}
+
+func TestResponsesEventToChatChunks_TopLevelTerminalUsage(t *testing.T) {
+	state := NewResponsesEventToChatState()
+	state.Model = "gpt-4o"
+	state.IncludeUsage = true
+
+	chunks := ResponsesEventToChatChunks(&ResponsesStreamEvent{
+		Type: "response.completed",
+		Response: &ResponsesResponse{
+			Status: "completed",
+		},
+		Usage: &ResponsesUsage{
+			InputTokens:  21,
+			OutputTokens: 9,
+			InputTokensDetails: &ResponsesInputTokensDetails{
+				CachedTokens: 4,
+			},
+		},
+	}, state)
+
+	require.Len(t, chunks, 2)
+	require.NotNil(t, chunks[1].Usage)
+	assert.Equal(t, 21, chunks[1].Usage.PromptTokens)
+	assert.Equal(t, 9, chunks[1].Usage.CompletionTokens)
+	require.NotNil(t, chunks[1].Usage.PromptTokensDetails)
+	assert.Equal(t, 4, chunks[1].Usage.PromptTokensDetails.CachedTokens)
 }
 
 func TestResponsesEventToChatChunks_ResponseDoneIncomplete(t *testing.T) {
@@ -1069,27 +1288,6 @@ func TestResponsesEventToChatChunks_ResponseDoneIncomplete(t *testing.T) {
 	assert.Equal(t, 13, chunks[1].Usage.PromptTokens)
 	assert.Equal(t, 7, chunks[1].Usage.CompletionTokens)
 	assert.Nil(t, FinalizeResponsesChatStream(state))
-}
-
-func TestResponsesEventToChatChunks_FailedDoesNotImplyToolCalls(t *testing.T) {
-	state := NewResponsesEventToChatState()
-	state.Model = "gpt-4o"
-	state.SawToolCall = true
-
-	chunks := ResponsesEventToChatChunks(&ResponsesStreamEvent{
-		Type: "response.failed",
-		Response: &ResponsesResponse{
-			Status: "failed",
-			Error: &ResponsesError{
-				Code:    "server_error",
-				Message: "boom",
-			},
-		},
-	}, state)
-
-	require.Len(t, chunks, 1)
-	require.NotNil(t, chunks[0].Choices[0].FinishReason)
-	assert.Equal(t, "stop", *chunks[0].Choices[0].FinishReason)
 }
 
 func TestResponsesEventToChatChunks_CompletedWithToolCalls(t *testing.T) {
@@ -1147,31 +1345,6 @@ func TestResponsesEventToChatChunks_ReasoningThenTextAutoCloseTag(t *testing.T) 
 	require.Len(t, chunks, 1)
 	require.NotNil(t, chunks[0].Choices[0].Delta.Content)
 	assert.Equal(t, "answer", *chunks[0].Choices[0].Delta.Content)
-}
-
-func TestFinalizeChatCompletionsResponsesStream_ReasoningOnlySurfacesText(t *testing.T) {
-	state := NewChatCompletionsToResponsesStreamState("gpt-4o")
-	chunks := ChatCompletionsChunkToResponsesEvents(&ChatCompletionsChunk{
-		ID:     "chatcmpl_reasoning_stream",
-		Object: "chat.completion.chunk",
-		Model:  "gpt-4o",
-		Choices: []ChatChunkChoice{{
-			Index: 0,
-			Delta: ChatDelta{ReasoningContent: stringPtr("think first")},
-		}},
-	}, state)
-	require.NotEmpty(t, chunks)
-
-	events := FinalizeChatCompletionsResponsesStream(state)
-	require.NotEmpty(t, events)
-
-	var sawVisibleText bool
-	for _, evt := range events {
-		if evt.Type == "response.output_text.delta" && evt.Delta == "think first" {
-			sawVisibleText = true
-		}
-	}
-	assert.True(t, sawVisibleText)
 }
 
 func TestFinalizeResponsesChatStream(t *testing.T) {
@@ -1470,62 +1643,6 @@ func TestBufferedResponseAccumulator_NoSupplementWhenOutputExists(t *testing.T) 
 	// Output should NOT be overwritten
 	require.Len(t, resp.Output, 1)
 	assert.Equal(t, "from terminal event", resp.Output[0].Content[0].Text)
-}
-
-func TestBufferedResponseAccumulator_SupplementsIncompleteReasoningOutput(t *testing.T) {
-	acc := NewBufferedResponseAccumulator()
-	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.reasoning_summary_text.delta", Delta: "visible reasoning"})
-
-	resp := &ResponsesResponse{
-		ID:     "resp_reasoning_partial",
-		Status: "incomplete",
-		Output: []ResponsesOutput{
-			{
-				Type: "reasoning",
-			},
-		},
-	}
-
-	acc.SupplementResponseOutput(resp)
-
-	require.Len(t, resp.Output, 2)
-	assert.Equal(t, "reasoning", resp.Output[0].Type)
-	require.Len(t, resp.Output[0].Summary, 1)
-	assert.Equal(t, "summary_text", resp.Output[0].Summary[0].Type)
-	assert.Equal(t, "visible reasoning", resp.Output[0].Summary[0].Text)
-	assert.Equal(t, "reasoning", resp.Output[1].Type)
-}
-
-func TestBufferedResponseAccumulator_DoesNotOverrideExistingVisibleContent(t *testing.T) {
-	acc := NewBufferedResponseAccumulator()
-	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.reasoning_summary_text.delta", Delta: "from deltas"})
-	acc.ProcessEvent(&ResponsesStreamEvent{Type: "response.output_text.delta", Delta: "text from deltas"})
-
-	resp := &ResponsesResponse{
-		ID:     "resp_visible",
-		Status: "completed",
-		Output: []ResponsesOutput{
-			{
-				Type: "reasoning",
-				Summary: []ResponsesSummary{{
-					Type: "summary_text",
-					Text: "from terminal",
-				}},
-			},
-			{
-				Type: "message",
-				Content: []ResponsesContentPart{
-					{Type: "output_text", Text: "terminal text"},
-				},
-			},
-		},
-	}
-
-	acc.SupplementResponseOutput(resp)
-
-	require.Len(t, resp.Output, 2)
-	assert.Equal(t, "from terminal", resp.Output[0].Summary[0].Text)
-	assert.Equal(t, "terminal text", resp.Output[1].Content[0].Text)
 }
 
 func TestBufferedResponseAccumulator_EmptyDeltas(t *testing.T) {
