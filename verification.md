@@ -4829,3 +4829,12 @@ v0.1.149 拉取结果：
 - 审查修复：SubscriptionService.Stop 现在会取消订阅缓存 Pub/Sub 监听上下文；回归测试已先失败后通过。
 - 边界：未提交、未构建镜像、未部署、未推送；未执行真实认证上游请求。
 - 遗留：AccountsView Vitest 的 common.time.never 英文 locale 警告为既有问题，未在本轮无关范围内修改。
+
+## 2026-07-10 v0.1.150.1 发布验证 — Devil
+
+- 代码提交：`4db1f5a4467b914fa25fa57c52385cf07bb4e017`；发布镜像：`sub2api:v0.1.150.1`。
+- 镜像验证：OCI version/revision 标签、容器内 `-version` 的 image version 和 commit 均与发布目标一致。
+- 蓝绿：构建前 active=green（`v0.1.149.1`）；只重建 idle blue（`v0.1.150.1`）；候选连续健康超过 60 秒后切流，green 保持为回滚实例。
+- 候选与线上：18083、8080、18081 的 health/root=200；未登录管理版本 API、`/responses`、`/v1/responses`=401；三个入口的真实入口 chunk SHA-256 一致。
+- 日志：候选和切流后的独立 75 秒窗口中未匹配 panic、fatal、migration failure、checksum、pq、端口绑定或 rebuild failure；blue/green 均 healthy，RestartCount=0。
+- 边界：未执行真实认证上游请求、管理员登录态浏览器操作、Git push 或 registry push。
