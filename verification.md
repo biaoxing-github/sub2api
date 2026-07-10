@@ -4766,3 +4766,37 @@ v0.1.149 拉取结果：
 - PASS：容器二进制版本为 `v0.1.146`、image version `v0.1.146.7`、commit `c98052790ca0`。
 - STATE：active=`sub2api-blue:8080 sub2api:v0.1.146.7`；rollback=`sub2api-green:8080 sub2api:v0.1.146.6`。
 - LIMIT：未 push、未执行真实认证 GPT-5.6 上游请求；快照清理 backlog 作为后续维护风险保留。
+## 2026-07-10T12:11:25+08:00 Devil - v0.1.149 吸收完成与版本切换
+
+本轮完成 v0.1.149 已选 P0/P1 吸收项收口，并将 `backend/cmd/server/VERSION` 从 `v0.1.146` 改为 `v0.1.149`。P2 在线二进制回退不吸收，继续使用不可变镜像和 blue/green 代理回滚。
+
+实现结果：
+- Ops 错误列表接通 `user_id`、`api_key_id`、`model`、`category`、`sort_by`、`sort_order`，筛选最终进入 repository SQL。
+- 普通错误列表即使筛选 `phase=upstream` 也保留客户端可见状态守卫；只有上游专用列表显式包含 status<400 的恢复态记录。
+- Ops 排序使用 `created_at/model/status_code` 白名单，并追加同方向 `e.id` 作为稳定分页键。
+- 用量页错误标签每次进入重新查询，排行首次进入懒挂载、后续每次进入主动刷新；筛选变化继续自动刷新排行。
+- `UsageRequestType` 与 v0.1.149 的 `cyber` 请求类型保持一致。
+- `docs/V0.1.149_ABSORPTION_PLAN_CN.md` 已更新为最终完成清单和数据用途说明。
+
+验证结果：
+- PASS: Ops handler 红绿测试，覆盖筛选透传、非法用户/Key、恢复态开关和排序参数。
+- PASS: Ops repository 红绿测试，覆盖状态守卫、`cyber_policy` 例外、排序白名单和稳定分页。
+- PASS: Grok/角色 service 聚焦测试。
+- PASS: compact/`response.failed` service 与 handler 聚焦测试。
+- PASS: dashboard 用户排行、Ops handler、usage/ops repository 和 `internal/pkg/xai` 聚焦测试。
+- PASS: `go test -tags unit ./cmd/server -run TestNonExistent -count=0`。
+- PASS: 前端 7 个 Vitest 文件，43/43 tests。
+- PASS: `npm run typecheck`。
+- PASS: 本轮变更文件 scoped ESLint。
+- PASS: `gofmt -d` 无输出，`git diff --check` 通过。
+- PASS: `go run ./cmd/server -version` 输出 `Sub2API v0.1.149 (commit: unknown, built: unknown)`。
+- PASS: 工作树没有 migration/schema 变更。
+- BASELINE: 全量 `npm run lint:check` 仍有 207 个与本轮无关的 Settings prop mutation/旧测试保留名错误；本轮新增的 3 个 UsageFilters 错误已修复，scoped ESLint 为 0。
+
+数据边界：
+- 无新表、无 migration/schema/SQL、无历史数据迁移。
+- 既有 `usage_logs`/usage 聚合继续用于 Token 排行、费用和余额；`ops_error_logs` 继续用于错误页；`users`、`api_keys`、`accounts`、`groups` 继续提供角色与筛选维度。
+- 对脑龄和认知训练无直接代码或表结构变更；若它们通过 sub2api 调用模型，只会间接受到模型、错误语义、延迟和费用统计变化影响。
+
+边界：
+- 未提交、未构建镜像、未部署、未推送；当前 HEAD 仍为 `558cac0f4a4f`。
