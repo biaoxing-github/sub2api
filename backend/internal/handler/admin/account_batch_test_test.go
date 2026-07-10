@@ -250,7 +250,7 @@ func TestAccountBatchTestNonAPIKeyUsesGroupFilterAndDefaultConcurrency(t *testin
 	require.Equal(t, 5, body.Data.Concurrency)
 	require.Eventually(t, func() bool {
 		models := tester.calledModelsSnapshot()
-		return len(models) == 1 && models[0] == "gpt-5.5"
+		return len(models) == 1 && models[0] == "gpt-5.6-terra"
 	}, time.Second, 10*time.Millisecond)
 }
 
@@ -322,7 +322,7 @@ func TestAccountBatchTestNonAPIKeyPassesPlanTypeFilter(t *testing.T) {
 	require.Equal(t, "free", adminSvc.lastListAccounts.planType)
 	require.Eventually(t, func() bool {
 		models := tester.calledModelsSnapshot()
-		return len(models) == 1 && models[0] == "gpt-5.5"
+		return len(models) == 1 && models[0] == "gpt-5.6-terra"
 	}, time.Second, 10*time.Millisecond)
 }
 
@@ -500,6 +500,10 @@ func (c *stubBatchConcurrencyCache) GetUsersLoadBatch(context.Context, []service
 }
 
 func (c *stubBatchConcurrencyCache) CleanupExpiredAccountSlots(context.Context, int64) error {
+	return nil
+}
+
+func (c *stubBatchConcurrencyCache) CleanupExpiredAccountSlotKeys(context.Context) error {
 	return nil
 }
 

@@ -42,8 +42,12 @@ func DefaultModelIDs() []string {
 	return ids
 }
 
-// DefaultTestModel default model for testing OpenAI accounts
-const DefaultTestModel = "gpt-5.5"
+// DefaultTestModel 是 OpenAI 账号测试、体检和快照探测使用的默认模型。
+const DefaultTestModel = "gpt-5.6-terra"
+
+// DefaultPricingFallbackModel 仅用于未知 OpenAI 模型的计费兜底，不能跟随
+// 探测默认模型变更，否则会意外改变正常请求的费用计算。
+const DefaultPricingFallbackModel = "gpt-5.5"
 
 // DefaultInstructions default instructions for non-Codex CLI requests.
 // 内容为 Codex 系模型默认使用的真实 Codex base prompt。

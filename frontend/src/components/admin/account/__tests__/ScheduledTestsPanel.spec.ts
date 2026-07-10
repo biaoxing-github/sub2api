@@ -77,7 +77,7 @@ describe('ScheduledTestsPanel', () => {
     listByAccount.mockResolvedValue([])
   })
 
-  it('preselects gpt-5.5 when creating scheduled account tests', async () => {
+  it('preselects gpt-5.6-terra when creating scheduled account tests', async () => {
     const wrapper = mount(ScheduledTestsPanel, {
       props: {
         show: true,
@@ -85,6 +85,7 @@ describe('ScheduledTestsPanel', () => {
         modelOptions: [
           { value: 'gpt-5.4', label: 'GPT-5.4' },
           { value: 'gpt-5.5', label: 'GPT-5.5' },
+          { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
         ],
       },
       global: {
@@ -106,6 +107,6 @@ describe('ScheduledTestsPanel', () => {
     await addButton!.trigger('click')
     await flushPromises()
 
-    expect((wrapper.find('[data-test="scheduled-test-model"]').element as HTMLSelectElement).value).toBe('gpt-5.5')
+    expect((wrapper.find('[data-test="scheduled-test-model"]').element as HTMLSelectElement).value).toBe('gpt-5.6-terra')
   })
 })

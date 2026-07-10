@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
@@ -104,6 +105,37 @@ func TestOpenAIGatewayService_Forward_VersionGateMessage(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, rec.Code)
 		require.Contains(t, rec.Body.String(), CodexOfficialClientsOnlyMessage)
 	})
+}
+
+// 回归 #3887：compact 首轮已用心跳提交 SSE 后，下一轮切号命中的本地限制
+// 不能把 JSON 错误追加到既有 SSE 流，必须以 response.failed 结束协议。
+func TestOpenAIGatewayService_Forward_LocalRestrictionAfterCompactRetryEmitsSSEFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+	MarkOpenAICompactClientStream(c)
+
+	stopFirstAttempt := StartOpenAICompactSSEKeepalive(c, time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+	stopFirstAttempt()
+	stopSecondAttempt := StartOpenAICompactSSEKeepalive(c, time.Hour)
+	defer stopSecondAttempt()
+
+	svc := &OpenAIGatewayService{codexDetector: &stubCodexRestrictionDetector{result: CodexClientRestrictionDetectionResult{
+		Enabled: true,
+		Matched: false,
+		Reason:  CodexClientRestrictionReasonNotMatchedUA,
+	}}}
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{"codex_cli_only": true}}
+
+	_, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.4"}`))
+	require.Error(t, err)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "event: response.failed\n")
+	require.Contains(t, rec.Body.String(), `"code":"forbidden_error"`)
+	require.NotContains(t, rec.Body.String(), "\n\n{\"error\":")
 }
 
 func TestOpenAIGatewayService_ForwardAsChatCompletions_RejectsCodexCLIOnlyNonOfficialClient(t *testing.T) {
@@ -219,10 +251,10 @@ func TestOpenAIGatewayService_ForwardAsChatCompletions_AllowsAPIKeyRawChatWhenCo
 }
 
 func TestOpenAICodexCLISimulationUsesLatestClientVersion(t *testing.T) {
-	require.Equal(t, "0.141.0", codexCLIVersion())
-	require.Equal(t, "Codex Desktop/0.141.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.616.32156)", codexCLIUserAgent())
+	require.Equal(t, "0.144.1", codexCLIVersion())
+	require.Equal(t, "Codex Desktop/0.144.1 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.616.32156)", codexCLIUserAgent())
 	require.NotContains(t, codexCLIUserAgent(), "0.125.0")
-	require.Contains(t, defaultOpenAICodexUserAgent(), "0.141.0")
+	require.Contains(t, defaultOpenAICodexUserAgent(), "0.144.1")
 	require.NotContains(t, defaultOpenAICodexUserAgent(), "0.125.0")
 	require.Equal(t, "codex_cli_rs", codexCLIOriginator)
 	require.Equal(t, "compact-history", codexCLIBetaFeatures)

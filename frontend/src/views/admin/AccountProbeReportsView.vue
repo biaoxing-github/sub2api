@@ -639,7 +639,7 @@ const rankingDialogOpen = ref(false)
 const scheduleDialogOpen = ref(false)
 const scheduleSubmitting = ref(false)
 const scheduleError = ref('')
-const defaultOpenAIAccountTestModelID = 'gpt-5.5'
+const defaultOpenAIAccountTestModelID = 'gpt-5.6-terra'
 
 const filters = reactive({
   account_id: '',

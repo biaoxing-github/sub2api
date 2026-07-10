@@ -90,6 +90,7 @@ describe('AccountSchedulingPoolView', () => {
     getAvailableModels.mockResolvedValue([
       { id: 'gpt-5.4', display_name: 'GPT-5.4' },
       { id: 'gpt-5.5', display_name: 'GPT-5.5' },
+      { id: 'gpt-5.6-terra', display_name: 'GPT-5.6 Terra' },
     ])
     getAllGroups.mockResolvedValue([
       { id: 2, name: '自用', platform: 'openai', status: 'active' },
@@ -317,7 +318,7 @@ describe('AccountSchedulingPoolView', () => {
     await flushPromises()
 
     expect(getAvailableModels).toHaveBeenCalledWith(101)
-    expect(manualProbeAccount).toHaveBeenCalledWith(101, { model: 'gpt-5.5' })
+    expect(manualProbeAccount).toHaveBeenCalledWith(101, { model: 'gpt-5.6-terra' })
     expect(listSchedulingPool).toHaveBeenCalledTimes(2)
   })
 

@@ -130,7 +130,7 @@ const antigravityUserAgentVersionErrorTTL = 5 * time.Second
 const antigravityUserAgentVersionDBTimeout = 5 * time.Second
 
 // DefaultOpenAICodexUserAgent OpenAI Codex 默认 User-Agent fallback（用于规避 Cloudflare 对浏览器 UA 的质询）
-const DefaultOpenAICodexUserAgent = "codex_cli_rs/0.141.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+const DefaultOpenAICodexUserAgent = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
 
 func defaultOpenAICodexUserAgent() string {
 	return openai.GetCurrentCodexCLIDefaultUserAgent()

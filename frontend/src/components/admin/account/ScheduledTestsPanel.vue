@@ -503,7 +503,7 @@ const showDeleteConfirm = ref(false)
 const deletingPlan = ref<ScheduledTestPlan | null>(null)
 const editingPlanId = ref<number | null>(null)
 const updating = ref(false)
-const defaultOpenAIAccountTestModelID = 'gpt-5.5'
+const defaultOpenAIAccountTestModelID = 'gpt-5.6-terra'
 const editForm = reactive({
   model_id: '' as string,
   cron_expression: '' as string,

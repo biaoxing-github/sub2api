@@ -103,11 +103,21 @@ func chatUsageFromResponsesUsage(u *ResponsesUsage) *ChatUsage {
 	}
 	if u.InputTokensDetails != nil {
 		details := &ChatTokenDetails{
-			CachedTokens: u.InputTokensDetails.CachedTokens,
-			AudioTokens:  u.InputTokensDetails.AudioTokens,
+			CachedTokens:        u.InputTokensDetails.CachedTokens,
+			AudioTokens:         u.InputTokensDetails.AudioTokens,
+			CacheCreationTokens: u.InputTokensDetails.CacheCreationTokens,
+			CacheWriteTokens:    u.InputTokensDetails.CacheWriteTokens,
 		}
 		if *details != (ChatTokenDetails{}) {
 			usage.PromptTokensDetails = details
+		}
+	}
+	if u.CacheCreationInputTokens > 0 {
+		if usage.PromptTokensDetails == nil {
+			usage.PromptTokensDetails = &ChatTokenDetails{}
+		}
+		if usage.PromptTokensDetails.CacheWriteTokens == 0 && usage.PromptTokensDetails.CacheCreationTokens == 0 {
+			usage.PromptTokensDetails.CacheCreationTokens = u.CacheCreationInputTokens
 		}
 	}
 	if u.OutputTokensDetails != nil {

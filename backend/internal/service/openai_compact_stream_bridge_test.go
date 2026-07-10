@@ -258,6 +258,115 @@ func TestHandleSSEToJSON_CompactClientStreamBridgesToSSE(t *testing.T) {
 	require.Equal(t, "resp_compact_sse", gjson.Get(events[1][1], "response.id").String())
 }
 
+// 混合 SSE 的终态 response.output 可能已有普通消息、但遗漏 raw done 中的
+// compaction。桥接后的 item 事件和 response.completed 都必须各保留且只保留一次。
+func TestHandleSSEToJSON_CompactClientStreamPreservesOneRawCompactionAlongsideMessage(t *testing.T) {
+	svc := newCompactBridgeTestService()
+	c, rec := newCompactBridgeTestContext(t, true)
+	messageItem := `{"id":"msg_mixed_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hello"}]}`
+	compactionItem := `{"id":"cmp_mixed_1","type":"compaction","status":"completed","encrypted_content":"compact-mixed-payload"}`
+	upstreamSSE := strings.Join([]string{
+		`data: {"type":"response.output_item.done","output_index":0,"item":` + messageItem + `}`,
+		"",
+		`data: {"type":"response.output_item.done","output_index":1,"item":` + compactionItem + `}`,
+		"",
+		`data: {"type":"response.completed","response":{"id":"resp_compact_mixed","object":"response","model":"gpt-5.1-codex","status":"completed","output":[` + messageItem + `],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}`,
+		"",
+	}, "\n")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamSSE)),
+	}
+
+	result, err := svc.handleNonStreamingResponse(context.Background(), resp, c, &Account{ID: 1, Type: AccountTypeOAuth}, "gpt-5.5", "gpt-5.5")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	events := parseCompactBridgeSSE(t, rec.Body.String())
+	require.Len(t, events, 3)
+	compactionEvents := 0
+	for _, event := range events {
+		if event[0] == "response.output_item.done" && gjson.Get(event[1], "item.type").String() == "compaction" {
+			compactionEvents++
+			require.Equal(t, "cmp_mixed_1", gjson.Get(event[1], "item.id").String())
+		}
+	}
+	require.Equal(t, 1, compactionEvents)
+
+	completedOutput := gjson.Get(events[2][1], "response.output").Array()
+	require.Len(t, completedOutput, 2)
+	compactionOutput := 0
+	for _, item := range completedOutput {
+		if item.Get("type").String() == "compaction" {
+			compactionOutput++
+			require.Equal(t, "cmp_mixed_1", item.Get("id").String())
+		}
+	}
+	require.Equal(t, 1, compactionOutput)
+}
+
+// 上游的 compaction 可能只存在于 raw output_item.done，而 completed.response
+// 的 output 为空。桥接前必须恢复该完整 item，否则 Codex 会因缺少 compaction
+// 事件而重复请求并重复消耗额度。
+func TestReconstructResponseOutputFromSSE_PreservesRawCompactionDoneItem(t *testing.T) {
+	bodyText := strings.Join([]string{
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"id":"cmp_1","type":"compaction_summary","status":"completed","summary":[{"type":"summary_text","text":"compact summary"}],"encrypted_content":"compact-payload","opaque":{"kept":true}}}`,
+		``,
+		`data: {"type":"response.completed","response":{"id":"resp_compact","output":[]}}`,
+		``,
+	}, "\n")
+
+	outputJSON, ok := reconstructResponseOutputFromSSE(bodyText)
+	require.True(t, ok)
+	items := gjson.ParseBytes(outputJSON).Array()
+	require.Len(t, items, 1)
+	require.Equal(t, "cmp_1", items[0].Get("id").String())
+	require.Equal(t, "compaction_summary", items[0].Get("type").String())
+	require.Equal(t, "compact-payload", items[0].Get("encrypted_content").String())
+	require.True(t, items[0].Get("opaque.kept").Bool())
+}
+
+// 终态 output 已含普通消息时，compact item 仍可能只在 SSE 事件中出现；补全
+// 必须附加该原始 item，防止桥接后的 Codex 视为缺少 compaction 并再次请求。
+func TestSupplementCompactionItemFromSSE_AppendsMissingCompaction(t *testing.T) {
+	c, _ := newCompactBridgeTestContext(t, false)
+	finalResponse := []byte(`{"id":"resp_1","output":[{"id":"msg_1","type":"message"}]}`)
+	bodyText := `data: {"type":"response.output_item.done","item":{"id":"cmp_1","type":"compaction","encrypted_content":"preserved"}}` + "\n"
+
+	patched := supplementCompactionItemFromSSE(c, finalResponse, bodyText)
+	items := gjson.GetBytes(patched, "output").Array()
+	require.Len(t, items, 2)
+	require.Equal(t, "message", items[0].Get("type").String())
+	require.Equal(t, "compaction", items[1].Get("type").String())
+	require.Equal(t, "preserved", items[1].Get("encrypted_content").String())
+}
+
+// 混合流中普通 item 已完成、compaction 只在 added 时仍需收集；而 done 已给出
+// compaction 时，added 只能作为早期事件，绝不能造成两个 compact item。
+func TestReconstructResponseOutputFromSSE_MergesAddedCompactionOnlyWhenMissingFromDone(t *testing.T) {
+	missingFromDone := strings.Join([]string{
+		`data: {"type":"response.output_item.added","item":{"id":"cmp_added","type":"compaction","encrypted_content":"added"}}`,
+		`data: {"type":"response.output_item.done","item":{"id":"msg_done","type":"message","content":[{"type":"output_text","text":"hello"}]}}`,
+	}, "\n")
+	outputJSON, ok := reconstructResponseOutputFromSSE(missingFromDone)
+	require.True(t, ok)
+	items := gjson.ParseBytes(outputJSON).Array()
+	require.Len(t, items, 2)
+	require.Equal(t, "msg_done", items[0].Get("id").String())
+	require.Equal(t, "cmp_added", items[1].Get("id").String())
+
+	doneHasCompaction := strings.Join([]string{
+		`data: {"type":"response.output_item.added","item":{"id":"cmp_duplicate","type":"compaction","status":"in_progress"}}`,
+		`data: {"type":"response.output_item.done","item":{"id":"cmp_duplicate","type":"compaction","status":"completed","encrypted_content":"final"}}`,
+	}, "\n")
+	outputJSON, ok = reconstructResponseOutputFromSSE(doneHasCompaction)
+	require.True(t, ok)
+	items = gjson.ParseBytes(outputJSON).Array()
+	require.Len(t, items, 1)
+	require.Equal(t, "final", items[0].Get("encrypted_content").String())
+}
+
 // 透传分支（OAuth passthrough）同样命中桥接。
 func TestHandleNonStreamingResponsePassthrough_CompactClientStreamBridgesToSSE(t *testing.T) {
 	svc := newCompactBridgeTestService()

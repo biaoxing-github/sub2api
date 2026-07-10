@@ -733,14 +733,14 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(batchTestNonAPIKeyAccounts).toHaveBeenCalledWith(expect.objectContaining({
-      model_id: 'gpt-5.5',
+      model_id: 'gpt-5.6-terra',
       concurrency: 5,
       limit: 500,
     }))
     expect(wrapper.text()).toContain('admin.accounts.batchTest.submitted')
   })
 
-  it('uses gpt-5.5 and carries the team plan filter for paid batch tests', async () => {
+  it('uses gpt-5.6-terra and carries the team plan filter for paid batch tests', async () => {
     listAccounts.mockResolvedValueOnce({
       items: [
         {
@@ -810,7 +810,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(batchTestNonAPIKeyAccounts).toHaveBeenCalledWith(expect.objectContaining({
-      model_id: 'gpt-5.5',
+      model_id: 'gpt-5.6-terra',
       platform: 'openai',
       plan_type: 'team',
       concurrency: 5,
@@ -894,7 +894,7 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(batchTestNonAPIKeyAccounts).toHaveBeenCalledWith(expect.objectContaining({
-      model_id: 'gpt-5.5',
+      model_id: 'gpt-5.6-terra',
       account_ids: [31, 33],
       concurrency: 5,
       limit: 500,

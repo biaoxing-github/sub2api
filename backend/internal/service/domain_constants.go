@@ -82,6 +82,8 @@ const (
 	SubscriptionStatusActive    = domain.SubscriptionStatusActive
 	SubscriptionStatusExpired   = domain.SubscriptionStatusExpired
 	SubscriptionStatusSuspended = domain.SubscriptionStatusSuspended
+	// SubscriptionStatusRevoked 是软删除订阅的展示状态，不会写入持久化 status 字段。
+	SubscriptionStatusRevoked = "revoked"
 )
 
 // LinuxDoConnectSyntheticEmailDomain 是 LinuxDo Connect 用户的合成邮箱后缀（RFC 保留域名）。

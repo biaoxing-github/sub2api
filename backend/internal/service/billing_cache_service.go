@@ -92,6 +92,12 @@ type apiKeyRateLimitLoader interface {
 	GetRateLimitData(ctx context.Context, keyID int64) (*APIKeyRateLimitData, error)
 }
 
+// subscriptionCacheInvalidationPubSub 是 Redis 订阅缓存跨实例失效的可选能力。
+type subscriptionCacheInvalidationPubSub interface {
+	PublishSubscriptionCacheInvalidation(ctx context.Context, cacheKey string) error
+	SubscribeSubscriptionCacheInvalidation(ctx context.Context, handler func(cacheKey string)) error
+}
+
 // userPlatformQuotaCache 是 BillingCache 的可选增强接口。
 // 真实 Redis cache 实现它，旧测试 fake 不需要实现。
 type userPlatformQuotaCache interface {
@@ -533,6 +539,30 @@ func (s *BillingCacheService) InvalidateSubscription(ctx context.Context, userID
 		return err
 	}
 	return nil
+}
+
+// PublishSubscriptionCacheInvalidation 广播订阅 L1 缓存失效；旧 cache 实现不支持时无操作。
+func (s *BillingCacheService) PublishSubscriptionCacheInvalidation(ctx context.Context, cacheKey string) error {
+	if s == nil || s.cache == nil {
+		return nil
+	}
+	pubsub, ok := s.cache.(subscriptionCacheInvalidationPubSub)
+	if !ok {
+		return nil
+	}
+	return pubsub.PublishSubscriptionCacheInvalidation(ctx, cacheKey)
+}
+
+// SubscribeSubscriptionCacheInvalidation 注册订阅 L1 缓存失效回调；旧 cache 实现不支持时无操作。
+func (s *BillingCacheService) SubscribeSubscriptionCacheInvalidation(ctx context.Context, handler func(cacheKey string)) error {
+	if s == nil || s.cache == nil {
+		return nil
+	}
+	pubsub, ok := s.cache.(subscriptionCacheInvalidationPubSub)
+	if !ok {
+		return nil
+	}
+	return pubsub.SubscribeSubscriptionCacheInvalidation(ctx, handler)
 }
 
 // InvalidateAPIKeyRateLimit invalidates the Redis rate-limit usage cache for an API key.

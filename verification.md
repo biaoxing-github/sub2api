@@ -4822,3 +4822,10 @@ v0.1.149 拉取结果：
 
 边界：
 - 未执行 Git push、镜像 registry push、真实认证上游请求或带管理登录态的浏览器点击。
+
+## 2026-07-10T21:27:02+08:00 — Devil
+- 本轮目标：选择性吸收 sub2api v0.1.150 更新；所有 OpenAI 探测默认模型为 gpt-5.6-terra。
+- 验证：后端 service 全量、单位/集成聚焦测试、DTO/routes/server、前端 10 个规格和 typecheck 通过；gofmt、diff check 通过。
+- 审查修复：SubscriptionService.Stop 现在会取消订阅缓存 Pub/Sub 监听上下文；回归测试已先失败后通过。
+- 边界：未提交、未构建镜像、未部署、未推送；未执行真实认证上游请求。
+- 遗留：AccountsView Vitest 的 common.time.never 英文 locale 警告为既有问题，未在本轮无关范围内修改。

@@ -2199,7 +2199,7 @@ const handleBulkRefreshToken = async () => {
   }
 }
 
-const defaultOpenAIAccountTestModelID = 'gpt-5.5'
+const defaultOpenAIAccountTestModelID = 'gpt-5.6-terra'
 
 const resolveBatchTestNonAPIKeyModelID = () => {
   return defaultOpenAIAccountTestModelID

@@ -15,7 +15,7 @@ const (
 	// CodexCLIDefaultVersion is the fallback version used when the npm registry
 	// is unreachable at startup. Keep it aligned with the latest published
 	// @openai/codex release so upstream version gates are satisfied even offline.
-	CodexCLIDefaultVersion = "0.141.0"
+	CodexCLIDefaultVersion = "0.144.1"
 	// CodexDesktopAppBuildFallback is the fallback desktop build suffix used
 	// before the gateway has learned a newer build from a real Codex Desktop
 	// request.
@@ -49,8 +49,8 @@ type npmCodexRegistryResponse struct {
 var (
 	globalCodexCLIVersionFetcher     *CodexCLIVersionFetcher
 	globalCodexCLIVersionFetcherOnce sync.Once
-	codexDesktopBuildMu             sync.RWMutex
-	codexDesktopObservedBuild       = CodexDesktopAppBuildFallback
+	codexDesktopBuildMu              sync.RWMutex
+	codexDesktopObservedBuild        = CodexDesktopAppBuildFallback
 )
 
 var codexDesktopBuildPattern = regexp.MustCompile(`(?i)\(Codex Desktop;\s*([^)]+)\)`)

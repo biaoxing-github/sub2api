@@ -1176,7 +1176,7 @@ type BatchTestNonAPIKeyAccountsRequest struct {
 	Limit       int     `json:"limit"`
 }
 
-const defaultBatchTestNonAPIKeyModelID = "gpt-5.5"
+const defaultBatchTestNonAPIKeyModelID = openai.DefaultTestModel
 
 type CreateAccountProbeRunRequest struct {
 	Mode                  string `json:"mode"`

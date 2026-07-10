@@ -109,7 +109,7 @@ describe('AccountModelProbesView', () => {
     })
     await flushPromises()
 
-    expect((wrapper.find('[data-test="model-probe-model"]').element as HTMLInputElement).value).toBe('gpt-5.5')
+    expect((wrapper.find('[data-test="model-probe-model"]').element as HTMLInputElement).value).toBe('gpt-5.6-terra')
     expect(listAccountProbeRuns).toHaveBeenCalledWith(1, 20, expect.objectContaining({
       mode: 'model_validation',
       sort_by: 'created_at',

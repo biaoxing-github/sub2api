@@ -6,6 +6,9 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/predicate"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
+	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -70,6 +73,22 @@ func (r *userSubscriptionRepository) GetByID(ctx context.Context, id int64) (*se
 		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 	}
 	return userSubscriptionEntityToService(m), nil
+}
+
+// GetByIDIncludeDeleted 为管理员恢复流程读取已软删除的订阅，并保留数据库中的原始状态。
+func (r *userSubscriptionRepository) GetByIDIncludeDeleted(ctx context.Context, id int64) (*service.UserSubscription, error) {
+	client := clientFromContext(ctx, r.client)
+	queryCtx := mixins.SkipSoftDelete(ctx)
+	m, err := client.UserSubscription.Query().
+		Where(usersubscription.IDEQ(id)).
+		WithUser().
+		WithGroup().
+		WithAssignedByUser().
+		Only(queryCtx)
+	if err != nil {
+		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	}
+	return userSubscriptionEntityToServicePreserveStatus(m), nil
 }
 
 func (r *userSubscriptionRepository) GetByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (*service.UserSubscription, error) {
@@ -138,6 +157,37 @@ func (r *userSubscriptionRepository) Delete(ctx context.Context, id int64) error
 	return err
 }
 
+// Restore 清除软删除标记并恢复订阅状态。
+func (r *userSubscriptionRepository) Restore(ctx context.Context, subscriptionID int64, restoredStatus string) (*service.UserSubscription, error) {
+	client := clientFromContext(ctx, r.client)
+	queryCtx := mixins.SkipSoftDelete(ctx)
+	affected, err := client.UserSubscription.Update().
+		Where(
+			usersubscription.IDEQ(subscriptionID),
+			usersubscription.DeletedAtNotNil(),
+		).
+		SetStatus(restoredStatus).
+		ClearDeletedAt().
+		SetUpdatedAt(time.Now()).
+		Save(queryCtx)
+	if err != nil {
+		return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, service.ErrSubscriptionRestoreConflict)
+	}
+	if affected == 0 {
+		exists, err := client.UserSubscription.Query().
+			Where(usersubscription.IDEQ(subscriptionID)).
+			Exist(queryCtx)
+		if err != nil {
+			return nil, translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+		}
+		if !exists {
+			return nil, service.ErrSubscriptionNotFound
+		}
+		return nil, service.ErrSubscriptionNotRevoked
+	}
+	return r.GetByID(ctx, subscriptionID)
+}
+
 func (r *userSubscriptionRepository) ListByUserID(ctx context.Context, userID int64) ([]service.UserSubscription, error) {
 	client := clientFromContext(ctx, r.client)
 	subs, err := client.UserSubscription.Query().
@@ -194,6 +244,7 @@ func (r *userSubscriptionRepository) ListByGroupID(ctx context.Context, groupID 
 func (r *userSubscriptionRepository) List(ctx context.Context, params pagination.PaginationParams, userID, groupID *int64, status, platform, sortBy, sortOrder string) ([]service.UserSubscription, *pagination.PaginationResult, error) {
 	client := clientFromContext(ctx, r.client)
 	q := client.UserSubscription.Query()
+	includeSoftDeleted := status == "" || status == service.SubscriptionStatusRevoked
 	if userID != nil {
 		q = q.Where(usersubscription.UserIDEQ(*userID))
 	}
@@ -201,7 +252,11 @@ func (r *userSubscriptionRepository) List(ctx context.Context, params pagination
 		q = q.Where(usersubscription.GroupIDEQ(*groupID))
 	}
 	if platform != "" {
-		q = q.Where(usersubscription.HasGroupWith(group.PlatformEQ(platform)))
+		groupPredicates := []predicate.Group{group.PlatformEQ(platform)}
+		if includeSoftDeleted {
+			groupPredicates = append(groupPredicates, group.DeletedAtIsNil())
+		}
+		q = q.Where(usersubscription.HasGroupWith(groupPredicates...))
 	}
 
 	// Status filtering with real-time expiration check
@@ -224,20 +279,28 @@ func (r *userSubscriptionRepository) List(ctx context.Context, params pagination
 				),
 			),
 		)
+	case service.SubscriptionStatusRevoked:
+		q = q.Where(usersubscription.DeletedAtNotNil())
 	case "":
-		// No filter
+		// 管理端全部状态需要包含软删除的撤销记录。
 	default:
-		// Other status (e.g., revoked)
+		// Other persisted status.
 		q = q.Where(usersubscription.StatusEQ(status))
 	}
 
-	total, err := q.Clone().Count(ctx)
+	queryCtx := ctx
+	if includeSoftDeleted {
+		queryCtx = mixins.SkipSoftDelete(ctx)
+	}
+
+	total, err := q.Clone().Count(queryCtx)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Apply sorting
-	q = q.WithUser().WithGroup().WithAssignedByUser()
+	if !includeSoftDeleted {
+		q = q.WithUser().WithGroup().WithAssignedByUser()
+	}
 
 	// Determine sort field
 	var field string
@@ -260,12 +323,19 @@ func (r *userSubscriptionRepository) List(ctx context.Context, params pagination
 	subs, err := q.
 		Offset(params.Offset()).
 		Limit(params.Limit()).
-		All(ctx)
+		All(queryCtx)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return userSubscriptionEntitiesToService(subs), paginationResultFromTotal(int64(total), params), nil
+	result := userSubscriptionEntitiesToService(subs)
+	if includeSoftDeleted {
+		if err := r.attachUserSubscriptionRelations(ctx, result); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return result, paginationResultFromTotal(int64(total), params), nil
 }
 
 func (r *userSubscriptionRepository) ExistsByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (bool, error) {
@@ -273,6 +343,11 @@ func (r *userSubscriptionRepository) ExistsByUserIDAndGroupID(ctx context.Contex
 	return client.UserSubscription.Query().
 		Where(usersubscription.UserIDEQ(userID), usersubscription.GroupIDEQ(groupID)).
 		Exist(ctx)
+}
+
+// ExistsActiveByUserIDAndGroupID 仅检查未软删除的同用户同分组订阅。
+func (r *userSubscriptionRepository) ExistsActiveByUserIDAndGroupID(ctx context.Context, userID, groupID int64) (bool, error) {
+	return r.ExistsByUserIDAndGroupID(ctx, userID, groupID)
 }
 
 func (r *userSubscriptionRepository) ExtendExpiry(ctx context.Context, subscriptionID int64, newExpiresAt time.Time) error {
@@ -309,31 +384,84 @@ func (r *userSubscriptionRepository) ActivateWindows(ctx context.Context, id int
 	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 }
 
-func (r *userSubscriptionRepository) ResetDailyUsage(ctx context.Context, id int64, newWindowStart time.Time) error {
+func (r *userSubscriptionRepository) ResetUsageWindows(ctx context.Context, id int64, resetDaily, resetWeekly, resetMonthly bool, newWindowStart time.Time) error {
 	client := clientFromContext(ctx, r.client)
-	_, err := client.UserSubscription.UpdateOneID(id).
+	update := client.UserSubscription.UpdateOneID(id)
+	if resetDaily {
+		update.SetDailyUsageUsd(0).SetDailyWindowStart(newWindowStart)
+	}
+	if resetWeekly {
+		update.SetWeeklyUsageUsd(0).SetWeeklyWindowStart(newWindowStart)
+	}
+	if resetMonthly {
+		update.SetMonthlyUsageUsd(0).SetMonthlyWindowStart(newWindowStart)
+	}
+	_, err := update.Save(ctx)
+	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+}
+
+func (r *userSubscriptionRepository) ResetDailyUsage(ctx context.Context, id int64, expectedWindowStart *time.Time, newWindowStart time.Time) error {
+	client := clientFromContext(ctx, r.client)
+	update := client.UserSubscription.Update().Where(usersubscription.IDEQ(id))
+	if expectedWindowStart == nil {
+		update = update.Where(usersubscription.DailyWindowStartIsNil())
+	} else {
+		update = update.Where(usersubscription.DailyWindowStartEQ(*expectedWindowStart))
+	}
+	affected, err := update.
 		SetDailyUsageUsd(0).
 		SetDailyWindowStart(newWindowStart).
 		Save(ctx)
-	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	return r.translateConditionalWindowReset(ctx, client, id, affected, err)
 }
 
-func (r *userSubscriptionRepository) ResetWeeklyUsage(ctx context.Context, id int64, newWindowStart time.Time) error {
+func (r *userSubscriptionRepository) ResetWeeklyUsage(ctx context.Context, id int64, expectedWindowStart *time.Time, newWindowStart time.Time) error {
 	client := clientFromContext(ctx, r.client)
-	_, err := client.UserSubscription.UpdateOneID(id).
+	update := client.UserSubscription.Update().Where(usersubscription.IDEQ(id))
+	if expectedWindowStart == nil {
+		update = update.Where(usersubscription.WeeklyWindowStartIsNil())
+	} else {
+		update = update.Where(usersubscription.WeeklyWindowStartEQ(*expectedWindowStart))
+	}
+	affected, err := update.
 		SetWeeklyUsageUsd(0).
 		SetWeeklyWindowStart(newWindowStart).
 		Save(ctx)
-	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	return r.translateConditionalWindowReset(ctx, client, id, affected, err)
 }
 
-func (r *userSubscriptionRepository) ResetMonthlyUsage(ctx context.Context, id int64, newWindowStart time.Time) error {
+func (r *userSubscriptionRepository) ResetMonthlyUsage(ctx context.Context, id int64, expectedWindowStart *time.Time, newWindowStart time.Time) error {
 	client := clientFromContext(ctx, r.client)
-	_, err := client.UserSubscription.UpdateOneID(id).
+	update := client.UserSubscription.Update().Where(usersubscription.IDEQ(id))
+	if expectedWindowStart == nil {
+		update = update.Where(usersubscription.MonthlyWindowStartIsNil())
+	} else {
+		update = update.Where(usersubscription.MonthlyWindowStartEQ(*expectedWindowStart))
+	}
+	affected, err := update.
 		SetMonthlyUsageUsd(0).
 		SetMonthlyWindowStart(newWindowStart).
 		Save(ctx)
-	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	return r.translateConditionalWindowReset(ctx, client, id, affected, err)
+}
+
+// translateConditionalWindowReset 将竞争请求造成的零行更新识别为正常 no-op，保留真实缺失订阅的错误语义。
+func (r *userSubscriptionRepository) translateConditionalWindowReset(ctx context.Context, client *dbent.Client, id int64, affected int, err error) error {
+	if err != nil {
+		return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	}
+	if affected > 0 {
+		return nil
+	}
+
+	exists, err := client.UserSubscription.Query().Where(usersubscription.IDEQ(id)).Exist(ctx)
+	if err != nil {
+		return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
+	}
+	if !exists {
+		return service.ErrSubscriptionNotFound
+	}
+	return nil
 }
 
 // IncrementUsage 原子性地累加订阅用量。
@@ -425,9 +553,92 @@ func (r *userSubscriptionRepository) DeleteByGroupID(ctx context.Context, groupI
 	return int64(n), err
 }
 
+// attachUserSubscriptionRelations 为包含软删除记录的管理端列表补齐关联对象。
+func (r *userSubscriptionRepository) attachUserSubscriptionRelations(ctx context.Context, subs []service.UserSubscription) error {
+	if len(subs) == 0 {
+		return nil
+	}
+
+	userIDs := make([]int64, 0, len(subs))
+	groupIDs := make([]int64, 0, len(subs))
+	assignedByIDs := make([]int64, 0, len(subs))
+	for i := range subs {
+		userIDs = append(userIDs, subs[i].UserID)
+		groupIDs = append(groupIDs, subs[i].GroupID)
+		if subs[i].AssignedBy != nil {
+			assignedByIDs = append(assignedByIDs, *subs[i].AssignedBy)
+		}
+	}
+
+	client := clientFromContext(ctx, r.client)
+	users, err := client.User.Query().Where(user.IDIn(uniqueInt64s(userIDs)...)).All(ctx)
+	if err != nil {
+		return err
+	}
+	userByID := make(map[int64]*service.User, len(users))
+	for _, item := range users {
+		userByID[item.ID] = userEntityToService(item)
+	}
+
+	groups, err := client.Group.Query().Where(group.IDIn(uniqueInt64s(groupIDs)...)).All(ctx)
+	if err != nil {
+		return err
+	}
+	groupByID := make(map[int64]*service.Group, len(groups))
+	for _, item := range groups {
+		groupByID[item.ID] = groupEntityToService(item)
+	}
+
+	assignedByID := map[int64]*service.User{}
+	if len(assignedByIDs) > 0 {
+		assignedUsers, err := client.User.Query().Where(user.IDIn(uniqueInt64s(assignedByIDs)...)).All(ctx)
+		if err != nil {
+			return err
+		}
+		assignedByID = make(map[int64]*service.User, len(assignedUsers))
+		for _, item := range assignedUsers {
+			assignedByID[item.ID] = userEntityToService(item)
+		}
+	}
+
+	for i := range subs {
+		subs[i].User = userByID[subs[i].UserID]
+		subs[i].Group = groupByID[subs[i].GroupID]
+		if subs[i].AssignedBy != nil {
+			subs[i].AssignedByUser = assignedByID[*subs[i].AssignedBy]
+		}
+	}
+	return nil
+}
+
+func uniqueInt64s(values []int64) []int64 {
+	seen := make(map[int64]struct{}, len(values))
+	result := make([]int64, 0, len(values))
+	for _, value := range values {
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
 func userSubscriptionEntityToService(m *dbent.UserSubscription) *service.UserSubscription {
+	return userSubscriptionEntityToServiceWithStatusMapping(m, true)
+}
+
+func userSubscriptionEntityToServicePreserveStatus(m *dbent.UserSubscription) *service.UserSubscription {
+	return userSubscriptionEntityToServiceWithStatusMapping(m, false)
+}
+
+func userSubscriptionEntityToServiceWithStatusMapping(m *dbent.UserSubscription, mapDeletedToRevoked bool) *service.UserSubscription {
 	if m == nil {
 		return nil
+	}
+	status := m.Status
+	if mapDeletedToRevoked && m.DeletedAt != nil {
+		status = service.SubscriptionStatusRevoked
 	}
 	out := &service.UserSubscription{
 		ID:                 m.ID,
@@ -435,7 +646,7 @@ func userSubscriptionEntityToService(m *dbent.UserSubscription) *service.UserSub
 		GroupID:            m.GroupID,
 		StartsAt:           m.StartsAt,
 		ExpiresAt:          m.ExpiresAt,
-		Status:             m.Status,
+		Status:             status,
 		DailyWindowStart:   m.DailyWindowStart,
 		WeeklyWindowStart:  m.WeeklyWindowStart,
 		MonthlyWindowStart: m.MonthlyWindowStart,
@@ -447,6 +658,7 @@ func userSubscriptionEntityToService(m *dbent.UserSubscription) *service.UserSub
 		Notes:              derefString(m.Notes),
 		CreatedAt:          m.CreatedAt,
 		UpdatedAt:          m.UpdatedAt,
+		DeletedAt:          m.DeletedAt,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)

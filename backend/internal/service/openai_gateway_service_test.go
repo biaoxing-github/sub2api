@@ -3891,6 +3891,7 @@ func TestOpenAIBuildUpstreamRequestPreservesCompactPathForAPIKeyBaseURL(t *testi
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, []byte(`{"model":"gpt-5"}`), "token", false, "", false)
 	require.NoError(t, err)
 	require.Equal(t, "https://example.com/v1/responses/compact", req.URL.String())
+	require.Equal(t, "application/json", req.Header.Get("Accept"))
 }
 
 func TestOpenAIBuildUpstreamRequestOAuthOfficialClientOriginatorCompatibility(t *testing.T) {
@@ -4072,7 +4073,7 @@ func TestOpenAIBuildUpstreamRequestAPIKeyCodexSimulationLearnsDesktopBuildFromRe
 	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator"))
 	req, err := svc.buildUpstreamRequest(c.Request.Context(), c, account, body, "token", true, "", isCodexCLI)
 	require.NoError(t, err)
-	require.Equal(t, "Codex Desktop/0.141.0 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.616.32157)", req.Header.Get("User-Agent"))
+	require.Equal(t, "Codex Desktop/"+codexCLIVersion()+" (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.616.32157)", req.Header.Get("User-Agent"))
 	require.Equal(t, "26.616.32157", openai.GetCurrentCodexDesktopAppBuild())
 	require.Equal(t, "window-321", req.Header.Get("X-Codex-Window-Id"))
 }

@@ -114,6 +114,13 @@ type UserRepository interface {
 	DisableTotp(ctx context.Context, userID int64) error
 }
 
+// RedeemUserAdjustmentRepository 定义负值兑换码使用的原子扣减能力。
+// 普通计费允许余额透支，因此不应把此下限规则扩展到 UserRepository。
+type RedeemUserAdjustmentRepository interface {
+	ApplyRedeemBalanceAdjustment(ctx context.Context, id int64, delta float64) error
+	ApplyRedeemConcurrencyAdjustment(ctx context.Context, id int64, delta int) error
+}
+
 type UserAuthIdentityRecord struct {
 	ProviderType    string
 	ProviderKey     string

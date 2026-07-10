@@ -13,9 +13,9 @@ func firstInstructionLine(s string) string {
 	return s
 }
 
-func TestDefaultTestModelUsesGPT55(t *testing.T) {
-	if DefaultTestModel != "gpt-5.5" {
-		t.Fatalf("DefaultTestModel = %q, want %q", DefaultTestModel, "gpt-5.5")
+func TestDefaultTestModelUsesGPT56Terra(t *testing.T) {
+	if DefaultTestModel != "gpt-5.6-terra" {
+		t.Fatalf("DefaultTestModel = %q, want %q", DefaultTestModel, "gpt-5.6-terra")
 	}
 }
 

@@ -529,7 +529,7 @@ describe('AccountProbeReportsView', () => {
     expect(listAccountProbeRuns).toHaveBeenCalledTimes(2)
   })
 
-  it('prepopulates report batch and schedule forms with gpt-5.5', async () => {
+  it('prepopulates report batch and schedule forms with gpt-5.6-terra', async () => {
     listAccountProbeRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, summary: {} })
     listAccounts.mockResolvedValue({
       items: [],
@@ -555,11 +555,11 @@ describe('AccountProbeReportsView', () => {
 
     await wrapper.find('[data-test="open-batch-probe-dialog"]').trigger('click')
     await flushPromises()
-    expect((wrapper.find('[data-test="batch-probe-model"]').element as HTMLInputElement).value).toBe('gpt-5.5')
+    expect((wrapper.find('[data-test="batch-probe-model"]').element as HTMLInputElement).value).toBe('gpt-5.6-terra')
 
     await wrapper.find('[data-test="open-scheduled-probe-dialog"]').trigger('click')
     await flushPromises()
-    expect((wrapper.find('[data-test="schedule-probe-model"]').element as HTMLInputElement).value).toBe('gpt-5.5')
+    expect((wrapper.find('[data-test="schedule-probe-model"]').element as HTMLInputElement).value).toBe('gpt-5.6-terra')
   })
 
   it('does not expose batch model validation from the report page', async () => {

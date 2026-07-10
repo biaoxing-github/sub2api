@@ -393,7 +393,7 @@ function selectAccountTestModel(account: Account, models: ClaudeModel[]): string
   const availableModels = account.platform === 'antigravity' ? sortAccountTestModels(models) : models
   if (availableModels.length === 0) return ''
   if (account.platform === 'openai') {
-    return availableModels.find(model => model.id === 'gpt-5.5')?.id || availableModels[0]?.id || ''
+    return availableModels.find(model => model.id === 'gpt-5.6-terra')?.id || availableModels[0]?.id || ''
   }
   if (account.platform === 'gemini') {
     return sortAccountTestModels(availableModels)[0]?.id || ''

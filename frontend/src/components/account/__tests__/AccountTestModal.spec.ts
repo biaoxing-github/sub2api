@@ -237,10 +237,11 @@ describe('AccountTestModal', () => {
     expect(wrapper.text()).toContain('total-latency-1456ms')
   })
 
-  it('defaults free OpenAI accounts to gpt-5.5', async () => {
+  it('defaults free OpenAI accounts to gpt-5.6-terra', async () => {
     getAvailableModelsMock.mockResolvedValueOnce([
       { id: 'gpt-5.4', display_name: 'GPT-5.4' },
-      { id: 'gpt-5.5', display_name: 'GPT-5.5' }
+      { id: 'gpt-5.5', display_name: 'GPT-5.5' },
+      { id: 'gpt-5.6-terra', display_name: 'GPT-5.6 Terra' }
     ])
     const account = buildAccount()
     account.credentials = { plan_type: 'free' }
@@ -263,12 +264,13 @@ describe('AccountTestModal', () => {
     await wrapper.setProps({ show: true })
     await flushPromises()
 
-    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.5')
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.6-terra')
   })
 
-  it('defaults paid OpenAI accounts to gpt-5.5', async () => {
+  it('defaults paid OpenAI accounts to gpt-5.6-terra', async () => {
     getAvailableModelsMock.mockResolvedValueOnce([
       { id: 'gpt-5.5', display_name: 'GPT-5.5' },
+      { id: 'gpt-5.6-terra', display_name: 'GPT-5.6 Terra' },
       { id: 'gpt-5.4', display_name: 'GPT-5.4' }
     ])
     const account = buildAccount()
@@ -292,7 +294,7 @@ describe('AccountTestModal', () => {
     await wrapper.setProps({ show: true })
     await flushPromises()
 
-    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.5')
+    expect((wrapper.vm as any).selectedModelId).toBe('gpt-5.6-terra')
   })
 
   it('defaults Anthropic accounts to claude-opus-4-8', async () => {

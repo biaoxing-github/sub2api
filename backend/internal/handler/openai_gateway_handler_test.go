@@ -360,14 +360,38 @@ func TestOpenAIForwardErrorAlreadyCommunicated_HeartbeatIsNotRealOutput(t *testi
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-
-	_, err := fmt.Fprint(c.Writer, ":\n\n")
-	require.NoError(t, err)
-	writerSizeBeforeForward := c.Writer.Size()
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+	service.MarkOpenAICompactClientStream(c)
+	stop := service.StartOpenAICompactSSEKeepalive(c, time.Millisecond)
+	defer stop()
+	writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
+	time.Sleep(20 * time.Millisecond)
 
 	require.False(t, service.OpenAIRealClientOutputStarted(c))
 	require.False(t, openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, errors.New("upstream response failed: boom")))
+}
+
+// 首轮 compact 心跳已提交 SSE 后，failover 的下一轮尚未首拍也必须继承该提交
+// 状态；否则本地错误会退回 JSON 并污染已经开始的 SSE 响应。
+func TestOpenAIErrorResponseAfterCompactFailoverRetryUsesSSE(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+	service.MarkOpenAICompactClientStream(c)
+
+	stopFirstAttempt := service.StartOpenAICompactSSEKeepalive(c, time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+	stopFirstAttempt()
+
+	stopSecondAttempt := service.StartOpenAICompactSSEKeepalive(c, time.Hour)
+	defer stopSecondAttempt()
+	(&OpenAIGatewayHandler{}).errorResponse(c, http.StatusForbidden, "permission_error", "second attempt rejected")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), "event: response.failed\n")
+	require.Contains(t, w.Body.String(), `"code":"permission_denied"`)
+	require.NotContains(t, w.Body.String(), "\n\n{\"error\":{\"type\":\"permission_error\"")
 }
 
 func TestOpenAIForwardErrorAlreadyCommunicated_ResponseFailedAfterOutput(t *testing.T) {

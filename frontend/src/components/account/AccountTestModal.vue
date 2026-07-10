@@ -323,7 +323,7 @@ const sortTestModels = (models: ClaudeModel[]) => {
 }
 
 const selectOpenAITestModel = (models: ClaudeModel[]) => {
-  const preferredModelID = 'gpt-5.5'
+  const preferredModelID = 'gpt-5.6-terra'
   return models.find((m) => m.id === preferredModelID)?.id || models[0]?.id || ''
 }
 

@@ -721,7 +721,7 @@ const batchAccounts = ref<Account[]>([])
 const selectedRunIds = ref<number[]>([])
 const selectedAccountIds = ref<number[]>([])
 const batchAccountSearch = ref('')
-const defaultOpenAIAccountTestModelID = 'gpt-5.5'
+const defaultOpenAIAccountTestModelID = 'gpt-5.6-terra'
 
 const filters = reactive({
   keyword: '',

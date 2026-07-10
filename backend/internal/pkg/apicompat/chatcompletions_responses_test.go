@@ -32,6 +32,26 @@ func TestChatCompletionsToResponses_BasicText(t *testing.T) {
 	assert.Equal(t, "user", items[0].Role)
 }
 
+func TestUsageConversionsPreserveCacheWriteTokens(t *testing.T) {
+	var responsesUsage ResponsesUsage
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"input_tokens":1000,
+		"output_tokens":50,
+		"input_tokens_details":{"cached_tokens":100,"cache_write_tokens":200}
+	}`), &responsesUsage))
+
+	chatUsage := chatUsageFromResponsesUsage(&responsesUsage)
+	chatPayload, err := json.Marshal(chatUsage)
+	require.NoError(t, err)
+	assert.Contains(t, string(chatPayload), `"cache_write_tokens":200`)
+
+	roundTrip := ChatUsageToResponsesUsage(chatUsage)
+	roundTripPayload, err := json.Marshal(roundTrip)
+	require.NoError(t, err)
+	assert.Contains(t, string(roundTripPayload), `"cache_creation_input_tokens":200`)
+	assert.Contains(t, string(roundTripPayload), `"cache_write_tokens":200`)
+}
+
 func TestChatCompletionsToResponses_SystemMessage(t *testing.T) {
 	req := &ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -398,6 +418,33 @@ func TestChatCompletionsToResponses_ServiceTier(t *testing.T) {
 	resp, err := ChatCompletionsToResponses(req)
 	require.NoError(t, err)
 	assert.Equal(t, "flex", resp.ServiceTier)
+}
+
+func TestChatCompletionsToResponses_ParallelToolCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   bool
+		encoded string
+	}{
+		{name: "false", value: false, encoded: "false"},
+		{name: "true", value: true, encoded: "true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var req ChatCompletionsRequest
+			require.NoError(t, json.Unmarshal([]byte(`{
+				"model":"gpt-4o",
+				"messages":[{"role":"user","content":"Hi"}],
+				"parallel_tool_calls":`+tc.encoded+`
+			}`), &req))
+
+			resp, err := ChatCompletionsToResponses(&req)
+			require.NoError(t, err)
+
+			payload, err := json.Marshal(resp)
+			require.NoError(t, err)
+			assert.Contains(t, string(payload), `"parallel_tool_calls":`+tc.encoded)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------

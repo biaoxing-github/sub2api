@@ -60,6 +60,51 @@ func TestCalculateCostUnified_TokenMode(t *testing.T) {
 	require.Equal(t, string(BillingModeToken), cost.BillingMode)
 }
 
+func TestCalculateCostUnified_TokenIntervalCountsCacheCreationTokens(t *testing.T) {
+	bs := newTestBillingService()
+	resolver := NewModelPricingResolver(nil, bs)
+	intervalEnd := 100
+	baseInputPrice := 1e-6
+	baseCacheWritePrice := 1e-6
+	highInputPrice := 2e-6
+	highCacheWritePrice := 2e-6
+
+	// 缓存写入 token 将总上下文从 80 推过 100 的区间边界。
+	resolved := &ResolvedPricing{
+		Mode: BillingModeToken,
+		BasePricing: &ModelPricing{
+			InputPricePerToken:         baseInputPrice,
+			CacheCreationPricePerToken: baseCacheWritePrice,
+		},
+		Intervals: []PricingInterval{
+			{
+				MinTokens:       0,
+				MaxTokens:       &intervalEnd,
+				InputPrice:      &baseInputPrice,
+				CacheWritePrice: &baseCacheWritePrice,
+			},
+			{
+				MinTokens:       intervalEnd,
+				InputPrice:      &highInputPrice,
+				CacheWritePrice: &highCacheWritePrice,
+			},
+		},
+	}
+
+	cost, err := bs.CalculateCostUnified(CostInput{
+		Ctx:            context.Background(),
+		Model:          "cache-tier-test",
+		Tokens:         UsageTokens{InputTokens: 80, CacheCreationTokens: 30},
+		RateMultiplier: 1,
+		Resolver:       resolver,
+		Resolved:       resolved,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 80*highInputPrice, cost.InputCost, 1e-12)
+	require.InDelta(t, 30*highCacheWritePrice, cost.CacheCreationCost, 1e-12)
+	require.InDelta(t, 220e-6, cost.TotalCost, 1e-12)
+}
+
 func TestCalculateCostUnified_PerRequestMode(t *testing.T) {
 	// Set up a ChannelService with a per-request pricing channel
 	cs := newTestChannelServiceWithCache(t, &channelCache{
@@ -101,6 +146,35 @@ func TestCalculateCostUnified_PerRequestMode(t *testing.T) {
 	// ActualCost = 0.15 * 2.0 = 0.30
 	require.InDelta(t, 0.30, cost.ActualCost, 1e-10)
 	require.Equal(t, string(BillingModePerRequest), cost.BillingMode)
+}
+
+func TestCalculateCostUnified_PerRequestTierCountsCacheCreationTokens(t *testing.T) {
+	bs := newTestBillingService()
+	resolver := NewModelPricingResolver(nil, bs)
+	intervalEnd := 100
+	basePrice := 0.01
+	highPrice := 0.02
+
+	// 按次计费同样按总上下文选层，缓存写入不能被遗漏。
+	resolved := &ResolvedPricing{
+		Mode: BillingModePerRequest,
+		RequestTiers: []PricingInterval{
+			{MinTokens: 0, MaxTokens: &intervalEnd, PerRequestPrice: &basePrice},
+			{MinTokens: intervalEnd, PerRequestPrice: &highPrice},
+		},
+	}
+
+	cost, err := bs.CalculateCostUnified(CostInput{
+		Ctx:            context.Background(),
+		Model:          "cache-request-tier-test",
+		Tokens:         UsageTokens{InputTokens: 80, CacheCreationTokens: 30},
+		RequestCount:   1,
+		RateMultiplier: 1,
+		Resolver:       resolver,
+		Resolved:       resolved,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, highPrice, cost.TotalCost, 1e-12)
 }
 
 func TestCalculateCostUnified_ImageMode(t *testing.T) {

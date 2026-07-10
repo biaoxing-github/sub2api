@@ -139,6 +139,22 @@ func TestResponsesToChatCompletionsRequest_TextFormat(t *testing.T) {
 	}
 }
 
+func TestResponsesToChatCompletionsRequest_ParallelToolCalls(t *testing.T) {
+	var req ResponsesRequest
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"model":"gpt-4o",
+		"input":[{"role":"user","content":"Use tools"}],
+		"parallel_tool_calls":false
+	}`), &req))
+
+	out, err := ResponsesToChatCompletionsRequest(&req)
+	require.NoError(t, err)
+
+	payload, err := json.Marshal(out)
+	require.NoError(t, err)
+	assert.Contains(t, string(payload), `"parallel_tool_calls":false`)
+}
+
 func TestResponsesInputToChatMessages_ReasoningAndToolPairing(t *testing.T) {
 	input := json.RawMessage(`[
 		{"type":"reasoning","summary":[{"type":"summary_text","text":"plan"}]},
