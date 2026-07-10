@@ -5,7 +5,20 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
+
+type grokUsageLogRepoStub struct {
+	UsageLogRepository
+	stats *usagestats.AccountStats
+}
+
+// GetAccountTodayStats 返回测试指定的 Grok 账号当日用量。
+func (r *grokUsageLogRepoStub) GetAccountTodayStats(_ context.Context, _ int64) (*usagestats.AccountStats, error) {
+	return r.stats, nil
+}
 
 type accountUsageCodexProbeRepo struct {
 	stubOpenAIAccountRepo
@@ -63,6 +76,52 @@ func TestShouldRefreshOpenAICodexSnapshot(t *testing.T) {
 		},
 	}, usage, now) {
 		t.Fatal("expected stale ws snapshot to trigger refresh")
+	}
+}
+
+// TestAccountUsageService_GetGrokUsage_UsesPassiveQuotaAndTodayStats 验证被动配额快照和本地费用同时返回。
+func TestAccountUsageService_GetGrokUsage_UsesPassiveQuotaAndTodayStats(t *testing.T) {
+	t.Parallel()
+
+	limit := int64(10)
+	remaining := int64(-5)
+	svc := &AccountUsageService{usageLogRepo: &grokUsageLogRepoStub{stats: &usagestats.AccountStats{
+		Requests:     12,
+		Tokens:       3456,
+		Cost:         0.05,
+		StandardCost: 0.04,
+		UserCost:     0.09,
+	}}}
+	account := &Account{
+		ID:       5001,
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Extra: map[string]any{
+			grokQuotaSnapshotExtraKey: &xai.QuotaSnapshot{
+				Requests: &xai.QuotaWindow{
+					Limit:     &limit,
+					Remaining: &remaining,
+					ResetAt:   "2026-07-10T12:00:00Z",
+				},
+				HeadersObserved:   true,
+				ObservationSource: "images",
+				UpdatedAt:         "2026-07-10T11:00:00Z",
+			},
+		},
+	}
+
+	usage, err := svc.getGrokUsage(context.Background(), account)
+	if err != nil {
+		t.Fatalf("getGrokUsage() error = %v", err)
+	}
+	if usage.GrokQuotaSnapshotState != "observed" || usage.GrokRequestQuota == nil {
+		t.Fatalf("expected observed request quota, got %#v", usage)
+	}
+	if usage.GrokRequestQuota.Remaining == nil || *usage.GrokRequestQuota.Remaining != -5 {
+		t.Fatalf("expected remaining=-5, got %#v", usage.GrokRequestQuota.Remaining)
+	}
+	if usage.GrokLocalUsage == nil || usage.GrokLocalUsage.UserCost != 0.09 {
+		t.Fatalf("expected local user cost 0.09, got %#v", usage.GrokLocalUsage)
 	}
 }
 

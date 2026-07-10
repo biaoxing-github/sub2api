@@ -72,6 +72,44 @@ describe('AccountUsageCell', () => {
     })
   })
 
+  it('Grok 用量显示用户费用且配额允许超过 100%', async () => {
+    getUsage.mockResolvedValue({
+      grok_local_usage: {
+        requests: 12,
+        tokens: 3456,
+        cost: 0.05,
+        user_cost: 0.09
+      },
+      grok_request_quota: {
+        limit: 10,
+        remaining: -5,
+        reset_at: '2026-07-10T12:00:00Z'
+      },
+      grok_quota_snapshot_state: 'observed'
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 5001, platform: 'grok', type: 'oauth', extra: {} })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization', 'resetsAt'],
+            template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ resetsAt }}</div>'
+          },
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getUsage).toHaveBeenCalledWith(5001)
+    expect(wrapper.text()).toContain('U $0.09')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.grokRequests|150|2026-07-10T12:00:00Z')
+  })
+
   it('Antigravity 图片用量会聚合新旧 image 模型', async () => {
     getUsage.mockResolvedValue({
       antigravity_quota: {

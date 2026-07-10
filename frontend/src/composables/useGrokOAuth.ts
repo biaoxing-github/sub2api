@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import type { GrokTokenInfo } from '@/api/admin/grok'
+import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 
 // useGrokOAuth 封装管理端 Grok OAuth 授权、授权码兑换和 refresh_token 验证状态。
 export function useGrokOAuth() {
@@ -39,8 +40,8 @@ export function useGrokOAuth() {
       sessionId.value = response.session_id
       state.value = response.state
       return true
-    } catch (err: any) {
-      error.value = err.response?.data?.detail || t('admin.accounts.oauth.grok.failedToGenerateUrl')
+    } catch (err: unknown) {
+      error.value = extractApiErrorMessage(err, t('admin.accounts.oauth.grok.failedToGenerateUrl'))
       appStore.showError(error.value)
       return false
     } finally {
@@ -72,8 +73,13 @@ export function useGrokOAuth() {
       if (params.proxyId) payload.proxy_id = params.proxyId
 
       return await adminAPI.grok.exchangeCode(payload as any)
-    } catch (err: any) {
-      error.value = err.response?.data?.detail || t('admin.accounts.oauth.grok.failedToExchangeCode')
+    } catch (err: unknown) {
+      error.value = extractI18nErrorMessage(
+        err,
+        t,
+        'admin.accounts.oauth.grok.errors',
+        t('admin.accounts.oauth.grok.failedToExchangeCode')
+      )
       appStore.showError(error.value)
       return null
     } finally {
@@ -95,8 +101,13 @@ export function useGrokOAuth() {
 
     try {
       return await adminAPI.grok.refreshGrokToken(refreshToken.trim(), proxyId)
-    } catch (err: any) {
-      error.value = err.response?.data?.detail || t('admin.accounts.oauth.grok.failedToValidateRT')
+    } catch (err: unknown) {
+      error.value = extractI18nErrorMessage(
+        err,
+        t,
+        'admin.accounts.oauth.grok.errors',
+        t('admin.accounts.oauth.grok.failedToValidateRT')
+      )
       return null
     } finally {
       loading.value = false

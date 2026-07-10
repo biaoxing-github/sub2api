@@ -23,10 +23,42 @@ func TestDefaultModelsIncludeGrok45AsDefaultAliasTarget(t *testing.T) {
 	}
 }
 
+// TestDefaultModelsIncludeComposerAndImagineModels 校验 v0.1.149 新增的 Composer 与图片模型可被后端模型接口发现。
+func TestDefaultModelsIncludeComposerAndImagineModels(t *testing.T) {
+	t.Parallel()
+
+	ids := DefaultModelIDs()
+	for _, expected := range []string{
+		"grok-composer-2.5-fast",
+		"grok-imagine",
+		"grok-imagine-image",
+		"grok-imagine-image-quality",
+		"grok-imagine-edit",
+	} {
+		if !containsModelID(ids, expected) {
+			t.Fatalf("DefaultModelIDs() does not contain %q: %v", expected, ids)
+		}
+	}
+
+	if got := DefaultModelMapping()["composer-2.5"]; got != "grok-composer-2.5-fast" {
+		t.Fatalf("DefaultModelMapping()[composer-2.5] = %q, want grok-composer-2.5-fast", got)
+	}
+}
+
 // firstModelID 返回模型 ID 列表的首项，空列表返回空字符串，便于失败信息保持清晰。
 func firstModelID(ids []string) string {
 	if len(ids) == 0 {
 		return ""
 	}
 	return ids[0]
+}
+
+// containsModelID 判断模型 ID 列表是否包含指定值。
+func containsModelID(ids []string, expected string) bool {
+	for _, id := range ids {
+		if id == expected {
+			return true
+		}
+	}
+	return false
 }

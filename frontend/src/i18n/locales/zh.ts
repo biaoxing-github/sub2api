@@ -930,6 +930,9 @@ export default {
     cost: '费用',
     firstToken: '首 Token',
     duration: '耗时',
+    latency: '延迟',
+    latencyFirstToken: '首字',
+    latencyDuration: '总耗时',
     time: '时间',
     ws: 'WS',
     stream: '流式',
@@ -975,7 +978,7 @@ export default {
     exportExcelFailed: '使用数据导出失败',
     imageUnit: '张',
     userAgent: 'User-Agent',
-    tabs: { usage: '用量明细', errors: '错误请求' },
+    tabs: { usage: '用量明细', errors: '错误请求', ranking: '用户排行' },
     errors: {
       time: '时间',
       model: '模型',
@@ -3484,6 +3487,11 @@ export default {
         gemini3Flash: 'G3F',
         gemini3Image: 'G31FI',
         claude: 'Claude',
+        grokRequests: '请求',
+        grokTokens: 'Token',
+        grokUnknown: 'Grok 配额需等待上游响应返回 xAI rate-limit 响应头后显示。',
+        grokRetryAfter: '{time} 后重试',
+        grokNoHeaders: '未观察到配额响应头',
         passiveSampled: '被动采样',
         activeQuery: '查询'
       },
@@ -4185,7 +4193,23 @@ export default {
           failedToGenerateUrl: '生成 Grok 授权链接失败',
           missingExchangeParams: '缺少 code / session_id / state',
           failedToExchangeCode: 'Grok 授权码兑换失败',
-          failedToValidateRT: '验证 Refresh Token 失败'
+          failedToValidateRT: '验证 Refresh Token 失败',
+          errors: {
+            GROK_OAUTH_SESSION_NOT_FOUND:
+              'Grok OAuth 会话不存在或已过期。请重新生成授权链接，并粘贴最新的回调链接。',
+            GROK_OAUTH_INVALID_STATE:
+              'Grok OAuth state 与当前会话不匹配。请粘贴同一次生成的授权链接返回的回调 URL。',
+            GROK_OAUTH_STATE_REQUIRED:
+              '回调链接缺少 OAuth state。请粘贴完整 callback URL，不要只粘贴 code。',
+            GROK_OAUTH_CODE_REQUIRED:
+              '缺少 Grok 授权码。请粘贴完整 callback URL、查询字符串或 code 值。',
+            GROK_OAUTH_NO_REFRESH_TOKEN:
+              'Grok 响应未返回 refresh token。请重新生成授权链接，并再次确认 offline access 授权。',
+            GROK_OAUTH_PROXY_NOT_AVAILABLE:
+              '无法查询 Grok OAuth 代理配置。请检查选择的代理后重试。',
+            GROK_OAUTH_PROXY_NOT_FOUND:
+              '找不到所选代理。请选择可用代理后重试。'
+          }
         }
       },
       // Gemini specific (platform-wide)
@@ -4987,6 +5011,20 @@ export default {
       deletedUser: '已删除用户',
       deletedUserHint: '该用户已于 {time} 删除，当前行为历史用量记录',
       failedToLoadUser: '加载用户信息失败',
+      tokenRanking: {
+        subtitle: '按当前筛选与时间范围统计每个用户的 Token 用量',
+        rowHint: '点击查看该用户的用量明细',
+        userCount: '共 {count} 位用户',
+        columns: {
+          user: '用户',
+          requests: '请求数',
+          inputTokens: '输入 Token',
+          outputTokens: '输出 Token',
+          cacheTokens: '缓存 Token',
+          totalTokens: '总 Token',
+          cost: '费用'
+        }
+      },
       cleanup: {
         button: '清理',
         title: '清理使用记录',

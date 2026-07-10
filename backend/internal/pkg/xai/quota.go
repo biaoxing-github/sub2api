@@ -22,7 +22,21 @@ type QuotaSnapshot struct {
 	EntitlementStatus string            `json:"entitlement_status,omitempty"`
 	StatusCode        int               `json:"status_code,omitempty"`
 	Headers           map[string]string `json:"headers,omitempty"`
+	HeadersObserved   bool              `json:"headers_observed"`
+	ObservationSource string            `json:"observation_source,omitempty"`
+	LastProbeAt       string            `json:"last_probe_at,omitempty"`
+	LastHeadersSeenAt string            `json:"last_headers_seen_at,omitempty"`
 	UpdatedAt         string            `json:"updated_at"`
+}
+
+// HasObservedHeaders 判断快照是否包含任一可用的 xAI 配额响应头。
+func (s *QuotaSnapshot) HasObservedHeaders() bool {
+	if s == nil {
+		return false
+	}
+	return s.HeadersObserved || s.Requests != nil || s.Tokens != nil ||
+		s.RetryAfterSeconds != nil || s.SubscriptionTier != "" ||
+		s.EntitlementStatus != "" || len(s.Headers) > 0
 }
 
 func ParseQuotaHeaders(headers http.Header, statusCode int) *QuotaSnapshot {
@@ -45,6 +59,8 @@ func ParseQuotaHeaders(headers http.Header, statusCode int) *QuotaSnapshot {
 	if snapshot.Requests == nil && snapshot.Tokens == nil && snapshot.RetryAfterSeconds == nil && snapshot.SubscriptionTier == "" && snapshot.EntitlementStatus == "" {
 		return nil
 	}
+	snapshot.HeadersObserved = true
+	snapshot.LastHeadersSeenAt = snapshot.UpdatedAt
 	return snapshot
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
@@ -193,6 +194,16 @@ type UsageInfo struct {
 	// Antigravity 多模型配额
 	AntigravityQuota map[string]*AntigravityModelQuota `json:"antigravity_quota,omitempty"`
 
+	// Grok / xAI 被动配额快照与本地当日用量。
+	GrokRequestQuota       *xai.QuotaWindow `json:"grok_request_quota,omitempty"`
+	GrokTokenQuota         *xai.QuotaWindow `json:"grok_token_quota,omitempty"`
+	GrokRetryAfterSeconds  *int             `json:"grok_retry_after_seconds,omitempty"`
+	GrokEntitlementStatus  string           `json:"grok_entitlement_status,omitempty"`
+	GrokQuotaSnapshotState string           `json:"grok_quota_snapshot_state,omitempty"`
+	GrokLastHeadersSeenAt  string           `json:"grok_last_headers_seen_at,omitempty"`
+	GrokLastStatusCode     int              `json:"grok_last_status_code,omitempty"`
+	GrokLocalUsage         *WindowStats     `json:"grok_local_usage,omitempty"`
+
 	// Antigravity 账号级信息
 	SubscriptionTier    string `json:"subscription_tier,omitempty"`     // 归一化订阅等级: FREE/PRO/ULTRA/UNKNOWN
 	SubscriptionTierRaw string `json:"subscription_tier_raw,omitempty"` // 上游原始订阅等级名称
@@ -305,6 +316,14 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64, for
 
 	if account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth {
 		usage, err := s.getOpenAIUsage(ctx, account, forceProbe)
+		if err == nil {
+			s.tryClearRecoverableAccountError(ctx, account)
+		}
+		return usage, err
+	}
+
+	if account.Platform == PlatformGrok {
+		usage, err := s.getGrokUsage(ctx, account)
 		if err == nil {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
@@ -543,6 +562,71 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 	}
 
 	return usage, nil
+}
+
+// getGrokUsage 从账号 Extra 的最新被动快照和 usage_logs 当日聚合构建 Grok 用量。
+func (s *AccountUsageService) getGrokUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+	now := time.Now()
+	usage := &UsageInfo{
+		Source:                 "passive",
+		UpdatedAt:              &now,
+		GrokQuotaSnapshotState: "unknown_until_first_response",
+	}
+
+	snapshot, err := grokQuotaSnapshotFromExtra(account.Extra)
+	if err != nil {
+		return nil, fmt.Errorf("parse grok quota snapshot: %w", err)
+	}
+	if snapshot != nil {
+		if parsedAt, parseErr := time.Parse(time.RFC3339, snapshot.UpdatedAt); parseErr == nil {
+			usage.UpdatedAt = &parsedAt
+		}
+		usage.GrokRequestQuota = snapshot.Requests
+		usage.GrokTokenQuota = snapshot.Tokens
+		usage.GrokRetryAfterSeconds = snapshot.RetryAfterSeconds
+		usage.GrokEntitlementStatus = snapshot.EntitlementStatus
+		usage.GrokLastHeadersSeenAt = snapshot.LastHeadersSeenAt
+		usage.GrokLastStatusCode = snapshot.StatusCode
+		if snapshot.HasObservedHeaders() {
+			usage.GrokQuotaSnapshotState = "observed"
+		} else {
+			usage.GrokQuotaSnapshotState = "no_headers"
+		}
+	}
+
+	if s.usageLogRepo != nil && account != nil {
+		if stats, statsErr := s.usageLogRepo.GetAccountTodayStats(ctx, account.ID); statsErr == nil && stats != nil {
+			usage.GrokLocalUsage = windowStatsFromAccountStats(stats)
+		}
+	}
+	enrichUsageWithAccountError(usage, account)
+	return usage, nil
+}
+
+// grokQuotaSnapshotFromExtra 将数据库 JSON、结构体或指针形式的快照统一还原为类型对象。
+func grokQuotaSnapshotFromExtra(extra map[string]any) (*xai.QuotaSnapshot, error) {
+	if extra == nil {
+		return nil, nil
+	}
+	raw, ok := extra[grokQuotaSnapshotExtraKey]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	switch snapshot := raw.(type) {
+	case *xai.QuotaSnapshot:
+		return snapshot, nil
+	case xai.QuotaSnapshot:
+		return &snapshot, nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	var snapshot xai.QuotaSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
 }
 
 func shouldRefreshOpenAICodexSnapshot(account *Account, usage *UsageInfo, now time.Time) bool {

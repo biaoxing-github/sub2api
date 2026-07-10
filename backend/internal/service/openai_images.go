@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/imroc/req/v3"
@@ -455,7 +456,15 @@ func applyOpenAIImagesDefaults(req *OpenAIImagesRequest) {
 }
 
 func isOpenAIImageGenerationModel(model string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-")
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(model, "gpt-image-") || isGrokImageGenerationModel(model)
+}
+
+// isGrokImageGenerationModel 判断模型是否属于 xAI Imagine 图片生成或编辑系列。
+func isGrokImageGenerationModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return model == "grok-imagine" || model == "grok-imagine-edit" ||
+		strings.HasPrefix(model, "grok-imagine-image")
 }
 
 func validateOpenAIImagesModel(model string) error {
@@ -546,6 +555,12 @@ func (s *OpenAIGatewayService) ForwardImages(
 	if parsed == nil {
 		return nil, fmt.Errorf("parsed images request is required")
 	}
+	if account == nil {
+		return nil, fmt.Errorf("images account is required")
+	}
+	if account.IsGrok() {
+		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)
+	}
 	switch account.Type {
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)
@@ -588,6 +603,12 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	if err != nil {
 		return nil, err
 	}
+	if account.IsGrok() {
+		forwardBody, forwardContentType, err = sanitizeGrokImagesForwardBody(forwardBody, forwardContentType)
+		if err != nil {
+			return nil, err
+		}
+	}
 	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, parsed.Stream)
 	defer releaseUpstreamCtx()
 
@@ -620,6 +641,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			Message:            safeErr,
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+	}
+	if account.IsGrok() {
+		s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
 	}
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
@@ -731,6 +755,9 @@ func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 		targetURL = openAIImagesEditsURL
 	}
 	baseURL := account.GetOpenAIBaseURL()
+	if account.IsGrok() {
+		baseURL = account.GetGrokBaseURL()
+	}
 	if baseURL != "" {
 		validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
@@ -781,6 +808,58 @@ func rewriteOpenAIImagesModel(body []byte, contentType string, model string) ([]
 		return nil, "", fmt.Errorf("rewrite image request model: %w", err)
 	}
 	return rewritten, contentType, nil
+}
+
+// sanitizeGrokImagesForwardBody 删除 xAI 图片接口不接受的 size 字段。
+// 原始尺寸仍保留在 OpenAIImagesRequest 中，供响应计费和用量记录使用。
+func sanitizeGrokImagesForwardBody(body []byte, contentType string) ([]byte, string, error) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err == nil && strings.EqualFold(mediaType, "multipart/form-data") {
+		boundary := strings.TrimSpace(params["boundary"])
+		if boundary == "" {
+			return nil, "", fmt.Errorf("multipart boundary is required")
+		}
+
+		reader := multipart.NewReader(bytes.NewReader(body), boundary)
+		var buffer bytes.Buffer
+		writer := multipart.NewWriter(&buffer)
+		for {
+			part, readErr := reader.NextPart()
+			if readErr == io.EOF {
+				break
+			}
+			if readErr != nil {
+				return nil, "", fmt.Errorf("read grok image multipart body: %w", readErr)
+			}
+			if strings.EqualFold(strings.TrimSpace(part.FormName()), "size") && part.FileName() == "" {
+				_ = part.Close()
+				continue
+			}
+			target, createErr := writer.CreatePart(cloneMultipartHeader(part.Header))
+			if createErr != nil {
+				_ = part.Close()
+				return nil, "", fmt.Errorf("create grok image multipart part: %w", createErr)
+			}
+			if _, copyErr := io.Copy(target, part); copyErr != nil {
+				_ = part.Close()
+				return nil, "", fmt.Errorf("copy grok image multipart part: %w", copyErr)
+			}
+			_ = part.Close()
+		}
+		if closeErr := writer.Close(); closeErr != nil {
+			return nil, "", fmt.Errorf("close grok image multipart writer: %w", closeErr)
+		}
+		return buffer.Bytes(), writer.FormDataContentType(), nil
+	}
+
+	if !gjson.ValidBytes(body) || !gjson.GetBytes(body, "size").Exists() {
+		return body, contentType, nil
+	}
+	out, err := sjson.DeleteBytes(body, "size")
+	if err != nil {
+		return nil, "", fmt.Errorf("sanitize grok image size: %w", err)
+	}
+	return out, contentType, nil
 }
 
 func rewriteOpenAIImagesMultipartModel(body []byte, contentType string, model string) ([]byte, string, error) {

@@ -925,6 +925,9 @@ export default {
     cost: 'Cost',
     firstToken: 'First Token',
     duration: 'Duration',
+    latency: 'Latency',
+    latencyFirstToken: 'First',
+    latencyDuration: 'Total',
     time: 'Time',
     ws: 'WS',
     stream: 'Stream',
@@ -970,7 +973,7 @@ export default {
     exportExcelFailed: 'Failed to export usage data',
     imageUnit: ' images',
     userAgent: 'User-Agent',
-    tabs: { usage: 'Usage', errors: 'Error Requests' },
+    tabs: { usage: 'Usage', errors: 'Error Requests', ranking: 'User Ranking' },
     errors: {
       time: 'Time',
       model: 'Model',
@@ -1878,6 +1881,7 @@ export default {
       creating: 'Creating...',
       updating: 'Updating...',
       form: {
+        roleLabel: 'Role',
         rpmLimit: 'Requests Per Minute (RPM)',
         rpmLimitPlaceholder: '0 = unlimited',
         rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.'
@@ -4059,7 +4063,23 @@ export default {
           failedToGenerateUrl: 'Failed to generate Grok auth URL',
           missingExchangeParams: 'Missing auth code, session ID, or state',
           failedToExchangeCode: 'Failed to exchange Grok auth code',
-          failedToValidateRT: 'Failed to validate Refresh Token'
+          failedToValidateRT: 'Failed to validate Refresh Token',
+          errors: {
+            GROK_OAUTH_SESSION_NOT_FOUND:
+              'Grok OAuth session was not found or has expired. Generate a new auth URL and paste the newest callback URL.',
+            GROK_OAUTH_INVALID_STATE:
+              'Grok OAuth state does not match this session. Paste the callback URL from the same generated auth link.',
+            GROK_OAUTH_STATE_REQUIRED:
+              'The callback URL is missing the OAuth state. Paste the full callback URL, not only the code.',
+            GROK_OAUTH_CODE_REQUIRED:
+              'The Grok authorization code is missing. Paste the full callback URL, query string, or code value.',
+            GROK_OAUTH_NO_REFRESH_TOKEN:
+              'The Grok response did not include a refresh token. Generate a new auth URL and approve offline access again.',
+            GROK_OAUTH_PROXY_NOT_AVAILABLE:
+              'Grok OAuth proxy lookup is unavailable. Check the selected proxy and retry.',
+            GROK_OAUTH_PROXY_NOT_FOUND:
+              'The selected proxy could not be found. Choose an available proxy and retry.'
+          }
         }
       },
       // Gemini specific (platform-wide)
@@ -4326,6 +4346,11 @@ export default {
         gemini3Flash: 'G3F',
         gemini3Image: 'G31FI',
         claude: 'Claude',
+        grokRequests: 'Req',
+        grokTokens: 'Tok',
+        grokUnknown: 'Grok quota is unknown until an upstream response includes xAI rate-limit headers.',
+        grokRetryAfter: 'Retry after {time}',
+        grokNoHeaders: 'No quota headers observed',
         passiveSampled: 'Passive',
         activeQuery: 'Query'
       },
@@ -4837,6 +4862,20 @@ export default {
       deletedUser: 'Deleted user',
       deletedUserHint: 'This user was deleted at {time}; this row is historical usage.',
       failedToLoadUser: 'Failed to load user info',
+      tokenRanking: {
+        subtitle: 'Per-user token usage for the current filters and time range',
+        rowHint: "Click to view this user's usage details",
+        userCount: '{count} users',
+        columns: {
+          user: 'User',
+          requests: 'Requests',
+          inputTokens: 'Input Tokens',
+          outputTokens: 'Output Tokens',
+          cacheTokens: 'Cache Tokens',
+          totalTokens: 'Total Tokens',
+          cost: 'Cost'
+        }
+      },
       cleanup: {
         button: 'Cleanup',
         title: 'Cleanup Usage Records',

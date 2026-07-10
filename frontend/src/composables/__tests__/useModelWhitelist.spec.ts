@@ -93,6 +93,21 @@ describe('useModelWhitelist', () => {
     expect(presets.some(item => item.to.startsWith('claude-'))).toBe(false)
   })
 
+  it('grok 模型列表包含 Composer 别名和 Imagine 图片模型', () => {
+    const models = getModelsByPlatform('grok')
+    const presets = getPresetMappingsByPlatform('grok')
+
+    expect(models).toEqual(expect.arrayContaining([
+      'grok-composer-2.5-fast',
+      'grok-composer',
+      'composer-2.5',
+      'grok-imagine',
+      'grok-imagine-image-quality',
+      'grok-imagine-edit'
+    ]))
+    expect(presets.find(item => item.from === 'composer-2.5')?.to).toBe('grok-composer-2.5-fast')
+  })
+
   it('whitelist 模式会忽略通配符条目', () => {
     const mapping = buildModelMappingObject('whitelist', ['claude-*', 'gemini-3.1-flash-image'], [])
     expect(mapping).toEqual({
