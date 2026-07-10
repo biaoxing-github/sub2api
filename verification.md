@@ -4542,3 +4542,212 @@ Observed result:
 Limit:
 - Authenticated browser click-through was not run because no reusable noninteractive admin login state was available.
 - If a browser tab still shows the old list, it is using a cached route chunk and should reload the page.
+
+## 2026-07-09T20:32:46+08:00 Devil - juhe-ai speed_first 首字节慢降级吸收验证
+
+本轮将 juhe-ai speed_first 中可借鉴的“首字节慢观测、短期降级、成功恢复”落到 sub2api 现有 OpenAI path health / fast lane 调度中：慢首字节不计入硬故障熔断，只通过 FirstByteDegradedUntil 让账号候选和同 baseURL 路径短期降权；连续快首字节恢复后清除降级。未新增独立 soft deadline；现有 CodexWaitGuard/pre-output failover 已覆盖协议边界，后续如需更激进切换应基于该机制增强。
+
+验证结果：
+- 新增三条聚焦测试先红后绿，覆盖 tracker 降级/恢复、scheduler 降权、baseURL 排序后置。
+- 相关 path-health/scheduler 回归通过。
+- 因 `NewTokenRefreshService` 既有测试签名漂移阻挡 service 包编译，已机械补齐 Antigravity 参数位的 `nil`，并通过 token refresh/privacy retry 聚焦测试。
+- server 编译门通过。
+
+## 2026-07-09T22:18:00+08:00 Devil - OpenAI 首字节主动切换 Phase 2
+
+本轮完成参考会话 `019f46ad-5e52-7b71-ac37-c147758cad8d` 中定义的第二阶段：当 OpenAI `/responses` 请求仍处于输出前 request-phase，且等待响应头/首字节超时时，网关记录慢首字节切换样本并返回可被 handler 消费的 `UpstreamFailoverError`，由现有 failover loop 切到下一个候选；客户端已取消或已收到真实输出时不做透明切换。
+
+实现结果：
+- `OpenAIPathHealthTracker.RecordFirstByteSlow` 用于显式慢首字节样本，触发 `FirstByteDegradedUntil`，但不增加硬故障计数和 circuit breaker 计数。
+- 普通 OpenAI HTTP/SSE 与 passthrough request-phase 分支均写入账号、baseURL、聚合 bucket 的慢首字节状态。
+- `UpstreamFailoverError.ActionMetadata` 增加 `first_byte_cutover_allowed`、`first_byte_cutover_phase`、`first_byte_wait_ms`、`degraded_account_id`、`degraded_base_url` 等审计字段。
+- 新增 `docs/OPENAI_FIRST_BYTE_CUTOVER_PHASE2_CN.md` 记录行为边界、入口和验证结果。
+
+验证结果：
+- PASS: `go test -tags unit ./internal/service -run "TestOpenAIPathHealthFirstByte|TestOrderedOpenAIRequestBaseURLsDemotesFirstByteDegradedURL" -count=1`.
+- PASS: `go test -tags unit ./internal/service -run "TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata|TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover|TestOpenAIGatewayService_ForwardRequestPhaseContextCanceled|TestOpenAIGatewayService_APIKeyRequestBaseURLDoesNotFailoverBeforeAccountFailover" -count=1`.
+- PASS: `go test -tags unit ./internal/service -run "TestOpenAIPathHealth|TestBuildOpenAIAccountLoadPlan|TestOpenAIAccountScheduleProfile" -count=1`.
+- PASS: `go test -tags unit ./internal/handler -run "TestOpenAIHandleFailoverExhausted|TestOpenAIEnsureForwardErrorResponse|TestOpenAIHandleStreamingAwareError" -count=1`.
+- PASS: `go test -tags unit ./cmd/server -run TestNonExistent -count=0`.
+- PASS: `git diff --check`，仅有既有 CRLF warning。
+
+Limit:
+- 本轮只完成本地实现和验证；未提交、未构建镜像、未部署、未做线上流量切换。
+## 2026-07-09 Devil - OpenAI first-byte protected cutover phase 2 handoff verification
+
+- Scope: local implementation verification and documentation check only; no commit, image build, deployment, or online cutover was performed.
+- CodeGraph status: healthy (`2231` indexed files, `70184` nodes, `184477` edges).
+- Obsidian prefeed: Local REST API available; read `Projects/00-项目总览.md` and `Areas/开发知识库/00-总览.md`.
+- Focused tests:
+  - `go test -tags unit ./internal/service -run "TestOpenAIPathHealthFirstByte|TestOrderedOpenAIRequestBaseURLsDemotesFirstByteDegradedURL" -count=1` -> pass.
+  - `go test -tags unit ./internal/service -run "TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata|TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover|TestOpenAIGatewayService_ForwardRequestPhaseContextCanceled|TestOpenAIGatewayService_APIKeyRequestBaseURLDoesNotFailoverBeforeAccountFailover" -count=1` -> pass.
+  - `go test -tags unit ./internal/service -run "TestOpenAIPathHealth|TestBuildOpenAIAccountLoadPlan|TestOpenAIAccountScheduleProfile" -count=1` -> pass.
+  - `go test -tags unit ./internal/handler -run "TestOpenAIHandleFailoverExhausted|TestOpenAIEnsureForwardErrorResponse|TestOpenAIHandleStreamingAwareError" -count=1` -> pass.
+  - `go test -tags unit ./cmd/server -run TestNonExistent -count=0` -> pass.
+- Static diff check: `git diff --check` -> pass, with CRLF conversion warnings only.
+- Documentation: `docs/OPENAI_FIRST_BYTE_CUTOVER_PHASE2_CN.md` exists; it is ignored by `.gitignore:130 docs/*` and must be force-added if committed.
+- JSONL bookkeeping: latest lines of `docs/feature_list.jsonl` and `docs/process_list.jsonl` parse successfully with `ConvertFrom-Json`.
+
+## 2026-07-09T23:32:00+08:00 Devil - Grok 账号可编入 OpenAI 分组并按 OpenAI 兼容请求调度
+
+本轮修复 Grok 账号放入 OpenAI 分组后无法进入调度候选池的问题。Grok 请求协议沿用 OpenAI 兼容格式，因此 OpenAI 分组的候选账号平台扩展为 `openai + grok`；Grok 平台分组仍只查询 `grok` 账号。Grok 账号仍仅支持 `chat/completions` 能力，不放开 `/responses`。
+
+实现结果：
+- `OpenAIGatewayService.listSchedulableAccounts` 在 OpenAI 请求平台下使用多平台账号查询，覆盖普通 repo 与 scheduler snapshot 路径。
+- `isOpenAICompatibleAccountForPlatform` 允许 OpenAI 请求平台匹配 Grok 账号，同时保持 Grok 请求平台不反向匹配 OpenAI 账号。
+- `SupportsOpenAIImageCapability("")` 将空图片能力视为“不要求图片能力”，避免 Grok chat/completions 被空能力误拒绝。
+- `GroupSelector` 在账号平台为 `grok` 时显示 `openai` 与 `grok` 分组，支持管理端直接把 Grok 账号编入 OpenAI 分组。
+
+验证结果：
+- RED: `go test ./internal/service -run 'TestOpenAIGatewayServiceListSchedulableAccountsIncludesGrokForOpenAIGroup|TestOpenAIAccountSchedulerSelectsGrokForOpenAIChatCompletionsOnly' -count=1` 初次失败，OpenAI 分组只返回 OpenAI 账号，Grok 调度返回 `no available OpenAI accounts`。
+- RED: `npm run test:run -- src/components/common/__tests__/GroupSelector.spec.ts` 初次失败，Grok 账号只显示 Grok 分组。
+- PASS: `go test ./internal/service -run 'TestOpenAIGatewayServiceListSchedulableAccountsIncludesGrokForOpenAIGroup|TestOpenAIAccountSchedulerSelectsGrokForOpenAIChatCompletionsOnly' -count=1`。
+- PASS: `go test ./internal/service -run 'TestOpenAIGatewayService.*Grok|TestOpenAIAccountScheduler' -count=1`。
+- PASS: `go test ./internal/service -run 'TestOpenAISelectAccountWithLoadAwareness_FiltersUnschedulable|TestOpenAIGatewayService.*Grok|TestOpenAIAccountScheduler' -count=1`。
+- PASS: `go test ./internal/service -run 'TestOpenAIGatewayService_ListOpenAIAccountSchedulingPool|TestOpenAIGatewayService_ManualProbeSuccessRestoresSchedulingPoolHealth' -count=1`。
+- PASS: `go test ./internal/service -count=1`。
+- PASS: `npm run test:run -- src/components/common/__tests__/GroupSelector.spec.ts`。
+- PASS: `npm run typecheck`。
+- PASS: `git diff --check`，仅有既有 CRLF warning。
+
+Limit:
+- 本轮只完成本地实现和验证；未提交、未构建镜像、未部署、未做真实 Grok 上游请求。
+
+## 2026-07-10T00:18:00+08:00 Devil - Grok OpenAI-compatible group scheduling release v0.1.146.6
+
+本轮将 Grok 账号可编入 OpenAI 分组并参与 OpenAI 兼容 `chat/completions` 调度的修复提交、构建并发布到线上。发布镜像从已提交 `ac5d8054855c` 归档构建，未包含工作树中其他未提交的 OpenAI first-byte/compact 等改动。
+
+验证结果：
+- PASS: commit `ac5d8054855c` (`fix(grok): 支持 OpenAI 分组兼容调度`)。
+- PASS: `go test ./internal/service -run 'TestOpenAIGatewayServiceListSchedulableAccountsUsesRequestedPlatform|TestOpenAIGatewayServiceListSchedulableAccountsIncludesGrokForOpenAIGroup|TestOpenAIAccountSchedulerSelectsGrokForOpenAIChatCompletionsOnly|TestOpenAIAccountSchedulingPool' -count=1`。
+- PASS: `go test -tags unit ./internal/service -run 'TestSchedulerSnapshotDefaultBucketsIncludesOpenAIMixedBuckets|TestSchedulerSnapshotRebuildBucketsForPlatformIncludesOpenAIMixedBucket' -count=1`。
+- PASS: `npm run test:run -- GroupSelector.spec.ts`。
+- PASS: `npm run typecheck`。
+- PASS: `git diff --cached --check`。
+- NOTE: dirty-worktree `go test -tags unit ./internal/service -count=1` still fails in existing `GatewayService_GroupResolution_*` tests; release image is built from committed HEAD, not dirty worktree.
+- PASS: `docker build` produced `sub2api:v0.1.146.6`, revision `ac5d8054855c`, image ID `sha256:88eda0006b3031bea41baaee6fcf57ced88266081a76dfe977a6a1214f1b53cb`。
+- PASS: idle green candidate `18082` health/static/protected-route smoke passed.
+- PASS: green candidate remained healthy for 65 seconds, restart count 0, critical logs 0.
+- PASS: proxy upstream switched from `sub2api-blue:8080` to `sub2api-green:8080`; `nginx -t` and reload passed.
+- PASS: post-cutover `8080/18081/18082` health and unauthenticated protection checks passed.
+- PASS: post-cutover green/proxy 65-second critical log window had 0 matches.
+
+Observed result:
+- Active upstream is now `sub2api-green:8080`.
+- Online image is now `sub2api:v0.1.146.6`.
+- Rollback target is `sub2api-blue:8080` on `sub2api:v0.1.146.5`.
+
+Limit:
+- Authenticated browser click-through and real Grok upstream request were not run because no reusable noninteractive admin login state or real Grok request credentials were available in this turn.
+
+## 2026-07-10T07:30:00+08:00 Devil - v0.1.147 P0 完成与 v0.1.149 拉取评估
+
+本轮完成 v0.1.147 P0 的本地收口，并安全拉取 v0.1.149 tag 做逐点吸收评估。未在当前大量未提交改动的工作树中执行 merge/cherry-pick。
+
+实现结果：
+- `GatewayService.Forward` 和 `ForwardCountTokens` 在 `*gin.Context == nil` 时不再读取 header 或写 context。
+- Claude OAuth identity fingerprint 和 tool-name rewrite context 写入增加 nil guard。
+- `handleErrorResponse` 的 passthrough、400 body 和统一 JSON 错误写回只在 HTTP context 存在时执行；无 context 时返回 Go error。
+- 上游错误体读取失败会记录日志，不再静默吞掉 read error。
+- 新增 `gateway_nil_context_test.go`，覆盖普通上游错误、400 错误体和 count_tokens 传输错误。
+
+验证结果：
+- PASS: v0.1.147 P0 service 聚焦测试。
+- PASS: 流内 SSE Ops handler 聚焦测试。
+- PASS: Google API Key middleware 聚焦测试。
+- PASS: 支付状态/支付流程/路由守卫/auth store 前端 79 tests。
+- PASS: 前端 `vue-tsc --noEmit`。
+- PASS: `cmd/server` 编译切片。
+- FAIL (既有非本轮基线): 完整 `internal/service` unit 包只有 3 个 `GatewayService_GroupResolution_*` 用例失败，均为 expected repository call count 1 / actual 0；147 P0 聚焦用例全部通过。
+
+v0.1.149 拉取结果：
+- PASS: `git fetch origin --prune --tags`。
+- tag: `v0.1.149` -> `dd1a116f4879992f04bb6ddbc77069bd503c3f4a`。
+- 上游没有 `v0.1.148` tag。
+- `v0.1.147..v0.1.149`: 72 files changed, 3467 insertions, 195 deletions。
+- 已生成 `docs/V0.1.149_ABSORPTION_PLAN_CN.md`，P0 为 compact JSON->SSE bridge 和 response.failed 语义错误透传；版本在线回退不适合当前 immutable image + blue/green 发布链路。
+
+边界：
+- 未提交、未构建镜像、未部署、未推送、未执行真实上游请求。
+- 工作树原有无关脏改保持未处理。
+
+## 2026-07-10T08:19:07+08:00 Devil - 并行吸收 v0.1.147 剩余优化与 v0.1.149 P0
+
+本轮继续按功能片段吸收上游行为，不执行整 tag merge。v0.1.149 P0 的 compact JSON -> Responses SSE bridge 和 `response.failed` 语义错误透传已经落入当前单体网关结构；同时补齐 v0.1.147 剩余的 Web Search 历史块过滤、Antigravity 生产端点默认值、Codex call-input ID 清理、Responses/Chat `response_format` 互转、`namespace=image_gen` 识别和 CRS 180 秒请求超时。
+
+用户可见行为：
+- Codex body-signal compact 请求在原始 `stream:true` 时会把上游 unary JSON 转为合法 Responses SSE，逐项发送 `response.output_item.done`，最后发送 `response.completed`；路径型 compact 和非 2xx 错误仍保持原 JSON/HTTP 语义。
+- Responses、passthrough、Chat Completions 和 Messages 路径遇到流内 `response.failed` 时，会按错误语义映射 400/401/403/429/502/503，并使用账号真实平台匹配 OpenAI/Grok 错误透传规则；已写出 heartbeat 的流保持 HTTP 200 并发送流内失败事件。
+- 历史消息中的本地模拟 Web Search 块会在所有 Anthropic 上游请求前移除；DeepSeek、Kimi、Moonshot、GLM、MiniMax 和 Qwen thinking 类模型还会移除真实 Web Search 块，避免第三方兼容上游返回 400；保留文本摘要和其他工具块。
+- Antigravity 默认转发到生产端点，只有显式设置 `daily` 或 `sandbox` 才使用联调端点。
+- Codex 续链输入只保留合法 `fc*` call-input ID，Chat/Responses 的 `json_schema` 等结构化输出格式可以双向转换，`namespace=image_gen` 同时支持顶层 tools 和 `input.additional_tools`。
+- 管理端 CRS 同步请求超时调整为 180 秒，避免大量账号同步被默认超时提前中断。
+
+验证结果：
+- PASS: v0.1.147/v0.1.149 组合 service 聚焦测试。
+- PASS: compact body-signal 和 Ops/流内错误 handler 聚焦测试。
+- PASS: 完整 `internal/pkg/apicompat`、`internal/pkg/antigravity` 和 `internal/pkg/httputil` unit 包。
+- PASS: CRS API Vitest 17 tests 和前端 `vue-tsc --noEmit`。
+- PASS: `cmd/server` 编译门。
+- PASS: `gofmt -d` 无输出，`git diff --check` exit 0，仅有既有 CRLF warning。
+- FAIL (既有非本轮 service 基线): 3 个 `GatewayService_GroupResolution_*` 测试仍为 expected repository call count 1 / actual 0。
+- FAIL (既有非本轮 handler 基线): 2 个 failover retry-window 测试仍期望至少 1 分钟而当前为 30 秒；4 个 WebSocket 测试桩缺少 `ListSchedulableByPlatforms`，导致服务端 panic 后客户端 EOF。
+
+边界：
+- 当前完成的是代码吸收和本地验证。
+- 未提交、未构建镜像、未部署、未推送，也未执行需要真实凭证的上游请求。
+
+## 2026-07-10T09:29:53+08:00 Devil - Codex 最新模型/思考强度同步与失败用量收口
+
+本轮以本机实时 `C:\Users\27404\.codex\models_cache.json` 和当前 Codex 可调用能力清单交叉核对模型事实。缓存客户端版本为 `0.144.0`，抓取时间为 `2026-07-10 00:25:41`；两处来源对以下组合一致：
+
+- `gpt-5.6-sol`: 默认 `low`，支持 `low, medium, high, xhigh, max, ultra`，上下文 `372000`。
+- `gpt-5.6-terra`: 默认 `medium`，支持 `low, medium, high, xhigh, max, ultra`，上下文 `372000`。
+- `gpt-5.6-luna`: 默认 `medium`，支持 `low, medium, high, xhigh, max`，上下文 `372000`；不声明 `ultra`。
+
+实现与用户可见行为：
+
+- OpenCode 配置生成器加入三种 GPT-5.6 模型、对应上下文/输出限制和精确 variants。
+- 后端 reasoning effort 提取保留 `max`、`ultra`，不再把新强度归一化为空；模型后缀如 `gpt-5.6-terra-ultra` 也可正确提取。
+- Responses、Chat Completions、Messages 在 `response.failed` 或其他失败返回中已观察到 usage/图片用量时，失败尝试进入既有计费链路且只提交一次；未观察到真实用量时不计费。
+- 上游已经写出 JSON/SSE 语义错误时，handler 不再追加泛化错误体；compact body-signal 在客户端要求流式时可桥接为 Responses SSE。
+
+### 对脑龄和认知训练的影响
+
+- **直接代码/数据库影响：无。** CodeGraph、目标 diff 和迁移目录均未发现脑龄或认知训练模块，本轮没有修改其评分、训练计划、题库、用户档案或结果表。
+- **模型选择的间接影响：有。** 如果脑龄或认知训练服务通过 sub2api 调用 OpenAI/Codex，调用方可选择三种 GPT-5.6 模型及其受支持的思考强度；输出质量、延迟和费用可能随模型/强度改变。
+- **失败计费的间接影响：有。** 如果上游失败事件已带 usage，调用方余额、配额和 usage 记录会反映实际消耗；同一失败尝试不得重复扣费。
+- **长会话的间接影响：有。** 使用 `/responses/compact` 且 `stream:true` 的认知训练长会话会收到标准 Responses SSE 事件，不再收到与客户端预期不一致的 unary JSON。
+- **错误处理的间接影响：有。** 调用方可能收到更准确的 400/401/403/429/502/503 或流内 `response.failed`，应按协议错误处理，不应只判断固定泛化错误文案。
+
+### 脑龄和认知训练建议测试
+
+| 层级 | 测试输入 | 核心断言 |
+| --- | --- | --- |
+| 模型目录/配置 | 生成 OpenCode 配置并读取模型白名单 | 三个模型均可见；Sol/Terra 有 `ultra`，Luna 无 `ultra`；上下文为 `372000` |
+| 脑龄回归 | 使用脱敏的同一份历史评估输入，分别走旧默认模型和三种 GPT-5.6 | HTTP/JSON 契约不变；脑龄字段、单位、范围和必填项满足脑龄项目自身约束；原始评估记录不被覆盖 |
+| 认知训练回归 | 使用同一脱敏用户画像生成训练计划、单次训练反馈和长会话续接 | 训练项目、难度、时长、顺序等字段符合认知训练项目契约；已有训练历史不被改写；compact SSE 事件顺序合法 |
+| 思考强度 | Sol/Terra 测 `low/medium/high/xhigh/max/ultra`，Luna 测到 `max` | 请求被接受且 usage 中记录期望强度；Luna 配置不暴露 `ultra` |
+| 失败用量 | 模拟 `response.failed` 携带 usage、无 usage、图片 usage 三类响应 | 携带用量时现有 usage/余额链路只记一次；无用量时不记；客户端只收到一次语义错误 |
+| 真实上游冒烟 | 每个模型选择一个低成本提示，覆盖非流式、流式和 compact | 返回模型可用、事件终止完整、usage 可解析、无重复错误体；记录延迟和费用基线 |
+
+脑龄和认知训练的业务契约测试必须在对应项目仓库执行；本仓库只能验证网关协议、模型目录、计费和错误语义，不能证明业务评分或训练算法正确。
+
+### 已有数据与新表用途
+
+- 本轮 **没有新增表**，也没有 migration、SQL、Ent schema 或数据回填，因此不存在“把已有数据迁入新表”的用途。
+- 现有用户、API Key、账号、脑龄结果、认知训练历史和 usage 数据继续保留在各自原表；模型清单和 OpenCode variants 是代码配置，不创建模型数据表。
+- `response.failed` 中观测到的 token/图片用量复用现有 `RecordUsage`、usage log、余额/配额链路，只会新增正常的既有表记录或更新既有余额，不写入任何新表。
+- 若“新表”指脑龄或认知训练另一个仓库中的设计，需要切换到该仓库并根据真实 schema、迁移文件和字段映射另行编写数据用途说明；本轮不虚构映射。
+
+验证结果：
+
+- PASS: `go test -count=1 -tags=unit ./internal/pkg/apicompat`、`./internal/pkg/antigravity`、`./internal/pkg/httputil`。
+- PASS: `go test -count=1 ./cmd/server`。
+- PASS: compact、`response.failed`、Messages fallback、失败用量 helper 和 `max/ultra` reasoning 的 service/handler 聚焦测试。
+- PASS: `npx vitest run src/components/keys/__tests__/UseKeyModal.spec.ts src/composables/__tests__/useModelWhitelist.spec.ts`，2 files / 18 tests。
+- PASS: `npm run typecheck`、目标前端文件 ESLint、目标 Go 文件 `gofmt -l` 无输出、`git diff --check` exit 0。
+- FAIL（既有 service 基线，已单独复现）: 3 个 `GatewayService_GroupResolution_*` 仍为 expected 1 / actual 0。
+- FAIL（既有 handler 基线，已单独复现）: 2 个 retry-window 断言仍要求至少 1 分钟而当前是 30 秒；4 个 WebSocket 旧桩仍在 `ListSchedulableByPlatforms` panic 后返回 EOF。
+
+边界：本轮完成本地代码与验证收口；未提交、未构建镜像、未部署、未推送，也未执行脑龄/认知训练仓库或真实上游业务测试。
