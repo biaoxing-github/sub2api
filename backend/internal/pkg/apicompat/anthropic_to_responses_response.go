@@ -103,9 +103,10 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 func responsesUsageFromAnthropicUsage(usage AnthropicUsage) *ResponsesUsage {
 	inputTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 	out := &ResponsesUsage{
-		InputTokens:  inputTokens,
-		OutputTokens: usage.OutputTokens,
-		TotalTokens:  inputTokens + usage.OutputTokens,
+		InputTokens:              inputTokens,
+		OutputTokens:             usage.OutputTokens,
+		TotalTokens:              inputTokens + usage.OutputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
 	}
 	if usage.CacheReadInputTokens > 0 {
 		out.InputTokensDetails = &ResponsesInputTokensDetails{
@@ -484,9 +485,10 @@ func makeResponsesCompletedEvent(
 
 	inputTokens := state.InputTokens + state.CacheReadInputTokens + state.CacheCreationInputTokens
 	usage := &ResponsesUsage{
-		InputTokens:  inputTokens,
-		OutputTokens: state.OutputTokens,
-		TotalTokens:  inputTokens + state.OutputTokens,
+		InputTokens:              inputTokens,
+		OutputTokens:             state.OutputTokens,
+		TotalTokens:              inputTokens + state.OutputTokens,
+		CacheCreationInputTokens: state.CacheCreationInputTokens,
 	}
 	if state.CacheReadInputTokens > 0 {
 		usage.InputTokensDetails = &ResponsesInputTokensDetails{
