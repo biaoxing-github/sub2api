@@ -4751,3 +4751,18 @@ v0.1.149 拉取结果：
 - FAIL（既有 handler 基线，已单独复现）: 2 个 retry-window 断言仍要求至少 1 分钟而当前是 30 秒；4 个 WebSocket 旧桩仍在 `ListSchedulableByPlatforms` panic 后返回 EOF。
 
 边界：本轮完成本地代码与验证收口；未提交、未构建镜像、未部署、未推送，也未执行脑龄/认知训练仓库或真实上游业务测试。
+
+## 2026-07-10T10:19:35+08:00 Devil - v0.1.146.7 提交、构建、蓝绿部署与验证
+
+- PASS：选择性提交 `ed7b48d53`（147/149 网关与模型）、`bba25335f`（支付与 Google 鉴权）、`c98052790`（吸收验证文档）；未提交 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/`、`tmp_body.json`。
+- PASS：发布前 service/handler/shared packages/middleware/server 聚焦验证通过；前端 7 files / 114 tests、typecheck、ESLint 通过。
+- PASS：从 committed HEAD `c98052790ca0` 构建 `sub2api:v0.1.146.7`，image ID `sha256:396be554d6823724faa5d840acd079b4526d87a9bcaec3e1770835d97b33ed24`。
+- PASS：idle blue `18083` 候选 health/static/401 冒烟通过，镜像正确、healthy、restart count 0。
+- INVESTIGATED：首次候选日志窗口出现一次 `openai_request_snapshots` 清理 10 秒超时；只读 DB 证据为 1673/1673 rows expired、relation 3510 MB、`expires_at` 索引存在，根因为大请求体批量删除超过共享 10 秒 context，不是新镜像启动或请求路径故障。
+- PASS：新的独立 75 秒候选窗口关键日志 0，未重建或覆盖不可变镜像。
+- PASS：代理 upstream 从 green 切换到 blue；nginx 配置测试/reload 成功。
+- PASS：切流后 `8080/18081/18083` health 200，admin 和 Responses 未授权均为 401；65 秒 blue/proxy 关键日志 0。
+- PASS：公网 KeysView bundle 精确验证 Sol/Terra 支持 `max/ultra`，Luna 支持 `max` 且无 `ultra`。
+- PASS：容器二进制版本为 `v0.1.146`、image version `v0.1.146.7`、commit `c98052790ca0`。
+- STATE：active=`sub2api-blue:8080 sub2api:v0.1.146.7`；rollback=`sub2api-green:8080 sub2api:v0.1.146.6`。
+- LIMIT：未 push、未执行真实认证 GPT-5.6 上游请求；快照清理 backlog 作为后续维护风险保留。
