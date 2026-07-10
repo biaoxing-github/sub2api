@@ -4800,3 +4800,25 @@ v0.1.149 拉取结果：
 
 边界：
 - 未提交、未构建镜像、未部署、未推送；当前 HEAD 仍为 `558cac0f4a4f`。
+
+## 2026-07-10T13:08:35+08:00 Devil - v0.1.149.1 提交、构建、部署与验证
+
+提交结果：
+- `70d6606ef feat(grok): 吸收图片配额与模型改进`。
+- `37a994938 feat(admin): 增强角色与用量观测`。
+- `e56621837 chore(version): 切换服务版本至 v0.1.149`。
+
+构建结果：
+- PASS：从 committed HEAD `e56621837035` 构建 `sub2api:v0.1.149.1`。
+- PASS：镜像 ID `sha256:a278012b8ecc621fe2ceeb728b6984c00639f8de850d0b4013ee1842b0825c8a`。
+- PASS：label version/revision 和容器二进制 `v0.1.149 / v0.1.149.1 / e56621837035` 一致。
+
+部署结果：
+- PASS：仅把 idle green 重建为 `sub2api:v0.1.149.1`，active blue、PostgreSQL、Redis、proxy 未重启。
+- PASS：候选 `18082` 完整冒烟和独立 65 秒日志窗口通过。
+- PASS：代理切到 `sub2api-green:8080`，nginx 配置校验和 reload 通过。
+- PASS：切流后 `8080/18081` 完整冒烟、线上 UsageView bundle 和独立 65 秒 green/proxy 日志窗口通过。
+- PASS：最终 green/blue 均 healthy、restart 0；active green，rollback blue `sub2api:v0.1.146.7`。
+
+边界：
+- 未执行 Git push、镜像 registry push、真实认证上游请求或带管理登录态的浏览器点击。
