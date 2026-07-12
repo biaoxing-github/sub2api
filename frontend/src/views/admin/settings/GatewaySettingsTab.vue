@@ -846,6 +846,22 @@
                   </div>
                 </div>
 
+                <div class="mt-3">
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                    {{ t("admin.settings.openaiFastPolicy.userIds") }}
+                  </label>
+                  <p class="mb-2 text-xs text-gray-400 dark:text-gray-500">
+                    {{ t("admin.settings.openaiFastPolicy.userIdsHint") }}
+                  </p>
+                  <div v-for="(_, userIDIndex) in rule.user_ids || []" :key="userIDIndex" class="mb-1.5 flex items-center gap-2">
+                    <input v-model.number="rule.user_ids![userIDIndex]" type="number" min="1" step="1" class="input input-sm flex-1" :placeholder="t('admin.settings.openaiFastPolicy.userIdPlaceholder')" />
+                    <button type="button" @click="removeOpenAIFastPolicyUserID(rule, userIDIndex)" class="shrink-0 rounded p-1 text-red-400 hover:text-red-600" :title="t('admin.settings.openaiFastPolicy.removeUserId')">&times;</button>
+                  </div>
+                  <button type="button" @click="addOpenAIFastPolicyUserID(rule)" class="mb-2 text-xs text-primary-600 hover:text-primary-700">
+                    {{ t("admin.settings.openaiFastPolicy.addUserId") }}
+                  </button>
+                </div>
+
                 <!-- Error Message (only when action=block) -->
                 <div v-if="rule.action === 'block'" class="mt-3">
                   <label
@@ -2516,6 +2532,8 @@ defineProps<{
   openaiFastPolicyScopeOptions: SelectOption[];
   addOpenAIFastPolicyRule: () => void;
   removeOpenAIFastPolicyRule: (index: number) => void;
+  addOpenAIFastPolicyUserID: (rule: OpenAIFastPolicyRule) => void;
+  removeOpenAIFastPolicyUserID: (rule: OpenAIFastPolicyRule, index: number) => void;
   addOpenAIFastPolicyModelPattern: (rule: OpenAIFastPolicyRule) => void;
   removeOpenAIFastPolicyModelPattern: (rule: OpenAIFastPolicyRule, index: number) => void;
   codexDirectTLSFingerprintProfiles: TLSFingerprintProfile[];

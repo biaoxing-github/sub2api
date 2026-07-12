@@ -597,10 +597,11 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 		userAgent      string
 		originator     string
 		wantOriginator string
+		wantUA         string
 	}{
-		{name: "desktop originator preserved", originator: "Codex Desktop", wantOriginator: "Codex Desktop"},
-		{name: "vscode originator preserved", originator: "codex_vscode", wantOriginator: "codex_vscode"},
-		{name: "official ua fallback to codex_cli_rs", userAgent: "Codex Desktop/1.2.3", wantOriginator: "codex_cli_rs"},
+		{name: "official ua pairs originator", userAgent: "Codex Desktop/1.2.3", wantOriginator: "Codex Desktop", wantUA: "Codex Desktop/1.2.3"},
+		{name: "mismatched originator repaired from ua", userAgent: "codex-tui/0.140.2", originator: "codex_cli_rs", wantOriginator: "codex-tui", wantUA: "codex-tui/0.140.2"},
+		{name: "originator without ua falls back to default identity", originator: "codex_vscode", wantOriginator: "codex_cli_rs", wantUA: codexCLIUserAgent()},
 	}
 
 	for _, tt := range tests {
@@ -665,6 +666,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthOriginatorCompatibility(t *testi
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Equal(t, tt.wantOriginator, captureDialer.lastHeaders.Get("originator"))
+			require.Equal(t, tt.wantUA, captureDialer.lastHeaders.Get("User-Agent"))
 		})
 	}
 }
@@ -700,7 +702,7 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationForceWS(
 	headers, sessionResolution := svc.buildOpenAIWSHeaders(c, account, "token", decision, false, "", "", "")
 	require.Equal(t, "Bearer token", headers.Get("authorization"))
 	require.Equal(t, codexDesktopUserAgent, headers.Get("user-agent"))
-	require.Equal(t, "codex_cli_rs", headers.Get("originator"))
+	require.Equal(t, "Codex Desktop", headers.Get("originator"))
 	require.Equal(t, "chatgpt-acc", headers.Get("chatgpt-account-id"))
 	require.Equal(t, isolateOpenAISessionID(0, "codex-session"), headers.Get("session_id"))
 	require.Equal(t, isolateOpenAISessionID(0, "codex-thread"), headers.Get("conversation_id"))
@@ -737,8 +739,8 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationPreserve
 	headers, sessionResolution := svc.buildOpenAIWSHeaders(c, account, "token", decision, isCodexCLI, "", "", "")
 	require.Equal(t, "Bearer token", headers.Get("authorization"))
 	require.Equal(t, "Codex Desktop/0.140.0 (Windows 10.0.26200; x86_64) unknown (codex_exec; 0.140.0)", headers.Get("user-agent"))
-	require.Equal(t, "codex_desktop", headers.Get("originator"))
-	require.Equal(t, "0.140.0", headers.Get("version"))
+	require.Equal(t, "Codex Desktop", headers.Get("originator"))
+	require.Equal(t, codexCLIVersion(), headers.Get("version"))
 	require.Equal(t, isolateOpenAISessionID(0, "codex-session"), headers.Get("session_id"))
 	require.Equal(t, "header_session_id", sessionResolution.SessionSource)
 }

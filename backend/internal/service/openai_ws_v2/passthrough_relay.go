@@ -717,7 +717,7 @@ func parseUsageAndAccumulate(
 	inputResult := gjson.GetBytes(message, "response.usage.input_tokens")
 	outputResult := gjson.GetBytes(message, "response.usage.output_tokens")
 	cachedResult := gjson.GetBytes(message, "response.usage.input_tokens_details.cached_tokens")
-	cacheCreationResult := gjson.GetBytes(message, "response.usage.cache_creation_input_tokens")
+	cacheCreationResult := openAICacheCreationTokensFromUsage(gjson.GetBytes(message, "response.usage"))
 	imageOutputResult := gjson.GetBytes(message, "response.usage.output_tokens_details.image_tokens")
 
 	// 同时支持 OpenAI 的 prompt_tokens/completion_tokens 别名
@@ -761,6 +761,27 @@ func parseUsageAndAccumulate(
 	state.usage.CacheCreationInputTokens += parsedUsage.CacheCreationInputTokens
 	state.usage.ImageOutputTokens += parsedUsage.ImageOutputTokens
 	return parsedUsage
+}
+
+func openAICacheCreationTokensFromUsage(value gjson.Result) gjson.Result {
+	for _, field := range []string{
+		"input_tokens_details.cache_write_tokens",
+		"prompt_tokens_details.cache_write_tokens",
+		"input_tokens_details.cache_creation_tokens",
+		"prompt_tokens_details.cache_creation_tokens",
+	} {
+		result := value.Get(field)
+		if result.Exists() {
+			return result
+		}
+	}
+	for _, field := range []string{"cache_write_tokens", "cache_creation_input_tokens", "cache_write_input_tokens", "cache_creation_tokens"} {
+		result := value.Get(field)
+		if result.Exists() {
+			return result
+		}
+	}
+	return gjson.Result{}
 }
 
 func parseUsageIntField(value gjson.Result, required bool) (int, bool) {

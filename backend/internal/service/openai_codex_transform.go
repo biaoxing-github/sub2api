@@ -595,7 +595,7 @@ func hasOpenAIImageGenerationTool(reqBody map[string]any) bool {
 	if toolsContainImageGeneration(reqBody["tools"]) {
 		return true
 	}
-	return inputContainsImageGenNamespace(reqBody["input"])
+	return inputContainsImageGenerationTool(reqBody["input"])
 }
 
 // toolsContainImageGeneration 识别标准 image_generation 和 Codex image_gen namespace 声明。
@@ -612,24 +612,25 @@ func toolsContainImageGeneration(rawTools any) bool {
 		if !ok {
 			continue
 		}
-		if strings.TrimSpace(firstNonEmptyString(toolMap["type"])) == "image_generation" {
-			return true
-		}
-		if isImageGenNamespaceToolMap(toolMap) {
+		if isOpenAIImageGenerationToolMap(toolMap) {
 			return true
 		}
 	}
 	return false
 }
 
+func isOpenAIImageGenerationToolMap(tool map[string]any) bool {
+	return isOpenAIImageGenerationType(firstNonEmptyString(tool["type"])) || isImageGenNamespaceToolMap(tool)
+}
+
 // isImageGenNamespaceToolMap 识别 map 形式的 Codex image_gen namespace 工具。
 func isImageGenNamespaceToolMap(tool map[string]any) bool {
 	return strings.TrimSpace(firstNonEmptyString(tool["type"])) == "namespace" &&
-		strings.TrimSpace(firstNonEmptyString(tool["name"])) == "image_gen"
+		isOpenAIImageGenNamespaceName(firstNonEmptyString(tool["name"]))
 }
 
 // inputContainsImageGenNamespace 扫描 map 形式的 Responses Lite additional_tools。
-func inputContainsImageGenNamespace(rawInput any) bool {
+func inputContainsImageGenerationTool(rawInput any) bool {
 	input, ok := rawInput.([]any)
 	if !ok {
 		return false
@@ -647,6 +648,94 @@ func inputContainsImageGenNamespace(rawInput any) bool {
 		}
 	}
 	return false
+}
+
+// stripOpenAIImageGenerationTools removes all OpenAI and Codex image tool declarations.
+func stripOpenAIImageGenerationTools(reqBody map[string]any) bool {
+	if reqBody == nil {
+		return false
+	}
+	modified := stripOpenAIImageGenerationToolList(reqBody, "tools")
+	if stripOpenAIImageGenerationToolsFromInput(reqBody) {
+		modified = true
+	}
+	if openAIAnyToolChoiceSelectsImageGeneration(reqBody["tool_choice"]) {
+		delete(reqBody, "tool_choice")
+		modified = true
+	}
+	return modified
+}
+
+func stripOpenAIImageGenerationToolList(container map[string]any, key string) bool {
+	tools, ok := container[key].([]any)
+	if !ok {
+		return false
+	}
+	filtered := make([]any, 0, len(tools))
+	removed := false
+	for _, rawTool := range tools {
+		if tool, ok := rawTool.(map[string]any); ok && isOpenAIImageGenerationToolMap(tool) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, rawTool)
+	}
+	if !removed {
+		return false
+	}
+	if len(filtered) == 0 {
+		delete(container, key)
+	} else {
+		container[key] = filtered
+	}
+	return true
+}
+
+func stripOpenAIImageGenerationToolsFromInput(reqBody map[string]any) bool {
+	input, ok := reqBody["input"].([]any)
+	if !ok {
+		return false
+	}
+	filtered := make([]any, 0, len(input))
+	modified := false
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok || strings.TrimSpace(firstNonEmptyString(item["type"])) != "additional_tools" {
+			filtered = append(filtered, rawItem)
+			continue
+		}
+		if !stripOpenAIImageGenerationToolList(item, "tools") {
+			filtered = append(filtered, rawItem)
+			continue
+		}
+		modified = true
+		if _, exists := item["tools"]; exists {
+			filtered = append(filtered, rawItem)
+		}
+	}
+	if modified {
+		reqBody["input"] = filtered
+	}
+	return modified
+}
+
+func stripOpenAIImageGenerationToolsFromRawPayload(payload []byte) ([]byte, bool, error) {
+	if !openAIRequestBodyHasImageGenerationDeclaration(payload) {
+		if json.Valid(payload) {
+			return payload, false, nil
+		}
+		var invalid map[string]any
+		return payload, false, json.Unmarshal(payload, &invalid)
+	}
+	payloadMap := make(map[string]any)
+	if err := json.Unmarshal(payload, &payloadMap); err != nil {
+		return payload, false, err
+	}
+	if !stripOpenAIImageGenerationTools(payloadMap) {
+		return payload, false, nil
+	}
+	rebuilt, err := json.Marshal(payloadMap)
+	return rebuilt, true, err
 }
 
 func hasOpenAIInputImage(reqBody map[string]any) bool {

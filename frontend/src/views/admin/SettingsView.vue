@@ -89,6 +89,8 @@
           :openai-fast-policy-scope-options="openaiFastPolicyScopeOptions"
           :addOpenAIFastPolicyRule="addOpenAIFastPolicyRule"
           :removeOpenAIFastPolicyRule="removeOpenAIFastPolicyRule"
+          :addOpenAIFastPolicyUserID="addOpenAIFastPolicyUserID"
+          :removeOpenAIFastPolicyUserID="removeOpenAIFastPolicyUserID"
           :addOpenAIFastPolicyModelPattern="addOpenAIFastPolicyModelPattern"
           :removeOpenAIFastPolicyModelPattern="removeOpenAIFastPolicyModelPattern"
           :codexDirectTLSFingerprintProfiles="codexDirectTLSFingerprintProfiles"
@@ -1516,6 +1518,7 @@ async function loadSettings() {
       openaiFastPolicyForm.rules =
         settings.openai_fast_policy_settings.rules.map((rule) => ({
           ...rule,
+          user_ids: rule.user_ids ? [...rule.user_ids] : [],
           model_whitelist: rule.model_whitelist
             ? [...rule.model_whitelist]
             : [],
@@ -2057,6 +2060,10 @@ async function saveSettings() {
             service_tier: rule.service_tier,
             action: rule.action,
             scope: rule.scope,
+            user_ids:
+              rule.user_ids && rule.user_ids.length > 0
+                ? [...rule.user_ids]
+                : undefined,
             error_message:
               rule.action === "block" ? rule.error_message : undefined,
             model_whitelist: hasWhitelist ? whitelist : undefined,
@@ -2140,6 +2147,7 @@ async function saveSettings() {
       openaiFastPolicyForm.rules =
         updated.openai_fast_policy_settings.rules.map((rule) => ({
           ...rule,
+          user_ids: rule.user_ids ? [...rule.user_ids] : [],
           model_whitelist: rule.model_whitelist
             ? [...rule.model_whitelist]
             : [],
@@ -2616,6 +2624,7 @@ function addOpenAIFastPolicyRule() {
     service_tier: "priority",
     action: "filter",
     scope: "all",
+    user_ids: [],
     error_message: "",
     model_whitelist: [],
     fallback_action: "pass",
@@ -2625,6 +2634,15 @@ function addOpenAIFastPolicyRule() {
 
 function removeOpenAIFastPolicyRule(index: number) {
   openaiFastPolicyForm.rules.splice(index, 1);
+}
+
+function addOpenAIFastPolicyUserID(rule: OpenAIFastPolicyRule) {
+  if (!rule.user_ids) rule.user_ids = [];
+  rule.user_ids.push(0);
+}
+
+function removeOpenAIFastPolicyUserID(rule: OpenAIFastPolicyRule, idx: number) {
+  rule.user_ids?.splice(idx, 1);
 }
 
 function addOpenAIFastPolicyModelPattern(rule: OpenAIFastPolicyRule) {

@@ -24,6 +24,19 @@ func TestOpenAIUsageParsesNestedCacheWriteTokens(t *testing.T) {
 	require.Equal(t, 200, usage.CacheCreationInputTokens)
 }
 
+func TestOpenAIUsageNestedZeroCacheTokensOverrideFallback(t *testing.T) {
+	usage, ok := extractOpenAIUsageFromJSONBytes([]byte(`{
+		"usage":{
+			"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},
+			"cache_read_tokens":100,
+			"cache_write_tokens":200
+		}
+	}`))
+	require.True(t, ok)
+	require.Zero(t, usage.CacheReadInputTokens)
+	require.Zero(t, usage.CacheCreationInputTokens)
+}
+
 func TestGPT56CacheWriteUsesOfficialTierPricing(t *testing.T) {
 	pricingService := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
 		"gpt-5.6-sol": {

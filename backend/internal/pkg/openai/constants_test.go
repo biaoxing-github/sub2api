@@ -24,7 +24,7 @@ func TestDefaultModelsIncludeGPT56Family(t *testing.T) {
 	for _, id := range DefaultModelIDs() {
 		ids[id] = true
 	}
-	for _, id := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+	for _, id := range []string{"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
 		if !ids[id] {
 			t.Fatalf("DefaultModelIDs missing %s", id)
 		}

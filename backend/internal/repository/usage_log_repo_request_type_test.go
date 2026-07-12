@@ -579,6 +579,12 @@ func TestBuildRequestTypeFilterConditionLegacyFallback(t *testing.T) {
 	}
 }
 
+func TestBuildRequestTypeFilterConditionWithAlias(t *testing.T) {
+	where, args := buildRequestTypeFilterConditionWithAlias(3, int16(service.RequestTypeStream), "ul")
+	require.Equal(t, "(ul.request_type = $3 OR (ul.request_type = 0 AND ul.stream = TRUE AND ul.openai_ws_mode = FALSE))", where)
+	require.Equal(t, []any{int16(service.RequestTypeStream)}, args)
+}
+
 type usageLogScannerStub struct {
 	values []any
 }

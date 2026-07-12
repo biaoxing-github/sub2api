@@ -8,6 +8,12 @@ import (
 
 const featureKeyCodexImageGenerationBridge = "codex_image_generation_bridge"
 
+const (
+	featureKeyCodexImageGenerationExplicitToolPolicy = "codex_image_generation_explicit_tool_policy"
+	codexImageGenerationExplicitToolPolicyAllow      = "allow"
+	codexImageGenerationExplicitToolPolicyStrip      = "strip"
+)
+
 func boolOverridePtr(v bool) *bool {
 	return &v
 }
@@ -22,6 +28,27 @@ func boolOverrideFromMap(values map[string]any, keys ...string) *bool {
 		}
 	}
 	return nil
+}
+
+func stringOverrideFromMap(values map[string]any, keys ...string) (string, bool) {
+	if values == nil {
+		return "", false
+	}
+	for _, key := range keys {
+		if value, ok := values[key].(string); ok {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func normalizeCodexImageGenerationExplicitToolPolicy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case codexImageGenerationExplicitToolPolicyStrip, "remove", "drop":
+		return codexImageGenerationExplicitToolPolicyStrip
+	default:
+		return codexImageGenerationExplicitToolPolicyAllow
+	}
 }
 
 func platformBoolOverride(values map[string]any, key string, platform string) *bool {
@@ -65,6 +92,21 @@ func (a *Account) CodexImageGenerationBridgeOverride() *bool {
 	}
 	openaiConfig, _ := a.Extra[PlatformOpenAI].(map[string]any)
 	return boolOverrideFromMap(openaiConfig, featureKeyCodexImageGenerationBridge, "codex_image_generation_bridge_enabled")
+}
+
+// CodexImageGenerationExplicitToolPolicy returns how client-provided image tools are handled.
+func (a *Account) CodexImageGenerationExplicitToolPolicy() string {
+	if a == nil || a.Platform != PlatformOpenAI || a.Extra == nil {
+		return codexImageGenerationExplicitToolPolicyAllow
+	}
+	if policy, ok := stringOverrideFromMap(a.Extra, featureKeyCodexImageGenerationExplicitToolPolicy); ok {
+		return normalizeCodexImageGenerationExplicitToolPolicy(policy)
+	}
+	openAIConfig, _ := a.Extra[PlatformOpenAI].(map[string]any)
+	if policy, ok := stringOverrideFromMap(openAIConfig, featureKeyCodexImageGenerationExplicitToolPolicy); ok {
+		return normalizeCodexImageGenerationExplicitToolPolicy(policy)
+	}
+	return codexImageGenerationExplicitToolPolicyAllow
 }
 
 func (s *OpenAIGatewayService) disableCodexImageGenerationBridgeForAccount(ctx context.Context, account *Account, reason string) {

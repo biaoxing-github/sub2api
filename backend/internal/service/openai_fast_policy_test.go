@@ -17,6 +17,18 @@ type openAIFastPolicyRepoStub struct {
 	values map[string]string
 }
 
+func TestEvaluateOpenAIFastPolicy_UserRulePrecedesGlobalRule(t *testing.T) {
+	settings := &OpenAIFastPolicySettings{Rules: []OpenAIFastPolicyRule{
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionBlock, Scope: BetaPolicyScopeAll},
+		{ServiceTier: OpenAIFastTierPriority, Action: BetaPolicyActionPass, Scope: BetaPolicyScopeAll, UserIDs: []int64{42}},
+	}}
+
+	action, _ := evaluateOpenAIFastPolicyWithSettings(settings, 42, &Account{Type: AccountTypeOAuth}, "gpt-5.6-terra", OpenAIFastTierPriority)
+	require.Equal(t, BetaPolicyActionPass, action)
+	action, _ = evaluateOpenAIFastPolicyWithSettings(settings, 7, &Account{Type: AccountTypeOAuth}, "gpt-5.6-terra", OpenAIFastTierPriority)
+	require.Equal(t, BetaPolicyActionBlock, action)
+}
+
 func (s *openAIFastPolicyRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
 	panic("unexpected Get call")
 }

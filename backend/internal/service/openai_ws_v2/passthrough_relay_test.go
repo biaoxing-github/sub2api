@@ -11,7 +11,15 @@ import (
 
 	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+func TestOpenAICacheCreationTokensNestedZeroOverridesFallback(t *testing.T) {
+	usage := gjson.Parse(`{"input_tokens_details":{"cache_write_tokens":0},"cache_write_tokens":200}`)
+	result := openAICacheCreationTokensFromUsage(usage)
+	require.True(t, result.Exists())
+	require.Zero(t, result.Int())
+}
 
 type passthroughTestFrame struct {
 	msgType coderws.MessageType

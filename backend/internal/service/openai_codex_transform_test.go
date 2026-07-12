@@ -43,6 +43,30 @@ func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
 	require.Equal(t, "fc_1", second["call_id"])
 }
 
+func TestStripOpenAIImageGenerationTools_StripsAllDeclarationForms(t *testing.T) {
+	imageNamespace := func() map[string]any {
+		return map[string]any{"type": "namespace", "name": "image_gen"}
+	}
+	reqBody := map[string]any{
+		"tools": []any{
+			map[string]any{"type": "function", "name": "shell"},
+			imageNamespace(),
+		},
+		"input": []any{
+			map[string]any{"type": "message", "content": "hello"},
+			map[string]any{"type": "additional_tools", "tools": []any{imageNamespace()}},
+		},
+		"tool_choice": map[string]any{"type": "namespace", "name": "image_gen"},
+	}
+
+	require.True(t, stripOpenAIImageGenerationTools(reqBody))
+	require.False(t, hasOpenAIImageGenerationTool(reqBody))
+	require.NotContains(t, reqBody, "tool_choice")
+	require.Len(t, reqBody["tools"], 1)
+	require.Len(t, reqBody["input"], 1)
+	require.False(t, stripOpenAIImageGenerationTools(reqBody), "stripping must be idempotent")
+}
+
 func TestApplyCodexCLISimulationClientMetadata_APIKeyAccountAddsStableInstallationID(t *testing.T) {
 	account := &Account{
 		ID:          470,

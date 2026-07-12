@@ -6,8 +6,69 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBillingService_GPT56UsesLongContextPricingAcrossModelsAndTiers(t *testing.T) {
+	models := []struct {
+		name               string
+		input, cached      float64
+		cacheWrite, output float64
+	}{
+		{name: "gpt-5.6-sol", input: 5e-6, cached: 0.5e-6, cacheWrite: 6.25e-6, output: 30e-6},
+		{name: "gpt-5.6-terra", input: 2.5e-6, cached: 0.25e-6, cacheWrite: 3.125e-6, output: 15e-6},
+		{name: "gpt-5.6-luna", input: 1e-6, cached: 0.1e-6, cacheWrite: 1.25e-6, output: 6e-6},
+	}
+	tiers := []struct {
+		name       string
+		priceScale float64
+	}{{name: "standard", priceScale: 1}, {name: "priority", priceScale: 2}, {name: "flex", priceScale: 0.5}}
+	tokens := UsageTokens{InputTokens: 100000, CacheCreationTokens: 100000, CacheReadTokens: 73000, OutputTokens: 10}
+
+	for _, model := range models {
+		for _, tier := range tiers {
+			t.Run(model.name+"/"+tier.name, func(t *testing.T) {
+				svc := NewBillingService(&config.Config{}, nil)
+				serviceTier := ""
+				if tier.name != "standard" {
+					serviceTier = tier.name
+				}
+				cost, err := svc.CalculateCostWithServiceTier(model.name, tokens, 1, serviceTier)
+				require.NoError(t, err)
+				require.InDelta(t, float64(tokens.InputTokens)*model.input*tier.priceScale*2, cost.InputCost, 1e-12)
+				require.InDelta(t, float64(tokens.CacheCreationTokens)*model.cacheWrite*tier.priceScale*2, cost.CacheCreationCost, 1e-12)
+				require.InDelta(t, float64(tokens.CacheReadTokens)*model.cached*tier.priceScale*2, cost.CacheReadCost, 1e-12)
+				require.InDelta(t, float64(tokens.OutputTokens)*model.output*tier.priceScale*1.5, cost.OutputCost, 1e-12)
+			})
+		}
+	}
+}
+
+func TestBillingService_GPT56LongContextBoundaryIsExclusive(t *testing.T) {
+	svc := NewBillingService(&config.Config{}, nil)
+	tokens := UsageTokens{InputTokens: 100000, CacheCreationTokens: 100000, CacheReadTokens: 72000, OutputTokens: 10}
+	cost, err := svc.CalculateCost("gpt-5.6-sol", tokens, 1)
+	require.NoError(t, err)
+	require.InDelta(t, 100000*5e-6, cost.InputCost, 1e-12)
+	require.InDelta(t, 100000*6.25e-6, cost.CacheCreationCost, 1e-12)
+	require.InDelta(t, 72000*0.5e-6, cost.CacheReadCost, 1e-12)
+	require.InDelta(t, 10*30e-6, cost.OutputCost, 1e-12)
+}
+
+func TestPricingService_BareGPT56AliasDeterministicallyUsesSol(t *testing.T) {
+	pricingSvc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"gpt-5.6-sol": {InputCostPerToken: 5e-6}, "gpt-5.6-terra": {InputCostPerToken: 2.5e-6},
+		"gpt-5.6-luna": {InputCostPerToken: 1e-6}, "gpt-5.4": {InputCostPerToken: 2.5e-6},
+	}}
+	for i := 0; i < 100; i++ {
+		for _, alias := range []string{"gpt-5.6", "openai/gpt-5.6"} {
+			pricing := pricingSvc.GetModelPricing(alias)
+			require.NotNil(t, pricing)
+			require.InDelta(t, 5e-6, pricing.InputCostPerToken, 1e-12)
+		}
+	}
+}
 
 func TestParsePricingData_ParsesPriorityAndServiceTierFields(t *testing.T) {
 	svc := &PricingService{}
@@ -123,7 +184,7 @@ func TestGetModelPricing_Gpt56UsesTierStaticFallbackWhenRemoteMissing(t *testing
 			require.NotNil(t, got)
 			require.InDelta(t, tt.inputPrice, got.InputCostPerToken, 1e-12)
 			require.InDelta(t, tt.outputPrice, got.OutputCostPerToken, 1e-12)
-			require.Zero(t, got.LongContextInputTokenThreshold)
+			require.Equal(t, 272000, got.LongContextInputTokenThreshold)
 		})
 	}
 }
