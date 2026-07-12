@@ -1359,7 +1359,7 @@ func (h *AccountHandler) ManualProbe(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 
 	if req.Prompt == "" {
-		req.Prompt = "hi"
+		req.Prompt = service.RandomQuickValidationPrompt()
 	}
 
 	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)

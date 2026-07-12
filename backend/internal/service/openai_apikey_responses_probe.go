@@ -34,7 +34,7 @@ func openaiResponsesProbePayload(modelID string) []byte {
 			{
 				"role": "user",
 				"content": []map[string]any{
-					{"type": "input_text", "text": "hi"},
+					{"type": "input_text", "text": RandomQuickValidationPrompt()},
 				},
 			},
 		},

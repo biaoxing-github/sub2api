@@ -298,22 +298,58 @@ const bodyModeHint = computed(() => {
   }
 })
 
+const quickValidationPrompts = [
+  '只回答 7+8 的结果，不要解释。',
+  '只回答英文单词 blue 的大写形式。',
+  '将 9、3、6 从小到大排列，只用逗号分隔。',
+  '只回答字符串 abc 的反转结果。',
+]
+const quickValidationPrompt =
+  quickValidationPrompts[Math.floor(Math.random() * quickValidationPrompts.length)]
+
 const bodyPlaceholder = computed(() => {
   if (props.provider === PROVIDER_OPENAI && props.apiMode === API_MODE_RESPONSES) {
     if (props.bodyOverrideMode === 'merge') {
       return '{\n  "max_output_tokens": 20\n}'
     }
-    return '{\n  "model": "gpt-4o-mini",\n  "instructions": "You are a health check endpoint. Reply briefly.",\n  "input": "Reply with exactly: ok",\n  "max_output_tokens": 20,\n  "stream": false\n}'
+    return JSON.stringify(
+      {
+        model: 'gpt-4o-mini',
+        instructions: 'You are a health check endpoint. Reply briefly.',
+        input: quickValidationPrompt,
+        max_output_tokens: 20,
+        stream: false,
+      },
+      null,
+      2,
+    )
   }
   if (props.provider === PROVIDER_OPENAI) {
     if (props.bodyOverrideMode === 'merge') {
       return '{\n  "max_tokens": 20\n}'
     }
-    return '{\n  "model": "gpt-4o-mini",\n  "messages": [{"role":"user","content":"Reply with exactly: ok"}],\n  "max_tokens": 20,\n  "stream": false\n}'
+    return JSON.stringify(
+      {
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: quickValidationPrompt }],
+        max_tokens: 20,
+        stream: false,
+      },
+      null,
+      2,
+    )
   }
   if (props.bodyOverrideMode === 'merge') {
     return '{\n  "system": "You are Claude Code..."\n}'
   }
-  return '{\n  "model": "claude-x",\n  "messages": [{"role":"user","content":"hi"}],\n  "max_tokens": 10\n}'
+  return JSON.stringify(
+    {
+      model: 'claude-x',
+      messages: [{ role: 'user', content: quickValidationPrompt }],
+      max_tokens: 20,
+    },
+    null,
+    2,
+  )
 })
 </script>

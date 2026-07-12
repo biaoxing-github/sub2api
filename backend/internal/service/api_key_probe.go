@@ -531,7 +531,7 @@ func shortProbeSample(label string) APIKeyProbePlannedSample {
 	return APIKeyProbePlannedSample{
 		Type:            "short",
 		Label:           label,
-		Prompt:          "只回复 ok，用于 API Key 测速体检。",
+		Prompt:          RandomQuickValidationPrompt(),
 		Timeout:         60 * time.Second,
 		MaxOutputTokens: 20,
 		InputTokenMin:   40,

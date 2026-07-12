@@ -64,7 +64,6 @@ type TestEvent struct {
 }
 
 const (
-	defaultGeminiTextTestPrompt  = "hi"
 	defaultGeminiImageTestPrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
 	defaultOpenAIImageTestPrompt = "Generate a cute orange cat astronaut sticker on a clean pastel background."
 )
@@ -282,7 +281,7 @@ func createTestPayload(modelID string, cliVersion string) (map[string]any, error
 				"content": []map[string]any{
 					{
 						"type": "text",
-						"text": "hi",
+						"text": RandomQuickValidationPrompt(),
 						"cache_control": map[string]string{
 							"type": "ephemeral",
 						},
@@ -603,7 +602,7 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 				"content": []map[string]any{
 					{
 						"type": "text",
-						"text": "hi",
+						"text": RandomQuickValidationPrompt(),
 					},
 				},
 			},
@@ -1345,7 +1344,7 @@ func createGeminiTestPayload(modelID string, prompt string) []byte {
 
 	textPrompt := strings.TrimSpace(prompt)
 	if textPrompt == "" {
-		textPrompt = defaultGeminiTextTestPrompt
+		textPrompt = RandomQuickValidationPrompt()
 	}
 
 	payload := map[string]any{
@@ -1467,7 +1466,7 @@ func createOpenAITestPayload(modelID string, account *Account) map[string]any {
 				"content": []map[string]any{
 					{
 						"type": "input_text",
-						"text": "hi",
+						"text": RandomQuickValidationPrompt(),
 					},
 				},
 			},
@@ -1494,7 +1493,7 @@ func createOpenAITestPayload(modelID string, account *Account) map[string]any {
 func createOpenAIChatCompletionsTestPayload(modelID string, prompt string) map[string]any {
 	testPrompt := strings.TrimSpace(prompt)
 	if testPrompt == "" {
-		testPrompt = "hi"
+		testPrompt = RandomQuickValidationPrompt()
 	}
 
 	return map[string]any{
