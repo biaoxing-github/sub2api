@@ -382,6 +382,25 @@ func TestNewAPICheckinHistoryUsesMonthlyRecordForExistingTodayAward(t *testing.T
 	require.Equal(t, 0.1, history.DailySummaries[0]["quota_awarded_display_value"])
 }
 
+// TestAggregateMonthlyCountsEachAccountDayOnce 验证重复刷新产生的同账号同日记录不会重复累计次数和奖励。
+func TestAggregateMonthlyCountsEachAccountDayOnce(t *testing.T) {
+	record := NewAPICheckinMonthlyRecord{
+		Site:                     "demo",
+		UserID:                   "1001",
+		AccountName:              "alpha",
+		Month:                    "2026-07",
+		CheckinDate:              "2026-07-08",
+		QuotaAwardedDisplayValue: 0.5,
+	}
+
+	siteMonthly, accountMonthly, siteDaily, accountDaily := aggregateMonthly([]NewAPICheckinMonthlyRecord{record, record})
+	for _, rows := range [][]map[string]any{siteMonthly, accountMonthly, siteDaily, accountDaily} {
+		require.Len(t, rows, 1)
+		require.Equal(t, 1, rows[0]["checkin_count"])
+		require.Equal(t, 0.5, rows[0]["quota_awarded_display_value"])
+	}
+}
+
 type memoryNewAPICheckinRepository struct {
 	config  NewAPICheckinConfig
 	report  NewAPICheckinReport

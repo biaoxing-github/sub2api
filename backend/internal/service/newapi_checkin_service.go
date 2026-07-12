@@ -3282,7 +3282,13 @@ func aggregateMonthly(records []NewAPICheckinMonthlyRecord) ([]map[string]any, [
 	accountMonth := map[string]*newAPICheckinMonthlyBucket{}
 	siteDaily := map[string]*newAPICheckinMonthlyBucket{}
 	accountDaily := map[string]*newAPICheckinMonthlyBucket{}
+	// 月度刷新可能重复返回同一账号同一天的数据；汇总前按持久化唯一键收敛，确保次数和奖励只计算一次。
+	uniqueRecords := make(map[string]NewAPICheckinMonthlyRecord, len(records))
 	for _, record := range records {
+		key := record.Site + "\x00" + record.UserID + "\x00" + record.CheckinDate
+		uniqueRecords[key] = record
+	}
+	for _, record := range uniqueRecords {
 		value := record.QuotaAwardedDisplayValue
 		accountLabel := firstNonEmpty(record.DisplayName, record.Username, record.AccountName, record.UserID)
 		if _, ok := siteMonth[record.Site]; !ok {
