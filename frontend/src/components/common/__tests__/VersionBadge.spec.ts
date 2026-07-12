@@ -65,4 +65,34 @@ describe('VersionBadge', () => {
     expect(wrapper.text()).toContain('version.imageVersion')
     expect(wrapper.text()).toContain('v0.1.136.1')
   })
+
+  it('版本接口已带 v 前缀时不会重复显示前缀', async () => {
+    const authStore = useAuthStore()
+    const appStore = useAppStore()
+
+    ;(authStore as any).user = { id: 1, role: 'admin' }
+    appStore.currentVersion = 'v0.1.151'
+    appStore.latestVersion = 'v0.1.152'
+    appStore.hasUpdate = true
+    appStore.buildType = 'release'
+    appStore.versionLoaded = true
+
+    const wrapper = mount(VersionBadge, {
+      global: {
+        stubs: {
+          Icon: true,
+          transition: false
+        }
+      }
+    })
+
+    expect(wrapper.find('button').text()).toContain('v0.1.151')
+    expect(wrapper.find('button').text()).not.toContain('vv0.1.151')
+
+    await wrapper.find('button').trigger('click')
+    await nextTick()
+
+    expect(wrapper.text()).toContain('version.latestVersion: v0.1.152')
+    expect(wrapper.text()).not.toContain('vv0.1.152')
+  })
 })
