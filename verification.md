@@ -4838,3 +4838,36 @@ v0.1.149 拉取结果：
 - 候选与线上：18083、8080、18081 的 health/root=200；未登录管理版本 API、`/responses`、`/v1/responses`=401；三个入口的真实入口 chunk SHA-256 一致。
 - 日志：候选和切流后的独立 75 秒窗口中未匹配 panic、fatal、migration failure、checksum、pq、端口绑定或 rebuild failure；blue/green 均 healthy，RestartCount=0。
 - 边界：未执行真实认证上游请求、管理员登录态浏览器操作、Git push 或 registry push。
+
+## 2026-07-11 16:12 +08:00 - superapi-buzz 新增两个签到账号
+
+- 执行者：Devil。
+- 存储边界：签到工具账号配置实际存放在 PostgreSQL `newapi_checkin_sites` / `newapi_checkin_accounts`，本轮未修改 Go、Vue、migration 或 schema。
+- 备份：`D:\sub2api-deploy\backups\newapi-checkin-before-superapi-20260711-161134.dump`，包含 8 张 NewApi 签到相关表，大小 50919 字节。
+- PASS：用户 `10478`、`10479` 的 `/api/user/self` 鉴权成功，识别为 `jjlin`、`peterzhu`。
+- PASS：事务幂等写入后，`superapi-buzz` 从 5 个账号增加到 7 个；新增行启用，线路为 `ip-slot-22`、`ip-slot-23`，凭据仅做脱敏核验。
+- PASS：两账号真实调用 `/api/user/checkin` 均返回“今日已签到”；现有 `queryCheckinStatusLocked` 会将该结果判定为 `CheckinOK=true`、`CheckedInToday=true`。
+- PASS：线上 `http://127.0.0.1:8080/health` 返回 200，active 仍为 `sub2api-blue:8080` / `sub2api:v0.1.150.1`。
+- 边界：未重启或重建应用、PostgreSQL、Redis、proxy；未提交、未构建、未部署、未推送。
+
+## 2026-07-12 - 月度历史签到次数与奖励重复累计修复
+
+- 执行者：Devil。
+- 根因：数据库已用 `UNIQUE (site, user_id, checkin_date)` 保证物理记录唯一，但 `aggregateMonthly` 对传入记录直接累加；重复快照或旧数据进入汇总时会把同一账号同一天的次数和奖励重复计算。
+- 修复：汇总入口先按 `site + user_id + checkin_date` 收敛，重复键采用最新记录，再生成站点月、账号月、站点日和账号日四类汇总。
+- RED：新增重复账号日记录测试，修复前明确失败为 `expected 1, actual 2`。
+- PASS：修复后重复输入在四类汇总中均为 `checkin_count=1`，奖励只计算一次。
+- PASS：NewApi service、repository、handler 聚焦验证和 server 编译切片均退出 0。
+- 线上数据核对：`newapi_checkin_monthly_records` 当前 461 行、461 个唯一账号日键、0 个重复组，不需要执行历史数据删除或 schema 变更。
+- 边界：该段记录的是实现阶段；随后已按下述 v0.1.150.2 发布记录完成提交、构建与部署。
+
+## 2026-07-12 - v0.1.150.2 提交、构建、部署与验证
+
+- PASS：业务提交 `1fdd17980f32`，不可变镜像 `sub2api:v0.1.150.2` 构建成功，OCI 标签和二进制 image/commit 一致。
+- PASS：仅重建 idle green；候选 `18082` health/home/静态资源为 200，管理版本 API、`/responses`、`/v1/responses` 未登录均为 401。
+- PASS：候选独立 65 秒窗口内 14 次 healthy/restart 0，关键日志 0。
+- PASS：nginx 配置检查与 reload 成功，active 从 blue 切到 green。
+- PASS：切流后 `8080/18081/18082` 冒烟通过，三个入口的 `index-B5YO7pRB.js` SHA-256 均为 `e5626be17e00e8251d714e41c9210633b6066f9a67b2ffbf923cf7e1b3b94278`。
+- PASS：切流后独立 65 秒窗口内 green 持续 healthy/restart 0，green/proxy 关键日志 0；blue `v0.1.150.1` 保持 healthy 作为回滚。
+- PASS：PostgreSQL、Redis 未重启；无 schema、migration 或数据清理。
+- 边界：未执行 Git push、镜像 registry push、管理员登录态页面操作或真实认证上游请求。
