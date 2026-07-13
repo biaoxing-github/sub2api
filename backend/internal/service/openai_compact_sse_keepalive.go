@@ -53,7 +53,9 @@ func StartOpenAICompactSSEKeepalive(c *gin.Context, interval time.Duration) func
 		stop:    make(chan struct{}),
 	}
 	c.Set(openAICompactSSEKeepaliveKey, k)
-	c.Writer = &openAICompactKeepaliveWriter{ResponseWriter: writer, keepalive: k}
+	originalWriter := writer
+	wrappedWriter := &openAICompactKeepaliveWriter{ResponseWriter: writer, keepalive: k}
+	c.Writer = wrappedWriter
 
 	var requestDone <-chan struct{}
 	if c.Request != nil {
@@ -76,7 +78,14 @@ func StartOpenAICompactSSEKeepalive(c *gin.Context, interval time.Duration) func
 			timer.Reset(interval)
 		}
 	}()
-	return k.Stop
+	return func() {
+		k.Stop()
+		// Do not leave a pooled middleware writer reachable through the compact
+		// wrapper after the request finishes.
+		if current, ok := c.Writer.(*openAICompactKeepaliveWriter); ok && current == wrappedWriter {
+			c.Writer = originalWriter
+		}
+	}
 }
 
 func openAICompactSSEKeepaliveFromContext(c *gin.Context) (*openAICompactSSEKeepalive, bool) {
