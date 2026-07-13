@@ -31,3 +31,12 @@
 - PASS：`go test -tags unit ./internal/service -run 'TestAccountTestService_(OpenAIAPIKeyResponses|OpenAIResponsesPath|TestAccountConnectionWithResult)' -count=1`。
 - PASS：`go test ./internal/service ./cmd/server -count=1`。
 - 既有基线：扩展运行 `TestAccountTestService_OpenAI` 时 2 个 OAuth originator 断言仍期望 `codex_cli_rs`，实际为合并版本的 `Codex Desktop`；与本次 API Key 协议切换无关。
+
+## 2026-07-13 v0.1.152.2 本地发布验证 - Devil
+
+- PASS：从 committed HEAD `9b42afcdf0e7` 构建并核验不可变镜像 `sub2api:v0.1.152.2`。
+- PASS：仅重建 idle green，候选 `18082` 完整未登录冒烟和 75 秒干净观察窗通过。
+- PASS：nginx 配置检查、reload 和 blue -> green 切流通过。
+- PASS：`8080/18081/18082` 完整冒烟、主 chunk SHA-256 一致和切流后 77 秒干净观察窗通过。
+- PASS：green active 与 blue rollback 均 healthy/restart 0；PostgreSQL、Redis 未重启。
+- 未执行：管理员登录态真实上游模拟测验、Git push、registry push。
