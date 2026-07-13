@@ -75,6 +75,17 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
 	}
 
+	if account.Platform == PlatformGrok && account.Type == AccountTypeOAuth {
+		if eligible, reason := grokChatResponsesBridgeEligibility(body); eligible {
+			return s.forwardGrokChatCompletionsViaResponses(ctx, c, account, body, promptCacheKey, defaultMappedModel)
+		} else {
+			logger.L().Debug("grok chat_completions: keeping existing responses path",
+				zap.Int64("account_id", account.ID),
+				zap.String("reason", reason),
+			)
+		}
+	}
+
 	// 入口分流：APIKey 账号 + 强制或已探测确认上游不支持 Responses，走 CC 直转。
 	// 自动模式下标记缺失（未探测）按"现状即证据"原则继续走下方原 Responses 转换路径。
 	if account.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
