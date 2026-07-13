@@ -2,7 +2,7 @@
 import { nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-export type AccountFormTab = 'basic' | 'advanced'
+export type AccountFormTab = 'basic' | 'advanced' | 'models'
 
 const props = defineProps<{
   modelValue: AccountFormTab
@@ -17,7 +17,8 @@ const tabButtons = ref<HTMLButtonElement[]>([])
 
 const tabs: Array<{ key: AccountFormTab; labelKey: string }> = [
   { key: 'basic', labelKey: 'admin.accounts.formTabs.basic' },
-  { key: 'advanced', labelKey: 'admin.accounts.formTabs.advanced' }
+  { key: 'advanced', labelKey: 'admin.accounts.formTabs.advanced' },
+  { key: 'models', labelKey: 'admin.accounts.formTabs.models' }
 ]
 
 // 键盘切换后同步聚焦目标 Tab，保持弹窗表单可完整使用键盘操作。
@@ -50,7 +51,7 @@ const handleKeydown = (event: KeyboardEvent, currentIndex: number) => {
   <div
     role="tablist"
     :aria-label="t('admin.accounts.formTabs.label')"
-    class="grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700"
+    class="grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700"
   >
     <button
       v-for="(tab, index) in tabs"

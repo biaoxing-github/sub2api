@@ -279,7 +279,7 @@ describe('EditAccountModal', () => {
     expect(wrapper.find('[data-testid="account-name-field"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="account-notes-field"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('admin.accounts.openai.requestBaseUrls')
-    expect(wrapper.get('[data-testid="model-whitelist-value"]').isVisible()).toBe(false)
+    expect(wrapper.get('[data-testid="account-model-restriction-section"]').attributes('style')).toContain('display: none')
 
     await wrapper.get('[data-testid="account-form-tab-advanced"]').trigger('click')
     await nextTick()
@@ -287,15 +287,17 @@ describe('EditAccountModal', () => {
     expect(wrapper.find('[data-testid="account-name-field"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="account-notes-field"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('admin.accounts.openai.requestBaseUrls')
-    expect(wrapper.get('[data-testid="model-whitelist-value"]').isVisible()).toBe(false)
+    expect(wrapper.get('[data-testid="account-model-restriction-section"]').attributes('style')).toContain('display: none')
 
     await wrapper.get('[data-testid="account-form-tab-models"]').trigger('click')
     await nextTick()
 
+    expect(wrapper.get('[data-testid="account-form-tab-models"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.find('[data-testid="account-name-field"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="account-notes-field"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="model-whitelist-value"]').isVisible()).toBe(true)
-    expect(wrapper.text()).not.toContain('admin.accounts.openai.requestBaseUrls')
+    expect(wrapper.get('[data-testid="account-model-restriction-section"]').attributes('style') ?? '').not.toContain('display: none')
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').text()).toBe('gpt-5.2')
+    expect(wrapper.get('[data-testid="account-api-key-credentials-fields"]').attributes('style')).toContain('display: none')
   })
 
   it('loads unified account error handling rules and saves legacy compatibility fields', async () => {

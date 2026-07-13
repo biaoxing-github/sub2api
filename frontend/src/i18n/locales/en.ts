@@ -2997,7 +2997,8 @@ export default {
       formTabs: {
         label: 'Account form settings',
         basic: 'Basic',
-        advanced: 'More settings'
+        advanced: 'More settings',
+        models: 'Model settings'
       },
       autoRefresh: 'Auto Refresh',
       enableAutoRefresh: 'Enable auto refresh',

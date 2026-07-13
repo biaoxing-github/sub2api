@@ -123,7 +123,7 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div data-testid="account-api-key-credentials-fields" class="space-y-4">
     <div v-if="showCoreFields">
       <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
       <input

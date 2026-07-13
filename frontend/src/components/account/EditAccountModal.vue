@@ -25,6 +25,7 @@
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey'" class="space-y-4">
         <AccountAPIKeyCredentialsFields
+          v-show="activeFormTab !== 'models'"
           v-model:base-url="editBaseUrl"
           v-model:request-base-urls-text="editRequestBaseUrlsText"
           v-model:balance-base-url="editBalanceBaseUrl"
@@ -61,6 +62,7 @@
 
         <AccountModelRestrictionSection
           v-if="account.platform !== 'antigravity'"
+          v-show="activeFormTab === 'models'"
           v-model:mode="modelRestrictionMode"
           v-model:allowed-models="allowedModels"
           v-model:model-mappings="modelMappings"
@@ -133,7 +135,7 @@
 
       <AccountModelRestrictionSection
         v-if="account.platform === 'openai' && account.type === 'oauth'"
-        v-show="activeFormTab === 'basic'"
+        v-show="activeFormTab === 'models'"
         v-model:mode="modelRestrictionMode"
         v-model:allowed-models="allowedModels"
         v-model:model-mappings="modelMappings"
@@ -207,7 +209,7 @@
         </div>
 
         <AccountModelRestrictionSection
-          v-show="activeFormTab === 'basic'"
+          v-show="activeFormTab === 'models'"
           v-model:mode="modelRestrictionMode"
           v-model:allowed-models="allowedModels"
           v-model:model-mappings="modelMappings"
@@ -294,18 +296,6 @@
           <p class="input-hint mt-1">{{ t('admin.accounts.bedrockForceGlobalHint') }}</p>
         </div>
 
-        <AccountModelRestrictionSection
-          v-model:mode="modelRestrictionMode"
-          v-model:allowed-models="allowedModels"
-          v-model:model-mappings="modelMappings"
-          platform="anthropic"
-          :preset-mappings="bedrockPresets"
-          :allow-duplicate-presets="true"
-          from-placeholder-key="admin.accounts.fromModel"
-          to-placeholder-key="admin.accounts.toModel"
-          supports-all-requires-empty-mappings
-        />
-
         <AccountPoolModeSection
           v-model:enabled="poolModeEnabled"
           v-model:retry-count="poolModeRetryCount"
@@ -314,9 +304,23 @@
         />
       </div>
 
+      <AccountModelRestrictionSection
+        v-if="account.type === 'bedrock'"
+        v-show="activeFormTab === 'models'"
+        v-model:mode="modelRestrictionMode"
+        v-model:allowed-models="allowedModels"
+        v-model:model-mappings="modelMappings"
+        platform="anthropic"
+        :preset-mappings="bedrockPresets"
+        :allow-duplicate-presets="true"
+        from-placeholder-key="admin.accounts.fromModel"
+        to-placeholder-key="admin.accounts.toModel"
+        supports-all-requires-empty-mappings
+      />
+
       <AccountAntigravityModelMappingSection
         v-if="account.platform === 'antigravity'"
-        v-show="activeFormTab === 'basic'"
+        v-show="activeFormTab === 'models'"
         v-model:model-mappings="antigravityModelMappings"
         :preset-mappings="antigravityPresetMappings"
         :sync-loading="isSyncingAntigravityUpstream"

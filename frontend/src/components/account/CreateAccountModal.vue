@@ -513,7 +513,7 @@
 
       <AccountAntigravityModelMappingSection
         v-if="form.platform === 'antigravity'"
-        v-show="activeFormTab === 'basic'"
+        v-show="activeFormTab === 'models'"
         v-model:model-mappings="antigravityModelMappings"
         :preset-mappings="antigravityPresetMappings"
       />
@@ -551,6 +551,7 @@
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
       <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
         <AccountAPIKeyCredentialsFields
+          v-show="activeFormTab !== 'models'"
           v-model:base-url="apiKeyBaseUrl"
           v-model:request-base-urls-text="requestBaseUrlsText"
           v-model:balance-base-url="balanceBaseUrl"
@@ -585,7 +586,7 @@
         </div>
 
         <AccountModelRestrictionSection
-          v-show="activeFormTab === 'basic'"
+          v-show="activeFormTab === 'models'"
           v-model:mode="modelRestrictionMode"
           v-model:allowed-models="allowedModels"
           v-model:model-mappings="modelMappings"
@@ -842,16 +843,6 @@
           <p class="input-hint mt-1">{{ t('admin.accounts.bedrockForceGlobalHint') }}</p>
         </div>
 
-        <AccountModelRestrictionSection
-          v-model:mode="modelRestrictionMode"
-          v-model:allowed-models="allowedModels"
-          v-model:model-mappings="modelMappings"
-          platform="anthropic"
-          :preset-mappings="bedrockPresets"
-          from-placeholder-key="admin.accounts.fromModel"
-          to-placeholder-key="admin.accounts.toModel"
-        />
-
         <AccountPoolModeSection
           v-model:enabled="poolModeEnabled"
           v-model:retry-count="poolModeRetryCount"
@@ -861,8 +852,20 @@
       </div>
 
       <AccountModelRestrictionSection
+        v-if="form.platform === 'anthropic' && accountCategory === 'bedrock'"
+        v-show="activeFormTab === 'models'"
+        v-model:mode="modelRestrictionMode"
+        v-model:allowed-models="allowedModels"
+        v-model:model-mappings="modelMappings"
+        platform="anthropic"
+        :preset-mappings="bedrockPresets"
+        from-placeholder-key="admin.accounts.fromModel"
+        to-placeholder-key="admin.accounts.toModel"
+      />
+
+      <AccountModelRestrictionSection
         v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
-        v-show="activeFormTab === 'basic'"
+        v-show="activeFormTab === 'models'"
         v-model:mode="modelRestrictionMode"
         v-model:allowed-models="allowedModels"
         v-model:model-mappings="modelMappings"

@@ -59,3 +59,12 @@
 - PASS：切流后约 66 秒三入口持续健康，blue/proxy restart 0，关键日志新增 0；green 回滚容器 healthy/restart 0，PostgreSQL、Redis 未重启。
 - PASS：Chrome 管理员登录态确认版本按钮 `v0.1.152`、镜像版本 `v0.1.152.3`，新增/编辑弹窗默认基本设置及更多设置切换符合预期，未保存账号数据。
 - 未执行：真实认证上游请求、Git push、registry push。
+
+## 2026-07-13 模型设置独立 Tab 验证 - Devil
+
+- RED：三个目标测试文件中 3 项按预期失败，分别证明第三个 Tab 不存在、创建弹窗未隔离模型区、编辑弹窗默认仍显示模型配置；同轮其余 26 项通过。
+- GREEN：`AccountFormTabs` 增加“模型设置”Tab，API Key、OAuth、Vertex、Bedrock 和 Antigravity 的模型限制/映射只在该 Tab 显示。
+- PASS：`npm run test -- --run src/components/account/__tests__/AccountFormTabs.spec.ts src/components/account/__tests__/AccountBasicInfoFields.spec.ts src/components/account/__tests__/AccountAPIKeyCredentialsFields.spec.ts src/components/account/__tests__/CreateAccountModal.grok.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts`，5 个文件、37 项测试全部通过。
+- PASS：本轮目标 Vue/TypeScript/i18n 文件 ESLint 通过；`npm run typecheck` 退出码 0；`git diff --check` 无空白错误。
+- PASS：CodeGraph 重索引完成，2302 个文件、71580 个节点。
+- 待执行：不可变镜像构建、候选部署、管理员登录态页面验证和蓝绿切流。

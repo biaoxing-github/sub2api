@@ -82,7 +82,10 @@ const addPresetMapping = (preset: PresetMapping) => {
 </script>
 
 <template>
-  <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+  <div
+    data-testid="account-model-restriction-section"
+    class="border-t border-gray-200 pt-4 dark:border-dark-600"
+  >
     <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
 
     <div

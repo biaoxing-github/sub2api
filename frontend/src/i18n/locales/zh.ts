@@ -3069,7 +3069,8 @@ export default {
       formTabs: {
         label: '账号表单设置',
         basic: '基本设置',
-        advanced: '更多设置'
+        advanced: '更多设置',
+        models: '模型设置'
       },
       autoRefresh: '自动刷新',
       enableAutoRefresh: '启用自动刷新',
