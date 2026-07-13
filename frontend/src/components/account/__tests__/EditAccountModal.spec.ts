@@ -271,7 +271,7 @@ function mountModal(account = buildAccount()) {
 }
 
 describe('EditAccountModal', () => {
-  it('shows core account fields by default and reveals connection details from the advanced tab', async () => {
+  it('separates core, advanced, and model settings into three tabs', async () => {
     const wrapper = mountModal()
     await flushPromises()
 
@@ -279,6 +279,7 @@ describe('EditAccountModal', () => {
     expect(wrapper.find('[data-testid="account-name-field"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="account-notes-field"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('admin.accounts.openai.requestBaseUrls')
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').isVisible()).toBe(false)
 
     await wrapper.get('[data-testid="account-form-tab-advanced"]').trigger('click')
     await nextTick()
@@ -286,6 +287,15 @@ describe('EditAccountModal', () => {
     expect(wrapper.find('[data-testid="account-name-field"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="account-notes-field"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('admin.accounts.openai.requestBaseUrls')
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').isVisible()).toBe(false)
+
+    await wrapper.get('[data-testid="account-form-tab-models"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="account-name-field"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="account-notes-field"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="model-whitelist-value"]').isVisible()).toBe(true)
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.requestBaseUrls')
   })
 
   it('loads unified account error handling rules and saves legacy compatibility fields', async () => {

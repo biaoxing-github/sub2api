@@ -22,10 +22,18 @@ describe('CreateAccountModal Grok account types', () => {
     expect(credentialsFieldsSource).toContain("return 'xai-...'")
   })
 
-  it('defaults to a compact basic tab and keeps advanced settings behind a second tab', () => {
+  it('defaults to basic settings and isolates model configuration in a third tab', () => {
     expect(source).toContain('<AccountFormTabs v-model="activeFormTab"')
     expect(source).toContain("const activeFormTab = ref<AccountFormTab>('basic')")
     expect(source).toContain(':show-notes="activeFormTab === \'advanced\'"')
+    expect(source).toContain('v-show="activeFormTab !== \'models\'"')
     expect(source).toContain(':section="activeFormTab === \'basic\' ? \'core\' : \'advanced\'"')
+
+    const modelRestrictionSections = source.match(/<AccountModelRestrictionSection[\s\S]*?\/>/g) ?? []
+    const antigravityModelSections = source.match(/<AccountAntigravityModelMappingSection[\s\S]*?\/>/g) ?? []
+    expect(modelRestrictionSections.length).toBeGreaterThan(0)
+    expect(antigravityModelSections.length).toBeGreaterThan(0)
+    expect(modelRestrictionSections.every(section => section.includes('v-show="activeFormTab === \'models\'"'))).toBe(true)
+    expect(antigravityModelSections.every(section => section.includes('v-show="activeFormTab === \'models\'"'))).toBe(true)
   })
 })
