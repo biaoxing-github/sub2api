@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log/slog"
+	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
@@ -1708,7 +1709,30 @@ func (a *Account) GetGrokBaseURL() string {
 	if !a.IsGrok() {
 		return ""
 	}
-	return xai.EffectiveBaseURL(a.GetCredential("base_url"))
+	baseURL := a.GetCredential("base_url")
+	if a.IsGrokOAuth() && (strings.TrimSpace(baseURL) == "" || isOfficialGrokAPIBaseURL(baseURL)) {
+		return xai.DefaultCLIBaseURL
+	}
+	return xai.EffectiveBaseURL(baseURL)
+}
+
+func isOfficialGrokAPIBaseURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == nil || parsed.Opaque != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	defaultURL, err := url.Parse(xai.DefaultBaseURL)
+	if err != nil || !strings.EqualFold(parsed.Scheme, defaultURL.Scheme) || !strings.EqualFold(parsed.Hostname(), defaultURL.Hostname()) {
+		return false
+	}
+	if port := parsed.Port(); port != "" {
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber != 443 {
+			return false
+		}
+	}
+	path := strings.TrimRight(parsed.Path, "/")
+	return path == "" || path == strings.TrimRight(defaultURL.Path, "/")
 }
 
 func (a *Account) GetExtraString(key string) string {

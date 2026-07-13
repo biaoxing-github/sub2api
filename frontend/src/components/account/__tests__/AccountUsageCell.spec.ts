@@ -72,7 +72,7 @@ describe('AccountUsageCell', () => {
     })
   })
 
-  it('Grok 用量显示用户费用且配额允许超过 100%', async () => {
+  it('Grok 用量显示用户费用且透支配额显示为零剩余容量', async () => {
     getUsage.mockResolvedValue({
       grok_local_usage: {
         requests: 12,
@@ -95,8 +95,9 @@ describe('AccountUsageCell', () => {
       global: {
         stubs: {
           UsageProgressBar: {
-            props: ['label', 'utilization', 'resetsAt'],
-            template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ resetsAt }}</div>'
+            props: ['label', 'utilization', 'resetsAt', 'remainingCapacity'],
+            template:
+              '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ resetsAt }}|{{ remainingCapacity }}</div>'
           },
           AccountQuotaInfo: true
         }
@@ -107,7 +108,9 @@ describe('AccountUsageCell', () => {
 
     expect(getUsage).toHaveBeenCalledWith(5001)
     expect(wrapper.text()).toContain('U $0.09')
-    expect(wrapper.text()).toContain('admin.accounts.usageWindow.grokRequests|150|2026-07-10T12:00:00Z')
+    expect(wrapper.text()).toContain(
+      'admin.accounts.usageWindow.grokRequests|0|2026-07-10T12:00:00Z|true'
+    )
   })
 
   it('Antigravity 图片用量会聚合新旧 image 模型', async () => {

@@ -371,6 +371,21 @@ func (s *BillingService) initFallbackPricing() {
 		CacheReadPricePerTokenPriority: 0.3e-6,
 		SupportsCacheBreakdown:         false,
 	}
+
+	// Grok 4.3 系列官方价格：输入 $1.25、缓存输入 $0.20、输出 $2.50 / MTok。
+	s.fallbackPrices["grok-4.3"] = &ModelPricing{
+		InputPricePerToken:     1.25e-6,
+		OutputPricePerToken:    2.5e-6,
+		CacheReadPricePerToken: 0.2e-6,
+		SupportsCacheBreakdown: false,
+	}
+	// Grok Build 0.1 官方价格：输入 $1、缓存输入 $0.20、输出 $2 / MTok；Composer 共用该价格。
+	s.fallbackPrices["grok-build-0.1"] = &ModelPricing{
+		InputPricePerToken:     1e-6,
+		OutputPricePerToken:    2e-6,
+		CacheReadPricePerToken: 0.2e-6,
+		SupportsCacheBreakdown: false,
+	}
 }
 
 // getFallbackPricing 根据模型系列获取回退价格
@@ -414,6 +429,18 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	}
 	if strings.Contains(modelLower, "glm-4.6") {
 		return s.fallbackPrices["glm-4.6"]
+	}
+
+	switch modelLower {
+	case "grok-4.3",
+		"grok-4.20-0309-reasoning",
+		"grok-4.20-0309-non-reasoning",
+		"grok-4.20-multi-agent-0309",
+		"grok-4.20-reasoning",
+		"grok-4.20-non-reasoning":
+		return s.fallbackPrices["grok-4.3"]
+	case "grok-build", "grok-build-0.1", "grok-composer", "grok-composer-2.5-fast", "composer-2.5":
+		return s.fallbackPrices["grok-build-0.1"]
 	}
 
 	// OpenAI 仅匹配已知 GPT-5/Codex 族，避免未知 OpenAI 型号误计价。
