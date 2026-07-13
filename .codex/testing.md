@@ -68,3 +68,14 @@
 - PASS：本轮目标 Vue/TypeScript/i18n 文件 ESLint 通过；`npm run typecheck` 退出码 0；`git diff --check` 无空白错误。
 - PASS：CodeGraph 重索引完成，2302 个文件、71580 个节点。
 - 待执行：不可变镜像构建、候选部署、管理员登录态页面验证和蓝绿切流。
+
+## 2026-07-13 v0.1.152.5 蓝绿发布验证 - Devil
+
+- PASS：`v0.1.152.4` 因二进制缺失 `image_version` 在候选部署前被拒绝，未部署或复用该标签。
+- PASS：从 committed HEAD `022bc50d240a` 构建并核验不可变镜像 `sub2api:v0.1.152.5`，OCI version/revision 与容器二进制版本一致。
+- PASS：仅重建 idle green；候选 `18082` 完整未登录冒烟通过，启动期一次 `pq` 查询取消后独立观察窗 7 次 health=200、关键日志新增 0。
+- PASS：nginx 配置检查、reload 和 blue -> green 切流通过；`8080/18081/18082` 完整冒烟与主资源 SHA-256 一致。
+- PASS：切流后 70 秒三入口持续健康，green/proxy restart 0，近 3 分钟精确严重日志过滤均为 0；blue 回滚容器 healthy/restart 0。
+- PASS：Chrome 管理员登录态确认版本按钮 `v0.1.152`、镜像版本 `v0.1.152.5`，新增/编辑弹窗三个 Tab 的字段隔离符合范围，未保存账号数据。
+- PASS：PostgreSQL、Redis 未重启。
+- 未执行：真实认证上游请求、Git push、registry push。
