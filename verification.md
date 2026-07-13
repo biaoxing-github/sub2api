@@ -4883,3 +4883,18 @@ v0.1.149 拉取结果：
 - 已知失败：`go test ./internal/handler -count=1` 仍有 6 个融合前已存在的失败，分别为 2 个 retry-window 断言和 4 个 WebSocket repository-stub / continuity 用例；本轮未修改对应实现。
 - PASS：`backend/cmd/server/VERSION` 为 `v0.1.152`；VersionBadge 继续从 API/store 取主版本并规范为恰好一个 `v` 前缀。
 - 边界：完成本地提交与验证；未构建镜像、未部署、未执行 Git push、registry push、真实认证上游请求或管理员登录态浏览器验证。
+
+## 2026-07-13 - v0.1.152.1 提交、构建、部署与验证
+
+- 执行者：Devil。
+- PASS：从 committed HEAD `6bf0d9f51e0e` 构建不可变镜像 `sub2api:v0.1.152.1`；OCI version/revision 与容器二进制主版本、镜像版本、commit 一致。
+- PASS：备份 `.env` 与 `active.conf`，只将 idle blue 从 `v0.1.151.1` 重建为 `v0.1.152.1`；active green、PostgreSQL、Redis、proxy 未重建。
+- PASS：候选 `18083` 的 health/root/静态资源为 200，管理版本 API、`/responses`、`/v1/responses` 未登录为 401。
+- OBSERVED：首次候选窗口持续 healthy/restart 0，但启动期出现一次 `pq: canceling statement due to user request`；保持 green active，未提前切流。
+- PASS：后续独立 65 秒候选窗口持续 healthy/restart 0，关键日志 0。
+- PASS：nginx 配置检查和 reload 成功，active 从 green 切换到 blue。
+- PASS：切流后 `8080/18081/18083` 冒烟通过，三个入口的 `index-j8WaZ3Bq.js` SHA-256 均为 `0145B7D6134A5D9AFC8E518FCAC490E2ADB684A3EB136948A756B028E85A4AC5`。
+- PASS：切流后独立 65 秒内 blue healthy/restart 0、proxy running/restart 0，联合关键日志 0；green `v0.1.151.2` 保持 healthy 作为回滚。
+- PASS：本轮追加的 `docs/feature_list.jsonl` 与 `docs/process_list.jsonl` 尾记录均可独立解析。
+- BASELINE：两份 JSONL 历史区各有 254 行早期编码/JSON 损坏；为避免 500 余行无关重写，本轮未修复历史记录。
+- 边界：未执行 Git push、registry push、真实认证上游请求或管理员登录态页面操作；handler 仍保留 6 个已记录的既有失败。
