@@ -50,3 +50,12 @@
 - PASS：`git diff --check`，无空白错误；CodeGraph 重索引后 2302 个文件、71562 个节点。
 - PASS：临时预览入口在 1280x720 渲染真实编辑弹窗，默认仅显示核心字段，截图未见重叠、裁切或空白页；预览文件验证后已删除。
 - 限制：开发端口真实管理路由需要登录；Browser 插件的点击动作错误落到先前登录标签，因此未取得可靠的高级 Tab 浏览器截图。Tab 点击、键盘切换和字段显隐由 Vitest 覆盖。
+
+## 2026-07-13 v0.1.152.3 蓝绿发布验证 - Devil
+
+- PASS：从 committed HEAD `edacdd5e729b` 构建并核验不可变镜像 `sub2api:v0.1.152.3`，OCI version/revision 与容器二进制版本一致。
+- PASS：仅重建 idle blue；候选 `18083` 完整未登录冒烟通过，启动期一次 `pq` 查询取消后独立约 66 秒窗口内 7 次 health=200、关键日志新增 0。
+- PASS：nginx 配置检查、reload 和 green -> blue 切流通过；`8080/18081/18083` 完整冒烟与主资源 SHA-256 一致。
+- PASS：切流后约 66 秒三入口持续健康，blue/proxy restart 0，关键日志新增 0；green 回滚容器 healthy/restart 0，PostgreSQL、Redis 未重启。
+- PASS：Chrome 管理员登录态确认版本按钮 `v0.1.152`、镜像版本 `v0.1.152.3`，新增/编辑弹窗默认基本设置及更多设置切换符合预期，未保存账号数据。
+- 未执行：真实认证上游请求、Git push、registry push。
