@@ -4871,3 +4871,15 @@ v0.1.149 拉取结果：
 - PASS：切流后独立 65 秒窗口内 green 持续 healthy/restart 0，green/proxy 关键日志 0；blue `v0.1.150.1` 保持 healthy 作为回滚。
 - PASS：PostgreSQL、Redis 未重启；无 schema、migration 或数据清理。
 - 边界：未执行 Git push、镜像 registry push、管理员登录态页面操作或真实认证上游请求。
+
+## 2026-07-13 - v0.1.152 选择性融合验证
+
+- 执行者：Devil。
+- 范围：按方案 1 选择性吸收上游 `v0.1.152` 的 compact 稳定性、Anthropic cache usage、Codex tool bridge / item ID / remote compaction / Messages identity、Fast/Flex、alpha/search、Grok cache identity、按次计费与最终 Grok 修复；保留本地探针、Ops/NewApi、动态 Codex 身份、alpha/search 计费和 VersionBadge 行为。
+- PASS：Grok 计费回归完成 RED -> GREEN；`grok-4.20-*` 使用 `grok-4.3` 价格，Composer 使用 `grok-build-0.1` 价格，缓存输入均为 `0.2e-6`。
+- PASS：`go test ./internal/repository -run 'GrokCLI|HTTPUpstream' -count=1`、`go test ./internal/service -run 'Grok|AccountBaseURL|Billing' -count=1`、`go test -tags unit ./internal/service -run 'Grok' -count=1`。
+- PASS：`go test ./internal/pkg/apicompat -count=1`、`go test ./internal/service -count=1`、`go test ./internal/repository -count=1`、`go test ./cmd/server -count=1`。
+- PASS：`npm run typecheck` 与 `npm run test -- --run`；Grok API Key 创建、OAuth、剩余容量进度条、UseKeyModal 和 VersionBadge 用例通过。
+- 已知失败：`go test ./internal/handler -count=1` 仍有 6 个融合前已存在的失败，分别为 2 个 retry-window 断言和 4 个 WebSocket repository-stub / continuity 用例；本轮未修改对应实现。
+- PASS：`backend/cmd/server/VERSION` 为 `v0.1.152`；VersionBadge 继续从 API/store 取主版本并规范为恰好一个 `v` 前缀。
+- 边界：完成本地提交与验证；未构建镜像、未部署、未执行 Git push、registry push、真实认证上游请求或管理员登录态浏览器验证。
