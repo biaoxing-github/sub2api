@@ -1015,16 +1015,14 @@ func TestAccountTestService_OpenAIOAuthResponsesTestDefaultsToCodexCLIUserAgent(
 	require.Contains(t, recorder.Body.String(), `"type":"test_complete"`)
 }
 
-func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsPath(t *testing.T) {
+func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedStillUsesResponsesStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 
 	upstreamBody := strings.Join([]string{
-		`data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":null}]}`,
+		`data: {"type":"response.output_text.delta","delta":"pong"}`,
 		"",
-		`data: {"id":"chatcmpl_test","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
-		"",
-		"data: [DONE]",
+		`data: {"type":"response.completed"}`,
 		"",
 	}, "\n")
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -1051,32 +1049,28 @@ func TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedUsesChatCompletionsP
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "hello", "")
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, "https://compat-upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer sk-test", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, "gpt-5.4", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
-	require.Equal(t, "hello", gjson.GetBytes(upstream.lastBody, "messages.0.content").String())
-	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
+	require.NotEmpty(t, gjson.GetBytes(upstream.lastBody, "input.0.content.0.text").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
 	body := recorder.Body.String()
 	require.Contains(t, body, "pong")
-	require.Contains(t, body, "已通过 /v1/chat/completions 验证")
 	require.Contains(t, body, `"success":true`)
-	require.NotContains(t, body, "当前测试接口仅支持 Responses API 路径")
 }
 
-func TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesGatewayCodexSimulationHeaders(t *testing.T) {
+func TestAccountTestService_OpenAIAPIKeyResponsesTestUsesGatewayCodexSimulationHeadersWhenCapabilityFlagIsFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 	ctx.Request.Header.Set("User-Agent", "curl/8.0")
 	ctx.Request.Header.Set("originator", "opencode")
 
 	upstreamBody := strings.Join([]string{
-		`data: {"id":"chatcmpl_codex","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":null}]}`,
+		`data: {"type":"response.output_text.delta","delta":"pong"}`,
 		"",
-		`data: {"id":"chatcmpl_codex","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
-		"",
-		"data: [DONE]",
+		`data: {"type":"response.completed"}`,
 		"",
 	}, "\n")
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -1106,7 +1100,11 @@ func TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesGatewayCodexSimul
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.5", "ping", "")
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, "https://new.sharedchat.cc/codex/v1/chat/completions", upstream.lastReq.URL.String())
+	require.Equal(t, "https://new.sharedchat.cc/codex/v1/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
+	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
 	require.Equal(t, codexCLIUserAgent(), upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, "codex_cli_rs", upstream.lastReq.Header.Get("originator"))
 	require.Equal(t, "responses=experimental", upstream.lastReq.Header.Get("OpenAI-Beta"))
@@ -1121,7 +1119,7 @@ func TestAccountTestService_OpenAIAPIKeyChatCompletionsTestUsesGatewayCodexSimul
 	require.Contains(t, recorder.Body.String(), `"success":true`)
 }
 
-func TestAccountTestService_OpenAIChatCompletionsPathReturns4xx(t *testing.T) {
+func TestAccountTestService_OpenAIResponsesPathReturns4xxWhenCapabilityFlagIsFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 
@@ -1144,13 +1142,13 @@ func TestAccountTestService_OpenAIChatCompletionsPathReturns4xx(t *testing.T) {
 
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
 	require.Error(t, err)
-	require.Equal(t, "https://compat-upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
-	require.Contains(t, err.Error(), "Chat Completions API (/v1/chat/completions) returned 400")
-	require.Contains(t, recorder.Body.String(), "/v1/chat/completions")
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
+	require.Contains(t, err.Error(), "API returned 400")
+	require.Contains(t, recorder.Body.String(), "API returned 400")
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
-func TestAccountTestService_OpenAIChatCompletionsPathTimeout(t *testing.T) {
+func TestAccountTestService_OpenAIResponsesPathTimeoutWhenCapabilityFlagIsFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 
@@ -1173,14 +1171,14 @@ func TestAccountTestService_OpenAIChatCompletionsPathTimeout(t *testing.T) {
 
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
 	require.Error(t, err)
-	require.Equal(t, "https://compat-upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
-	require.Contains(t, err.Error(), "Chat Completions API (/v1/chat/completions) request failed")
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
+	require.Contains(t, err.Error(), "Request failed")
 	require.Contains(t, err.Error(), context.DeadlineExceeded.Error())
-	require.Contains(t, recorder.Body.String(), "/v1/chat/completions")
+	require.Contains(t, recorder.Body.String(), context.DeadlineExceeded.Error())
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
-func TestAccountTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *testing.T) {
+func TestAccountTestService_OpenAIResponsesPathRejectsNonJSONStreamWhenCapabilityFlagIsFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, recorder := newTestContext()
 
@@ -1207,13 +1205,13 @@ func TestAccountTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *tes
 
 	err := svc.testOpenAIAccountConnection(ctx, account, "gpt-5.4", "", "")
 	require.Error(t, err)
-	require.Equal(t, "https://compat-upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
-	require.Contains(t, err.Error(), "Invalid Chat Completions response from /v1/chat/completions")
-	require.Contains(t, recorder.Body.String(), "/v1/chat/completions")
+	require.Equal(t, "https://compat-upstream.example/v1/responses", upstream.lastReq.URL.String())
+	require.Contains(t, err.Error(), "Stream ended before response.completed")
+	require.Contains(t, recorder.Body.String(), "Stream ended before response.completed")
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
 
-func TestAccountTestService_OpenAIChatCompletionsPathDisablesSelectedKey(t *testing.T) {
+func TestAccountTestService_OpenAIResponsesPathDisablesSelectedKeyWhenCapabilityFlagIsFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := newTestContext()
 

@@ -23,7 +23,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -743,13 +742,6 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			}
 			normalizedBaseURLs = append(normalizedBaseURLs, normalizedBaseURL)
 		}
-		if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
-			authToken = account.GetOpenAIApiKey()
-			if authToken == "" {
-				return s.sendErrorAndEnd(c, "No API key available")
-			}
-			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURLs[0], authToken)
-		}
 		requestBaseURLs = normalizedBaseURLs
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
@@ -798,6 +790,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			if err != nil {
 				return s.sendErrorAndEnd(c, "Failed to create request")
 			}
+			req.Header.Set("Accept", "text/event-stream")
 
 			requestStartedAt := time.Now()
 			resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.openAIUpstreamTLSProfile(account))

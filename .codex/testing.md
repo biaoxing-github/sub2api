@@ -22,3 +22,12 @@
 - PASS：切流后 65 秒 blue/proxy 状态稳定且关键日志 0。
 - PASS：两份 JSONL 本轮新增尾记录可解析；历史区各 254 行无效为既有基线，未在本轮重写。
 - 未执行：管理员登录态浏览器验证、真实认证上游请求、Git push、registry push。
+
+## 2026-07-13 OpenAI 模拟测验 Responses streaming - Devil
+
+- RED：`go test -tags unit ./internal/service -run 'TestAccountTestService_OpenAIAPIKeyResponsesUnsupportedStillUsesResponsesStreaming' -count=1 -v`，旧实现仍走 `/v1/chat/completions`，按预期失败。
+- PASS：同一目标测试在实现后通过，请求为 `/v1/responses`、`stream:true`、`Accept: text/event-stream`，并按 Responses SSE 解析输出。
+- PASS：6 个协议相关用例覆盖成功、Codex 模拟头、4xx、超时、非 JSON SSE 和选中 API Key 禁用。
+- PASS：`go test -tags unit ./internal/service -run 'TestAccountTestService_(OpenAIAPIKeyResponses|OpenAIResponsesPath|TestAccountConnectionWithResult)' -count=1`。
+- PASS：`go test ./internal/service ./cmd/server -count=1`。
+- 既有基线：扩展运行 `TestAccountTestService_OpenAI` 时 2 个 OAuth originator 断言仍期望 `codex_cli_rs`，实际为合并版本的 `Codex Desktop`；与本次 API Key 协议切换无关。
