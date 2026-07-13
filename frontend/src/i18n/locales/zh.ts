@@ -2319,6 +2319,12 @@ export default {
         finalPricePreview: '最终单张价格预览',
         notConfigured: '未配置'
       },
+      webSearchPricing: {
+        title: 'Codex 网页搜索计费',
+        pricePerCall: '单次搜索价格（USD）',
+        pricePerCallHint: '留空使用默认价 0.01 美元/次；填写 0 表示免费。',
+        finalPricePreview: '最终单次价格：{price}'
+      },
       claudeCode: {
         title: 'Claude Code 客户端限制',
         tooltip:

@@ -33,6 +33,8 @@ type Group struct {
 	ImagePrice1K         *float64
 	ImagePrice2K         *float64
 	ImagePrice4K         *float64
+	// WebSearchPricePerCall 是 Codex alpha/search 单次价格；nil 使用默认价 0.01 USD。
+	WebSearchPricePerCall *float64
 
 	// Claude Code 客户端限制
 	ClaudeCodeOnly  bool

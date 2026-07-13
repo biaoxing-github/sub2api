@@ -750,6 +750,25 @@
           </div>
         </div>
 
+        <div v-if="createForm.platform === 'openai'" class="border-t pt-4">
+          <h4 class="mb-3 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.webSearchPricing.title") }}
+          </h4>
+          <label class="input-label">{{ t("admin.groups.webSearchPricing.pricePerCall") }}</label>
+          <input
+            v-model.number="createForm.web_search_price_per_call"
+            type="number"
+            step="0.001"
+            min="0"
+            placeholder="0.01"
+            class="input"
+          />
+          <p class="input-hint">{{ t("admin.groups.webSearchPricing.pricePerCallHint") }}</p>
+          <p class="mt-2 text-xs text-gray-600 dark:text-gray-300">
+            {{ t("admin.groups.webSearchPricing.finalPricePreview", { price: createWebSearchFinalPricePreview }) }}
+          </p>
+        </div>
+
         <!-- 支持的模型系列（仅 antigravity 平台） -->
         <div v-if="createForm.platform === 'antigravity'" class="border-t pt-4">
           <div class="mb-1.5 flex items-center gap-1">
@@ -2008,6 +2027,25 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <div v-if="editForm.platform === 'openai'" class="border-t pt-4">
+          <h4 class="mb-3 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {{ t("admin.groups.webSearchPricing.title") }}
+          </h4>
+          <label class="input-label">{{ t("admin.groups.webSearchPricing.pricePerCall") }}</label>
+          <input
+            v-model.number="editForm.web_search_price_per_call"
+            type="number"
+            step="0.001"
+            min="0"
+            placeholder="0.01"
+            class="input"
+          />
+          <p class="input-hint">{{ t("admin.groups.webSearchPricing.pricePerCallHint") }}</p>
+          <p class="mt-2 text-xs text-gray-600 dark:text-gray-300">
+            {{ t("admin.groups.webSearchPricing.finalPricePreview", { price: editWebSearchFinalPricePreview }) }}
+          </p>
         </div>
 
         <!-- 支持的模型系列（仅 antigravity 平台） -->
@@ -3285,6 +3323,7 @@ const createForm = reactive({
   image_price_1k: null as number | null,
   image_price_2k: null as number | null,
   image_price_4k: null as number | null,
+  web_search_price_per_call: null as number | null,
   // Claude Code 客户端限制（仅 anthropic 平台使用）
   claude_code_only: false,
   fallback_group_id: null as number | null,
@@ -3647,6 +3686,7 @@ const editForm = reactive({
   image_price_1k: null as number | null,
   image_price_2k: null as number | null,
   image_price_4k: null as number | null,
+  web_search_price_per_call: null as number | null,
   // Claude Code 客户端限制（仅 anthropic 平台使用）
   claude_code_only: false,
   fallback_group_id: null as number | null,
@@ -3727,6 +3767,22 @@ const createImageFinalPricePreview = computed(() =>
 );
 const editImageFinalPricePreview = computed(() =>
   buildImageFinalPricePreview(editForm),
+);
+
+const buildWebSearchFinalPricePreview = (form: {
+  web_search_price_per_call: number | string | null;
+  rate_multiplier: number | string | null;
+}) => {
+  const basePrice = normalizePreviewNumber(form.web_search_price_per_call, 0.01);
+  const multiplier = normalizePreviewNumber(form.rate_multiplier, 1);
+  return formatImagePricePreview(basePrice * multiplier);
+};
+
+const createWebSearchFinalPricePreview = computed(() =>
+  buildWebSearchFinalPricePreview(createForm),
+);
+const editWebSearchFinalPricePreview = computed(() =>
+  buildWebSearchFinalPricePreview(editForm),
 );
 
 // 根据分组类型返回不同的删除确认消息
@@ -3893,6 +3949,7 @@ const closeCreateModal = () => {
   createForm.image_price_1k = null;
   createForm.image_price_2k = null;
   createForm.image_price_4k = null;
+  createForm.web_search_price_per_call = null;
   createForm.claude_code_only = false;
   createForm.fallback_group_id = null;
   createForm.fallback_group_id_on_invalid_request = null;
@@ -4020,6 +4077,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.image_price_1k = group.image_price_1k;
   editForm.image_price_2k = group.image_price_2k;
   editForm.image_price_4k = group.image_price_4k;
+  editForm.web_search_price_per_call = group.web_search_price_per_call ?? null;
   editForm.claude_code_only = group.claude_code_only || false;
   editForm.fallback_group_id = group.fallback_group_id;
   editForm.fallback_group_id_on_invalid_request =

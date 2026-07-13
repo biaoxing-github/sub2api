@@ -2239,6 +2239,12 @@ export default {
         finalPricePreview: 'Final per-image price preview',
         notConfigured: 'Not configured'
       },
+      webSearchPricing: {
+        title: 'Codex Web Search Pricing',
+        pricePerCall: 'Price per search (USD)',
+        pricePerCallHint: 'Leave empty to use the default $0.01 per successful search. Set 0 for free.',
+        finalPricePreview: 'Final price per search: {price}'
+      },
       claudeCode: {
         title: 'Claude Code Client Restriction',
         tooltip: 'When enabled, this group only allows official Claude Code clients. Non-Claude Code requests will be rejected or fallback to the specified group.',

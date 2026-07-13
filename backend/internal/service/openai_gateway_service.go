@@ -292,6 +292,7 @@ type OpenAIForwardResult struct {
 	FirstTokenMs       *int
 	ClientDisconnect   bool
 	ImageCount         int
+	WebSearchCalls     int
 	ImageSize          string
 	ImageInputSize     string
 	ImageOutputSize    string
@@ -8838,7 +8839,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if result == nil {
 		return errors.New("openai usage result is nil")
 	}
-	if result.UsageMissing && result.ImageCount == 0 {
+	if result.UsageMissing && result.ImageCount == 0 && result.WebSearchCalls == 0 {
 		return nil
 	}
 	if s.rateLimitService != nil && input.Account != nil && input.Account.Platform == PlatformOpenAI {
@@ -9072,6 +9073,13 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	serviceTier string,
 ) (*CostBreakdown, error) {
 	billingModel := firstUsageBillingModel(billingModels)
+	if result != nil && result.WebSearchCalls > 0 {
+		var groupPrice *float64
+		if apiKey != nil && apiKey.Group != nil {
+			groupPrice = apiKey.Group.WebSearchPricePerCall
+		}
+		return s.billingService.CalculateWebSearchCost(result.WebSearchCalls, groupPrice, multiplier), nil
+	}
 	if result != nil && result.ImageCount > 0 {
 		// 渠道定价为 token 计费时走 token 路径，否则走图片计费
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
