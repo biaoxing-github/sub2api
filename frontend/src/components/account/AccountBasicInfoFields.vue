@@ -7,10 +7,14 @@ const props = withDefaults(defineProps<{
   nameLabelKey?: string
   namePlaceholderKey?: string
   nameTour?: string
+  showName?: boolean
+  showNotes?: boolean
 }>(), {
   nameLabelKey: 'common.name',
   namePlaceholderKey: '',
-  nameTour: ''
+  nameTour: '',
+  showName: true,
+  showNotes: true
 })
 
 const emit = defineEmits<{
@@ -22,7 +26,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <div>
+  <div v-if="props.showName" data-testid="account-name-field">
     <label class="input-label">{{ t(props.nameLabelKey) }}</label>
     <input
       :value="props.name"
@@ -34,7 +38,7 @@ const { t } = useI18n()
       @input="emit('update:name', ($event.target as HTMLInputElement).value)"
     />
   </div>
-  <div>
+  <div v-if="props.showNotes" data-testid="account-notes-field">
     <label class="input-label">{{ t('admin.accounts.notes') }}</label>
     <textarea
       :value="props.notes"

@@ -11,11 +11,15 @@
       @submit.prevent="handleSubmit"
       class="space-y-5"
     >
+      <AccountFormTabs v-model="activeFormTab" />
+
       <AccountBasicInfoFields
         v-model:name="form.name"
         v-model:notes="form.notes"
         name-label-key="common.name"
         name-tour="edit-account-form-name"
+        :show-name="activeFormTab === 'basic'"
+        :show-notes="activeFormTab === 'advanced'"
       />
 
       <!-- API Key fields (only for apikey type) -->
@@ -37,12 +41,14 @@
           :api-keys-edit-mode-hint="apiKeysEditModeHint"
           :deleting-api-key-fingerprint="deletingApiKeyFingerprint"
           :restoring-api-key-fingerprint="restoringApiKeyFingerprint"
+          :section="activeFormTab === 'basic' ? 'core' : 'advanced'"
           mode="edit"
           @delete-api-key="handleDeleteAPIKey"
           @restore-api-key="handleRestoreAPIKeyState"
         />
         <AccountUpstreamBalanceFields
           v-if="supportsAPIKeyUpstreamBalanceConfig"
+          v-show="activeFormTab === 'advanced'"
           v-model:auth-username="upstreamAuthUsername"
           v-model:auth-password="upstreamAuthPassword"
           v-model:common-rate-multiplier="upstreamCommonRateMultiplier"
@@ -67,6 +73,7 @@
         />
 
         <AccountPoolModeSection
+          v-show="activeFormTab === 'advanced'"
           v-model:enabled="poolModeEnabled"
           v-model:retry-count="poolModeRetryCount"
           :default-retry-count="DEFAULT_POOL_MODE_RETRY_COUNT"
@@ -74,6 +81,7 @@
         />
 
         <AccountErrorHandlingCard
+          v-show="activeFormTab === 'advanced'"
           v-model:rules="accountErrorHandlingRules"
           :account-type="account?.type || ''"
           :base-url="editBaseUrl"
@@ -85,6 +93,7 @@
       <!-- OpenAI response text error section -->
       <div
         v-if="account.platform === 'openai'"
+        v-show="activeFormTab === 'advanced'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="mb-3 flex items-center justify-between">
@@ -124,6 +133,7 @@
 
       <AccountModelRestrictionSection
         v-if="account.platform === 'openai' && account.type === 'oauth'"
+        v-show="activeFormTab === 'basic'"
         v-model:mode="modelRestrictionMode"
         v-model:allowed-models="allowedModels"
         v-model:model-mappings="modelMappings"
@@ -138,11 +148,13 @@
       <!-- Upstream fields (only for upstream type) -->
       <div v-if="account.type === 'upstream'" class="space-y-4">
         <AccountUpstreamCredentialsFields
+          v-show="activeFormTab === 'basic'"
           v-model:base-url="editBaseUrl"
           v-model:api-key="editApiKey"
           api-key-hint-key="admin.accounts.leaveEmptyToKeep"
         />
         <AccountUpstreamBalanceFields
+          v-show="activeFormTab === 'advanced'"
           v-model:auth-username="upstreamAuthUsername"
           v-model:auth-password="upstreamAuthPassword"
           v-model:common-rate-multiplier="upstreamCommonRateMultiplier"
@@ -154,7 +166,10 @@
 
       <!-- Vertex Service Account -->
       <div v-if="(account.platform === 'gemini' || account.platform === 'anthropic') && account.type === 'service_account'" class="space-y-4">
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div
+          v-show="activeFormTab === 'advanced'"
+          class="grid grid-cols-1 gap-4 sm:grid-cols-2"
+        >
           <div>
             <label class="input-label">Project ID</label>
             <input
@@ -192,6 +207,7 @@
         </div>
 
         <AccountModelRestrictionSection
+          v-show="activeFormTab === 'basic'"
           v-model:mode="modelRestrictionMode"
           v-model:allowed-models="allowedModels"
           v-model:model-mappings="modelMappings"
@@ -203,7 +219,11 @@
       </div>
 
       <!-- Bedrock fields (for bedrock type, both SigV4 and API Key modes) -->
-      <div v-if="account.type === 'bedrock'" class="space-y-4">
+      <div
+        v-if="account.type === 'bedrock'"
+        v-show="activeFormTab === 'basic'"
+        class="space-y-4"
+      >
         <!-- SigV4 fields -->
         <template v-if="!isBedrockAPIKeyMode">
           <div>
@@ -296,6 +316,7 @@
 
       <AccountAntigravityModelMappingSection
         v-if="account.platform === 'antigravity'"
+        v-show="activeFormTab === 'basic'"
         v-model:model-mappings="antigravityModelMappings"
         :preset-mappings="antigravityPresetMappings"
         :sync-loading="isSyncingAntigravityUpstream"
@@ -304,6 +325,7 @@
         @sync="syncAntigravityUpstreamModels"
       />
 
+      <div v-show="activeFormTab === 'advanced'" class="space-y-5">
       <!-- Intercept Warmup Requests (Anthropic/Antigravity) -->
       <div
         v-if="account?.platform === 'anthropic' || account?.platform === 'antigravity'"
@@ -862,9 +884,12 @@
         </div>
       </div>
 
+      </div>
+
       <!-- Group Selection - 仅标准模式显示 -->
       <GroupSelector
         v-if="!authStore.isSimpleMode"
+        v-show="activeFormTab === 'basic'"
         v-model="form.group_ids"
         :groups="groups"
         :platform="account?.platform"
@@ -940,6 +965,7 @@ import Icon from '@/components/icons/Icon.vue'
 import AccountErrorHandlingCard from '@/components/account/AccountErrorHandlingCard.vue'
 import AccountAPIKeyCredentialsFields from '@/components/account/AccountAPIKeyCredentialsFields.vue'
 import AccountBasicInfoFields from '@/components/account/AccountBasicInfoFields.vue'
+import AccountFormTabs, { type AccountFormTab } from '@/components/account/AccountFormTabs.vue'
 import AccountPoolModeSection from '@/components/account/AccountPoolModeSection.vue'
 import AccountUpstreamCredentialsFields from '@/components/account/AccountUpstreamCredentialsFields.vue'
 import AccountUpstreamBalanceFields from '@/components/account/AccountUpstreamBalanceFields.vue'
@@ -1469,6 +1495,9 @@ const form = reactive({
   expires_at: null as number | null
 })
 
+// 每次打开弹窗先展示高频字段，避免高级设置淹没账号核心信息。
+const activeFormTab = ref<AccountFormTab>('basic')
+
 const statusOptions = computed(() => {
   const options = [
     { value: 'active', label: t('common.active') },
@@ -1842,6 +1871,7 @@ watch(
       return
     }
     if (!wasShow || newAccount !== previousAccount) {
+      activeFormTab.value = 'basic'
       syncFormFromAccount(newAccount)
       loadTLSProfiles()
     }

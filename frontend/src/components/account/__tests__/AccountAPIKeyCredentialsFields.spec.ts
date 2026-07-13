@@ -15,7 +15,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 const SelectStub = defineComponent({
-  name: 'Select',
+  name: 'AccountSelectStub',
   props: {
     modelValue: {
       type: String,
@@ -41,6 +41,35 @@ const SelectStub = defineComponent({
 })
 
 describe('AccountAPIKeyCredentialsFields', () => {
+  it('separates core credentials from advanced connection fields', () => {
+    const sharedProps = {
+      platform: 'openai' as const,
+      baseUrl: 'https://api.openai.com',
+      requestBaseUrlsText: 'https://request.example.com',
+      balanceBaseUrl: 'https://balance.example.com',
+      apiKey: '',
+      apiKeysText: '',
+      baseUrlHint: 'base hint',
+      openaiCodexCliUserAgent: 'Codex Desktop/0.150.0'
+    }
+    const core = mount(AccountAPIKeyCredentialsFields, {
+      props: { ...sharedProps, section: 'core' },
+      global: { stubs: { Icon: true, Select: SelectStub } }
+    })
+    const advanced = mount(AccountAPIKeyCredentialsFields, {
+      props: { ...sharedProps, section: 'advanced' },
+      global: { stubs: { Icon: true, Select: SelectStub } }
+    })
+
+    expect(core.text()).toContain('admin.accounts.baseUrl')
+    expect(core.text()).toContain('admin.accounts.apiKeyRequired')
+    expect(core.text()).not.toContain('admin.accounts.openai.requestBaseUrls')
+    expect(core.find('[data-testid="openai-codex-cli-user-agent-input"]').exists()).toBe(false)
+    expect(advanced.text()).not.toContain('admin.accounts.apiKeyRequired')
+    expect(advanced.text()).toContain('admin.accounts.openai.requestBaseUrls')
+    expect(advanced.find('[data-testid="openai-codex-cli-user-agent-input"]').exists()).toBe(true)
+  })
+
   it('emits create-mode base URL, request URL, balance URL and API key edits', async () => {
     const wrapper = mount(AccountAPIKeyCredentialsFields, {
       props: {

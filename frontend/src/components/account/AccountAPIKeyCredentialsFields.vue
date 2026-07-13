@@ -38,6 +38,7 @@ const props = withDefaults(defineProps<{
   apiKeysEditModeHint?: string
   deletingApiKeyFingerprint?: string | null
   restoringApiKeyFingerprint?: string | null
+  section?: 'all' | 'core' | 'advanced'
 }>(), {
   apiKeyHint: '',
   mode: 'create',
@@ -47,7 +48,8 @@ const props = withDefaults(defineProps<{
   apiKeysEditModeOptions: () => [],
   apiKeysEditModeHint: '',
   deletingApiKeyFingerprint: '',
-  restoringApiKeyFingerprint: ''
+  restoringApiKeyFingerprint: '',
+  section: 'all'
 })
 
 const emit = defineEmits<{
@@ -66,6 +68,8 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const isEditMode = computed(() => props.mode === 'edit')
+const showCoreFields = computed(() => props.section === 'all' || props.section === 'core')
+const showAdvancedFields = computed(() => props.section === 'all' || props.section === 'advanced')
 const supportsRequestBaseUrls = computed(
   () => props.platform === 'openai' || props.platform === 'anthropic'
 )
@@ -120,7 +124,7 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
 
 <template>
   <div class="space-y-4">
-    <div>
+    <div v-if="showCoreFields">
       <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
       <input
         :value="props.baseUrl"
@@ -132,7 +136,10 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
       <p class="input-hint">{{ props.baseUrlHint }}</p>
     </div>
 
-    <div v-if="supportsRequestBaseUrls" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+    <div
+      v-if="showAdvancedFields && supportsRequestBaseUrls"
+      class="grid grid-cols-1 gap-4 sm:grid-cols-2"
+    >
       <div>
         <label class="input-label">{{ t('admin.accounts.openai.requestBaseUrls') }}</label>
         <textarea
@@ -157,7 +164,7 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
       </div>
     </div>
 
-    <div>
+    <div v-if="showCoreFields">
       <label class="input-label">{{ t(singleApiKeyLabel) }}</label>
       <input
         :value="props.apiKey"
@@ -173,7 +180,7 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
       <p class="input-hint">{{ singleApiKeyHint }}</p>
     </div>
 
-    <div v-if="supportsClaudeCliVersion">
+    <div v-if="showAdvancedFields && supportsClaudeCliVersion">
       <label class="input-label">{{ t('admin.accounts.anthropic.claudeCliVersion') }}</label>
       <input
         :value="props.claudeCliVersion || ''"
@@ -186,7 +193,7 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
       <p class="input-hint">{{ t('admin.accounts.anthropic.claudeCliVersionHint') }}</p>
     </div>
 
-    <div v-if="supportsOpenAICodexCliUserAgent">
+    <div v-if="showAdvancedFields && supportsOpenAICodexCliUserAgent">
       <label class="input-label">{{ t('admin.accounts.openai.codexCLIUserAgent') }}</label>
       <input
         :value="props.openaiCodexCliUserAgent || ''"
@@ -199,7 +206,7 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
       <p class="input-hint">{{ t('admin.accounts.openai.codexCLIUserAgentHint') }}</p>
     </div>
 
-    <div>
+    <div v-if="showCoreFields">
       <label class="input-label">{{ t('admin.accounts.apiKeys') }}</label>
       <div
         v-if="isEditMode && props.existingApiKeyItems.length > 0"

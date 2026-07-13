@@ -271,6 +271,23 @@ function mountModal(account = buildAccount()) {
 }
 
 describe('EditAccountModal', () => {
+  it('shows core account fields by default and reveals connection details from the advanced tab', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="account-form-tab-basic"]').attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('[data-testid="account-name-field"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="account-notes-field"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.requestBaseUrls')
+
+    await wrapper.get('[data-testid="account-form-tab-advanced"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="account-name-field"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="account-notes-field"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('admin.accounts.openai.requestBaseUrls')
+  })
+
   it('loads unified account error handling rules and saves legacy compatibility fields', async () => {
     const account = buildAccount()
     account.credentials = {
@@ -707,6 +724,7 @@ describe('EditAccountModal', () => {
     updateAccountMock.mockResolvedValue(account)
 
     const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="account-form-tab-advanced"]').trigger('click')
 
     const versionInput = wrapper.get('[data-testid="claude-cli-version-input"]')
     expect((versionInput.element as HTMLInputElement).value).toBe('2.1.126')
@@ -895,6 +913,7 @@ describe('EditAccountModal', () => {
     updateAccountMock.mockResolvedValue(account)
 
     const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="account-form-tab-advanced"]').trigger('click')
     const userAgentInput = wrapper.get('[data-testid="openai-codex-cli-user-agent-input"]')
     expect((userAgentInput.element as HTMLInputElement).value).toBe(
       'Codex Desktop/0.142.2 (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.623.30605)'

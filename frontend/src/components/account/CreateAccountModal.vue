@@ -45,14 +45,19 @@
       @submit.prevent="handleSubmit"
       class="space-y-5"
     >
+      <AccountFormTabs v-model="activeFormTab" />
+
       <AccountBasicInfoFields
         v-model:name="form.name"
         v-model:notes="form.notes"
         name-label-key="admin.accounts.accountName"
         name-placeholder-key="admin.accounts.enterAccountName"
         name-tour="account-form-name"
+        :show-name="activeFormTab === 'basic'"
+        :show-notes="activeFormTab === 'advanced'"
       />
 
+      <div v-show="activeFormTab === 'basic'" class="space-y-5">
       <!-- 平台选择只改变表单状态，后续账号类型和凭证表单仍由父组件控制。 -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
@@ -389,16 +394,19 @@
           :options="antigravityAccountTypeOptions"
         />
       </div>
+      </div>
 
       <!-- Upstream config (only for Antigravity upstream type) -->
       <div v-if="form.platform === 'antigravity' && antigravityAccountType === 'upstream'" class="space-y-4">
         <AccountUpstreamCredentialsFields
+          v-show="activeFormTab === 'basic'"
           v-model:base-url="upstreamBaseUrl"
           v-model:api-key="upstreamApiKey"
           api-key-hint-key="admin.accounts.upstream.apiKeyHint"
           required
         />
         <AccountUpstreamBalanceFields
+          v-show="activeFormTab === 'advanced'"
           v-model:auth-username="upstreamAuthUsername"
           v-model:auth-password="upstreamAuthPassword"
           v-model:common-rate-multiplier="upstreamCommonRateMultiplier"
@@ -410,7 +418,11 @@
       </div>
 
       <!-- Vertex Service Account -->
-      <div v-if="(form.platform === 'gemini' || form.platform === 'anthropic') && accountCategory === 'service_account'" class="space-y-4">
+      <div
+        v-if="(form.platform === 'gemini' || form.platform === 'anthropic') && accountCategory === 'service_account'"
+        v-show="activeFormTab === 'advanced'"
+        class="space-y-4"
+      >
         <div>
           <label class="input-label">Service Account JSON</label>
           <input
@@ -501,12 +513,16 @@
 
       <AccountAntigravityModelMappingSection
         v-if="form.platform === 'antigravity'"
+        v-show="activeFormTab === 'basic'"
         v-model:model-mappings="antigravityModelMappings"
         :preset-mappings="antigravityPresetMappings"
       />
 
       <!-- Add Method (only for Anthropic OAuth-based type) -->
-      <div v-if="form.platform === 'anthropic' && isOAuthFlow">
+      <div
+        v-if="form.platform === 'anthropic' && isOAuthFlow"
+        v-show="activeFormTab === 'advanced'"
+      >
         <label class="input-label">{{ t('admin.accounts.addMethod') }}</label>
         <div class="mt-2 flex gap-4">
           <label class="flex cursor-pointer items-center">
@@ -545,10 +561,12 @@
           :platform="form.platform"
           :base-url-hint="baseUrlHint"
           :api-key-hint="apiKeyHint"
+          :section="activeFormTab === 'basic' ? 'core' : 'advanced'"
           mode="create"
         />
         <AccountUpstreamBalanceFields
           v-if="form.platform === 'openai'"
+          v-show="activeFormTab === 'advanced'"
           v-model:auth-username="upstreamAuthUsername"
           v-model:auth-password="upstreamAuthPassword"
           v-model:common-rate-multiplier="upstreamCommonRateMultiplier"
@@ -557,7 +575,7 @@
         />
 
         <!-- Gemini API Key tier selection -->
-        <div v-if="form.platform === 'gemini'">
+        <div v-if="form.platform === 'gemini'" v-show="activeFormTab === 'advanced'">
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
           <select v-model="geminiTierAIStudio" class="input">
             <option value="aistudio_free">{{ t('admin.accounts.gemini.tier.aiStudio.free') }}</option>
@@ -567,6 +585,7 @@
         </div>
 
         <AccountModelRestrictionSection
+          v-show="activeFormTab === 'basic'"
           v-model:mode="modelRestrictionMode"
           v-model:allowed-models="allowedModels"
           v-model:model-mappings="modelMappings"
@@ -577,6 +596,7 @@
         />
 
         <AccountPoolModeSection
+          v-show="activeFormTab === 'advanced'"
           v-model:enabled="poolModeEnabled"
           v-model:retry-count="poolModeRetryCount"
           :default-retry-count="DEFAULT_POOL_MODE_RETRY_COUNT"
@@ -584,7 +604,10 @@
         />
 
         <!-- Custom Error Codes Section -->
-        <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div
+          v-show="activeFormTab === 'advanced'"
+          class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        >
           <div class="mb-3 flex items-center justify-between">
             <div>
               <label class="input-label mb-0">{{ t('admin.accounts.customErrorCodes') }}</label>
@@ -684,6 +707,7 @@
       </div>
 
       <AccountErrorHandlingCard
+        v-show="activeFormTab === 'advanced'"
         v-model:rules="accountErrorHandlingRules"
         :account-type="form.type"
         :base-url="apiKeyBaseUrl"
@@ -691,7 +715,11 @@
       />
 
       <!-- Bedrock credentials (only for Anthropic Bedrock type) -->
-      <div v-if="form.platform === 'anthropic' && accountCategory === 'bedrock'" class="space-y-4">
+      <div
+        v-if="form.platform === 'anthropic' && accountCategory === 'bedrock'"
+        v-show="activeFormTab === 'basic'"
+        class="space-y-4"
+      >
         <!-- Auth Mode Radio -->
         <div>
           <label class="input-label">{{ t('admin.accounts.bedrockAuthMode') }}</label>
@@ -832,6 +860,19 @@
         />
       </div>
 
+      <AccountModelRestrictionSection
+        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
+        v-show="activeFormTab === 'basic'"
+        v-model:mode="modelRestrictionMode"
+        v-model:allowed-models="allowedModels"
+        v-model:model-mappings="modelMappings"
+        :platform="form.platform"
+        :preset-mappings="presetMappings"
+        :disabled="isOpenAIModelRestrictionDisabled"
+        disabled-hint-key="admin.accounts.openai.modelRestrictionDisabledByPassthrough"
+      />
+
+      <div v-show="activeFormTab === 'advanced'" class="space-y-5">
       <AccountQuotaControlSection
         v-if="form.platform === 'anthropic' && (form.type === 'apikey' || form.type === 'bedrock')"
         hint-key="admin.accounts.quotaControl.hint"
@@ -878,17 +919,6 @@
         v-model:weekly-reset-hour="editWeeklyResetHour"
         v-model:reset-timezone="editResetTimezone"
         :quota-notify-global-enabled="quotaNotifyGlobalEnabled"
-      />
-
-      <AccountModelRestrictionSection
-        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
-        v-model:mode="modelRestrictionMode"
-        v-model:allowed-models="allowedModels"
-        v-model:model-mappings="modelMappings"
-        :platform="form.platform"
-        :preset-mappings="presetMappings"
-        :disabled="isOpenAIModelRestrictionDisabled"
-        disabled-hint-key="admin.accounts.openai.modelRestrictionDisabledByPassthrough"
       />
 
       <!-- Temp Unschedulable Rules -->
@@ -1460,16 +1490,19 @@
           </div>
         </div>
 
-        <!-- Group Selection - 仅标准模式显示 -->
-        <GroupSelector
-          v-if="!authStore.isSimpleMode"
-          v-model="form.group_ids"
-          :groups="groups"
-          :platform="form.platform"
-          :mixed-scheduling="mixedScheduling"
-          data-tour="account-form-groups"
-        />
       </div>
+      </div>
+
+      <!-- Group Selection - 仅标准模式显示 -->
+      <GroupSelector
+        v-if="!authStore.isSimpleMode"
+        v-show="activeFormTab === 'basic'"
+        v-model="form.group_ids"
+        :groups="groups"
+        :platform="form.platform"
+        :mixed-scheduling="mixedScheduling"
+        data-tour="account-form-groups"
+      />
 
     </form>
 
@@ -1867,6 +1900,7 @@ import AccountOpenAICompactModeSection from '@/components/account/AccountOpenAIC
 import AccountErrorHandlingCard from '@/components/account/AccountErrorHandlingCard.vue'
 import AccountAPIKeyCredentialsFields from '@/components/account/AccountAPIKeyCredentialsFields.vue'
 import AccountBasicInfoFields from '@/components/account/AccountBasicInfoFields.vue'
+import AccountFormTabs, { type AccountFormTab } from '@/components/account/AccountFormTabs.vue'
 import AccountPoolModeSection from '@/components/account/AccountPoolModeSection.vue'
 import AccountUpstreamCredentialsFields from '@/components/account/AccountUpstreamCredentialsFields.vue'
 import AccountUpstreamBalanceFields from '@/components/account/AccountUpstreamBalanceFields.vue'
@@ -2469,6 +2503,9 @@ const form = reactive({
   expires_at: null as number | null
 })
 
+// 新增账号默认只展示完成创建所需的高频字段。
+const activeFormTab = ref<AccountFormTab>('basic')
+
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
   // Antigravity upstream 类型不需要 OAuth 流程
@@ -2515,6 +2552,7 @@ watch(
   () => props.show,
   (newVal) => {
     if (newVal) {
+      activeFormTab.value = 'basic'
       // Load TLS fingerprint profiles
       adminAPI.tlsFingerprintProfiles.list()
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
@@ -2969,6 +3007,7 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 // Methods
 const resetForm = () => {
   step.value = 1
+  activeFormTab.value = 'basic'
   form.name = ''
   form.notes = ''
   form.platform = 'anthropic'

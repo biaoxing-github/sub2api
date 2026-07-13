@@ -21,4 +21,11 @@ describe('CreateAccountModal Grok account types', () => {
     expect(credentialsFieldsSource).toContain("props.platform === 'grok'")
     expect(credentialsFieldsSource).toContain("return 'xai-...'")
   })
+
+  it('defaults to a compact basic tab and keeps advanced settings behind a second tab', () => {
+    expect(source).toContain('<AccountFormTabs v-model="activeFormTab"')
+    expect(source).toContain("const activeFormTab = ref<AccountFormTab>('basic')")
+    expect(source).toContain(':show-notes="activeFormTab === \'advanced\'"')
+    expect(source).toContain(':section="activeFormTab === \'basic\' ? \'core\' : \'advanced\'"')
+  })
 })

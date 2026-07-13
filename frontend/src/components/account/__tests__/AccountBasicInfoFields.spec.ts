@@ -36,4 +36,26 @@ describe('AccountBasicInfoFields', () => {
     expect(wrapper.emitted('update:name')?.[0]).toEqual(['new-name'])
     expect(wrapper.emitted('update:notes')?.[0]).toEqual(['new-notes'])
   })
+
+  it('can render the name and notes fields independently for tabbed forms', () => {
+    const nameOnly = mount(AccountBasicInfoFields, {
+      props: {
+        name: 'name',
+        notes: 'notes',
+        showNotes: false
+      }
+    })
+    const notesOnly = mount(AccountBasicInfoFields, {
+      props: {
+        name: 'name',
+        notes: 'notes',
+        showName: false
+      }
+    })
+
+    expect(nameOnly.find('[data-testid="account-name-field"]').exists()).toBe(true)
+    expect(nameOnly.find('[data-testid="account-notes-field"]').exists()).toBe(false)
+    expect(notesOnly.find('[data-testid="account-name-field"]').exists()).toBe(false)
+    expect(notesOnly.find('[data-testid="account-notes-field"]').exists()).toBe(true)
+  })
 })

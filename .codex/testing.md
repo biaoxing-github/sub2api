@@ -40,3 +40,13 @@
 - PASS：`8080/18081/18082` 完整冒烟、主 chunk SHA-256 一致和切流后 77 秒干净观察窗通过。
 - PASS：green active 与 blue rollback 均 healthy/restart 0；PostgreSQL、Redis 未重启。
 - 未执行：管理员登录态真实上游模拟测验、Git push、registry push。
+
+## 2026-07-13 账号表单 Tab 简化验证 - Devil
+
+- RED：新增 `AccountFormTabs`、名称/备注独立渲染、API Key 核心/高级字段分区、创建/编辑弹窗默认 Tab 测试；实现前 5 个测试文件按预期失败。
+- PASS：`npm run test -- --run src/components/account/__tests__/AccountFormTabs.spec.ts src/components/account/__tests__/AccountBasicInfoFields.spec.ts src/components/account/__tests__/AccountAPIKeyCredentialsFields.spec.ts src/components/account/__tests__/CreateAccountModal.grok.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts`，5 个文件、37 个测试全部通过。
+- PASS：`npx eslint` 检查本轮 12 个 Vue/TS/i18n 文件，0 错误。
+- PASS：`npm run typecheck`，`vue-tsc --noEmit` 退出码 0。
+- PASS：`git diff --check`，无空白错误；CodeGraph 重索引后 2302 个文件、71562 个节点。
+- PASS：临时预览入口在 1280x720 渲染真实编辑弹窗，默认仅显示核心字段，截图未见重叠、裁切或空白页；预览文件验证后已删除。
+- 限制：开发端口真实管理路由需要登录；Browser 插件的点击动作错误落到先前登录标签，因此未取得可靠的高级 Tab 浏览器截图。Tab 点击、键盘切换和字段显隐由 Vitest 覆盖。
