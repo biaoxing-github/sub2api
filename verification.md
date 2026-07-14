@@ -4898,3 +4898,183 @@ v0.1.149 拉取结果：
 - PASS：本轮追加的 `docs/feature_list.jsonl` 与 `docs/process_list.jsonl` 尾记录均可独立解析。
 - BASELINE：两份 JSONL 历史区各有 254 行早期编码/JSON 损坏；为避免 500 余行无关重写，本轮未修复历史记录。
 - 边界：未执行 Git push、registry push、真实认证上游请求或管理员登录态页面操作；handler 仍保留 6 个已记录的既有失败。
+## 2026-07-12 - NewApi 签到数据库直接去重
+
+- 执行者：Devil。
+- 备份：`D:\sub2api-deploy\backups\newapi-dedup-20260712-104749.dump`，包含月度明细和签到历史两张表，29081 字节。
+- PASS：事务按 `site + user_id + checkin_date/date` 分组，每组仅保留 `created_at/id` 最新记录。
+- 结果：`newapi_checkin_monthly_records` 删除 0 行，最终 461 行、重复组 0。
+- 结果：`newapi_checkin_history` 删除 0 行，最终 339 行、重复组 0。
+- 结论：线上数据已唯一，无历史重复数据需要清理；此前显示叠加由旧版汇总逻辑导致。
+
+## 2026-07-12 - v0.1.151 吸收与本地验证
+
+- 执行者：Devil。
+- PASS：完整吸收 GPT-5.6 计费、cache-write 解析、Codex 身份配对、用户级 Fast/Flex、image_gen 清理、Grok reasoning 和 setup-token 刷新行为。
+- PASS：主版本更新为 `v0.1.151`，不可变镜像版本目标为 `v0.1.151.1`。
+- PASS：后端 service 全包及相关 pkg/repository/WS/middleware/handler/migrations/cmd server 测试。
+- PASS：前端 Vitest 全量测试与 `npm run typecheck`。
+- 发布前状态：active green=`sub2api:v0.1.150.2` healthy；idle blue=`sub2api:v0.1.150.1` healthy。
+
+## 2026-07-12 - v0.1.151.1 构建阻断
+
+- PASS：提交 `84bb9e56fb80`；migration 173 已定向执行并验证约束允许 request_type 0..4。
+- FAIL：清华 Alpine 源 403/拒绝连接；USTC 下载 brotli-libs 时 TLS 中断；阿里云 Alpine 成功后 goproxy.cn 多项依赖 unexpected EOF。
+- 按连续三次失败规则暂停；未生成镜像、未部署 idle blue、未切流。
+- PASS：active green 仍为 `sub2api:v0.1.150.2` healthy，blue `v0.1.150.1` healthy。
+
+## 2026-07-12 - VersionBadge 主版本同步
+
+- RED：接口返回 `v0.1.151` 时组件显示为 `vv0.1.151`。
+- PASS：主版本、最新版本和非管理员版本统一规范为恰好一个 `v` 前缀。
+- PASS：VersionBadge 2 个 Vitest 用例通过，`npm run typecheck` 通过。
+- 约束：以后发布只更新统一版本源和 `IMAGE_VERSION`，并验证侧边栏、下拉主版本及镜像版本。
+
+## 2026-07-12 - v0.1.151.1 构建、蓝绿部署与线上验证
+
+- 执行者：Devil。
+- PASS：从 committed HEAD `92ba858d98e8` 构建 `sub2api:v0.1.151.1`；OCI version/revision 和容器内 `-version` 一致。
+- PASS：仅重建 idle blue；`18083` health、首页和静态资源为 200，管理 API、`/responses`、`/v1/responses` 未登录为 401。
+- PASS：候选持续 healthy、restart 0；一次启动期 `pq: canceling statement due to user request` 未重复，后续独立 120 秒关键日志窗口为 0。
+- PASS：nginx 配置检查和 reload 成功，active 从 green 切到 blue。
+- PASS：`8080`、`18081`、`18083` 完整冒烟通过；切流后 68 秒三个健康入口持续 200，blue healthy、restart 0，最近 120 秒关键日志为 0。
+- PASS：green `sub2api:v0.1.150.2` 保持 healthy、restart 0 作为回滚；PostgreSQL、Redis 未重启。
+- 边界：未执行 Git push、镜像 registry push、管理员登录态页面操作或真实认证上游请求。
+
+## 2026-07-12 - 探测提示词随机快速验证题
+
+- 执行者：Devil。
+- PASS：新增 8 道低 token、答案明确的共享快速验证题，通用探测每次随机选择，不再固定发送 `hi` 或 `ok`。
+- PASS：账号人工测试、Claude/Bedrock/OpenAI/Gemini、API Key Responses、调度耗尽、compact 和 API Key 快速体检均接入共享题库。
+- PASS：监控高级请求模板每次打开随机选择快速验证题；中英文界面文案同步更新。
+- PASS：`go test ./internal/service ./internal/handler/admin -count=1`。
+- PASS：`npm run typecheck`。
+- PASS：生产源码扫描未发现通用检测入口遗留固定 `hi`、`Respond with OK` 或 `只回复 ok`；需要精确判分的专项能力验证提示词保持不变。
+- 边界：仅完成源码修改与本地验证，未提交、构建或部署。
+
+## 2026-07-12 v0.1.151.2 蓝绿发布验证
+
+- 执行者：Devil。
+- PASS：业务提交 `dd489bb537d1`，不可变镜像 `sub2api:v0.1.151.2` 的 revision、版本标签和 ImageID 校验一致。
+- PASS：仅重建 idle green，候选 `18082` 的健康页、首页、静态资源为 200，受保护管理 API 与 Responses 路径未登录为 401。
+- PASS：候选独立观察 90 秒持续 healthy、restart 0，关键日志匹配 0。
+- PASS：nginx 配置校验通过并从 blue 切流到 green。
+- PASS：切流后 `8080`、`18081`、`18082` 冒烟通过，观察 75 秒后 green/blue 均 healthy、restart 0，新增关键日志匹配 0。
+- PASS：PostgreSQL 和 Redis 未重启；blue `sub2api:v0.1.151.1` 保留为回滚目标。
+- 风险：green 启动初期出现一次 request snapshot 清理 SQL 取消，后续两个干净观察窗均未复现；未执行真实认证上游请求。
+
+## 2026-07-13 - OpenAI 模拟测验改用 Responses streaming
+
+- 执行者：Devil。
+- PASS：`responses_supported=false` 的 OpenAI API Key 账号人工测试不再分流到 `/v1/chat/completions`，统一请求 `/v1/responses`。
+- PASS：请求体为 Responses `input` 结构并携带 `stream:true`，请求头显式携带 `Accept: text/event-stream`。
+- PASS：Responses SSE 的 `response.output_text.delta` 与 `response.completed` 被现有解析器正确处理。
+- PASS：协议相关 6 个 unit 用例和 service/server 非 unit 编译测试通过。
+- 边界：图片测试和 compact 测试路径未修改；真实网关兼容与回退行为未修改。
+
+## 2026-07-13 v0.1.152.2 蓝绿发布验证
+
+- 执行者：Devil。
+- PASS：业务提交 `9b42afcdf0e7`，不可变镜像版本、revision、二进制版本和 ImageID 一致。
+- PASS：仅重建 idle green；候选 `18082` 冒烟及 75 秒 healthy/restart 0、关键日志 0 观察通过。
+- PASS：nginx 配置检查通过并从 blue 切流到 green。
+- PASS：切流后三入口冒烟和主 chunk SHA-256 一致；77 秒公网/green/proxy 观察稳定，关键日志 0。
+- PASS：blue `v0.1.152.1` 保留为健康回滚目标；PostgreSQL、Redis 未重启。
+- 边界：未执行管理员登录态真实上游模拟测验、Git push 或 registry push。
+
+## 2026-07-13 - 君公益上游 403 诊断
+
+- 执行者：Devil。
+- PASS：确认账号 `494/君公益` 的人工测试已请求 `https://muyuan.do/v1/responses`，协议切换已生效。
+- PASS：上游返回 Cloudflare HTML 403，页面明确包含 `Sorry, you have been blocked`，不是 sub2api 生成的错误或 OpenAI JSON 权限错误。
+- PASS：不带凭证的首页 GET 和 `/v1/responses` POST 在普通 UA、Codex UA 下均稳定返回 403，排除 API Key、请求体和 UA 为主因。
+- PASS：账号未绑定独立代理；本机 `muyuan.do` 解析为 Mihomo Fake-IP `198.18.0.170`，默认路由由 Mihomo TUN 接管，Cloudflare 识别出口 IP 为 `40.83.88.242`。
+- PASS：同域名账号 `445` 的余额登录也返回 Cloudflare 403；账号 `494` 在 2026-07-06 曾有成功 usage 记录，说明当前故障是出口/WAF 状态变化。
+- 结论：当前 Mihomo/Clash 出口被 `muyuan.do` Cloudflare 拦截；`upstream_abnormal` 是失败后的调度结果。
+
+## 2026-07-13 - 账号新增/编辑表单简化
+
+- 执行者：Devil。
+- PASS：新增共享“基本设置 / 更多设置”Tab；新增和编辑弹窗每次打开均回到基本设置。
+- PASS：基本设置保留名称、平台/账号类型、Base URL、API Key、模型限制和分组；备注、额外连接参数、代理/并发、配额、调度、错误处理和协议开关进入更多设置。
+- PASS：API Key 字段组件按核心/高级区渲染，现有 API Key 管理、模型映射和提交载荷保持原逻辑。
+- PASS：5 个聚焦测试文件共 37 项通过；ESLint、`vue-tsc --noEmit`、`git diff --check` 全部通过。
+- PASS：1280x720 临时预览默认编辑弹窗无重叠或裁切，预览文件已删除，最终工作树未保留测试入口。
+- 边界：未提交、未构建镜像、未部署；真实管理路由开发态需要登录，Browser 插件跨标签点击异常导致高级 Tab 浏览器截图未作为证据。
+
+## 2026-07-13 - v0.1.152.3 蓝绿发布验证
+
+- 执行者：Devil。
+- PASS：业务提交 `edacdd5e729b`；不可变镜像 `sub2api:v0.1.152.3` 的 version、revision、二进制版本和 ImageID 一致。
+- PASS：仅重建 idle blue；候选 `18083` 的 health、首页、静态资源为 200，管理与 Responses 受保护接口未登录为 401。
+- OBSERVED：候选启动期出现一次 `pq: canceling statement due to user request`；后续独立约 66 秒窗口中 7 次 health=200、blue healthy/restart 0、关键日志新增 0。
+- PASS：nginx 配置检查通过并从 green 切流到 blue；切流后三入口冒烟、主资源路径和 SHA-256 一致。
+- PASS：切流后约 66 秒三入口持续健康，blue/proxy restart 0，关键日志新增 0；green 回滚容器 healthy/restart 0。
+- PASS：管理员登录态页面唯一显示主版本 `v0.1.152` 和镜像版本 `v0.1.152.3`；新增/编辑弹窗默认基本设置，更多设置可切换，未提交账号数据。
+- PASS：PostgreSQL、Redis 未重启。
+- 边界：未执行真实认证上游请求、Git push 或 registry push。
+
+## 2026-07-14 - v0.1.152.6 蓝绿发布验证
+
+- 执行者：Devil。
+- PASS：业务提交 `ef9d5c851e30`；不可变镜像 `sub2api:v0.1.152.6` 的 version、revision、二进制版本和 ImageID 一致。
+- PASS：仅重建 idle blue；候选 `18083` 的 health、首页、工具页和静态资源为 200，管理与 Responses 受保护接口未登录为 401。
+- OBSERVED：候选启动期出现一次 `pq: canceling statement due to user request`；后续独立候选观察窗内未复现关键错误。
+- PASS：nginx 配置检查通过并从 green 切流到 blue；切流后三入口完整冒烟、主资源路径和 SHA-256 一致。
+- PASS：切流后 62 秒内 4 次三入口 health 均为 200，blue healthy/restart 0，proxy running/restart 0，blue/proxy 关键日志匹配 0。
+- PASS：管理员登录态页面显示主版本 `v0.1.152` 和镜像版本 `v0.1.152.6`；签到平台目录展示 `API Key` 表头、`sk-前2位***后4位` 脱敏值和“未生成”。
+- PASS：active blue=`sub2api:v0.1.152.6`；rollback green=`sub2api:v0.1.152.5`；PostgreSQL、Redis 未重启。
+- 边界：未执行签到写入、上游 Key 创建、Git push 或 registry push。
+
+## 2026-07-14 - 签到工具 API Key 脱敏展示
+
+- 执行者：Devil。
+- RED：service 测试先失败于 `APIKeys` 方法不存在；嵌入页测试先失败于账号目录没有 `sk-ab***5678`。
+- PASS：新增 `GET /api/v1/admin/newapi-checkin/api-keys`，按 6 并发读取上游 token 列表，只返回名称和 `sk-前2位***后4位` 脱敏值。
+- PASS：账号目录异步加载 API Key，不阻塞 SQL 配置、余额、历史和月度数据；无 Key 显示“未生成”，读取失败显示“读取失败”。
+- PASS：service NewAPICheckin 测试、admin handler NewAPICheckin 测试、server 编译切片、嵌入页 Vitest 1/1、Vue typecheck 和 diff check 全部通过。
+- PASS：handler 测试直接断言 HTTP 响应含 `sk-ab***5678` 且不含完整上游 Key。
+- 边界：仅完成源码与本地自动化验证，未提交、构建镜像、部署或执行管理员登录态线上页面验证。
+
+## 2026-07-14 - 全部签到站点与 Key 脱敏复核
+
+- 执行者：Devil。
+- PASS：从运行中 PostgreSQL 读取 5 个站点、42 个账号，随后实时请求各站点 `/api/status` 和各账号 `/api/token/?p=1&size=100`。
+- PASS：5 个站点状态接口均成功；42 个账号 token 列表均成功读取，首次超时的 3 个 dawclaudecode 账号定向重试后成功。
+- 结果：25 个账号已有至少 1 个生成的 API Key，17 个账号暂无 API Key。
+- 脱敏规则：签到 access key 与生成的 API Key 均只展示前 2 位和后 4 位。
+- 边界：全程只读，未创建、修改或删除任何上游 API Key，未修改数据库。
+
+## 2026-07-14 - aiaiai 签到站点与账号写入验证
+
+- 执行者：Devil。
+- 备份：`D:\sub2api-deploy\backups\newapi-checkin-before-aiaiai-20260714-075511.dump`，包含 8 张 NewAPI 签到相关表，大小 54950 字节。
+- PASS：`https://api.aiaiai001.com/api/status` 返回 CNY、`quota_per_unit=500000`。
+- PASS：9 个 access key 均通过 `/api/user/self` 验证，返回用户 ID 与提交的 9 个 ID 一致。
+- PASS：事务幂等写入 `aiaiai` 站点和 9 个启用账号，线路为 `ip-slot-36` 至 `ip-slot-44`，数据库仅做脱敏凭据核对。
+- PASS：9 个账号真实调用 `/api/user/checkin` 均返回“今日已签到”。
+- PASS：`/api/token/?p=1&size=100` 可读取账号已生成的完整 API Key；账号 525、619 各有 1 个 `codex` Key，其余 7 个账号当前没有已生成 Key。
+- 边界：未在上游创建新 API Key，未重启应用、PostgreSQL 或 Redis，未修改 schema。
+
+## 2026-07-13 - 模型设置独立 Tab
+
+- 执行者：Devil。
+- RED：第三个 Tab、创建弹窗模型隔离和编辑弹窗模型隔离测试均因目标行为缺失而失败；同轮其余 26 项通过。
+- PASS：基本设置只保留核心账号字段，更多设置保留低频连接/调度字段，模型限制与模型映射统一进入独立“模型设置”Tab。
+- PASS：API Key、OAuth、Vertex、Bedrock 和 Antigravity 的模型配置入口均绑定 `activeFormTab === 'models'`，API Key 凭证区在模型 Tab 隐藏。
+- PASS：共享 Tab 支持三个选项的鼠标与方向键/Home/End 操作，默认值仍为 `basic`。
+- PASS：账号表单 5 个聚焦测试文件、37 项测试，目标 ESLint、`vue-tsc --noEmit`、`git diff --check` 全部通过。
+- 边界：本节仅记录源码与本地验证；镜像构建、候选部署和线上页面验证待后续发布步骤完成。
+
+## 2026-07-13 - v0.1.152.5 蓝绿发布验证
+
+- 执行者：Devil。
+- PASS：`v0.1.152.4` 因二进制缺失 `image_version` 在候选部署前被拒绝，未部署、未切流、未覆盖重建。
+- PASS：业务提交 `022bc50d240a`；不可变镜像 `sub2api:v0.1.152.5` 的 version、revision、二进制版本和 ImageID 一致。
+- PASS：仅重建 idle green；候选 `18082` 的 health、首页、静态资源为 200，管理与 Responses 受保护接口未登录为 401。
+- OBSERVED：候选启动期出现一次 `pq: canceling statement due to user request`；后续独立观察窗中 7 次 health=200、green healthy/restart 0、关键日志新增 0。
+- PASS：nginx 配置检查通过并从 blue 切流到 green；切流后三入口完整冒烟、主资源路径和 SHA-256 一致。
+- PASS：切流后 70 秒三入口持续健康，green/proxy restart 0，近 3 分钟精确严重日志过滤均为 0；blue 回滚容器 healthy/restart 0。
+- PASS：管理员登录态页面显示主版本 `v0.1.152` 和镜像版本 `v0.1.152.5`；新增/编辑弹窗的基本、更多、模型设置三个 Tab 符合发布范围，未提交账号数据。
+- PASS：PostgreSQL、Redis 未重启。
+- 边界：未执行真实认证上游请求、Git push 或 registry push。

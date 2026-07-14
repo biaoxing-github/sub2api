@@ -60,6 +60,18 @@
 - PASS：Chrome 管理员登录态确认版本按钮 `v0.1.152`、镜像版本 `v0.1.152.3`，新增/编辑弹窗默认基本设置及更多设置切换符合预期，未保存账号数据。
 - 未执行：真实认证上游请求、Git push、registry push。
 
+## 2026-07-14 签到工具 API Key 脱敏展示 - Devil
+
+- 用户行为：管理员打开签到工具账号目录后，页面后台读取各账号已生成的 API Key；有 Key 时展示 `sk-前2位***后4位`，无 Key 时展示“未生成”，读取异常时展示“读取失败”。
+- RED：`go test ./internal/service -run TestNewAPICheckinAPIKeysMasksGeneratedKeys -count=1` 失败于 `svc.APIKeys undefined`。
+- RED：`.\node_modules\.bin\vitest.cmd run src/views/admin/tools/newapiCheckinLegacy.generated.test.ts` 失败于页面未显示 `sk-ab***5678`。
+- GREEN：`go test ./internal/service -run NewAPICheckin -count=1` 通过。
+- GREEN：`go test ./internal/handler/admin -run NewAPICheckin -count=1` 通过，且响应体断言不包含完整上游 Key。
+- GREEN：`go test ./cmd/server -run '^$' -count=1` 通过。
+- GREEN：`.\node_modules\.bin\vitest.cmd run src/views/admin/tools/newapiCheckinLegacy.generated.test.ts` 通过，1/1。
+- GREEN：`.\node_modules\.bin\vue-tsc.cmd --noEmit` 与 `git diff --check` 通过。
+- 覆盖边界：本轮未执行真实管理员登录态接口或浏览器截图；未提交、构建镜像或部署。
+
 ## 2026-07-13 模型设置独立 Tab 验证 - Devil
 
 - RED：三个目标测试文件中 3 项按预期失败，分别证明第三个 Tab 不存在、创建弹窗未隔离模型区、编辑弹窗默认仍显示模型配置；同轮其余 26 项通过。
@@ -79,3 +91,13 @@
 - PASS：Chrome 管理员登录态确认版本按钮 `v0.1.152`、镜像版本 `v0.1.152.5`，新增/编辑弹窗三个 Tab 的字段隔离符合范围，未保存账号数据。
 - PASS：PostgreSQL、Redis 未重启。
 - 未执行：真实认证上游请求、Git push、registry push。
+
+## 2026-07-14 v0.1.152.6 蓝绿发布验证 - Devil
+
+- PASS：从业务提交 `ef9d5c851e30` 构建不可变镜像 `sub2api:v0.1.152.6`，OCI version/revision、二进制版本和 ImageID 一致。
+- PASS：仅重建 idle blue；候选 `18083` 完整未登录冒烟通过，启动期一次 `pq` 查询取消后独立观察窗健康且关键日志新增 0。
+- PASS：nginx 配置检查、reload 和 green -> blue 切流通过；`8080/18081/18083` 完整冒烟与主资源 SHA-256 一致。
+- PASS：切流后 62 秒三入口持续健康，blue healthy/restart 0，proxy running/restart 0，关键日志匹配均为 0。
+- PASS：Chrome 管理员登录态确认主版本 `v0.1.152`、镜像版本 `v0.1.152.6`，平台目录显示 `API Key` 列、`sk-前2位***后4位` 和“未生成”。
+- PASS：验收过程未执行签到、创建 Key 或配置写入；PostgreSQL、Redis 未重启。
+- 未执行：Git push、registry push。

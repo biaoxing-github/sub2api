@@ -25,3 +25,100 @@
 - 修改 upstream 到 blue，执行 nginx 配置检查和 reload。
 - 完成 `8080/18081/18083` 冒烟、前端 chunk 哈希一致性和切流后 65 秒 blue/proxy 观察。
 - 最终 active blue=`sub2api:v0.1.152.1`；rollback green=`sub2api:v0.1.151.2`；PostgreSQL、Redis 未重启。
+- 从 committed HEAD `dd489bb537d1` 构建并校验不可变镜像 `sub2api:v0.1.151.2`。
+- 备份部署配置，仅将 idle green 更新为新镜像，完成候选冒烟与独立健康日志观察。
+- 通过 nginx 配置检查后将 active 从 blue 切换到 green，完成三入口冒烟和切流后观察，保留 blue 作为回滚目标。
+
+## 2026-07-13 Devil - OpenAI 模拟测验 Responses streaming
+
+- 在现有 `D:\sub2api-src` / `codex/merge-v0.1.134-updates` 上继续工作，未创建新 worktree；同步后的 HEAD 为 `4aa66e0b4`。
+- 通过 Obsidian Local REST、Memory、项目流水与本地 CodeGraph CLI 注入上下文；CodeGraph 索引为最新状态。
+- 按 TDD 先将旧 Chat 路径测试改为 Responses streaming 预期并观察 RED，再移除人工测试的 Chat 分流。
+- 显式设置 `Accept: text/event-stream`，迁移旧路径的成功与错误测试断言，并完成聚焦验证。
+
+## 2026-07-13 Devil - v0.1.152.2 发布
+
+- 提交协议改动 `9b42afcdf0e7`，从 committed archive 构建并核验不可变镜像 `sub2api:v0.1.152.2`。
+- 备份部署 `.env` 与 `active.conf`，仅更新并重建 idle green，blue active 全程保持运行。
+- 完成候选 `18082` 冒烟和 75 秒独立健康/日志观察。
+- 通过 nginx 配置检查后从 blue 切流到 green，完成三入口冒烟、静态资源哈希核对和 77 秒切流后观察。
+- 最终 active green=`sub2api:v0.1.152.2`；rollback blue=`sub2api:v0.1.152.1`；PostgreSQL、Redis 未重启。
+
+## 2026-07-13 Devil - 君公益 403 根因诊断
+
+- 按 systematic-debugging 流程检查 active green 日志、账号非敏感配置、历史 usage、无凭证直连请求和主机网络路由。
+- 定位账号 `494/君公益` 的 `/v1/responses` 请求被 `muyuan.do` Cloudflare 返回 HTML 403，记录 Ray ID 并确认非 sub2api 本地拒绝。
+- 对首页和 Responses 路径分别使用普通 UA、Codex UA 无凭证复现同一封禁页，排除 API Key 和协议 payload。
+- 确认账号无独立代理，主机默认流量经 Mihomo TUN/Clash 出站；未修改代理节点、账号配置或调度状态。
+
+## 2026-07-13 Devil - 简化账号新增与编辑表单
+
+- 读取项目 AGENTS、Obsidian 项目/开发知识库入口、会话 JSONL 流水，并使用 CodeGraph 定位账号表单相关组件；CodeGraph 结果不足后按规则使用 PowerShell 定向读取 Vue 文件。
+- 通过 `frontend-design` 的渐进披露原则设计“基本设置 / 更多设置”两级表单；`shrimp-task-manager` 当前未暴露，改用内置计划工具维护步骤。
+- 先补 Tab、基本信息字段拆分、API Key 凭证分区和编辑弹窗行为测试，确认 RED 后实现共享 `AccountFormTabs` 与两弹窗字段分区。
+- 使用 `apply_patch` 完成源码、测试和 i18n 修改；未改后端请求类型、表单状态结构或提交载荷。
+- 运行聚焦 Vitest、ESLint、Vue TypeScript 检查、diff check 和 CodeGraph 重索引；应用内浏览器用临时假数据预览默认编辑弹窗后删除预览文件。
+- 浏览器默认态截图确认 1280x720 下无重叠或裁切；Browser 插件跨标签点击状态不一致，未把其高级 Tab 点击截图作为验证证据，交互由自动化测试覆盖。
+
+## 2026-07-13 Devil - v0.1.152.3 发布
+
+- 提交账号表单简化改动 `edacdd5e729b`，从 committed archive 构建并核验不可变镜像 `sub2api:v0.1.152.3`。
+- 备份部署 `.env` 与 `active.conf`，仅更新并重建 idle blue，green active 全程保持运行。
+- 完成候选 `18083` 冒烟；启动期一次 `pq` 查询取消后，追加独立约 66 秒健康/日志观察并通过。
+- 通过 nginx 配置检查后从 green 切流到 blue，完成三入口冒烟、静态资源哈希核对和切流后约 66 秒观察。
+- 使用管理员登录态 Chrome 页面验证版本展示、添加弹窗和编辑弹窗的默认 Tab 与切换行为，未保存账号数据并释放用户标签页。
+- 最终 active blue=`sub2api:v0.1.152.3`；rollback green=`sub2api:v0.1.152.2`；PostgreSQL、Redis 未重启。
+
+## 2026-07-13 Devil - 模型设置独立 Tab
+
+- 根据用户追加要求，将模型限制和模型映射从基本/更多设置中移出，定义为独立第三个 Tab。
+- 使用 CodeGraph 定位 API Key、OAuth、Vertex、Bedrock 和 Antigravity 的 10 个模型配置渲染入口，并按 TDD 先提交失败复现测试 `f855c186d`。
+- 扩展共享 `AccountFormTabs`，拆分 Bedrock 模型区域，隐藏模型 Tab 中的 API Key 凭证区域，并同步中英文文案。
+- 按 `frontend-design` / `teach-impeccable` 生成项目设计上下文，保持管理后台克制、可靠、清晰的工具型风格。
+- 运行 5 个聚焦测试文件、目标 ESLint、Vue TypeScript 检查、diff check 和 CodeGraph 重索引，全部通过。
+
+## 2026-07-13 Devil - v0.1.152.5 发布
+
+- 先拒绝二进制未注入 `image_version` 的 `sub2api:v0.1.152.4`，该镜像未进入候选部署。
+- 从业务提交 `022bc50d240a` 构建并核验不可变镜像 `sub2api:v0.1.152.5`。
+- 备份部署 `.env` 与 `active.conf`，仅更新并重建 idle green，blue active 全程保持运行。
+- 完成候选 `18082` 冒烟和独立健康/日志观察，通过 nginx 配置检查后从 blue 切流到 green。
+- 完成三入口完整冒烟、静态资源哈希核对、70 秒切流后观察和精确严重日志过滤。
+- 使用管理员登录态 Chrome 验证主版本、镜像版本以及新增/编辑账号三个 Tab，未保存账号数据并释放浏览器标签页。
+- 最终 active green=`sub2api:v0.1.152.5`；rollback blue=`sub2api:v0.1.152.3`；PostgreSQL、Redis 未重启。
+
+## 2026-07-14 Devil - 添加 aiaiai 签到站点
+
+- 读取 Obsidian 前馈入口、项目流水和运行中 PostgreSQL 配置，确认 `aiaiai` 尚不存在。
+- 使用 CodeGraph 与源码确认 NewAPI 上游认证头和 `/api/user/self`、`/api/user/checkin` 调用方式。
+- 对 `api.aiaiai001.com` 的 9 个账号执行身份验证和令牌列表只读探测，不记录明文凭据。
+- 备份 8 张签到相关表后，在单一事务中幂等写入站点和 9 个账号，分配 `ip-slot-36` 至 `ip-slot-44`。
+- 真实签到验证 9 个账号均返回“今日已签到”；令牌接口确认仅账号 525、619 已有生成的 `codex` API Key。
+- 未创建上游 API Key，未重启应用、PostgreSQL 或 Redis，未修改 schema。
+
+## 2026-07-14 Devil - 全站点 Key 脱敏复核
+
+- 从 PostgreSQL 读取 5 个签到站点及 42 个账号的实时配置。
+- 请求 5 个站点 `/api/status`，确认站点可达和额度显示类型。
+- 限制并发请求 42 个账号 `/api/token/`；3 个 dawclaudecode 账号首次超时后仅对失败项重试并成功。
+- 汇总签到 access key 与生成 API Key，统一仅保留前 2 位和后 4 位；未在日志中记录完整凭据。
+- 结果为 25 个账号已有 API Key、17 个账号暂无 API Key；全程只读，无数据库或上游写操作。
+
+## 2026-07-14 Devil - 签到工具展示脱敏 API Key
+
+- 复用既有 NewApi access key 请求各账号 `/api/token/?p=1&size=100`，新增独立只读管理接口，限制并发为 6。
+- 后端只输出 Key 名称及 `sk-前2位***后4位`，完整上游 Key 不写入 PostgreSQL、不返回前端。
+- 公共签到 HTML 与管理端嵌入生成文件同步增加 API Key 列，并采用后台异步加载，避免拖慢主页面数据读取。
+- 以 service、handler 和真实嵌入页面测试覆盖有 Key、无 Key、请求头、URL、`sk-` 前缀及完整值不泄露。
+- 运行 Go 聚焦测试、server 编译切片、Vitest、Vue typecheck 和 diff check，全部通过。
+- 本轮未执行 Git commit、镜像构建、蓝绿部署或线上管理员页面验证。
+
+## 2026-07-14 Devil - v0.1.152.6 发布
+
+- 提交签到工具 API Key 脱敏展示改动 `ef9d5c851e30`，从 committed archive 构建并核验不可变镜像 `sub2api:v0.1.152.6`。
+- 备份部署 `.env` 与 `active.conf`，仅更新并重建 idle blue，green active 全程保持运行。
+- 完成候选 `18083` 冒烟；启动期一次 `pq` 查询取消后，追加独立健康和关键日志观察并通过。
+- 通过 nginx 配置检查后从 green 切流到 blue，完成三入口冒烟和静态资源哈希核对。
+- 切流后连续 62 秒采样 `8080/18081/18083`，全部为 200；blue/proxy restart 0，关键日志匹配 0。
+- 使用管理员登录态 Chrome 验证主版本、镜像版本和签到平台目录 API Key 脱敏展示，未执行签到、创建 Key 或配置写入。
+- 最终 active blue=`sub2api:v0.1.152.6`；rollback green=`sub2api:v0.1.152.5`；PostgreSQL、Redis 未重启。
