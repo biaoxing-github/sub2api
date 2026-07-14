@@ -59,6 +59,12 @@ func (h *NewAPICheckinHandler) GetConfig(c *gin.Context) {
 	respondNewAPICheckin(c, data, err)
 }
 
+// GetAPIKeys GET /admin/newapi-checkin/api-keys
+func (h *NewAPICheckinHandler) GetAPIKeys(c *gin.Context) {
+	data, err := h.checkinService.APIKeys(c.Request.Context())
+	respondNewAPICheckin(c, data, err)
+}
+
 // GetLastRun GET /admin/newapi-checkin/last-run
 func (h *NewAPICheckinHandler) GetLastRun(c *gin.Context) {
 	data, err := h.checkinService.LastRun(c.Request.Context())

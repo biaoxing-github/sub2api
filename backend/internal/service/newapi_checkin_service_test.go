@@ -60,6 +60,54 @@ func TestNewAPICheckinConfigSummaryCountsAndKeepsDisabledSiteVisible(t *testing.
 	require.Equal(t, "Turnstile 保护站点，仅保留余额与月度记录查询", summary.Sites[1].DisabledReason)
 }
 
+// TestNewAPICheckinAPIKeysMasksGeneratedKeys 验证页面只接收带 sk- 前缀的脱敏 API Key。
+func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
+	var seen []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.String()+" "+r.Header.Get("Authorization")+" "+r.Header.Get("New-Api-User"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Header.Get("New-Api-User") {
+		case "1001":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"total":1,"items":[{"id":7,"name":"codex","key":"abcdef12345678","status":1}]}}`))
+		case "1002":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"total":0,"items":[]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{
+			{
+				"name":     "demo",
+				"enabled":  true,
+				"base_url": upstream.URL,
+				"accounts": []map[string]any{
+					{"name": "alpha", "user_id": "1001", "access_key": "access-a"},
+					{"name": "beta", "user_id": "1002", "access_key": "access-b"},
+				},
+			},
+		},
+	})
+
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+	payload, err := svc.APIKeys(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 2, payload.AccountCount)
+	require.Equal(t, 1, payload.AvailableCount)
+	require.Equal(t, 1, payload.MissingCount)
+	require.Zero(t, payload.ErrorCount)
+	require.Len(t, payload.Accounts, 2)
+	require.Equal(t, "ready", payload.Accounts[0].Status)
+	require.Equal(t, "codex", payload.Accounts[0].APIKeys[0].Name)
+	require.Equal(t, "sk-ab***5678", payload.Accounts[0].APIKeys[0].MaskedKey)
+	require.Equal(t, "missing", payload.Accounts[1].Status)
+	require.Empty(t, payload.Accounts[1].APIKeys)
+	require.Contains(t, seen, "GET /api/token/?p=1&size=100 Bearer access-a 1001")
+	require.Contains(t, seen, "GET /api/token/?p=1&size=100 Bearer access-b 1002")
+}
+
 func TestNewAPICheckinSetSiteEnabledPersistsReasonAndSummary(t *testing.T) {
 	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
 		"sites": []map[string]any{

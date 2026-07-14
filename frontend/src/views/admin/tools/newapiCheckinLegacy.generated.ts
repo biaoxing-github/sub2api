@@ -19,6 +19,7 @@ export function mountNewapiCheckinLegacyTool(scope: LegacyToolScope): LegacyTool
 
 const state = {
       config: null,
+      apiKeys: null,
       lastRun: null,
       balances: null,
       history: null,
@@ -774,9 +775,27 @@ const state = {
         badge(`停用站点 ${config.all_site_count - config.enabled_site_count}`, config.all_site_count > config.enabled_site_count ? "warn" : "neutral"),
       ].join("");
 
+      const apiKeyAccounts = new Map(
+        (state.apiKeys?.accounts || []).map((account) => [`${account.site}\u0000${account.user_id}`, account]),
+      );
       const rows = [];
       visibleSites.forEach((site) => {
         (site.accounts || []).forEach((account, index) => {
+          const apiKeySummary = apiKeyAccounts.get(`${site.name}\u0000${account.user_id}`);
+          let apiKeyHtml = '<span class="dim">读取中</span>';
+          if (state.apiKeys?.load_error) {
+            apiKeyHtml = '<span class="dim">读取失败</span>';
+          } else if (apiKeySummary?.status === "ready") {
+            apiKeyHtml = (apiKeySummary.api_keys || [])
+              .map((item) => `<code title="${escapeHtml(item.name || "未命名")}">${escapeHtml(item.masked_key)}</code>`)
+              .join("<br>");
+          } else if (apiKeySummary?.status === "missing") {
+            apiKeyHtml = '<span class="dim">未生成</span>';
+          } else if (apiKeySummary?.status === "error") {
+            apiKeyHtml = `<span class="dim" title="${escapeHtml(apiKeySummary.message || "API Key 读取失败")}">读取失败</span>`;
+          } else if (state.apiKeys) {
+            apiKeyHtml = '<span class="dim">读取失败</span>';
+          }
           const siteHtml = index === 0
             ? `
                 <div class="site-block">
@@ -799,6 +818,7 @@ const state = {
             route: account.ip_profile || "-",
             endpoint: `/api/user/checkin`,
             display: account.display_name || "-",
+            apiKeyHtml,
             action: `
               <div class="action-cluster">
                 <button
@@ -868,6 +888,7 @@ const state = {
           { label: "站点", value: (row) => row.siteHtml },
           { label: "名称 / 账号", value: (row) => identityHtml(row.identity) },
           { label: "展示名称", value: (row) => `<span class="dim">${escapeHtml(row.display)}</span>` },
+          { label: "API Key", value: (row) => row.apiKeyHtml },
           { label: "出口档位", value: (row) => `<span class="route-badge">${escapeHtml(row.route)}</span>` },
           { label: "签到路径", value: (row) => `<span class="dim">${escapeHtml(row.endpoint)}</span>` },
           { label: "操作", value: (row) => row.action },
@@ -1263,6 +1284,16 @@ const state = {
       renderConfigSelectors();
     }
 
+    async function loadAPIKeys() {
+      try {
+        state.apiKeys = await fetchJson("/api/api-keys");
+      } catch (error) {
+        state.apiKeys = { load_error: true, accounts: [] };
+        console.error("读取 API Key 摘要失败", error);
+      }
+      renderConfig(state.config);
+    }
+
     async function loadLastRun() {
       state.lastRun = await fetchJson("/api/last-run");
     }
@@ -1289,7 +1320,9 @@ const state = {
         setButtonBusy(button, true, "读取中");
       });
       try {
+        state.apiKeys = null;
         await loadConfig();
+        void loadAPIKeys();
         await loadLastRun();
         await loadBalances();
         await loadHistory();

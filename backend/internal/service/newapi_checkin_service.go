@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -26,6 +28,7 @@ const (
 	newAPICheckinDateLayout        = "2006-01-02"
 	newAPICheckinDateTimeLayout    = "2006-01-02 15:04:05"
 	newAPICheckinMonthlySourceSync = "manual-refresh"
+	newAPICheckinAPIKeyConcurrency = 6
 )
 
 // NewAPICheckinOptions 描述 NewApi 签到迁移功能的运行选项。
@@ -189,6 +192,44 @@ type NewAPICheckinConfigAccountSummary struct {
 	UserID string `json:"user_id"`
 	// IPProfile 是线路标记。
 	IPProfile string `json:"ip_profile"`
+}
+
+// NewAPICheckinMaskedAPIKey 是允许返回管理页面的上游 API Key 脱敏摘要。
+type NewAPICheckinMaskedAPIKey struct {
+	// Name 是上游 API Key 名称。
+	Name string `json:"name"`
+	// MaskedKey 固定使用 sk-前2位***后4位格式，不包含完整凭据。
+	MaskedKey string `json:"masked_key"`
+}
+
+// NewAPICheckinAccountAPIKeySummary 是单个签到账号的 API Key 查询结果。
+type NewAPICheckinAccountAPIKeySummary struct {
+	// Site 是账号所属站点名。
+	Site string `json:"site"`
+	// UserID 是 NewApi 用户 ID。
+	UserID string `json:"user_id"`
+	// Status 是 ready、missing 或 error。
+	Status string `json:"status"`
+	// Message 是读取失败时的简短原因。
+	Message string `json:"message,omitempty"`
+	// APIKeys 是该账号已生成的脱敏 API Key 列表。
+	APIKeys []NewAPICheckinMaskedAPIKey `json:"api_keys"`
+}
+
+// NewAPICheckinAPIKeyPayload 是签到页面 API Key 列的只读载荷。
+type NewAPICheckinAPIKeyPayload struct {
+	// GeneratedAt 是本次读取完成时间。
+	GeneratedAt string `json:"generated_at"`
+	// AccountCount 是参与读取的启用账号数。
+	AccountCount int `json:"account_count"`
+	// AvailableCount 是至少有一个 API Key 的账号数。
+	AvailableCount int `json:"available_count"`
+	// MissingCount 是尚未生成 API Key 的账号数。
+	MissingCount int `json:"missing_count"`
+	// ErrorCount 是上游读取失败的账号数。
+	ErrorCount int `json:"error_count"`
+	// Accounts 按站点配置顺序返回每个账号的结果。
+	Accounts []NewAPICheckinAccountAPIKeySummary `json:"accounts"`
 }
 
 // NewAPICheckinSiteEnabledResult 是站点启停接口的返回值。
@@ -771,6 +812,58 @@ func (s *NewAPICheckinService) ConfigSummary(ctx context.Context) (NewAPICheckin
 		return NewAPICheckinConfigSummary{}, err
 	}
 	return s.configSummaryLocked(cfg), nil
+}
+
+// APIKeys 并发读取各签到账号已生成的 API Key，仅向页面返回脱敏摘要。
+func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKeyPayload, error) {
+	s.mu.Lock()
+	cfg, err := s.loadConfigLocked(ctx)
+	s.mu.Unlock()
+	if err != nil {
+		return NewAPICheckinAPIKeyPayload{}, err
+	}
+
+	type target struct {
+		site    NewAPICheckinSite
+		account NewAPICheckinAccount
+	}
+	targets := make([]target, 0)
+	for _, site := range cfg.Sites {
+		for _, account := range site.Accounts {
+			if account.Enabled {
+				targets = append(targets, target{site: site, account: account})
+			}
+		}
+	}
+
+	accounts := make([]NewAPICheckinAccountAPIKeySummary, len(targets))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(newAPICheckinAPIKeyConcurrency)
+	for index, item := range targets {
+		index, item := index, item
+		group.Go(func() error {
+			accounts[index] = s.queryAPIKeysLocked(groupCtx, item.site, item.account)
+			return nil
+		})
+	}
+	_ = group.Wait()
+
+	payload := NewAPICheckinAPIKeyPayload{
+		GeneratedAt:  s.nowText(),
+		AccountCount: len(accounts),
+		Accounts:     accounts,
+	}
+	for _, account := range accounts {
+		switch account.Status {
+		case "ready":
+			payload.AvailableCount++
+		case "missing":
+			payload.MissingCount++
+		default:
+			payload.ErrorCount++
+		}
+	}
+	return payload, nil
 }
 
 // LastRun 读取最近一次非空签到报告。
@@ -1637,6 +1730,51 @@ func (s *NewAPICheckinService) queryAccountSelfLocked(ctx context.Context, site 
 		result.payload["used_quota_display"] = formatNewAPIDisplayAmount(&used, status)
 	}
 	return result
+}
+
+func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount) NewAPICheckinAccountAPIKeySummary {
+	summary := NewAPICheckinAccountAPIKeySummary{
+		Site:    site.Name,
+		UserID:  account.UserID,
+		Status:  "missing",
+		APIKeys: []NewAPICheckinMaskedAPIKey{},
+	}
+	headers := map[string]string{
+		"Authorization": fmt.Sprintf("Bearer %s", account.AccessKey),
+		"New-Api-User":  account.UserID,
+	}
+	result := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/token/?p=1&size=100"), site.BaseURL, headers)
+	if !result.ok {
+		summary.Status = "error"
+		summary.Message = firstNonEmpty(result.message, "API Key 读取失败")
+		return summary
+	}
+
+	data := mapFromAny(result.payload["data"])
+	for _, raw := range sliceFromAny(data["items"]) {
+		item := mapFromAny(raw)
+		masked := maskNewAPIKey(cleanNewAPIText(item["key"]))
+		if masked == "" {
+			continue
+		}
+		summary.APIKeys = append(summary.APIKeys, NewAPICheckinMaskedAPIKey{
+			Name:      firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
+			MaskedKey: masked,
+		})
+	}
+	if len(summary.APIKeys) > 0 {
+		summary.Status = "ready"
+	}
+	return summary
+}
+
+func maskNewAPIKey(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "sk-")
+	if len(value) < 7 {
+		return ""
+	}
+	return "sk-" + value[:2] + "***" + value[len(value)-4:]
 }
 
 func (s *NewAPICheckinService) queryCheckinStatusLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount, status NewAPICheckinSiteStatus) NewAPICheckinStatusResult {
