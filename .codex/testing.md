@@ -141,3 +141,15 @@
 - PASS：Chrome 桌面与 390x844 验证默认仅含脱敏 Key，点击“显示”后才把完整 Key 写入 DOM，点击“隐藏”后恢复脱敏；窄屏页面无整体横向溢出，Key 可换行，控制台页面错误为 0。
 - LIMIT：Windows CGO 未启用，未执行 `go test -race`；已将并发测试的无锁 slice 改为有缓冲 channel，并连续运行聚焦测试验证。
 - 边界：未执行签到、月度同步、套餐/模型刷新、上游认证请求、Git commit、镜像构建或部署。
+
+## 2026-07-15 v0.1.155.2 蓝绿发布验证 - Devil
+
+- PASS：业务提交 `9e055eeba143`；后端聚焦测试、server build、Vitest 3/3、Vue typecheck 和生产构建通过。
+- PASS：首次镜像因主版本参数遗漏在候选前拒绝并删除；最终不可变镜像主版本=`v0.1.155`、image_version=`v0.1.155.2`、revision=`9e055eeba143`。
+- PASS：仅重建 idle green；候选完整冒烟通过，独立 65 秒观察窗 13 次 health=200、restart 0、关键日志新增 0。
+- PASS：nginx 配置检查、reload 和 blue -> green 切流通过；三入口状态码与主资源 SHA-256 一致。
+- PASS：切流后 13 组、三入口 39 次 health=200，green/proxy restart 0，严重日志新增 0；blue 回滚容器保持 healthy/restart 0。
+- PASS：线上主资源包含 Key 显示/隐藏代码且不含真实账号 Key；生产库保持 9 个启用账号、9 个 Key 长度 67。
+- PASS：Chrome 验证公开签到页桌面与 390x844 非空且无页面整体横向溢出。
+- LIMIT：管理 Chrome 登录态已过期且部署环境没有可用管理员密码，未验证登录态平台目录与版本徽标。
+- PASS：未调用上游、未签到、未刷新、未重启 PostgreSQL 或 Redis。

@@ -5023,6 +5023,17 @@ v0.1.149 拉取结果：
 - PASS：点击前完整 Key 不在 DOM；显示后 `aria-pressed=true` 且完整 Key 可见；隐藏后 `aria-pressed=false` 且完整 Key 从 DOM 移除。
 - 边界：仅查询生产数据库进行脱敏复核，未调用目标站点上游、未签到、未提交、未构建镜像、未部署。
 
+## 2026-07-15 v0.1.155.2 发布验证 - Devil
+
+- PASS：committed HEAD `9e055eeba143` 构建镜像 `sub2api:v0.1.155.2`，ImageID=`sha256:ed19ef17dfdcce6235d03a354d3fc8b76062a9a97483093a1a5953477873d8c9`。
+- PASS：最终二进制和 OCI 标签同时确认主版本 `v0.1.155`、镜像版本 `v0.1.155.2`、revision `9e055eeba143`。
+- PASS：候选 green `18082` 完整冒烟与 65 秒稳定观察通过后切流；active=`sub2api-green:8080`，rollback=`sub2api-blue:8080`。
+- PASS：切流后三入口完整冒烟、资源路径和 SHA-256 一致；65 秒健康采样及关键日志观察通过。
+- PASS：green、blue 均 healthy/restart 0，proxy running/restart 0；PostgreSQL、Redis 未重启。
+- PASS：线上静态主资源包含完整 Key 按需展示实现，不包含 8 个真实账号 Key；数据库保持 9/9 启用账号。
+- LIMIT：管理员登录态过期，未验证受保护页面的最终交互和版本徽标；公开签到页桌面/移动布局已由 Chrome 验证。
+- 边界：未执行上游请求、签到、套餐/模型刷新、Git push 或 registry push。
+
 ## 2026-07-15 - v0.1.155.1 sub2api 签到工具发布验证
 
 - 执行者：Devil。

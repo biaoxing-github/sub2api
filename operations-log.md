@@ -158,3 +158,14 @@
 - 增加 service、handler、Vitest 契约与交互测试；完成 Go 聚焦测试、server 构建、Vue typecheck、前端生产构建。
 - 启动本地 mock 预览，使用 Chrome 验证桌面与 390x844 页面、DOM 显示/隐藏、窄屏溢出和控制台错误；截图保存在系统临时目录，随后停止预览进程并删除临时脚本。
 - 本轮未执行 Git commit、镜像构建、蓝绿部署或上游 API 调用。
+
+## 2026-07-15 Devil - v0.1.155.2 提交构建部署验证
+
+- 提交完整 sub2 Key 按需展示改动 `9e055eeba143`，只包含本轮代码、测试和审计记录；排除 daemon、live probe 和临时请求文件。
+- 预提交运行后端聚焦测试、server build、Vitest、Vue typecheck 和前端 production build。
+- 备份部署 `.env` 与 active upstream；首次镜像因主版本参数遗漏在候选前拒绝并删除，随后从同一 committed HEAD 正确重建 `sub2api:v0.1.155.2`。
+- 仅更新并重建 idle green；候选冒烟、65 秒稳定观察和关键日志检查通过。
+- 通过 nginx 配置检查后从 blue 切流到 green，完成三入口冒烟、资源 SHA-256 和切流后 65 秒健康/日志观察。
+- 验证线上静态主资源包含显示/隐藏实现且不含真实 Key，生产库仍为 9 个启用账号；未请求上游或签到。
+- Chrome 验证公开签到页桌面/移动布局；管理登录态过期且无可用部署密码，未修改认证配置。
+- 最终 active green=`sub2api:v0.1.155.2`，rollback blue=`sub2api:v0.1.155.1`；PostgreSQL、Redis 未重启。
