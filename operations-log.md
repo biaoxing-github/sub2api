@@ -180,3 +180,12 @@
 - 创建一次性 detached worktree 组合验证低冲突候选；连续三次组合冲突后停止扩大范围并收敛到已成功组合项。
 - 移除存在测试依赖缺口的 Ops 投影组，剩余五项通过 repository、handler 编译、apicompat 和 service 测试。
 - 验证完成后清理一次性 worktree；未合并当前分支、未构建镜像、未部署。
+
+## 2026-07-15 Devil - v0.1.156 第一批更新合并
+
+- 通过 Obsidian REST、Memory、项目流水和 Git 状态复核前馈边界；确认主线已前进到 `34c2cc775`，用户原有未提交文件保持不动。
+- 使用 CodeGraph 定位 failover 与 OpenAI usage 相关入口，并确认本轮更新覆盖 handler、service、apicompat 三个既有边界。
+- 从最新 committed HEAD 创建隔离 worktree `D:\sub2api-src-156-batch1` 和分支 `codex/merge-v0.1.156-batch1`。
+- 按顺序以 `git cherry-pick -m 1` 合并 `1f91b69ca`、`65093591c`、`8d13bbbea`、`7cb8ece8d`、`65d744d0e`，全部无冲突。
+- 并行执行 repository、handler、apicompat/service 聚焦测试和后端全包编译，全部通过。
+- 本轮只完成第一批代码合并与本地验证；未改版本号、未构建镜像、未部署、未推送。

@@ -5178,6 +5178,14 @@ v0.1.149 拉取结果：
 - LIMIT：无可用管理员登录配置，未在线读取受保护版本接口；OCI 标签与线上资源已核验。
 - 边界：未执行真实 Key 追加/替换、签到、月度同步、Git push 或镜像 registry push。
 
+## 2026-07-15 - v0.1.156 第一批更新合并完成
+
+- 执行者：Devil。
+- PASS：GPT-5.6 长上下文成本、failover 代理日志、OAuth 图片实际尺寸、OpenAI 会话 seed 扫描优化、并行 tool_use index/ghost delta 修复已合并到 `codex/merge-v0.1.156-batch1`。
+- PASS：5 个上游 merge commit 均基于最新本地发布基线 `34c2cc775` 无冲突落地。
+- PASS：repository、handler 编译、apicompat、service 聚焦测试及后端全包编译全部通过。
+- 边界：当前线上仍为 `v0.1.155.9`；本轮未改版本、未构建部署、未推送。
+
 ## 2026-07-15 - v0.1.156 可更新项评估
 
 - 执行者：Devil。

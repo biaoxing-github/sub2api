@@ -291,3 +291,13 @@
 - OBSERVED：WebSocket 代理日志、内容审核热路径、Antigravity refresh token 在组合 cherry-pick 中出现上下文冲突，已降为手工适配。
 - OBSERVED：Ops 投影查询测试依赖当前主线不存在的 `normalizeSQLWhitespace`，已从第一批移出。
 - 边界：只拉取 tag 和执行临时探针；未合并当前分支、未构建镜像、未部署。
+
+## 2026-07-15 v0.1.156 第一批更新合并 - Devil
+
+- PASS：从最新已提交基线 `34c2cc775` 创建隔离分支 `codex/merge-v0.1.156-batch1`。
+- PASS：按 first-parent 语义使用 `git cherry-pick -m 1` 合并 5 个上游更新，无冲突。
+- PASS：`go test ./internal/repository -count=1`。
+- PASS：`go test ./internal/handler -run '^$' -count=1`。
+- PASS：`go test ./internal/pkg/apicompat ./internal/service -count=1`，包含新增图片尺寸、会话 seed 和并行 tool_use 测试。
+- PASS：`go test ./... -run '^$' -count=1`，后端全部 Go package 编译通过。
+- 边界：本轮未修改版本号、未构建镜像、未部署、未推送。
