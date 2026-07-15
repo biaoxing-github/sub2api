@@ -5147,3 +5147,13 @@ v0.1.149 拉取结果：
 - PASS：后端 NewAPICheckin service/repository/handler/routes 聚焦测试、前端 Vitest 3/3、Vue typecheck 和 diff check 通过。
 - PASS：平台目录弹窗在桌面与 390px 窄屏下可用，无前端 console warning/error。
 - 边界：未调用签到接口，未执行真实 Key 分组更新，未提交、构建镜像或部署。
+
+## 2026-07-15 - v0.1.155.3 发布完成
+
+- 执行者：Devil。
+- PASS：提交 `c47c17ba202d`，不可变镜像 `sub2api:v0.1.155.3` 已构建并核验。
+- PASS：迁移 176 已在备份后执行，active 从 green 零停机切换到 blue。
+- PASS：候选与线上三入口冒烟、静态资源哈希、超过 65 秒健康观察和严重日志检查通过。
+- PASS：blue `v0.1.155.3` healthy/restart 0；green `v0.1.155.2` healthy/restart 0；PostgreSQL、Redis running/restart 0。
+- PASS：线上静态资源包含登录凭据、登录测试、完整 Key 与 group_id 分组更新代码。
+- 边界：未把用户密码写入生产库，未执行签到或真实分组更新，未 push Git 或镜像。

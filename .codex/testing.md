@@ -175,3 +175,14 @@
 - PASS：本地页面 1280x720 与 390x844 平台目录弹窗无重叠，浏览器 console warning/error 为 0。
 - LIMIT：本地管理 API 未登录，浏览器账号目录为空；登录凭据弹窗、密码不回显、Key 显示和 group_id 提交由 Vitest 覆盖。
 - 边界：未签到、未执行真实分组更新、未提交、未构建镜像、未部署。
+
+## 2026-07-15 v0.1.155.3 蓝绿发布验证 - Devil
+
+- PASS：业务提交 `c47c17ba202d`，从 committed HEAD 构建 `sub2api:v0.1.155.3`，OCI 标签、ImageID 和二进制版本一致。
+- PASS：迁移 176 执行前完成 custom dump 备份，迁移后 51 个账号保留，两个登录字段在线存在且为空。
+- PASS：仅部署 idle blue；候选 health/首页/签到工具为 200，管理 API 和 Responses 未登录为 401。
+- PASS：候选与切流后观察窗均超过 65 秒，blue healthy/restart 0，新增应用严重日志和 proxy error 均为 0。
+- PASS：三入口主资源路径与 SHA-256 一致，线上静态代码包含登录凭据、登录测试和 group_id 能力。
+- PASS：active 已从 green 切到 blue；green `v0.1.155.2` 保持 healthy/restart 0 作为回滚目标。
+- PASS：PostgreSQL、Redis 未重启且 restart 0。
+- LIMIT：管理员登录态不可用，未执行生产页面凭据保存或真实分组更新；未签到、未月度同步。
