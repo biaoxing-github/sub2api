@@ -271,6 +271,16 @@
 - PASS：`git diff --check`，并确认公开 HTML 与生成 TypeScript 的余额逻辑标记一致。
 - 边界：复用数据库余额缓存，不发起新增上游请求；未提交、未部署。
 
+## 2026-07-15 v0.1.155.9 蓝绿发布验证 - Devil
+
+- PASS：提交 `f33701edc1a4`；最终不可变镜像 `sub2api:v0.1.155.9` 的 OCI revision、ImageID 和二进制 image_version 一致。
+- PASS：仅重建 idle green；候选功能检查、401 契约和独立 60 秒干净观察窗口通过。
+- PASS：代理从 blue 切到 green；切流后 7 轮三入口持续 200，green/proxy 新增关键日志为 0。
+- PASS：三入口主资源和签到页面 SHA-256 分别一致，签到页面均包含余额列标记。
+- PASS：green、blue、PostgreSQL、Redis 均 healthy/restart 0。
+- NOTE：`v0.1.155.8` 因二进制 image_version 为空在部署前拦截，未部署、未覆盖。
+- LIMIT：无管理员登录态，未在线核对版本下拉；未执行真实余额刷新、同步、Key/分组写入或签到。
+
 ## 2026-07-15 v0.1.156 tag 更新评估 - Devil
 
 - PASS：精确拉取 annotated tag `v0.1.156`，tag 对象 `9cc1b469a24e`，目标提交 `12f991dde8a5`。

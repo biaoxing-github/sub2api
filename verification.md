@@ -5236,6 +5236,16 @@ v0.1.149 拉取结果：
 - PASS：聚焦 Vitest、TypeScript 类型检查、生产构建、静态副本同步和 diff check 全部通过。
 - 边界：没有新增实时上游访问；未提交、未部署。
 
+## 2026-07-15 - v0.1.155.9 发布完成
+
+- 执行者：Devil。
+- PASS：功能提交 `f33701edc1a4`，最终镜像 `sub2api:v0.1.155.9` 从 committed HEAD 构建并核验版本信息。
+- PASS：仅部署 idle green，候选独立 60 秒观察窗口通过后，代理从 blue 零停机切换到 green。
+- PASS：切流后 7 次三入口健康采样、401 契约、资源哈希、余额列标记和关键日志检查通过。
+- PASS：active green `v0.1.155.9`、rollback blue `v0.1.155.7`、PostgreSQL、Redis 均 healthy/restart 0。
+- NOTE：失败候选 `v0.1.155.8` 未注入 image_version，未部署且未覆盖。
+- 边界：未执行真实余额刷新、上游同步、Key/分组写入、签到、Git push 或 registry push。
+
 ## 2026-07-15 - 签到 Key 数据库引用识别修复
 
 - 执行者：Devil。
