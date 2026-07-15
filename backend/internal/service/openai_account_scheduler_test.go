@@ -2623,6 +2623,25 @@ func TestOpenAIGatewayService_SchedulerWrappersAndDefaults(t *testing.T) {
 	require.Equal(t, 0.6, customWeights.TTFT)
 }
 
+func TestDefaultOpenAIAccountScheduler_LoadScorePrefersRemainingConcurrencyCapacity(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.SchedulerScoreWeights.Load = 1
+	scheduler := &defaultOpenAIAccountScheduler{
+		service: &OpenAIGatewayService{cfg: cfg},
+	}
+	accounts := []*Account{
+		{ID: 7101, Priority: 1, Concurrency: 10},
+		{ID: 7102, Priority: 1, Concurrency: 2},
+	}
+	plan := scheduler.buildOpenAIAccountLoadPlan(OpenAIAccountScheduleRequest{}, accounts, map[int64]*AccountLoadInfo{
+		7101: {AccountID: 7101, CurrentConcurrency: 2, LoadRate: 20},
+		7102: {AccountID: 7102, CurrentConcurrency: 0, LoadRate: 0},
+	})
+
+	require.Len(t, plan.candidates, 2)
+	require.Greater(t, plan.candidates[0].score, plan.candidates[1].score)
+}
+
 func TestDefaultOpenAIAccountScheduler_IsAccountTransportCompatible_Branches(t *testing.T) {
 	scheduler := &defaultOpenAIAccountScheduler{}
 	require.True(t, scheduler.isAccountTransportCompatible(nil, OpenAIUpstreamTransportAny))

@@ -361,6 +361,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 
 	minPriority, maxPriority := candidates[0].account.Priority, candidates[0].account.Priority
 	maxWaiting := 1
+	maxAvailableCapacity := 1
 	loadRateSum := 0.0
 	loadRateSumSquares := 0.0
 	minTTFT, maxTTFT := 0.0, 0.0
@@ -374,6 +375,9 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		}
 		if candidate.loadInfo.WaitingCount > maxWaiting {
 			maxWaiting = candidate.loadInfo.WaitingCount
+		}
+		if capacity := availableAccountCapacity(candidate.account, candidate.loadInfo); capacity > maxAvailableCapacity {
+			maxAvailableCapacity = capacity
 		}
 		if candidate.hasTTFT && candidate.ttft > 0 {
 			if !hasTTFTSample {
@@ -402,6 +406,9 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 			priorityFactor = 1 - float64(item.account.Priority-minPriority)/float64(maxPriority-minPriority)
 		}
 		loadFactor := 1 - clamp01(float64(item.loadInfo.LoadRate)/100.0)
+		capacityFactor := clamp01(float64(availableAccountCapacity(item.account, item.loadInfo)) / float64(maxAvailableCapacity))
+		// 并发容量是同优先级内的主要调度依据，负载率用于避免把请求继续压向已繁忙账号。
+		concurrencyFactor := 0.7*capacityFactor + 0.3*loadFactor
 		queueFactor := 1 - clamp01(float64(item.loadInfo.WaitingCount)/float64(maxWaiting))
 		errorFactor := 1 - clamp01(item.errorRate)
 		ttftFactor := 0.5
@@ -410,7 +417,7 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		}
 
 		item.score = weights.Priority*priorityFactor +
-			weights.Load*loadFactor +
+			weights.Load*concurrencyFactor +
 			weights.Queue*queueFactor +
 			weights.ErrorRate*errorFactor +
 			weights.TTFT*ttftFactor

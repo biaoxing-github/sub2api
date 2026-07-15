@@ -97,8 +97,36 @@
           </template>
 
           <template #cell-capacity="{ row: item }">
-            <div class="text-sm text-gray-700 dark:text-gray-300">
-              {{ t('admin.accountSchedulingPool.priority') }} {{ item.account.priority }}
+            <div class="flex items-center gap-1.5">
+              <label :for="`scheduling-priority-${item.account.id}`" class="sr-only">
+                {{ t('admin.accountSchedulingPool.priority') }}
+              </label>
+              <input
+                :id="`scheduling-priority-${item.account.id}`"
+                :value="priorityDrafts[item.account.id]"
+                type="number"
+                min="1"
+                step="1"
+                class="input h-8 w-20 px-2 py-1 text-sm"
+                :aria-label="t('admin.accountSchedulingPool.priorityFor', { name: item.account.name })"
+                :disabled="isSavingPriority(item.account.id)"
+                data-test="priority-input"
+                @input="setPriorityDraft(item.account.id, $event)"
+                @keydown.enter.prevent="savePriority(item)"
+              />
+              <button
+                type="button"
+                class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+                :disabled="!canSavePriority(item)"
+                :title="t('admin.accountSchedulingPool.savePriority')"
+                data-test="save-priority"
+                @click="savePriority(item)"
+              >
+                <Icon name="check" size="sm" :class="isSavingPriority(item.account.id) ? 'animate-pulse' : ''" />
+              </button>
+            </div>
+            <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accountSchedulingPool.priorityHint') }}
             </div>
             <div class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accountSchedulingPool.concurrency') }} {{ item.account.concurrency }}
@@ -163,7 +191,7 @@ import DataTable from '@/components/common/DataTable.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AccountAvailabilityRadarBadge from '@/components/account/AccountAvailabilityRadarBadge.vue'
-import { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels } from '@/api/admin/accounts'
+import { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels, update as updateAccount } from '@/api/admin/accounts'
 import groupsAPI from '@/api/admin/groups'
 import type { Column } from '@/components/common/types'
 import type {
@@ -192,6 +220,8 @@ const error = ref('')
 const message = ref('')
 const disablingIds = ref<Set<number>>(new Set())
 const probingIds = ref<Set<number>>(new Set())
+const savingPriorityIds = ref<Set<number>>(new Set())
+const priorityDrafts = reactive<Record<number, number | null>>({})
 
 let listAbortController: AbortController | null = null
 let searchTimer: number | null = null
@@ -271,7 +301,11 @@ async function loadPool() {
   loading.value = true
   error.value = ''
   try {
-    snapshot.value = await listSchedulingPool(buildFilters(), { signal: controller.signal })
+    const nextSnapshot = await listSchedulingPool(buildFilters(), { signal: controller.signal })
+    snapshot.value = nextSnapshot
+    for (const item of nextSnapshot.items) {
+      priorityDrafts[item.account.id] = item.account.priority
+    }
   } catch (err: any) {
     if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return
     error.value = err?.response?.data?.error || err?.message || t('admin.accountSchedulingPool.failedToLoad')
@@ -306,6 +340,52 @@ function resetFilters() {
 
 function resolveSchedulingPoolRowKey(item: OpenAIAccountSchedulingPoolItem): number {
   return item.account.id
+}
+
+function setPriorityDraft(accountId: number, event: Event) {
+  const value = (event.target as HTMLInputElement).value
+  priorityDrafts[accountId] = value === '' ? null : Number(value)
+}
+
+function normalizedPriority(accountId: number): number | null {
+  const value = priorityDrafts[accountId]
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : null
+}
+
+function canSavePriority(item: OpenAIAccountSchedulingPoolItem): boolean {
+  const priority = normalizedPriority(item.account.id)
+  return priority !== null && priority !== item.account.priority && !isSavingPriority(item.account.id)
+}
+
+function isSavingPriority(accountId: number): boolean {
+  return savingPriorityIds.value.has(accountId)
+}
+
+async function savePriority(item: OpenAIAccountSchedulingPoolItem) {
+  if (!canSavePriority(item)) return
+  const priority = normalizedPriority(item.account.id)
+  if (priority === null) return
+
+  const accountId = item.account.id
+  const nextSavingIds = new Set(savingPriorityIds.value)
+  nextSavingIds.add(accountId)
+  savingPriorityIds.value = nextSavingIds
+  message.value = ''
+  error.value = ''
+  try {
+    await updateAccount(accountId, { priority })
+    message.value = t('admin.accountSchedulingPool.priorityUpdated', {
+      name: item.account.name,
+      priority,
+    })
+    await loadPool()
+  } catch (err: any) {
+    error.value = err?.response?.data?.error || err?.message || t('admin.accountSchedulingPool.priorityUpdateFailed')
+  } finally {
+    const remainingSavingIds = new Set(savingPriorityIds.value)
+    remainingSavingIds.delete(accountId)
+    savingPriorityIds.value = remainingSavingIds
+  }
 }
 
 async function disableScheduling(item: OpenAIAccountSchedulingPoolItem) {

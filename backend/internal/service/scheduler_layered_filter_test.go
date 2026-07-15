@@ -99,6 +99,37 @@ func TestFilterByMinLoadRate(t *testing.T) {
 	})
 }
 
+func TestFilterByMaxAvailableCapacity(t *testing.T) {
+	t.Run("empty slice", func(t *testing.T) {
+		require.Empty(t, filterByMaxAvailableCapacity(nil))
+	})
+
+	t.Run("prefers more remaining concurrency slots", func(t *testing.T) {
+		accounts := []accountWithLoad{
+			{account: &Account{ID: 1, Concurrency: 4}, loadInfo: &AccountLoadInfo{CurrentConcurrency: 1}},
+			{account: &Account{ID: 2, Concurrency: 10}, loadInfo: &AccountLoadInfo{CurrentConcurrency: 3, WaitingCount: 1}},
+			{account: &Account{ID: 3, Concurrency: 8}, loadInfo: &AccountLoadInfo{CurrentConcurrency: 2}},
+		}
+
+		result := filterByMaxAvailableCapacity(accounts)
+		require.Len(t, result, 2)
+		require.Equal(t, int64(2), result[0].account.ID)
+		require.Equal(t, int64(3), result[1].account.ID)
+	})
+
+	t.Run("uses effective load factor", func(t *testing.T) {
+		loadFactor := 12
+		accounts := []accountWithLoad{
+			{account: &Account{ID: 1, Concurrency: 20, LoadFactor: &loadFactor}, loadInfo: &AccountLoadInfo{CurrentConcurrency: 5}},
+			{account: &Account{ID: 2, Concurrency: 10}, loadInfo: &AccountLoadInfo{CurrentConcurrency: 1}},
+		}
+
+		result := filterByMaxAvailableCapacity(accounts)
+		require.Len(t, result, 1)
+		require.Equal(t, int64(2), result[0].account.ID)
+	})
+}
+
 func TestSelectByLRU(t *testing.T) {
 	now := time.Now()
 	earlier := now.Add(-1 * time.Hour)
@@ -233,12 +264,16 @@ func TestLayeredFilterIntegration(t *testing.T) {
 		step1 := filterByMinPriority(accounts)
 		require.Len(t, step1, 3)
 
-		// 2. 取负载率最低的集合 → ID: 2, 3
-		step2 := filterByMinLoadRate(step1)
-		require.Len(t, step2, 2)
+		// 2. 取剩余并发槽最多的集合；本例容量相同，仍为 ID: 1, 2, 3
+		step2 := filterByMaxAvailableCapacity(step1)
+		require.Len(t, step2, 3)
 
-		// 3. LRU 选择 → ID: 3（muchEarlier 最早）
-		selected := selectByLRU(step2, false)
+		// 3. 取负载率最低的集合 → ID: 2, 3
+		step3 := filterByMinLoadRate(step2)
+		require.Len(t, step3, 2)
+
+		// 4. LRU 选择 → ID: 3（muchEarlier 最早）
+		selected := selectByLRU(step3, false)
 		require.NotNil(t, selected)
 		require.Equal(t, int64(3), selected.account.ID)
 	})
@@ -253,11 +288,14 @@ func TestLayeredFilterIntegration(t *testing.T) {
 		step1 := filterByMinPriority(accounts)
 		require.Len(t, step1, 3)
 
-		step2 := filterByMinLoadRate(step1)
+		step2 := filterByMaxAvailableCapacity(step1)
 		require.Len(t, step2, 3)
 
+		step3 := filterByMinLoadRate(step2)
+		require.Len(t, step3, 3)
+
 		// LRU 选择最早的
-		selected := selectByLRU(step2, false)
+		selected := selectByLRU(step3, false)
 		require.NotNil(t, selected)
 		require.Equal(t, int64(3), selected.account.ID)
 	})

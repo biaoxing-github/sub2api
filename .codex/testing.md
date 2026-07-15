@@ -291,3 +291,12 @@
 - OBSERVED：WebSocket 代理日志、内容审核热路径、Antigravity refresh token 在组合 cherry-pick 中出现上下文冲突，已降为手工适配。
 - OBSERVED：Ops 投影查询测试依赖当前主线不存在的 `normalizeSQLWhitespace`，已从第一批移出。
 - 边界：只拉取 tag 和执行临时探针；未合并当前分支、未构建镜像、未部署。
+
+## 2026-07-15 - 调度优先级与并发容量
+
+- PASS：`go test -tags unit ./internal/service -run 'TestFilterByMaxAvailableCapacity|TestFilterByMinPriority|TestFilterByMinLoadRate|TestLayeredFilterIntegration|TestDefaultOpenAIAccountScheduler_LoadScorePrefersRemainingConcurrencyCapacity|TestOpenAIGatewayService_SelectAccountWithScheduler_AdvancedLoadBalanceHonorsLowestPriorityFirst' -count=1`。
+- PASS：`pnpm exec vitest run src/views/admin/__tests__/AccountSchedulingPoolView.spec.ts`，8/8 通过。
+- PASS：`pnpm run typecheck`。
+- PASS：`pnpm run build`，945 modules transformed；仅有项目既有动态导入和大 chunk warning。
+- PASS：`git diff --check`。
+- LIMITED：应用内浏览器打开 `http://127.0.0.1:4180/admin/account-scheduling-pool` 后跳转登录页；确认应用非空且无框架错误覆盖层，因该端口无管理员登录态未做真实保存操作。

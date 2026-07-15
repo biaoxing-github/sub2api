@@ -3,11 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountSchedulingPoolView from '../AccountSchedulingPoolView.vue'
 
-const { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels } = vi.hoisted(() => ({
+const { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels, updateAccount } = vi.hoisted(() => ({
   listSchedulingPool: vi.fn(),
   setSchedulable: vi.fn(),
   manualProbeAccount: vi.fn(),
   getAvailableModels: vi.fn(),
+  updateAccount: vi.fn(),
 }))
 
 const { getAllGroups } = vi.hoisted(() => ({
@@ -20,11 +21,13 @@ vi.mock('@/api/admin/accounts', () => ({
     setSchedulable,
     manualProbeAccount,
     getAvailableModels,
+    update: updateAccount,
   },
   listSchedulingPool,
   setSchedulable,
   manualProbeAccount,
   getAvailableModels,
+  update: updateAccount,
 }))
 
 vi.mock('@/api/admin/groups', () => ({
@@ -86,6 +89,7 @@ describe('AccountSchedulingPoolView', () => {
     setSchedulable.mockReset()
     manualProbeAccount.mockReset()
     getAvailableModels.mockReset()
+    updateAccount.mockReset()
     getAllGroups.mockReset()
     getAvailableModels.mockResolvedValue([
       { id: 'gpt-5.4', display_name: 'GPT-5.4' },
@@ -187,6 +191,7 @@ describe('AccountSchedulingPoolView', () => {
       generated_at: '2026-06-09T10:00:00Z',
     })
     setSchedulable.mockResolvedValue({})
+    updateAccount.mockResolvedValue({})
     vi.spyOn(window, 'confirm').mockReturnValue(true)
   })
 
@@ -248,6 +253,30 @@ describe('AccountSchedulingPoolView', () => {
     expect(wrapper.text()).toContain('不稳定')
     expect(wrapper.text()).toContain('最近探测失败率升高')
     expect(wrapper.text()).toContain('成功率 50%')
+  })
+
+  it('updates account priority directly from the scheduling pool', async () => {
+    const wrapper = mount(AccountSchedulingPoolView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          DataTable: DataTableStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    const priorityInput = wrapper.find('[data-test="priority-input"]')
+    expect((priorityInput.element as HTMLInputElement).value).toBe('20')
+    await priorityInput.setValue('3')
+    await wrapper.find('[data-test="save-priority"]').trigger('click')
+    await flushPromises()
+
+    expect(updateAccount).toHaveBeenCalledWith(101, { priority: 3 })
+    expect(listSchedulingPool).toHaveBeenCalledTimes(2)
   })
 
   it('queries anthropic scheduling pool with the selected group', async () => {

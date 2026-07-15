@@ -1933,7 +1933,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 			routingLoadMap, _ := s.concurrencyService.GetAccountsLoadBatch(ctx, routingLoads)
 
-			// 3. 按负载感知排序
+			// 3. 按优先级、剩余并发容量和负载感知排序
 			var routingAvailable []accountWithLoad
 			for _, acc := range routingCandidates {
 				loadInfo := routingLoadMap[acc.ID]
@@ -1946,11 +1946,16 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 
 			if len(routingAvailable) > 0 {
-				// 排序：优先级 > 负载率 > 最后使用时间
+				// 排序：优先级 > 剩余并发槽 > 负载率 > 最后使用时间。
 				sort.SliceStable(routingAvailable, func(i, j int) bool {
 					a, b := routingAvailable[i], routingAvailable[j]
 					if a.account.Priority != b.account.Priority {
 						return a.account.Priority < b.account.Priority
+					}
+					aCapacity := availableAccountCapacity(a.account, a.loadInfo)
+					bCapacity := availableAccountCapacity(b.account, b.loadInfo)
+					if aCapacity != bCapacity {
+						return aCapacity > bCapacity
 					}
 					if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
 						return a.loadInfo.LoadRate < b.loadInfo.LoadRate
@@ -2205,13 +2210,15 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// 分层过滤选择：优先级 → 负载率 → LRU
+		// 分层过滤选择：优先级 → 剩余并发槽 → 负载率 → LRU
 		for len(available) > 0 {
 			// 1. 取优先级最小的集合
 			candidates := filterByMinPriority(available)
-			// 2. 取负载率最低的集合
+			// 2. 优先使用剩余并发槽最多的账号，让人工设置的并发容量真实参与调度。
+			candidates = filterByMaxAvailableCapacity(candidates)
+			// 3. 取负载率最低的集合
 			candidates = filterByMinLoadRate(candidates)
-			// 3. LRU 选择最久未用的账号
+			// 4. LRU 选择最久未用的账号
 			selected := selectByLRU(candidates, preferOAuth)
 			if selected == nil {
 				break
@@ -3079,6 +3086,41 @@ func filterByMinPriority(accounts []accountWithLoad) []accountWithLoad {
 	return result
 }
 
+// availableAccountCapacity 返回调度负载口径下尚未占用的并发槽数。
+func availableAccountCapacity(account *Account, loadInfo *AccountLoadInfo) int {
+	if account == nil {
+		return 0
+	}
+	capacity := account.EffectiveLoadFactor()
+	if loadInfo != nil {
+		capacity -= loadInfo.CurrentConcurrency + loadInfo.WaitingCount
+	}
+	if capacity < 0 {
+		return 0
+	}
+	return capacity
+}
+
+// filterByMaxAvailableCapacity 过滤出剩余并发槽最多的账号集合。
+func filterByMaxAvailableCapacity(accounts []accountWithLoad) []accountWithLoad {
+	if len(accounts) == 0 {
+		return accounts
+	}
+	maxCapacity := availableAccountCapacity(accounts[0].account, accounts[0].loadInfo)
+	for _, acc := range accounts[1:] {
+		if capacity := availableAccountCapacity(acc.account, acc.loadInfo); capacity > maxCapacity {
+			maxCapacity = capacity
+		}
+	}
+	result := make([]accountWithLoad, 0, len(accounts))
+	for _, acc := range accounts {
+		if availableAccountCapacity(acc.account, acc.loadInfo) == maxCapacity {
+			result = append(result, acc)
+		}
+	}
+	return result
+}
+
 // filterByMinLoadRate 过滤出负载率最低的账号集合
 func filterByMinLoadRate(accounts []accountWithLoad) []accountWithLoad {
 	if len(accounts) == 0 {
@@ -3182,7 +3224,7 @@ func sortAccountsByPriorityAndLastUsed(accounts []*Account, preferOAuth bool) {
 	shuffleWithinPriorityAndLastUsed(accounts, preferOAuth)
 }
 
-// shuffleWithinSortGroups 对排序后的 accountWithLoad 切片，按 (Priority, LoadRate, LastUsedAt) 分组后组内随机打乱。
+// shuffleWithinSortGroups 对排序后的 accountWithLoad 切片，按 (Priority, AvailableCapacity, LoadRate, LastUsedAt) 分组后组内随机打乱。
 // 防止并发请求读取同一快照时，确定性排序导致所有请求命中相同账号。
 func shuffleWithinSortGroups(accounts []accountWithLoad) {
 	if len(accounts) <= 1 {
@@ -3206,6 +3248,9 @@ func shuffleWithinSortGroups(accounts []accountWithLoad) {
 // sameAccountWithLoadGroup 判断两个 accountWithLoad 是否属于同一排序组
 func sameAccountWithLoadGroup(a, b accountWithLoad) bool {
 	if a.account.Priority != b.account.Priority {
+		return false
+	}
+	if availableAccountCapacity(a.account, a.loadInfo) != availableAccountCapacity(b.account, b.loadInfo) {
 		return false
 	}
 	if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
