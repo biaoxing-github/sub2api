@@ -5195,6 +5195,16 @@ v0.1.149 拉取结果：
 - OBSERVED：service 首次并发全量测试遇到支付测试共享唯一键碰撞；该测试在第一/第二阶段单独运行均通过，复跑全量通过，和本轮模块无代码关联。
 - 边界：线上仍为 `v0.1.155.9`；未修改版本号、未构建部署、未推送。
 
+## 2026-07-15 - v0.1.156 第三阶段并行融入完成
+
+- 执行者：Devil。
+- PASS：Responses 首输出超时、SSE 拼接 JSON、Read/Anthropic 收尾和根 `/models` 四组功能已在独立 worktree 并行完成并汇总。
+- PASS：首输出超时支持默认关闭、high/xhigh/max 独立配置、8 MiB 暂存上限和最多一次 failover。
+- PASS：SSE/WS 拼接 JSON 逐文档处理，尾部事件不会错误复用连接。
+- PASS：Read tool 参数和 Anthropic incomplete 具有完整终态；根 `/models` 与 `/v1/models` 使用同一 handler。
+- PASS：联合分支 service 全量、apicompat、handler、routes、config 聚焦测试和后端全包编译通过。
+- 边界：线上仍为 `v0.1.155.9`；未修改版本号、未构建部署、未推送。
+
 ## 2026-07-15 - v0.1.156 可更新项评估
 
 - 执行者：Devil。

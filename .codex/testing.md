@@ -311,3 +311,14 @@
 - PASS：`go test ./... -run '^$' -count=1`，后端全包编译通过。
 - PASS：Antigravity composable Vitest 2/2，`pnpm run typecheck` 通过。
 - 边界：未修改版本号、未构建镜像、未部署、未推送。
+
+## 2026-07-15 v0.1.156 第三阶段并行融入 - Devil
+
+- PASS：`go test ./internal/service -count=1`，联合分支 service 全量通过。
+- PASS：`go test ./internal/pkg/apicompat -count=1`，Anthropic/Read 收尾及既有协议测试通过。
+- PASS：handler 首输出/failover 聚焦测试和根 `/models` routes 测试通过。
+- PASS：新增首输出配置 3 项聚焦测试通过。
+- PASS：`go test ./... -run '^$' -count=1`，后端全包编译通过。
+- PASS：各并行分支分别完成聚焦测试、包测试和 diff check，汇总 cherry-pick 仅在 scanner 初始化点发生一次可组合冲突。
+- NOTE：config 既有 RequestHeaderTimeout 默认值测试与当前代码基线不一致，本轮未修改该无关行为。
+- 边界：未修改版本号、未构建镜像、未部署、未推送。

@@ -199,3 +199,13 @@
 - 上游取消端到端夹具连续三次停在本地调度前置条件后按闸门收敛，移除不兼容夹具，保留本地核心与入口编译验证。
 - service 首次全量并发测试遇到既有支付测试唯一键碰撞；提取精确失败后，在第一/第二阶段分别单跑通过，第二阶段全量复跑通过。
 - 完成后端全包编译、前端 Vitest 和 TypeScript 类型检查；未改版本号、未构建镜像、未部署、未推送。
+
+## 2026-07-15 Devil - v0.1.156 第三阶段并行融入
+
+- 从第二阶段提交 `70daf70d2` 创建第三阶段集成分支及 3 个独立功能 worktree，并行实现首输出超时、SSE 完整性和 tool 收尾；主线程实现根 `/models`。
+- SSE 组确认本地主线已覆盖空行 flush，且不存在 whitespace 图片 keepalive，仅移植真实存在的拼接 JSON 错误面。
+- tool 收尾组拆分为 Anthropic incomplete、Read 参数收尾和本地 StopReason 映射 3 个提交。
+- 首输出超时组按本地单文件流处理结构适配，上游 9 个初始失败收敛后，相关 28 项联合测试与 service 全量通过。
+- 汇总时 `openai_gateway_service.go` scanner 初始化发生一次冲突，按“动态 split 后包裹 JSON document scanner”组合两组语义。
+- 在汇总分支重新运行 service 全量、apicompat、handler、routes、config 聚焦测试和后端全包编译，全部通过。
+- 未修改版本号、未构建镜像、未部署、未推送。
