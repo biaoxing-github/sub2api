@@ -5187,6 +5187,16 @@ v0.1.149 拉取结果：
 - PASS：后端聚焦测试、仓储 SQL round-trip、管理路由、`cmd/server`、前端 Vitest 3/3、类型检查和生产构建通过。
 - 边界：仅本地代码与自动化测试验证，未写生产数据库、未提交、未部署。
 
+## 2026-07-15 - v0.1.155.6 发布完成
+
+- 执行者：Devil。
+- PASS：业务提交 `846875b18087`，不可变镜像 `sub2api:v0.1.155.6` 从 committed HEAD 构建并部署。
+- PASS：API Key 缓存迁移定向执行；仅更新 idle green，候选稳定后代理从 blue 零停机切换到 green。
+- PASS：候选和切流后各完成 60 秒干净观察；三入口资源哈希、同步功能标记、401 契约和关键日志检查通过。
+- PASS：active green `v0.1.155.6`、rollback blue `v0.1.155.5`、PostgreSQL、Redis 均 healthy/restart 0。
+- LIMIT：无管理员登录态，未在线核对版本下拉；未执行真实全量同步、Key 追加/替换或分组写入。
+- 边界：未执行签到、月度同步、Git push 或 registry push。
+
 ## 2026-07-15 - 签到 Key 数据库引用识别修复
 
 - 执行者：Devil。

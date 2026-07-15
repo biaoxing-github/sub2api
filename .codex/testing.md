@@ -234,3 +234,13 @@
 - PASS：`npm run test:run -- src/views/admin/tools/newapiCheckinLegacy.generated.test.ts`，3/3 通过，覆盖普通 GET 与手动 POST 同步。
 - PASS：`npm run typecheck`、`npm run build` 和 `git diff --check` 通过；构建仅有既有动态导入与 chunk size 警告。
 - 边界：未连接生产数据库，未提交、未构建 Docker 镜像、未部署。
+
+## 2026-07-15 v0.1.155.6 蓝绿发布验证 - Devil
+
+- PASS：提交 `846875b18087`，从 committed HEAD 构建最终镜像 `sub2api:v0.1.155.6`；OCI revision、运行 ImageID 和二进制 image_version 一致。
+- PASS：定向创建 API Key 缓存表，PostgreSQL 未重启；仅重建 idle green，候选完整冒烟通过。
+- PASS：启动期一次 `pq: canceling statement due to user request` 后重新建立独立 60 秒候选窗口，7 次采样健康且新增关键日志为 0。
+- PASS：代理从 blue 切到 green；切流后 61 秒三入口持续 200，green/proxy 新增关键日志为 0。
+- PASS：三入口主资源与签到页 SHA-256 分别一致；缓存 GET、同步 POST 和 Responses 未登录均为 401。
+- PASS：green、blue、PostgreSQL、Redis 均 healthy/restart 0。
+- LIMIT：浏览器无管理员登录态，未在线核对受保护版本接口和版本下拉；未执行真实同步或账号写入。
