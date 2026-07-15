@@ -41,6 +41,7 @@ var (
 type openAIWSDialError struct {
 	StatusCode      int
 	ResponseHeaders http.Header
+	ResponseBody    []byte
 	Err             error
 }
 
@@ -62,9 +63,12 @@ func (e *openAIWSDialError) Unwrap() error {
 }
 
 type openAIWSAcquireRequest struct {
-	Account         *Account
-	WSURL           string
-	Headers         http.Header
+	Account *Account
+	WSURL   string
+	Headers http.Header
+	// HeadersFactory is evaluated by dialConn so short-lived credentials are
+	// regenerated for every connection, including delayed prewarm dials.
+	HeadersFactory  func(context.Context, http.Header) (http.Header, error)
 	ProxyURL        string
 	TLSProfile      *tlsfingerprint.Profile // 当前账号上游握手使用的稳定 TLS 指纹
 	PreferredConnID string
@@ -535,6 +539,7 @@ type openAIWSAccountPool struct {
 	pinnedConns   map[string]int
 	changedCh     chan struct{}
 	creating      int
+	generation    uint64
 	lastCleanupAt time.Time
 	lastAcquire   *openAIWSAcquireRequest
 	prewarmActive bool
@@ -1405,6 +1410,7 @@ func (p *openAIWSConnPool) ensureTargetIdleAsync(accountID int64) {
 	}
 
 	var req openAIWSAcquireRequest
+	generation := uint64(0)
 	need := 0
 	ap, ok := p.getAccountPool(accountID)
 	if !ok || ap == nil {
@@ -1439,6 +1445,7 @@ func (p *openAIWSConnPool) ensureTargetIdleAsync(accountID int64) {
 		return
 	}
 	req = cloneOpenAIWSAcquireRequest(*ap.lastAcquire)
+	generation = ap.generation
 	ap.prewarmActive = true
 	if cooldown := p.prewarmCooldown(); cooldown > 0 {
 		ap.prewarmUntil = now.Add(cooldown)
@@ -1446,7 +1453,7 @@ func (p *openAIWSConnPool) ensureTargetIdleAsync(accountID int64) {
 	ap.creating += need
 	p.metrics.scaleUpTotal.Add(int64(need))
 
-	go p.prewarmConns(accountID, req, need)
+	go p.prewarmConns(accountID, req, need, generation)
 }
 
 func (p *openAIWSConnPool) targetConnCountLocked(ap *openAIWSAccountPool, maxConns int) int {
@@ -1489,7 +1496,11 @@ func (p *openAIWSConnPool) targetConnCountLocked(ap *openAIWSAccountPool, maxCon
 	return target
 }
 
-func (p *openAIWSConnPool) prewarmConns(accountID int64, req openAIWSAcquireRequest, total int) {
+func (p *openAIWSConnPool) prewarmConns(accountID int64, req openAIWSAcquireRequest, total int, generations ...uint64) {
+	generation := uint64(0)
+	if len(generations) > 0 {
+		generation = generations[0]
+	}
 	defer func() {
 		if ap, ok := p.getAccountPool(accountID); ok && ap != nil {
 			ap.mu.Lock()
@@ -1521,6 +1532,11 @@ func (p *openAIWSConnPool) prewarmConns(accountID int64, req openAIWSAcquireRequ
 			ap.mu.Unlock()
 			continue
 		}
+		if ap.generation != generation || ap.lastAcquire == nil {
+			ap.mu.Unlock()
+			conn.close()
+			continue
+		}
 		if len(ap.conns) >= p.effectiveMaxConnsByAccount(req.Account) {
 			ap.signalChangedLocked()
 			ap.mu.Unlock()
@@ -1533,6 +1549,36 @@ func (p *openAIWSConnPool) prewarmConns(accountID int64, req openAIWSAcquireRequ
 		ap.signalChangedLocked()
 		ap.mu.Unlock()
 	}
+}
+
+// ClearAccount closes all pooled connections and discards deferred prewarm
+// state. The generation guard keeps an in-flight prewarm from admitting a
+// connection created with the previous Agent Identity task.
+func (p *openAIWSConnPool) ClearAccount(accountID int64) {
+	if p == nil || accountID <= 0 {
+		return
+	}
+	ap, ok := p.getAccountPool(accountID)
+	if !ok || ap == nil {
+		return
+	}
+	ap.mu.Lock()
+	ap.generation++
+	conns := make([]*openAIWSConn, 0, len(ap.conns))
+	for id, conn := range ap.conns {
+		delete(ap.conns, id)
+		delete(ap.pinnedConns, id)
+		if conn != nil {
+			conns = append(conns, conn)
+		}
+	}
+	ap.lastAcquire = nil
+	ap.prewarmUntil = time.Time{}
+	ap.prewarmFails = 0
+	ap.prewarmFailAt = time.Time{}
+	ap.signalChangedLocked()
+	ap.mu.Unlock()
+	closeOpenAIWSConns(conns)
 }
 
 func (p *openAIWSConnPool) evictConn(accountID int64, connID string) {
@@ -1613,21 +1659,34 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 	if p == nil || p.clientDialer == nil {
 		return nil, errors.New("openai ws client dialer is nil")
 	}
+	headers := cloneHeader(req.Headers)
+	var err error
+	if req.HeadersFactory != nil {
+		headers, err = req.HeadersFactory(ctx, headers)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var (
 		conn             openAIWSClientConn
 		status           int
 		handshakeHeaders http.Header
-		err              error
 	)
 	if tlsDialer, ok := p.clientDialer.(openAIWSTLSClientDialer); ok && req.TLSProfile != nil {
-		conn, status, handshakeHeaders, err = tlsDialer.DialWithTLS(ctx, req.WSURL, req.Headers, req.ProxyURL, req.TLSProfile)
+		conn, status, handshakeHeaders, err = tlsDialer.DialWithTLS(ctx, req.WSURL, headers, req.ProxyURL, req.TLSProfile)
 	} else {
-		conn, status, handshakeHeaders, err = p.clientDialer.Dial(ctx, req.WSURL, req.Headers, req.ProxyURL)
+		conn, status, handshakeHeaders, err = p.clientDialer.Dial(ctx, req.WSURL, headers, req.ProxyURL)
 	}
 	if err != nil {
+		var handshakeErr *openAIWSHandshakeError
+		var responseBody []byte
+		if errors.As(err, &handshakeErr) && handshakeErr != nil {
+			responseBody = append([]byte(nil), handshakeErr.Body...)
+		}
 		return nil, &openAIWSDialError{
 			StatusCode:      status,
 			ResponseHeaders: cloneHeader(handshakeHeaders),
+			ResponseBody:    responseBody,
 			Err:             err,
 		}
 	}

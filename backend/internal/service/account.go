@@ -36,6 +36,8 @@ const (
 	CredentialOpenAICodexCLIUserAgent = "openai_codex_cli_user_agent"
 	// OpenAICodexCLISimulationEnabledExtraKey 控制单个 OpenAI 账号是否把上游请求模拟为 Codex CLI。
 	OpenAICodexCLISimulationEnabledExtraKey = "openai_codex_cli_simulation_enabled"
+	// OpenAIAuthModePersonalAccessToken 标记以个人访问令牌认证的 OAuth 账号。
+	OpenAIAuthModePersonalAccessToken = "personalAccessToken"
 )
 
 type APIKeyDisabledDetail struct {

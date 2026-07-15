@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -102,6 +103,8 @@ type AccountTestService struct {
 	cfg                       *config.Config
 	tlsFPProfileService       *TLSFingerprintProfileService
 	openAIPathHealthTracker   *OpenAIPathHealthTracker
+	agentIdentityTaskMu       sync.Mutex
+	agentIdentityWS           agentIdentityWSConnectionInvalidator
 }
 
 // NewAccountTestService creates a new AccountTestService
@@ -157,26 +160,43 @@ func (s *AccountTestService) buildOpenAITestResponsesRequest(ctx context.Context
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
-	gateway := &OpenAIGatewayService{cfg: cfg}
+	gateway := &OpenAIGatewayService{cfg: cfg, accountRepo: s.accountRepo}
 	isCodexCLI := openai.IsCodexOfficialClientByHeaders(c.GetHeader("User-Agent"), c.GetHeader("originator"))
 	if account != nil && (account.IsOpenAICodexCLISimulationEnabled() || account.IsOAuth()) {
 		isCodexCLI = true
 	}
 
+	var (
+		req *http.Request
+		err error
+	)
 	if strings.TrimSpace(requestPath) == "" {
-		return gateway.buildUpstreamRequestWithBaseURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, requestBaseURL)
+		req, err = gateway.buildUpstreamRequestWithBaseURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, requestBaseURL)
+	} else {
+		originalPath := c.Request.URL.Path
+		originalRawPath := c.Request.URL.RawPath
+		c.Request.URL.Path = requestPath
+		c.Request.URL.RawPath = ""
+		defer func() {
+			c.Request.URL.Path = originalPath
+			c.Request.URL.RawPath = originalRawPath
+		}()
+		req, err = gateway.buildUpstreamRequestWithBaseURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, requestBaseURL)
 	}
-
-	originalPath := c.Request.URL.Path
-	originalRawPath := c.Request.URL.RawPath
-	c.Request.URL.Path = requestPath
-	c.Request.URL.RawPath = ""
-	defer func() {
-		c.Request.URL.Path = originalPath
-		c.Request.URL.RawPath = originalRawPath
-	}()
-
-	return gateway.buildUpstreamRequestWithBaseURL(ctx, c, account, body, token, isStream, promptCacheKey, isCodexCLI, requestBaseURL)
+	if err != nil || account == nil || !account.IsOpenAIAgentIdentity() {
+		return req, err
+	}
+	authHeaders, authErr := buildAgentIdentityAuthenticationHeaders(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account)
+	if authErr != nil {
+		return nil, authErr
+	}
+	req.Header.Del("Authorization")
+	for key, values := range authHeaders {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	return req, nil
 }
 
 // applyOpenAITestClientHeaders 为管理端人工测试准备入站客户端身份。
@@ -717,9 +737,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 
 	if account.IsOAuth() {
 		isOAuth = true
-		// OAuth - use Bearer token with ChatGPT internal API
-		authToken = account.GetOpenAIAccessToken()
-		if authToken == "" {
+		// Agent Identity signs each request and does not persist an OAuth token.
+		if !account.IsOpenAIAgentIdentity() {
+			authToken = account.GetOpenAIAccessToken()
+		}
+		if authToken == "" && !account.IsOpenAIAgentIdentity() {
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
 
@@ -758,8 +780,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	payload := createOpenAITestPayload(testModelID, account)
 	payloadBytes, _ := json.Marshal(payload)
 
-	// Send test_start event
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	// Task recovery restarts this probe once without emitting duplicate events.
+	if !agentIdentityTaskRecoveryWasTried(ctx) {
+		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	}
 
 	// Get proxy URL
 	proxyURL := ""
@@ -812,6 +836,15 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			if resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)
 				_ = resp.Body.Close()
+				body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, account, body)
+				if !agentIdentityTaskRecoveryWasTried(ctx) && account.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
+					expectedTaskID := account.GetCredential("task_id")
+					if recoveryErr := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account, expectedTaskID); recoveryErr != nil {
+						return s.sendErrorAndEnd(c, fmt.Sprintf("Agent Identity task recovery failed: %s", recoveryErr.Error()))
+					}
+					c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
+					return s.testOpenAIAccountConnection(c, account, modelID, prompt, mode)
+				}
 				accountScheduled := s.scheduleOpenAIAPIKeyFromTestError(ctx, account, resp.StatusCode, body)
 				if !accountScheduled && resp.StatusCode == http.StatusTooManyRequests {
 					s.reconcileOpenAI429State(ctx, account, resp.Header, body)
@@ -907,8 +940,10 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 
 	switch {
 	case account.IsOAuth():
-		authToken = account.GetOpenAIAccessToken()
-		if authToken == "" {
+		if !account.IsOpenAIAgentIdentity() {
+			authToken = account.GetOpenAIAccessToken()
+		}
+		if authToken == "" && !account.IsOpenAIAgentIdentity() {
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
 	case account.Type == AccountTypeAPIKey:
@@ -936,7 +971,9 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	c.Writer.Flush()
 
 	payloadBytes, _ := json.Marshal(createOpenAICompactProbePayload(testModelID))
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	if !agentIdentityTaskRecoveryWasTried(ctx) {
+		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	}
 	c.Set(openAICompactSessionSeedKey, compactProbeSessionID(account.ID))
 
 	req, err := s.buildOpenAITestResponsesRequest(ctx, c, account, payloadBytes, authToken, false, "", requestBaseURL, "/v1/responses/compact")
@@ -961,6 +998,15 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, account, body)
+	if !agentIdentityTaskRecoveryWasTried(ctx) && account.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
+		expectedTaskID := account.GetCredential("task_id")
+		if recoveryErr := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, account, expectedTaskID); recoveryErr != nil {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Agent Identity task recovery failed: %s", recoveryErr.Error()))
+		}
+		c.Request = c.Request.WithContext(markAgentIdentityTaskRecoveryTried(ctx))
+		return s.testOpenAICompactConnection(c, account, testModelID)
+	}
 
 	accountScheduled := s.scheduleOpenAIAPIKeyFromTestError(ctx, account, resp.StatusCode, body)
 
