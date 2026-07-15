@@ -5014,6 +5014,17 @@ v0.1.149 拉取结果：
 - PASS：PostgreSQL、Redis 未重启。
 - 边界：未执行真实认证上游请求、Git push 或 registry push。
 
+## 2026-07-15 - v0.1.155.1 sub2api 签到工具发布验证
+
+- 执行者：Devil。
+- PASS：业务提交 `ab937dd48b7f`；不可变镜像 `sub2api:v0.1.155.1` 的 version、revision、ImageID 与 active blue 一致。
+- PASS：候选 `18083` 健康、静态资源和未授权路由冒烟通过；稳定观察后切流到 blue。
+- PASS：切流后三入口主资源及 SHA-256 一致，连续 60 秒 health=200，blue/proxy restart 0 且新增严重日志 0。
+- PASS：数据库备份后新增 `sub-vcnovb` 只读站点，后台签到关闭，账号 Key 仅脱敏复核为 `sk-90***84cd`。
+- PASS：nginx 当前 upstream 为 `sub2api-blue:8080`，配置检查通过；green `sub2api:v0.1.155` 保持 healthy/restart 0。
+- LIMIT：部署环境未配置管理员密码，未取得登录态页面截图；公开直链静态布局正常，但内联脚本受现有 CSP 限制。
+- LIMIT：`internal/server` 全包测试存在既有测试桩接口缺口；未执行真实远端刷新、签到、模型生成、Git push 或 registry push。
+
 ## 2026-07-15 sub2api 只读数据源与账号标识边界 - Devil
 
 - 已实现：`provider=sub2api` 只调用 `GET /v1/usage?days=30` 与 `GET /v1/models`，不进入签到、月度同步、NewAPI Key 枚举或名称同步流程。

@@ -118,3 +118,15 @@
 - PASS（用户停止检测前）：浏览器确认 sub2 站点不会出现可用签到/月度同步动作，并修正余额明细宽表布局。
 - 未执行：最终紧凑表格布局和 `POST /account-display-name` 手工标识接口未再运行测试或浏览器检查；原因是用户明确要求后续自行检测。
 - 未执行：提交、镜像构建、部署、线上数据库写入。
+
+## 2026-07-15 v0.1.155.1 蓝绿发布验证 - Devil
+
+- PASS：NewAPICheckin service、repository/migration、admin handler 聚焦测试和 server 二进制构建通过。
+- PASS：目标 Vitest 3/3、Vue typecheck 和前端生产构建通过。
+- PASS：从 committed HEAD `ab937dd48b7f` 构建不可变镜像 `sub2api:v0.1.155.1`，OCI version/revision、ImageID 和运行容器一致。
+- PASS：候选 `18083` 冒烟、未授权 401、60 秒稳定观察、三入口资源哈希一致和 green -> blue 切流通过。
+- PASS：切流后 12 次 health=200，blue healthy/restart 0，blue 严重日志 0，proxy error 日志 0。
+- PASS：生产库备份后幂等写入 `sub-vcnovb`，确认 `provider=sub2api`、后台签到关闭、Key 长度 67，脱敏为 `sk-90***84cd`。
+- PASS：公开嵌入页 1440px 静态布局无重叠；未点击签到、刷新或名称同步动作。
+- LIMIT：`internal/server` 全包测试因既有 `stubUserRepo` 接口缺口无法编译；管理登录态因部署密码为空未验证；公开直链内联脚本被现有 CSP 拦截。
+- PASS：PostgreSQL、Redis 未重启，green 回滚容器保持 healthy/restart 0。
