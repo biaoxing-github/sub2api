@@ -195,3 +195,15 @@
 - PASS：active 已从 green 切到 blue；green `v0.1.155.2` 保持 healthy/restart 0 作为回滚目标。
 - PASS：PostgreSQL、Redis 未重启且 restart 0。
 - LIMIT：管理员登录态不可用，未执行生产页面凭据保存或真实分组更新；未签到、未月度同步。
+
+## 2026-07-15 v0.1.155.4 蓝绿发布验证 - Devil
+
+- PASS：业务提交 `071b55713a6c`，从 committed HEAD 构建 `sub2api:v0.1.155.4`，OCI version/revision、ImageID 和二进制提交号一致。
+- PASS：仅部署 idle green；候选 health/首页/主资源/签到工具为 200，管理 API 和 Responses 未登录为 401。
+- PASS：候选运行 94 秒后 healthy/restart 0；启动期一次 `pq: canceling statement due to user request` 后新增严重日志为 0。
+- PASS：镜像静态代码包含 Key 关联 API、交互标记和引用高亮类名。
+- PASS：代理从 blue 零停机切到 green；三入口资源路径与 SHA-256 一致。
+- PASS：切流后 61 秒连续采样均为 200，green/proxy 新增严重日志为 0；green/blue 均 healthy/restart 0。
+- PASS：PostgreSQL、Redis 未重启且 healthy/restart 0。
+- LIMIT：部署环境无可用管理员登录配置，未在线读取受保护版本接口；未执行生产账号 Key 追加/替换。
+- 边界：未签到、未月度同步、未 Git push 或 registry push。

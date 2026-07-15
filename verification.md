@@ -5167,3 +5167,13 @@ v0.1.149 拉取结果：
 - PASS：Go 聚焦测试、server 编译、Vitest、Vue typecheck、Vite build、HTML/generated 同步检查、diff check 均通过。
 - PASS：桌面与移动浏览器弹窗验证通过，console warning/error 为 0。
 - LIMIT：未对生产账号执行真实追加或替换；未提交、未部署。
+
+## 2026-07-15 - v0.1.155.4 发布完成
+
+- 执行者：Devil。
+- PASS：提交 `071b55713a6c`，不可变镜像 `sub2api:v0.1.155.4` 已从 committed HEAD 构建并核验。
+- PASS：仅重建 idle green，候选稳定后代理从 blue 零停机切换到 green；blue `.3` 保持运行作为回滚。
+- PASS：候选和线上三入口冒烟、静态资源哈希、Key 关联静态标记、持续健康观察及严重日志检查通过。
+- PASS：green、blue、PostgreSQL、Redis 均 healthy/restart 0，数据库和缓存未重启。
+- LIMIT：无可用管理员登录配置，未在线读取受保护版本接口；OCI 标签与线上资源已核验。
+- 边界：未执行真实 Key 追加/替换、签到、月度同步、Git push 或镜像 registry push。
