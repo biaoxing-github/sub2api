@@ -5934,6 +5934,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 	defer putSSEScannerBuf64K(scanBuf)
+	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
 
 	streamInterval := time.Duration(0)
 	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
@@ -5986,9 +5987,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		markOpenAIRealClientOutputStarted(c)
 	}
 
-	for scanner.Scan() {
+	for documentScanner.Scan() {
 		resetStreamTimeout()
-		line := scanner.Text()
+		line := documentScanner.Text()
 		lineStartsClientOutput := false
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
@@ -6138,7 +6139,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
+	if err := documentScanner.Err(); err != nil {
 		if streamTimedOut.Load() {
 			if sawTerminalEvent && !sawFailedEvent {
 				if !clientDisconnected && !writePendingLines() {
@@ -7024,6 +7025,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	}
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
+	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
 
 	streamInterval := time.Duration(0)
 	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
@@ -7529,13 +7531,13 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	// 无超时/无 keepalive 的常见路径走同步扫描，减少 goroutine 与 channel 开销。
 	if streamInterval <= 0 && keepaliveInterval <= 0 {
 		defer putSSEScannerBuf64K(scanBuf)
-		for scanner.Scan() {
-			processSSELine(scanner.Text(), true)
+		for documentScanner.Scan() {
+			processSSELine(documentScanner.Text(), true)
 			if streamFailoverErr != nil {
 				return resultWithUsage(), streamFailoverErr
 			}
 		}
-		if result, err, done := handleScanErr(scanner.Err()); done {
+		if result, err, done := handleScanErr(documentScanner.Err()); done {
 			return result, err
 		}
 		return finalizeStream()
@@ -7561,13 +7563,13 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 	go func(scanBuf *sseScannerBuf64K) {
 		defer putSSEScannerBuf64K(scanBuf)
 		defer close(events)
-		for scanner.Scan() {
+		for documentScanner.Scan() {
 			atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
-			if !sendEvent(scanEvent{line: scanner.Text()}) {
+			if !sendEvent(scanEvent{line: documentScanner.Text()}) {
 				return
 			}
 		}
-		if err := scanner.Err(); err != nil {
+		if err := documentScanner.Err(); err != nil {
 			_ = sendEvent(scanEvent{err: err})
 		}
 	}(scanBuf)
