@@ -178,7 +178,7 @@ describe('mountNewapiCheckinLegacyTool', () => {
             provider: 'sub2api',
             enabled: true,
             base_url: 'https://sub2.example',
-            accounts: [{ name: 'primary', label: 'primary', user_id: 'primary', access_key_masked: 'sk-90***84cd' }]
+            accounts: [{ name: 'primary', label: 'primary', user_id: 'primary', access_key: 'sk-test-full-key', access_key_masked: 'sk-90***84cd' }]
           }]
         })
       }
@@ -195,7 +195,7 @@ describe('mountNewapiCheckinLegacyTool', () => {
             provider: 'sub2api',
             enabled: true,
             base_url: 'https://sub2.example',
-            accounts: [{ name: 'primary', display_name: 'owner@example.com', label: 'owner@example.com', user_id: 'primary', access_key_masked: 'sk-90***84cd' }]
+            accounts: [{ name: 'primary', display_name: 'owner@example.com', label: 'owner@example.com', user_id: 'primary', access_key: 'sk-test-full-key', access_key_masked: 'sk-90***84cd' }]
           }]
         })
       }
@@ -250,6 +250,17 @@ describe('mountNewapiCheckinLegacyTool', () => {
     const cleanup = mountNewapiCheckinLegacyTool(scope)
     await vi.waitFor(() => expect(root.querySelector('#configTableWrap')?.textContent).toContain('sub2api 只读'))
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('sk-90***84cd')
+    expect(root.querySelector('#configTableWrap')?.textContent).not.toContain('sk-test-full-key')
+
+    const revealKeyButton = Array.from(root.querySelectorAll('button')).find(button => button.textContent?.trim() === '显示')
+    expect(revealKeyButton).toBeTruthy()
+    revealKeyButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await vi.waitFor(() => expect(root.querySelector('#configTableWrap')?.textContent).toContain('sk-test-full-key'))
+
+    const hideKeyButton = Array.from(root.querySelectorAll('button')).find(button => button.textContent?.trim() === '隐藏')
+    expect(hideKeyButton).toBeTruthy()
+    hideKeyButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await vi.waitFor(() => expect(root.querySelector('#configTableWrap')?.textContent).not.toContain('sk-test-full-key'))
     expect(root.querySelector('#balanceAccountTable')?.textContent).toContain('尝鲜套餐')
     expect(root.querySelector('#balanceAccountTable')?.textContent).toContain('7648 Token')
     expect(root.querySelector('#balanceAccountTable')?.textContent).toContain('2 个模型')

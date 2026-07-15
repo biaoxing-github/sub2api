@@ -1044,6 +1044,29 @@
       color: var(--ink);
     }
 
+    .access-key-cell {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      min-width: 190px;
+      max-width: 380px;
+    }
+
+    .access-key-cell code {
+      display: block;
+      min-width: 0;
+      max-width: 310px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      user-select: all;
+    }
+
+    .access-key-cell .quick-action {
+      min-height: 28px;
+      flex: 0 0 auto;
+      padding: 3px 8px;
+    }
+
     .model-list {
       max-width: 360px;
       margin-top: 6px;
@@ -1571,6 +1594,7 @@
       monthlyStatusTimer: null,
       checkinStatusTimer: null,
       activeTab: "overview",
+      revealedAccessKeys: new Set(),
     };
 
     const statsGrid = document.getElementById("statsGrid");
@@ -2145,6 +2169,17 @@
           editAccountDisplayName(button.dataset.site, button.dataset.editAccountLabel, button);
         });
       });
+      Array.from(configTableWrap.querySelectorAll("[data-toggle-access-key][data-site][data-user-id]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          const accountKey = `${button.dataset.site}\u0000${button.dataset.userId}`;
+          if (state.revealedAccessKeys.has(accountKey)) {
+            state.revealedAccessKeys.delete(accountKey);
+          } else {
+            state.revealedAccessKeys.add(accountKey);
+          }
+          renderConfig(state.config);
+        });
+      });
       Array.from(configTableWrap.querySelectorAll("[data-delete-site]")).forEach((button) => {
         button.addEventListener("click", () => {
           deleteSite(button.dataset.deleteSite, button);
@@ -2359,8 +2394,26 @@
           const apiKeySummary = apiKeyAccounts.get(`${site.name}\u0000${account.user_id}`);
           let apiKeyHtml = '<span class="dim">读取中</span>';
           if (readOnly) {
-            apiKeyHtml = account.access_key_masked
-              ? `<code title="sub2api 访问 Key">${escapeHtml(account.access_key_masked)}</code>`
+            const accountKey = `${site.name}\u0000${account.user_id}`;
+            const keyRevealed = state.revealedAccessKeys.has(accountKey) && Boolean(account.access_key);
+            const displayedKey = keyRevealed ? account.access_key : account.access_key_masked;
+            apiKeyHtml = displayedKey
+              ? `
+                  <div class="access-key-cell">
+                    <code title="${keyRevealed ? "完整 sub2api 访问 Key" : "sub2api 访问 Key（已脱敏）"}">${escapeHtml(displayedKey)}</code>
+                    ${account.access_key ? `
+                      <button
+                        class="quick-action secondary"
+                        type="button"
+                        data-toggle-access-key
+                        data-site="${escapeHtml(site.name)}"
+                        data-user-id="${escapeHtml(account.user_id)}"
+                        aria-pressed="${keyRevealed ? "true" : "false"}"
+                        title="${keyRevealed ? "隐藏完整 Key" : "显示完整 Key"}"
+                      >${keyRevealed ? "隐藏" : "显示"}</button>
+                    ` : ""}
+                  </div>
+                `
               : '<span class="dim">已保存</span>';
           } else if (state.apiKeys?.load_error) {
             apiKeyHtml = '<span class="dim">读取失败</span>';

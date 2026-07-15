@@ -199,6 +199,8 @@ type NewAPICheckinConfigAccountSummary struct {
 	UserID string `json:"user_id"`
 	// IPProfile 是线路标记。
 	IPProfile string `json:"ip_profile"`
+	// AccessKey 是受保护管理页面按需展示的完整配置访问凭据。
+	AccessKey string `json:"access_key,omitempty"`
 	// AccessKeyMasked 是配置访问凭据的脱敏展示值。
 	AccessKeyMasked string `json:"access_key_masked,omitempty"`
 }
@@ -2356,6 +2358,7 @@ func (s *NewAPICheckinService) configSummaryLocked(cfg NewAPICheckinConfig) NewA
 				Label:           resolveNewAPIAccountLabel(account, NewAPICheckinBalanceAccount{}),
 				UserID:          account.UserID,
 				IPProfile:       account.IPProfile,
+				AccessKey:       account.AccessKey,
 				AccessKeyMasked: maskNewAPIKey(account.AccessKey),
 			})
 		}

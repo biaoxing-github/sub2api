@@ -5014,6 +5014,15 @@ v0.1.149 拉取结果：
 - PASS：PostgreSQL、Redis 未重启。
 - 边界：未执行真实认证上游请求、Git push 或 registry push。
 
+## 2026-07-15 sub-vcnovb 8 账号与完整 Key 展示验证 - Devil
+
+- PASS：生产库写入前已有 SQL 备份；8 个账号幂等写入后，`sub-vcnovb` 共 9 个账号，邮箱标识和独立出口档位均已落库。
+- PASS：完整访问 Key 只由受保护管理配置接口返回；页面默认展示 `sk-前2位***后4位`，按账号点击“显示/隐藏”切换。
+- PASS：后端聚焦测试、server 构建、前端 Vitest/typecheck/build 全部通过。
+- PASS：桌面 1564px 页面和 390x844 窄屏浏览器检查通过；窄屏 `document.scrollWidth === clientWidth`，目录表格使用内部横向滚动，完整 Key 正常换行。
+- PASS：点击前完整 Key 不在 DOM；显示后 `aria-pressed=true` 且完整 Key 可见；隐藏后 `aria-pressed=false` 且完整 Key 从 DOM 移除。
+- 边界：仅查询生产数据库进行脱敏复核，未调用目标站点上游、未签到、未提交、未构建镜像、未部署。
+
 ## 2026-07-15 - v0.1.155.1 sub2api 签到工具发布验证
 
 - 执行者：Devil。

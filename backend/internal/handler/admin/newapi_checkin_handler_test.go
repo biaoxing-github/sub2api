@@ -34,6 +34,7 @@ func TestNewAPICheckinHandlerConfigEnvelopeKeepsDisabledSiteVisible(t *testing.T
 	require.Equal(t, 1, payload.Data.EnabledSiteCount)
 	require.False(t, payload.Data.Sites[1].Enabled)
 	require.Equal(t, "turnstile-site", payload.Data.Sites[1].Name)
+	require.Equal(t, "key-a", payload.Data.Sites[0].Accounts[0].AccessKey)
 }
 
 // TestNewAPICheckinHandlerAPIKeysOnlyReturnsMaskedValues 验证接口响应不会泄露上游完整 API Key。

@@ -148,3 +148,13 @@
 - 确认 active blue=`sub2api:v0.1.155.1`、rollback green=`sub2api:v0.1.155`，两者均 healthy/restart 0；PostgreSQL、Redis 未重启。
 - 确认目标 sub2 站点尚未入库后，先备份配置表，再幂等写入 `sub-vcnovb` 和 `primary` 账号；只记录 Key 长度与 `sk-90***84cd` 脱敏值。
 - 浏览器检查公开嵌入页静态布局；部署环境管理员密码为空，未修改密码或伪造令牌，登录态页面验证保留为遗留边界。
+
+## 2026-07-15 Devil - sub-vcnovb 账号扩容与完整 Key 按需展示
+
+- 读取项目指导、Obsidian 项目/开发知识库入口、历史过程流水与签到工具既有实现边界。
+- 备份生产签到配置表后，向 `sub-vcnovb` 幂等写入 8 个账号，保存邮箱标识与 `ip-slot-sub2-01` 至 `ip-slot-sub2-08`。
+- 仅通过 SQL 脱敏复核账号数、Key 长度和首尾字符；未请求 `https://sub.vcnovb.cn/`，未执行签到或刷新。
+- 后端配置摘要增加完整 `access_key`；公共签到页面和管理端生成副本增加逐账号“显示/隐藏”，默认仍只渲染脱敏值。
+- 增加 service、handler、Vitest 契约与交互测试；完成 Go 聚焦测试、server 构建、Vue typecheck、前端生产构建。
+- 启动本地 mock 预览，使用 Chrome 验证桌面与 390x844 页面、DOM 显示/隐藏、窄屏溢出和控制台错误；截图保存在系统临时目录，随后停止预览进程并删除临时脚本。
+- 本轮未执行 Git commit、镜像构建、蓝绿部署或上游 API 调用。

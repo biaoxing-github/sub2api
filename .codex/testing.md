@@ -130,3 +130,14 @@
 - PASS：公开嵌入页 1440px 静态布局无重叠；未点击签到、刷新或名称同步动作。
 - LIMIT：`internal/server` 全包测试因既有 `stubUserRepo` 接口缺口无法编译；管理登录态因部署密码为空未验证；公开直链内联脚本被现有 CSP 拦截。
 - PASS：PostgreSQL、Redis 未重启，green 回滚容器保持 healthy/restart 0。
+
+## 2026-07-15 sub-vcnovb 账号扩容与完整 Key 按需展示 - Devil
+
+- PASS：写入前备份 `newapi_checkin_sites`、`newapi_checkin_accounts` 至 `D:\sub2api-deploy\db-backups\newapi-checkin-config-before-sub-vcnovb-8-accounts-20260715-124340.sql`。
+- PASS：生产 `sub-vcnovb` 幂等增加 8 个账号，总数由 1 增至 9；用户名、展示名使用提交邮箱，出口档位为 `ip-slot-sub2-01` 至 `ip-slot-sub2-08`。
+- PASS：数据库复核 8 个 Key 长度均为 67，仅输出 `sk-12***cc0c`、`sk-e5***f971`、`sk-6c***7428`、`sk-b5***035c`、`sk-06***08e4`、`sk-95***7254`、`sk-eb***3f00`、`sk-d6***8a4b`。
+- PASS：NewAPICheckin service 聚焦测试连续 3 轮通过；handler、repository 聚焦测试与 `go build ./cmd/server` 通过。
+- PASS：签到工具目标 Vitest 3/3、Vue typecheck、前端生产构建通过。
+- PASS：Chrome 桌面与 390x844 验证默认仅含脱敏 Key，点击“显示”后才把完整 Key 写入 DOM，点击“隐藏”后恢复脱敏；窄屏页面无整体横向溢出，Key 可换行，控制台页面错误为 0。
+- LIMIT：Windows CGO 未启用，未执行 `go test -race`；已将并发测试的无锁 slice 改为有缓冲 channel，并连续运行聚焦测试验证。
+- 边界：未执行签到、月度同步、套餐/模型刷新、上游认证请求、Git commit、镜像构建或部署。

@@ -76,14 +76,15 @@ func TestNewAPICheckinSetAccountDisplayName(t *testing.T) {
 	summary, err := svc.SetAccountDisplayName(context.Background(), "sub2-demo", "primary", "owner@example.com")
 	require.NoError(t, err)
 	require.Equal(t, "owner@example.com", summary.Sites[0].Accounts[0].DisplayName)
+	require.Equal(t, "sk-secret", summary.Sites[0].Accounts[0].AccessKey)
 	require.Equal(t, "owner@example.com", repo.config.Sites[0].Accounts[0].DisplayName)
 }
 
 // TestNewAPICheckinAPIKeysMasksGeneratedKeys 验证页面只接收带 sk- 前缀的脱敏 API Key。
 func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
-	var seen []string
+	seen := make(chan string, 2)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = append(seen, r.Method+" "+r.URL.String()+" "+r.Header.Get("Authorization")+" "+r.Header.Get("New-Api-User"))
+		seen <- r.Method + " " + r.URL.String() + " " + r.Header.Get("Authorization") + " " + r.Header.Get("New-Api-User")
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Header.Get("New-Api-User") {
 		case "1001":
@@ -113,6 +114,11 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
 	payload, err := svc.APIKeys(context.Background())
 	require.NoError(t, err)
+	close(seen)
+	requests := make([]string, 0, 2)
+	for request := range seen {
+		requests = append(requests, request)
+	}
 	require.Equal(t, 2, payload.AccountCount)
 	require.Equal(t, 1, payload.AvailableCount)
 	require.Equal(t, 1, payload.MissingCount)
@@ -123,8 +129,8 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	require.Equal(t, "sk-ab***5678", payload.Accounts[0].APIKeys[0].MaskedKey)
 	require.Equal(t, "missing", payload.Accounts[1].Status)
 	require.Empty(t, payload.Accounts[1].APIKeys)
-	require.Contains(t, seen, "GET /api/token/?p=1&size=100 Bearer access-a 1001")
-	require.Contains(t, seen, "GET /api/token/?p=1&size=100 Bearer access-b 1002")
+	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-a 1001")
+	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-b 1002")
 }
 
 // TestNewAPICheckinRefreshSub2AccountReadsUsageAndModelsOnly 验证 sub2 数据源只调用只读接口。
