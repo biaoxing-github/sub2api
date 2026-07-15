@@ -216,3 +216,13 @@
 - PASS：`vue-tsc --noEmit`、Vite 生产构建、HTML/generated 同步检查和 `git diff --check` 通过。
 - PASS：Browser 1280x720 打开平台目录，已引用卡片置顶、绿色高亮并显示“数据库已引用 · dawcode”；未引用卡片显示“可关联 · dawcode”；console warning/error 为 0。
 - 边界：浏览器使用只读模拟 API，未签到、未修改生产账号 Key、未提交、未部署。
+
+## 2026-07-15 v0.1.155.5 蓝绿发布验证 - Devil
+
+- PASS：业务提交 `9e0f58d64547`，从 committed HEAD 构建并核验 `sub2api:v0.1.155.5`，镜像标签、OCI revision 和二进制版本一致。
+- PASS：仅部署 idle blue；候选 health/首页/签到页面为 200，管理 API 和 Responses 未登录为 401。
+- PASS：首轮在切流前捕获一次启动期 `pq: canceling statement due to user request` 并停止；独立 80 秒新窗口中 blue healthy/restart 0、新增关键日志为 0。
+- PASS：代理从 green 零停机切到 blue；切流后 7 轮、61 秒三入口 health 全部为 200，blue/proxy 新增关键日志为 0。
+- PASS：三入口主资源和签到页面 SHA-256 分别一致，线上页面包含数据库引用标识、引用置顶和兼容站点标记。
+- PASS：blue `v0.1.155.5` 与 green `v0.1.155.4` 均 healthy/restart 0；PostgreSQL、Redis 未重启且 healthy/restart 0。
+- LIMIT：无管理员登录配置，未在线读取受保护版本接口；未执行生产账号 Key 追加/替换、签到或月度同步。

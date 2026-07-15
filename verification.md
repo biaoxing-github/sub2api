@@ -5186,3 +5186,13 @@ v0.1.149 拉取结果：
 - PASS：`dawclaudecode.com` 与 `api.dawclaudecode.com` 在协议、端口和规范化路径一致时可关联，页面可选择 `dawcode`。
 - PASS：后端聚焦测试、Vitest、类型检查、生产构建、静态副本同步、diff check 和 Browser 渲染验证通过。
 - 边界：只读验证，未签到、未执行真实 Key 追加/替换、未提交、未部署。
+
+## 2026-07-15 - v0.1.155.5 发布完成
+
+- 执行者：Devil。
+- PASS：提交 `9e0f58d64547`，不可变镜像 `sub2api:v0.1.155.5` 已从 committed HEAD 构建并核验。
+- PASS：仅重建 idle blue；启动期一次数据库清理取消触发切流前日志闸门，随后独立 80 秒候选窗口健康且新增关键日志为 0。
+- PASS：代理从 green 零停机切换到 blue；切流后 61 秒三入口连续健康、blue/proxy 新增关键日志为 0。
+- PASS：三入口资源路径、主资源哈希、签到页面哈希和三个功能标记一致；容器二进制 image_version=`v0.1.155.5`、commit=`9e0f58d64547`。
+- PASS：blue、green、PostgreSQL、Redis 均 healthy/restart 0，数据库和缓存未重启。
+- 边界：未执行真实 Key 追加/替换、签到、月度同步、Git push 或镜像 registry push。
