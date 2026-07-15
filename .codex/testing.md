@@ -300,3 +300,5 @@
 - PASS：`pnpm run build`，945 modules transformed；仅有项目既有动态导入和大 chunk warning。
 - PASS：`git diff --check`。
 - LIMITED：应用内浏览器打开 `http://127.0.0.1:4180/admin/account-scheduling-pool` 后跳转登录页；确认应用非空且无框架错误覆盖层，因该端口无管理员登录态未做真实保存操作。
+- PASS：`sub2api:v0.1.156.1` OCI 标签和二进制版本信息与提交 `fbef11c9eefe` 一致。
+- PASS：blue 候选 61 秒 7 轮、切流后 63 秒三入口 7 轮验证通过；主资源 SHA-256 一致，独立窗口关键日志为 0。

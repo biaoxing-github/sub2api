@@ -5187,6 +5187,13 @@ v0.1.149 拉取结果：
 - LIMITED：本地浏览器因缺少 `4180` 管理员登录态停留在登录页；组件交互由 Vitest 覆盖，未对真实账号执行优先级写入。
 - 边界：功能实现与本地验证已完成；发布状态以本次发布记录为准，未写数据库。
 
+### v0.1.156.1 发布验证
+
+- PASS：从提交 `fbef11c9eefe` 的干净归档构建 `sub2api:v0.1.156.1`，OCI 标签与二进制主版本、镜像版本、提交号一致。
+- PASS：仅重建 idle blue；候选独立 61 秒窗口 7 轮通过，启动窗口之外关键日志为 0。
+- PASS：nginx 检查和 reload 通过；切流后独立 63 秒窗口 7 轮三入口通过，资源哈希一致，blue/proxy 关键日志为 0。
+- PASS：active blue 与 rollback green 均 healthy/restart 0；PostgreSQL、Redis 未重启。
+
 ## 2026-07-15 - v0.1.156 可更新项评估
 
 - 执行者：Devil。
