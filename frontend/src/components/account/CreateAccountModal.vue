@@ -1522,11 +1522,15 @@
         :show-proxy-warning="form.platform !== 'openai' && !!form.proxy_id"
         :allow-multiple="form.platform === 'anthropic'"
         :show-cookie-option="form.platform === 'anthropic'"
-        :show-refresh-token-option="form.platform === 'openai' || form.platform === 'antigravity' || form.platform === 'grok'"
-        :show-mobile-refresh-token-option="form.platform === 'openai'"
+        :show-refresh-token-option="(form.platform === 'openai' && accountCategory === 'oauth-based') || form.platform === 'antigravity' || form.platform === 'grok'"
+        :show-mobile-refresh-token-option="form.platform === 'openai' && accountCategory === 'oauth-based'"
         :show-session-token-option="false"
         :show-access-token-option="false"
-        :show-codex-session-import-option="form.platform === 'openai'"
+        :show-codex-session-import-option="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'agent-identity')"
+        :show-manual-option="form.platform !== 'openai' || accountCategory === 'oauth-based'"
+        :initial-input-method="openAIInitialInputMethod"
+        :title-override="oauthStepTitle"
+        :agent-identity-only="form.platform === 'openai' && accountCategory === 'agent-identity'"
         :platform="form.platform"
         :show-project-id="geminiOAuthType === 'code_assist'"
         @generate-url="handleGenerateUrl"
@@ -1953,6 +1957,8 @@ const { t } = useI18n()
 const authStore = useAuthStore()
 
 const oauthStepTitle = computed(() => {
+  if (form.platform === 'openai' && accountCategory.value === 'agent-identity') return 'Agent Identity'
+  if (form.platform === 'openai' && accountCategory.value === 'codex-pat') return 'Codex PAT'
   if (form.platform === 'openai') return t('admin.accounts.oauth.openai.title')
   if (form.platform === 'grok') return t('admin.accounts.oauth.grok.title')
   if (form.platform === 'gemini') return t('admin.accounts.oauth.gemini.title')
@@ -2105,7 +2111,7 @@ interface TempUnschedRuleForm {
 // State
 const step = ref(1)
 const submitting = ref(false)
-const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
+const accountCategory = ref<'oauth-based' | 'agent-identity' | 'codex-pat' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const requestBaseUrlsText = ref('')
@@ -2261,6 +2267,13 @@ const openAIAccountTypeOptions = computed(() => [
     label: 'OAuth',
     description: t('admin.accounts.types.chatgptOauth'),
     icon: 'key' as const,
+  },
+  {
+    value: 'agent-identity',
+    label: 'Agent Identity',
+    description: t('admin.accounts.types.agentIdentity'),
+    icon: 'shield' as const,
+    testId: 'openai-account-type-agent-identity',
   },
   {
     value: 'apikey',
@@ -2519,7 +2532,14 @@ const isOAuthFlow = computed(() => {
   if (form.platform === 'anthropic' && accountCategory.value === 'bedrock') {
     return false
   }
-  return accountCategory.value === 'oauth-based'
+  return accountCategory.value === 'oauth-based' || accountCategory.value === 'agent-identity' || accountCategory.value === 'codex-pat'
+})
+
+const openAIInitialInputMethod = computed<AuthInputMethod>(() => {
+  if (form.platform !== 'openai') return 'manual'
+  if (accountCategory.value === 'agent-identity') return 'codex_session'
+  if (accountCategory.value === 'codex-pat') return 'codex_pat'
+  return 'manual'
 })
 
 const isManualInputMethod = computed(() => {
@@ -2596,8 +2616,8 @@ watch(
     }
     if ((form.platform === 'gemini' || form.platform === 'anthropic') && category === 'service_account') {
       form.type = 'service_account' as AccountType
-    } else if (category === 'oauth-based') {
-      form.type = method as AccountType // 'oauth' or 'setup-token'
+    } else if (category === 'oauth-based' || category === 'agent-identity' || category === 'codex-pat') {
+      form.type = form.platform === 'anthropic' ? method as AccountType : 'oauth'
     } else {
       form.type = 'apikey'
     }
@@ -2691,7 +2711,7 @@ watch(
 watch(
   [accountCategory, () => form.platform],
   ([category, platform]) => {
-    if (platform === 'openai' && category !== 'oauth-based') {
+    if (platform === 'openai' && category !== 'oauth-based' && category !== 'agent-identity' && category !== 'codex-pat') {
       codexCLIOnlyEnabled.value = false
     }
     if (platform !== 'anthropic' || category !== 'apikey') {
@@ -3777,11 +3797,36 @@ const formatCodexImportMessages = (messages?: CodexSessionImportMessage[]) => {
     .join('\n')
 }
 
+const isAgentIdentityImportContent = (content: string) => {
+  const isAgentIdentityValue = (value: unknown): boolean => {
+    if (Array.isArray(value)) return value.length > 0 && value.every(isAgentIdentityValue)
+    if (!value || typeof value !== 'object') return false
+    const record = value as Record<string, unknown>
+    return record.auth_mode === 'agentIdentity' && !!record.agent_identity && typeof record.agent_identity === 'object'
+  }
+
+  try {
+    return isAgentIdentityValue(JSON.parse(content))
+  } catch {
+    const lines = content.split('\n').map((line) => line.trim()).filter(Boolean)
+    if (lines.length === 0) return false
+    try {
+      return lines.every((line) => isAgentIdentityValue(JSON.parse(line)))
+    } catch {
+      return false
+    }
+  }
+}
+
 const handleOpenAIImportCodexSession = async (content: string) => {
   const oauthClient = openaiOAuth
   const trimmed = content.trim()
   if (!trimmed) {
     oauthClient.error.value = t('admin.accounts.oauth.openai.codexSessionEmpty')
+    return
+  }
+  if (accountCategory.value === 'agent-identity' && !isAgentIdentityImportContent(trimmed)) {
+    oauthClient.error.value = t('admin.accounts.oauth.openai.agentIdentityInvalid')
     return
   }
 
