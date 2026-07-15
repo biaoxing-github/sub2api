@@ -152,6 +152,12 @@ gateway:
   # OpenAI /responses per-account response header timeout before failover (seconds)
   # OpenAI /responses 单个账号等待响应头超时后切号（秒）
   openai_request_header_timeout_seconds: 60
+  # Native OpenAI HTTP Responses first semantic output timeout (seconds, 0=disabled)
+  # 原生 OpenAI HTTP Responses 首个语义输出超时（秒，0=关闭）
+  # 超时前会暂存单次尝试的 SSE 数据；超时切号可能产生重复上游计费。
+  openai_first_output_timeout_seconds: 0
+  # high/xhigh/max 推理的可选超时（秒，0=沿用标准值）
+  openai_high_effort_first_output_timeout_seconds: 0
   # Max request body size in bytes (default: 256MB)
   # 请求体最大字节数（默认 256MB）
   max_body_size: 268435456
