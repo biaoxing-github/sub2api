@@ -3981,6 +3981,7 @@ export default {
           codexSessionImportFailed: 'Failed to import Codex account',
           codexSessionImportSuccess: 'Import completed: created {created}, updated {updated}, skipped {skipped}',
           codexSessionImportPartial: 'Partial success: created {created}, updated {updated}, skipped {skipped}, failed {failed}',
+          agentIdentityAuth: 'Agent Identity auth.json',
           agentIdentityDesc: 'Import a Codex Agent Identity auth.json. No OAuth access or refresh token is stored.',
           agentIdentityInputLabel: 'Agent Identity auth.json',
           agentIdentityPlaceholder: 'Paste one Agent Identity auth.json object',
