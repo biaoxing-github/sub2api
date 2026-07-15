@@ -1004,6 +1004,9 @@ func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKey
 		for index := range accounts {
 			s.attachMainAccountReferences(&accounts[index], targets[index].site, mainAccounts)
 		}
+		sort.SliceStable(accounts, func(left, right int) bool {
+			return newAPICheckinSummaryHasReferences(accounts[left]) && !newAPICheckinSummaryHasReferences(accounts[right])
+		})
 	}
 
 	payload := NewAPICheckinAPIKeyPayload{
@@ -1049,7 +1052,7 @@ func (s *NewAPICheckinService) LinkAPIKeyToAccount(ctx context.Context, siteName
 	if err != nil {
 		return NewAPICheckinLinkAPIKeyResult{}, err
 	}
-	if target.Platform != PlatformOpenAI || target.Type != AccountTypeAPIKey || normalizeNewAPIAccountBaseURL(target.GetCredential("base_url")) != normalizeNewAPIAccountBaseURL(site.BaseURL) {
+	if target.Platform != PlatformOpenAI || target.Type != AccountTypeAPIKey || !newAPIAccountBaseURLsMatch(target.GetCredential("base_url"), site.BaseURL) {
 		return NewAPICheckinLinkAPIKeyResult{}, fmt.Errorf("目标账号与签到站点 URL 不匹配")
 	}
 	if operation == "append" {
@@ -1064,30 +1067,124 @@ func (s *NewAPICheckinService) LinkAPIKeyToAccount(ctx context.Context, siteName
 	return NewAPICheckinLinkAPIKeyResult{Site: site.Name, UserID: userID, APIKeyID: apiKeyID, TargetAccountID: target.ID, TargetAccountName: target.Name, Operation: operation, KeyCount: len(target.GetAPIKeys()), Message: "主平台账号 Key 已更新"}, nil
 }
 
-// attachMainAccountReferences 依据规范化站点 URL 标注可关联账号与已引用账号。
+// attachMainAccountReferences 从数据库 Key 标注引用关系，并按兼容站点 URL 提供可操作账号。
 func (s *NewAPICheckinService) attachMainAccountReferences(summary *NewAPICheckinAccountAPIKeySummary, site NewAPICheckinSite, accounts []Account) {
-	baseURL := normalizeNewAPIAccountBaseURL(site.BaseURL)
 	for keyIndex := range summary.APIKeys {
 		key := &summary.APIKeys[keyIndex]
 		for index := range accounts {
 			account := &accounts[index]
-			if account.Type != AccountTypeAPIKey || normalizeNewAPIAccountBaseURL(account.GetCredential("base_url")) != baseURL {
+			if account.Type != AccountTypeAPIKey {
 				continue
 			}
 			referenced := false
 			for _, existing := range storedAccountAPIKeys(account.Credentials) {
-				if strings.TrimSpace(existing) == key.fullKey {
+				if newAPIGeneratedKeyMatchesStored(key.fullKey, existing) {
 					referenced = true
 					break
 				}
 			}
 			ref := NewAPICheckinAccountReference{ID: account.ID, Name: account.Name, Referenced: referenced}
-			key.TargetAccounts = append(key.TargetAccounts, ref)
 			if referenced {
 				key.ReferencedAccounts = append(key.ReferencedAccounts, ref)
 			}
+			if newAPIAccountBaseURLsMatch(account.GetCredential("base_url"), site.BaseURL) {
+				key.TargetAccounts = append(key.TargetAccounts, ref)
+			}
+		}
+		sort.SliceStable(key.TargetAccounts, func(left, right int) bool {
+			return key.TargetAccounts[left].Referenced && !key.TargetAccounts[right].Referenced
+		})
+	}
+	sort.SliceStable(summary.APIKeys, func(left, right int) bool {
+		return len(summary.APIKeys[left].ReferencedAccounts) > 0 && len(summary.APIKeys[right].ReferencedAccounts) == 0
+	})
+}
+
+// newAPICheckinSummaryHasReferences 判断签到账号是否包含数据库已引用 Key，用于账号级置顶。
+func newAPICheckinSummaryHasReferences(summary NewAPICheckinAccountAPIKeySummary) bool {
+	for _, key := range summary.APIKeys {
+		if len(key.ReferencedAccounts) > 0 {
+			return true
 		}
 	}
+	return false
+}
+
+// newAPIGeneratedKeyMatchesStored 使用 NewAPI 固定的前4位、后4位脱敏格式匹配数据库完整 Key。
+func newAPIGeneratedKeyMatchesStored(generated, stored string) bool {
+	generated = normalizeNewAPIFullKey(generated)
+	stored = normalizeNewAPIFullKey(stored)
+	if generated == "" || stored == "" {
+		return false
+	}
+	if generated == stored {
+		return true
+	}
+	firstMask := strings.IndexByte(generated, '*')
+	lastMask := strings.LastIndexByte(generated, '*')
+	if firstMask <= len("sk-") || lastMask < firstMask || lastMask+1 >= len(generated) {
+		return false
+	}
+	prefix := generated[:firstMask]
+	suffix := generated[lastMask+1:]
+	return len(suffix) >= 4 && strings.HasPrefix(stored, prefix) && strings.HasSuffix(stored, suffix)
+}
+
+// newAPIAccountBaseURLsMatch 兼容根域名与 api. 子域名，以及常见 /v1 后缀差异。
+func newAPIAccountBaseURLsMatch(left, right string) bool {
+	left = normalizeNewAPIAccountBaseURL(left)
+	right = normalizeNewAPIAccountBaseURL(right)
+	if left == right {
+		return true
+	}
+	leftURL, leftErr := url.Parse(left)
+	rightURL, rightErr := url.Parse(right)
+	if leftErr != nil || rightErr != nil || leftURL.Host == "" || rightURL.Host == "" {
+		return false
+	}
+	leftHost := strings.TrimPrefix(strings.ToLower(leftURL.Hostname()), "api.")
+	rightHost := strings.TrimPrefix(strings.ToLower(rightURL.Hostname()), "api.")
+	return leftURL.Scheme == rightURL.Scheme && leftHost == rightHost && leftURL.Port() == rightURL.Port() && leftURL.Path == rightURL.Path
+}
+
+// resolveStoredFullAPIKey 将上游脱敏 Key 映射为数据库中唯一的完整 Key。
+func (s *NewAPICheckinService) resolveStoredFullAPIKey(ctx context.Context, generated string) (string, error) {
+	generated = normalizeNewAPIFullKey(generated)
+	if generated == "" {
+		return "", fmt.Errorf("上游未返回 API Key")
+	}
+	if !strings.Contains(generated, "*") {
+		return generated, nil
+	}
+	if s.accountRepo == nil {
+		return "", fmt.Errorf("上游仅返回脱敏 Key，主平台账号数据库不可用")
+	}
+	accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+	if err != nil {
+		return "", fmt.Errorf("读取主平台账号失败: %w", err)
+	}
+	matches := map[string]struct{}{}
+	for index := range accounts {
+		if accounts[index].Type != AccountTypeAPIKey {
+			continue
+		}
+		for _, stored := range storedAccountAPIKeys(accounts[index].Credentials) {
+			stored = normalizeNewAPIFullKey(stored)
+			if newAPIGeneratedKeyMatchesStored(generated, stored) {
+				matches[stored] = struct{}{}
+			}
+		}
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("上游仅返回脱敏 Key，主平台数据库未找到对应完整 Key")
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("脱敏 Key 匹配到多个不同完整 Key，无法安全关联")
+	}
+	for key := range matches {
+		return key, nil
+	}
+	return "", fmt.Errorf("主平台数据库未找到对应完整 Key")
 }
 
 // storedAccountAPIKeys 返回账号保存的全部 Key，包括暂时禁用的 Key，用于准确标记引用关系。
@@ -1151,9 +1248,9 @@ func (s *NewAPICheckinService) RevealAPIKey(ctx context.Context, siteName, userI
 	if err != nil {
 		return NewAPICheckinAPIKeyRevealResult{}, err
 	}
-	key := normalizeNewAPIFullKey(cleanNewAPIText(item["key"]))
-	if key == "" {
-		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("上游 token %d 未返回完整 API Key", apiKeyID)
+	key, err := s.resolveStoredFullAPIKey(ctx, cleanNewAPIText(item["key"]))
+	if err != nil {
+		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("读取 token %d 完整 API Key 失败: %w", apiKeyID, err)
 	}
 	return NewAPICheckinAPIKeyRevealResult{
 		Site: site.Name, UserID: account.UserID, APIKeyID: apiKeyID,

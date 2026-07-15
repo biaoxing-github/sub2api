@@ -116,11 +116,18 @@ describe('mountNewapiCheckinLegacyTool', () => {
             {
               site: 'demo', provider: 'newapi', user_id: '1001', status: 'ready',
               group_status: 'ready', group_message: '已读取上游完整可用分组', available_groups: ['codex-team', 'default'],
-              api_keys: [{
-                id: 7, name: 'codex', masked_key: 'sk-ab***5678', group: 'codex-team',
-                referenced_accounts: [{ id: 91, name: 'demo-main', referenced: true }],
-                target_accounts: [{ id: 91, name: 'demo-main', referenced: true }]
-              }]
+              api_keys: [
+                {
+                  id: 8, name: 'other', masked_key: 'sk-zz***yyyy', group: 'default',
+                  referenced_accounts: [],
+                  target_accounts: [{ id: 91, name: 'demo-main', referenced: false }]
+                },
+                {
+                  id: 7, name: 'codex', masked_key: 'sk-ab***5678', group: 'codex-team',
+                  referenced_accounts: [{ id: 91, name: 'demo-main', referenced: true }],
+                  target_accounts: [{ id: 91, name: 'demo-main', referenced: true }]
+                }
+              ]
             },
             { site: 'demo', provider: 'newapi', user_id: '1002', status: 'missing', group_status: 'partial', group_message: '仅展示已知分组', available_groups: ['default'], api_keys: [] }
           ]
@@ -183,6 +190,7 @@ describe('mountNewapiCheckinLegacyTool', () => {
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('未生成')
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('已引用 · demo-main')
     expect(root.querySelector('.api-key-item.referenced')).toBeTruthy()
+    expect(root.querySelector('.api-key-item')?.textContent).toContain('sk-ab***5678')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/admin/newapi-checkin/api-keys',
       expect.any(Object)

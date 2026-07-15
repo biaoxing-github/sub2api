@@ -5177,3 +5177,12 @@ v0.1.149 拉取结果：
 - PASS：green、blue、PostgreSQL、Redis 均 healthy/restart 0，数据库和缓存未重启。
 - LIMIT：无可用管理员登录配置，未在线读取受保护版本接口；OCI 标签与线上资源已核验。
 - 边界：未执行真实 Key 追加/替换、签到、月度同步、Git push 或镜像 registry push。
+
+## 2026-07-15 - 签到 Key 数据库引用识别修复
+
+- 执行者：Devil。
+- PASS：确认根因是上游 NewAPI 仅返回脱敏 Key，旧逻辑却与数据库完整 Key 做精确比较；URL 严格匹配同时遗漏根域名与 `api.` 子域名关系。
+- PASS：引用关系改为从主账号数据库 Key 匹配；已引用账号和 Key 置顶并在页面显示数据库账号名称与绿色高亮。
+- PASS：`dawclaudecode.com` 与 `api.dawclaudecode.com` 在协议、端口和规范化路径一致时可关联，页面可选择 `dawcode`。
+- PASS：后端聚焦测试、Vitest、类型检查、生产构建、静态副本同步、diff check 和 Browser 渲染验证通过。
+- 边界：只读验证，未签到、未执行真实 Key 追加/替换、未提交、未部署。

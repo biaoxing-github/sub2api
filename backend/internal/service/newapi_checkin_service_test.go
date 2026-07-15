@@ -44,7 +44,61 @@ func TestNewAPICheckinAttachMainAccountReferences(t *testing.T) {
 	require.Len(t, summary.APIKeys[0].TargetAccounts, 1)
 	require.Equal(t, int64(11), summary.APIKeys[0].TargetAccounts[0].ID)
 	require.True(t, summary.APIKeys[0].TargetAccounts[0].Referenced)
+	require.Len(t, summary.APIKeys[0].ReferencedAccounts, 2)
+	require.Equal(t, []int64{11, 12}, []int64{summary.APIKeys[0].ReferencedAccounts[0].ID, summary.APIKeys[0].ReferencedAccounts[1].ID})
+}
+
+// TestNewAPICheckinAttachMainAccountReferencesMatchesMaskedKeyAndAPISubdomain 验证真实 NewAPI 脱敏 Key 可从数据库识别，并兼容 api. 子域名。
+func TestNewAPICheckinAttachMainAccountReferencesMatchesMaskedKeyAndAPISubdomain(t *testing.T) {
+	svc := NewNewAPICheckinService(NewAPICheckinOptions{})
+	summary := NewAPICheckinAccountAPIKeySummary{APIKeys: []NewAPICheckinAPIKeySummary{
+		{ID: 8, MaskedKey: "sk-zz***yyyy", fullKey: "sk-zzzz**********yyyy"},
+		{ID: 7, MaskedKey: "sk-4e***LIrz", fullKey: "sk-4eAb**********LIrz"},
+	}}
+	storedKey := "sk-4eAb123456789012345678901234567890123456789LIrz"
+	svc.attachMainAccountReferences(&summary, NewAPICheckinSite{BaseURL: "https://dawclaudecode.com"}, []Account{
+		{ID: 491, Name: "dawcode", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
+			"base_url": "https://api.dawclaudecode.com/v1", "api_key": storedKey,
+		}},
+	})
+
+	require.Equal(t, []int64{7, 8}, []int64{summary.APIKeys[0].ID, summary.APIKeys[1].ID})
 	require.Len(t, summary.APIKeys[0].ReferencedAccounts, 1)
+	require.Equal(t, int64(491), summary.APIKeys[0].ReferencedAccounts[0].ID)
+	require.Len(t, summary.APIKeys[0].TargetAccounts, 1)
+	require.True(t, summary.APIKeys[0].TargetAccounts[0].Referenced)
+	require.Empty(t, summary.APIKeys[1].ReferencedAccounts)
+	require.Len(t, summary.APIKeys[1].TargetAccounts, 1)
+}
+
+// TestNewAPICheckinRevealMaskedKeyUsesDatabaseFullKey 验证上游只返回脱敏 Key 时从主账号数据库读取唯一完整值。
+func TestNewAPICheckinRevealMaskedKeyUsesDatabaseFullKey(t *testing.T) {
+	storedKey := "sk-4eAb123456789012345678901234567890123456789LIrz"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"codex","key":"4eAb**********LIrz","group":"default"}]}}`))
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{"sites": []map[string]any{{
+		"name": "dawclaudecode", "enabled": true, "base_url": upstream.URL,
+		"accounts": []map[string]any{{"name": "alpha", "user_id": "1001", "access_key": "access-a"}},
+	}}})
+	accountRepo := &newAPICheckinAccountRepoStub{accounts: []Account{{
+		ID: 491, Name: "dawcode", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"base_url": upstream.URL, "api_key": storedKey},
+	}}}
+	svc := NewNewAPICheckinService(NewAPICheckinOptions{Repository: repo, AccountRepository: accountRepo, HTTPClient: upstream.Client()})
+
+	revealed, err := svc.RevealAPIKey(context.Background(), "dawclaudecode", "1001", 7)
+	require.NoError(t, err)
+	require.Equal(t, storedKey, revealed.Key)
+
+	linked, err := svc.LinkAPIKeyToAccount(context.Background(), "dawclaudecode", "1001", 7, 491, "append")
+	require.NoError(t, err)
+	require.Equal(t, int64(491), linked.TargetAccountID)
+	require.NotNil(t, accountRepo.updated)
+	require.Equal(t, []string{storedKey}, accountRepo.updated.GetAPIKeys())
 }
 
 func fixedNewAPICheckinNow() time.Time {

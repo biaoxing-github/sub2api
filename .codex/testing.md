@@ -207,3 +207,12 @@
 - PASS：PostgreSQL、Redis 未重启且 healthy/restart 0。
 - LIMIT：部署环境无可用管理员登录配置，未在线读取受保护版本接口；未执行生产账号 Key 追加/替换。
 - 边界：未签到、未月度同步、未 Git push 或 registry push。
+
+## 2026-07-15 签到 Key 数据库引用识别修复 - Devil
+
+- PASS：生产数据只读对比确认 NewAPI token 列表返回脱敏 Key，主账号数据库保存完整 Key；旧精确比较无法命中。
+- PASS：`go test ./internal/service -run NewAPICheckin -count=1`，覆盖脱敏 Key 匹配、数据库完整 Key 解析、引用置顶和 `api.` 子域名兼容。
+- PASS：签到工具 Vitest 3/3，覆盖已引用 Key 在未引用 Key 之前渲染，并显示数据库账号名称。
+- PASS：`vue-tsc --noEmit`、Vite 生产构建、HTML/generated 同步检查和 `git diff --check` 通过。
+- PASS：Browser 1280x720 打开平台目录，已引用卡片置顶、绿色高亮并显示“数据库已引用 · dawcode”；未引用卡片显示“可关联 · dawcode”；console warning/error 为 0。
+- 边界：浏览器使用只读模拟 API，未签到、未修改生产账号 Key、未提交、未部署。

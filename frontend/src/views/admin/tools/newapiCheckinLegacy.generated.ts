@@ -1031,7 +1031,11 @@ export function mountNewapiCheckinLegacyTool(scope: LegacyToolScope): LegacyTool
       const baseOptions = sub2
         ? (apiKeySummary?.available_group_options || []).map((option) => ({ id: Number(option.id), name: option.name }))
         : Array.from(new Set((apiKeySummary?.available_groups || []).filter(Boolean))).map((name) => ({ id: 0, name }));
-      const items = (apiKeySummary?.api_keys || []).map((item) => {
+      const items = (apiKeySummary?.api_keys || []).slice().sort((left, right) => {
+        const leftReferenced = (left.referenced_accounts || []).length > 0 ? 1 : 0;
+        const rightReferenced = (right.referenced_accounts || []).length > 0 ? 1 : 0;
+        return rightReferenced - leftReferenced;
+      }).map((item) => {
         const stateKey = generatedKeyStateKey(site.name, account.user_id, item.id);
         const revealedKey = state.revealedGeneratedKeys.get(stateKey);
         const options = baseOptions.slice();
@@ -1040,11 +1044,19 @@ export function mountNewapiCheckinLegacyTool(scope: LegacyToolScope): LegacyTool
         }
         const references = item.referenced_accounts || [];
         const targets = item.target_accounts || [];
-        const referenceHtml = targets.length ? `
+        const targetIds = new Set(targets.map((target) => Number(target.id)));
+        const databaseReferences = references.filter((reference) => !targetIds.has(Number(reference.id)));
+        const databaseReferenceHtml = databaseReferences.map((reference) => `
+          <div class="account-reference-row">
+            ${badge(`数据库已引用 · ${reference.name}`, "ok")}
+          </div>
+        `).join("");
+        const referenceHtml = targets.length || databaseReferences.length ? `
           <div class="account-reference-list">
+            ${databaseReferenceHtml}
             ${targets.map((target) => `
               <div class="account-reference-row">
-                ${badge(target.referenced ? `已引用 · ${target.name}` : `可关联 · ${target.name}`, target.referenced ? "ok" : "neutral")}
+                ${badge(target.referenced ? `数据库已引用 · ${target.name}` : `可关联 · ${target.name}`, target.referenced ? "ok" : "neutral")}
                 <button class="quick-action secondary" type="button"
                   data-link-generated-key="${escapeHtml(item.id)}" data-site="${escapeHtml(site.name)}"
                   data-user-id="${escapeHtml(account.user_id)}" data-target-account-id="${escapeHtml(target.id)}"
@@ -1056,7 +1068,7 @@ export function mountNewapiCheckinLegacyTool(scope: LegacyToolScope): LegacyTool
               </div>
             `).join("")}
           </div>
-        ` : '<div class="group-capability">主平台暂无相同站点 URL 的 OpenAI API Key 账号</div>';
+        ` : '<div class="group-capability">主平台数据库未找到已引用 Key 或兼容站点账号</div>';
         return `
           <div class="api-key-item ${references.length ? "referenced" : ""}">
             <div class="api-key-line">
