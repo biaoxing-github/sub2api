@@ -70,7 +70,7 @@ ORDER BY id ASC`)
 	}
 
 	accountRows, err := r.db.QueryContext(ctx, `
-SELECT site_id, name, username, display_name, user_id, access_key, ip_profile, enabled, disabled_reason
+SELECT site_id, name, username, display_name, user_id, access_key, login_username, login_password, ip_profile, enabled, disabled_reason
 FROM newapi_checkin_accounts
 ORDER BY site_id ASC, id ASC`)
 	if err != nil {
@@ -82,6 +82,7 @@ ORDER BY site_id ASC, id ASC`)
 		var account service.NewAPICheckinAccount
 		if err := accountRows.Scan(
 			&siteID, &account.Name, &account.Username, &account.DisplayName, &account.UserID, &account.AccessKey,
+			&account.LoginUsername, &account.LoginPassword,
 			&account.IPProfile, &account.Enabled, &account.DisabledReason,
 		); err != nil {
 			return cfg, err
@@ -151,19 +152,21 @@ RETURNING id`,
 		for _, account := range site.Accounts {
 			if _, err := tx.ExecContext(ctx, `
 INSERT INTO newapi_checkin_accounts (
-  site_id, name, username, display_name, user_id, access_key, ip_profile, enabled, disabled_reason, updated_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+  site_id, name, username, display_name, user_id, access_key, login_username, login_password, ip_profile, enabled, disabled_reason, updated_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
 ON CONFLICT (site_id, user_id) DO UPDATE SET
   name = EXCLUDED.name,
   username = EXCLUDED.username,
   display_name = EXCLUDED.display_name,
   access_key = EXCLUDED.access_key,
+  login_username = EXCLUDED.login_username,
+  login_password = EXCLUDED.login_password,
   ip_profile = EXCLUDED.ip_profile,
   enabled = EXCLUDED.enabled,
   disabled_reason = EXCLUDED.disabled_reason,
   updated_at = NOW()`,
 				siteID, account.Name, account.Username, account.DisplayName, account.UserID, account.AccessKey,
-				account.IPProfile, account.Enabled, account.DisabledReason,
+				account.LoginUsername, account.LoginPassword, account.IPProfile, account.Enabled, account.DisabledReason,
 			); err != nil {
 				return err
 			}

@@ -82,8 +82,10 @@ describe('mountNewapiCheckinLegacyTool', () => {
     )
   })
 
-  it('shows masked API keys with sk prefix and missing state in the account catalog', async () => {
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+  it('opens the platform directory modal and manages generated NewAPI keys and groups', async () => {
+    let revealPayload: Record<string, unknown> | null = null
+    let groupPayload: Record<string, unknown> | null = null
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/config')) {
         return jsonResponse({
@@ -110,10 +112,22 @@ describe('mountNewapiCheckinLegacyTool', () => {
           missing_count: 1,
           error_count: 0,
           accounts: [
-            { site: 'demo', user_id: '1001', status: 'ready', api_keys: [{ name: 'codex', masked_key: 'sk-ab***5678' }] },
-            { site: 'demo', user_id: '1002', status: 'missing', api_keys: [] }
+            {
+              site: 'demo', provider: 'newapi', user_id: '1001', status: 'ready',
+              group_status: 'ready', group_message: '已读取上游完整可用分组', available_groups: ['codex-team', 'default'],
+              api_keys: [{ id: 7, name: 'codex', masked_key: 'sk-ab***5678', group: 'codex-team' }]
+            },
+            { site: 'demo', provider: 'newapi', user_id: '1002', status: 'missing', group_status: 'partial', group_message: '仅展示已知分组', available_groups: ['default'], api_keys: [] }
           ]
         })
+      }
+      if (url.endsWith('/reveal-api-key')) {
+        revealPayload = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+        return jsonResponse({ site: 'demo', user_id: '1001', api_key_id: 7, name: 'codex', key: 'sk-abcdef12345678', masked_key: 'sk-ab***5678', group: 'codex-team' })
+      }
+      if (url.endsWith('/api-key-group')) {
+        groupPayload = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+        return jsonResponse({ site: 'demo', user_id: '1001', api_key_id: 7, name: 'codex', group: 'default', message: 'updated' })
       }
       if (url.endsWith('/last-run')) return jsonResponse({})
       if (url.endsWith('/balances')) return jsonResponse({ site_statuses: {}, accounts: [] })
@@ -154,17 +168,33 @@ describe('mountNewapiCheckinLegacyTool', () => {
     await vi.waitFor(() => {
       expect(root.querySelector('#configTableWrap')?.textContent).toContain('sk-ab***5678')
     })
+    const directoryButton = root.querySelector('#openPlatformDirectoryBtn') as HTMLButtonElement
+    directoryButton.click()
+    expect(root.querySelector('#platformDirectoryDialog')?.hasAttribute('open')).toBe(true)
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('未生成')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/admin/newapi-checkin/api-keys',
       expect.any(Object)
     )
 
+    const revealButton = Array.from(root.querySelectorAll('[data-reveal-generated-key]'))[0] as HTMLButtonElement
+    revealButton.click()
+    await vi.waitFor(() => expect(root.querySelector('#configTableWrap')?.textContent).toContain('sk-abcdef12345678'))
+    expect(revealPayload).toEqual({ site: 'demo', user_id: '1001', api_key_id: 7 })
+
+    const groupSelect = root.querySelector('[data-group-select="7"]') as HTMLSelectElement
+    groupSelect.value = 'default'
+    const updateButton = root.querySelector('[data-update-generated-group="7"]') as HTMLButtonElement
+    updateButton.click()
+    await vi.waitFor(() => expect(groupPayload).toEqual({ site: 'demo', user_id: '1001', api_key_id: 7, group: 'default', group_id: 0 }))
+
     cleanup()
   })
 
   it('renders sub2api subscription data and disables every checkin action', async () => {
     let savedIdentityPayload: Record<string, string> | null = null
+    let testedLoginPayload: Record<string, string> | null = null
+    let updatedGroupPayload: Record<string, unknown> | null = null
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/config')) {
@@ -178,11 +208,29 @@ describe('mountNewapiCheckinLegacyTool', () => {
             provider: 'sub2api',
             enabled: true,
             base_url: 'https://sub2.example',
-            accounts: [{ name: 'primary', label: 'primary', user_id: 'primary', access_key: 'sk-test-full-key', access_key_masked: 'sk-90***84cd' }]
+            accounts: [{ name: 'primary', label: 'primary', user_id: 'primary', access_key: 'sk-test-full-key', access_key_masked: 'sk-90***84cd', login_username: 'owner@example.com', has_login_password: true }]
           }]
         })
       }
-      if (url.endsWith('/api-keys')) return jsonResponse({ account_count: 0, accounts: [] })
+      if (url.endsWith('/api-keys')) return jsonResponse({
+        account_count: 1,
+        available_count: 1,
+        accounts: [{
+          site: 'sub2-demo', provider: 'sub2api', user_id: 'primary', status: 'ready',
+          group_status: 'ready', group_message: '登录成功，已读取 2 个可用分组',
+          available_groups: ['尝鲜套餐', 'codex--pro'],
+          available_group_options: [{ id: 22, name: '尝鲜套餐' }, { id: 26, name: 'codex--pro' }],
+          api_keys: [{ id: 1067, name: 'codex', masked_key: 'sk-90***84cd', group: '尝鲜套餐', group_id: 22 }]
+        }]
+      })
+      if (url.endsWith('/test-login-credentials')) {
+        testedLoginPayload = JSON.parse(String(init?.body || '{}')) as Record<string, string>
+        return jsonResponse({ login_ok: true, message: '登录验证成功', api_key_count: 1, group_count: 2 })
+      }
+      if (url.endsWith('/api-key-group')) {
+        updatedGroupPayload = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+        return jsonResponse({ site: 'sub2-demo', user_id: 'primary', api_key_id: 1067, name: 'codex', group: 'codex--pro', group_id: 26, message: 'updated' })
+      }
       if (url.endsWith('/account-display-name')) {
         savedIdentityPayload = JSON.parse(String(init?.body || '{}')) as Record<string, string>
         return jsonResponse({
@@ -251,6 +299,8 @@ describe('mountNewapiCheckinLegacyTool', () => {
     await vi.waitFor(() => expect(root.querySelector('#configTableWrap')?.textContent).toContain('sub2api 只读'))
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('sk-90***84cd')
     expect(root.querySelector('#configTableWrap')?.textContent).not.toContain('sk-test-full-key')
+    expect(root.querySelector('#configTableWrap')?.textContent).toContain('登录 owner@example.com')
+    expect(root.querySelector('#configTableWrap')?.textContent).toContain('完整分组已读取')
 
     const revealKeyButton = Array.from(root.querySelectorAll('button')).find(button => button.textContent?.trim() === '显示')
     expect(revealKeyButton).toBeTruthy()
@@ -277,6 +327,27 @@ describe('mountNewapiCheckinLegacyTool', () => {
       display_name: 'owner@example.com'
     }))
     await vi.waitFor(() => expect(root.querySelector('#configTableWrap')?.textContent).toContain('owner@example.com'))
+
+    const loginButton = root.querySelector('[data-edit-login-credential="primary"]') as HTMLButtonElement
+    loginButton.click()
+    expect(root.querySelector('#loginCredentialDialog')?.hasAttribute('open')).toBe(true)
+    expect((root.querySelector('#loginUsernameInput') as HTMLInputElement).value).toBe('owner@example.com')
+    ;(root.querySelector('#loginPasswordInput') as HTMLInputElement).value = 'new-fixture-password'
+    ;(root.querySelector('#testLoginCredentialBtn') as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(testedLoginPayload).toEqual({
+      site: 'sub2-demo',
+      user_id: 'primary',
+      login_username: 'owner@example.com',
+      login_password: 'new-fixture-password'
+    }))
+    await vi.waitFor(() => expect(root.querySelector('#loginCredentialStatus')?.textContent).toContain('分组 2 个'))
+
+    const sub2GroupSelect = root.querySelector('[data-group-select="1067"]') as HTMLSelectElement
+    sub2GroupSelect.value = '26'
+    ;(root.querySelector('[data-update-generated-group="1067"]') as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(updatedGroupPayload).toEqual({
+      site: 'sub2-demo', user_id: 'primary', api_key_id: 1067, group: 'codex--pro', group_id: 26
+    }))
 
     cleanup()
   })

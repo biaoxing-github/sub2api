@@ -153,3 +153,25 @@
 - PASS：Chrome 验证公开签到页桌面与 390x844 非空且无页面整体横向溢出。
 - LIMIT：管理 Chrome 登录态已过期且部署环境没有可用管理员密码，未验证登录态平台目录与版本徽标。
 - PASS：未调用上游、未签到、未刷新、未重启 PostgreSQL 或 Redis。
+
+## 2026-07-15 平台目录弹窗、NewAPI Key 与分组管理 - Devil
+
+- PASS：NewAPICheckin service、handler 聚焦测试通过，server 全包测试通过。
+- PASS：签到工具 Vitest 3/3、Vue typecheck、前端生产构建通过；`git diff --check` 无错误。
+- PASS：NewAPI 生成 Key 列表默认仅返回脱敏值；点击显示后才调用独立接口读取完整 `sk-` Key。
+- PASS：分组更新测试确认先读取完整 token，再只替换 `group`，原额度、状态和模型限制字段保持不变。
+- PASS：Playwright 桌面验证主 Tab 不再包含平台目录，按钮打开大弹窗；完整 Key 显示/隐藏与分组提交载荷正确，控制台错误为 0。
+- PASS：390x844 验证弹窗标题和关闭按钮可见，页面无整体横向溢出，宽目录表格仅在自身容器内滚动。
+- LIMIT：NewAPI `/api/user/available_groups` 对现有 access key 返回权限不足，因此页面明确标记为 partial，仅展示账号与 token 已知分组。
+- LIMIT：sub2api `sk-` 调用 `/api/v1/keys` 和 `/api/v1/groups/available` 均返回 `401 INVALID_TOKEN`，页面明确提示需要账号登录态。
+- 边界：未签到、未执行真实上游分组写入、未提交、未构建镜像、未部署。
+
+## 2026-07-15 sub2api 登录凭据与分组读取 - Devil
+
+- PASS：使用用户修正后的 VC 登录凭据只读调用 `/api/v1/auth/login` 返回 200，随后读取 1 个 API Key 和 28 个可用分组。
+- PASS：API Key `1067` 的当前分组 ID 为 `22`；仅核对脱敏 Key `sk-90***84cd`，未在测试日志记录登录密码或完整 Key。
+- PASS：`go test ./internal/service -run NewAPICheckin -count=1`、repository 聚焦测试、admin handler 与 routes 聚焦测试通过。
+- PASS：签到工具 Vitest 3/3 与 `vue-tsc --noEmit` 通过；此前同一代码切片的 Vite 生产构建通过。
+- PASS：本地页面 1280x720 与 390x844 平台目录弹窗无重叠，浏览器 console warning/error 为 0。
+- LIMIT：本地管理 API 未登录，浏览器账号目录为空；登录凭据弹窗、密码不回显、Key 显示和 group_id 提交由 Vitest 覆盖。
+- 边界：未签到、未执行真实分组更新、未提交、未构建镜像、未部署。

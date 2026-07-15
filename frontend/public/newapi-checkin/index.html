@@ -638,6 +638,104 @@
       display: none;
     }
 
+    .directory-trigger {
+      margin-left: auto;
+      min-height: 38px;
+    }
+
+    .directory-dialog {
+      width: min(1500px, calc(100vw - 32px));
+      max-width: none;
+      max-height: calc(100vh - 32px);
+      margin: auto;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: var(--bg);
+      color: var(--ink);
+      box-shadow: 0 24px 80px rgba(15, 23, 42, 0.24);
+      overflow: hidden;
+    }
+
+    .directory-dialog::backdrop {
+      background: rgba(15, 23, 42, 0.52);
+    }
+
+    .credential-dialog {
+      width: min(560px, calc(100vw - 32px));
+    }
+
+    .credential-form {
+      display: grid;
+      gap: 14px;
+      padding: 20px 22px 22px;
+      background: var(--surface);
+    }
+
+    .credential-target {
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .directory-dialog-shell {
+      max-height: calc(100vh - 34px);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .directory-dialog-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .directory-dialog-body {
+      padding: 18px;
+      overflow: auto;
+    }
+
+    .api-key-stack {
+      display: grid;
+      gap: 8px;
+      min-width: 260px;
+    }
+
+    .api-key-item {
+      display: grid;
+      gap: 7px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+    }
+
+    .api-key-line,
+    .group-control {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .group-control select {
+      width: auto;
+      min-width: 126px;
+      min-height: 34px;
+      padding-block: 5px;
+    }
+
+    .group-capability {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
     .view-grid-2 {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1197,6 +1295,21 @@
       .overview-metrics {
         grid-template-columns: 1fr;
       }
+
+      .directory-trigger {
+        width: 100%;
+        margin-left: 0;
+      }
+
+      .directory-dialog {
+        width: 100vw;
+        max-height: 100vh;
+        border-radius: 0;
+      }
+
+      .directory-dialog-shell {
+        max-height: 100vh;
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -1306,10 +1419,10 @@
         <section class="viewbar">
           <div class="tab-row" id="tabRow">
             <button class="tab-button" type="button" data-tab="overview" aria-selected="true">总览</button>
-            <button class="tab-button" type="button" data-tab="config" aria-selected="false">平台目录</button>
             <button class="tab-button" type="button" data-tab="history" aria-selected="false">签到记录</button>
             <button class="tab-button" type="button" data-tab="balances" aria-selected="false">实时余额</button>
             <button class="tab-button" type="button" data-tab="monthly" aria-selected="false">月度历史</button>
+            <button class="secondary directory-trigger" id="openPlatformDirectoryBtn" type="button">平台目录</button>
           </div>
           <div class="filter-row">
             <div class="filter-row" id="siteFilterRow"></div>
@@ -1368,41 +1481,6 @@
               <div class="feed-list" id="overviewContextFeed"></div>
             </section>
           </div>
-        </section>
-
-        <section class="view-panel" data-tab-panel="config" hidden>
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2 class="panel-title">新增平台 / 账号</h2>
-                  <div class="panel-meta">粘贴平台或账号 JSON 配置片段；同名平台会按 user_id 合并账号</div>
-              </div>
-              <button class="primary" id="saveConfigJsonBtn" type="button">写入配置</button>
-            </div>
-            <div class="config-editor">
-              <textarea class="json-input" id="configJsonInput" spellcheck="false"></textarea>
-              <div class="editor-aside">
-                <div class="badge-row">
-                  <span class="badge neutral">JSON</span>
-                  <span class="badge neutral">明文 key</span>
-                </div>
-                <div class="inline-note">可以粘贴单个平台对象，也可以粘贴 <code>{"sites":[...]}</code>。字段格式沿用 NewApi 签到配置。</div>
-                <div class="status-box" id="configJsonStatus" data-tone="normal">等待输入。</div>
-              </div>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2 class="panel-title">平台目录</h2>
-                <div class="panel-meta" id="configMeta">等待配置</div>
-              </div>
-              <div class="panel-meta">按站点分组，提供各数据源支持的刷新与账号操作</div>
-            </div>
-            <div class="table-summary" id="configSummaryBadges"></div>
-            <div class="table-wrap catalog-wrap" id="configTableWrap"></div>
-          </section>
         </section>
 
         <section class="view-panel" data-tab-panel="history" hidden>
@@ -1580,6 +1658,83 @@
     </div>
   </div>
 
+  <dialog class="directory-dialog" id="platformDirectoryDialog" aria-labelledby="platformDirectoryTitle">
+    <div class="directory-dialog-shell">
+      <div class="directory-dialog-head">
+        <div>
+          <h2 class="panel-title" id="platformDirectoryTitle">平台目录</h2>
+          <div class="panel-meta">集中管理站点、账号、API Key 和分组</div>
+        </div>
+        <div class="toolbar">
+          <button class="secondary" id="refreshDirectoryKeysBtn" type="button">重新读取 Key / 分组</button>
+          <button class="secondary" id="closePlatformDirectoryBtn" type="button">关闭</button>
+        </div>
+      </div>
+      <div class="directory-dialog-body">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">新增平台 / 账号</h2>
+              <div class="panel-meta">粘贴平台或账号 JSON 配置片段；同名平台会按 user_id 合并账号</div>
+            </div>
+            <button class="primary" id="saveConfigJsonBtn" type="button">写入配置</button>
+          </div>
+          <div class="config-editor">
+            <textarea class="json-input" id="configJsonInput" spellcheck="false"></textarea>
+            <div class="editor-aside">
+              <div class="badge-row">
+                <span class="badge neutral">JSON</span>
+                <span class="badge neutral">明文 key</span>
+              </div>
+              <div class="inline-note">可以粘贴单个平台对象，也可以粘贴 <code>{"sites":[...]}</code>。字段格式沿用 NewApi 签到配置。</div>
+              <div class="status-box" id="configJsonStatus" data-tone="normal">等待输入。</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">站点与账号</h2>
+              <div class="panel-meta" id="configMeta">等待配置</div>
+            </div>
+            <div class="panel-meta">NewAPI 可按需显示生成 Key 并更新 token 分组；sub2api 需要账号登录态</div>
+          </div>
+          <div class="table-summary" id="configSummaryBadges"></div>
+          <div class="table-wrap catalog-wrap" id="configTableWrap"></div>
+        </section>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="directory-dialog credential-dialog" id="loginCredentialDialog" aria-labelledby="loginCredentialTitle">
+    <div class="directory-dialog-shell">
+      <div class="directory-dialog-head">
+        <div>
+          <h2 class="panel-title" id="loginCredentialTitle">登录凭据</h2>
+          <div class="panel-meta">用于读取和修改 sub2api API Key 分组</div>
+        </div>
+        <button class="secondary" id="closeLoginCredentialBtn" type="button">关闭</button>
+      </div>
+      <form class="credential-form" id="loginCredentialForm">
+        <div class="credential-target" id="loginCredentialTarget">等待选择账号</div>
+        <label>
+          登录账号 / 邮箱
+          <input id="loginUsernameInput" type="email" autocomplete="username" required>
+        </label>
+        <label>
+          登录密码
+          <input id="loginPasswordInput" type="password" autocomplete="current-password" placeholder="留空则使用已保存密码">
+        </label>
+        <div class="status-box" id="loginCredentialStatus" data-tone="normal">密码不会在页面中回显。</div>
+        <div class="toolbar">
+          <button class="secondary" id="testLoginCredentialBtn" type="button">测试登录</button>
+          <button class="primary" id="saveLoginCredentialBtn" type="submit">验证并保存</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
   <script>
     const state = {
       config: null,
@@ -1595,6 +1750,8 @@
       checkinStatusTimer: null,
       activeTab: "overview",
       revealedAccessKeys: new Set(),
+      revealedGeneratedKeys: new Map(),
+      loginCredentialTarget: null,
     };
 
     const statsGrid = document.getElementById("statsGrid");
@@ -1604,6 +1761,19 @@
     const activeFilterMeta = document.getElementById("activeFilterMeta");
     const siteFilterRow = document.getElementById("siteFilterRow");
     const tabRow = document.getElementById("tabRow");
+    const openPlatformDirectoryBtn = document.getElementById("openPlatformDirectoryBtn");
+    const closePlatformDirectoryBtn = document.getElementById("closePlatformDirectoryBtn");
+    const refreshDirectoryKeysBtn = document.getElementById("refreshDirectoryKeysBtn");
+    const platformDirectoryDialog = document.getElementById("platformDirectoryDialog");
+    const loginCredentialDialog = document.getElementById("loginCredentialDialog");
+    const closeLoginCredentialBtn = document.getElementById("closeLoginCredentialBtn");
+    const loginCredentialForm = document.getElementById("loginCredentialForm");
+    const loginCredentialTarget = document.getElementById("loginCredentialTarget");
+    const loginUsernameInput = document.getElementById("loginUsernameInput");
+    const loginPasswordInput = document.getElementById("loginPasswordInput");
+    const loginCredentialStatus = document.getElementById("loginCredentialStatus");
+    const testLoginCredentialBtn = document.getElementById("testLoginCredentialBtn");
+    const saveLoginCredentialBtn = document.getElementById("saveLoginCredentialBtn");
 
     const siteSelect = document.getElementById("siteSelect");
     const accountSelect = document.getElementById("accountSelect");
@@ -1870,6 +2040,12 @@
       if (record?.email) {
         secondary.push(record.email);
       }
+      if (record?.login_username) {
+        secondary.push(`登录 ${record.login_username}`);
+      }
+      if (record?.has_login_password) {
+        secondary.push("密码已保存");
+      }
       return `
         <div class="identity">
           <strong>${escapeHtml(name)}</strong>
@@ -2060,6 +2236,90 @@
       });
     }
 
+    function openPlatformDirectory() {
+      renderConfig(state.config);
+      if (typeof platformDirectoryDialog.showModal === "function") {
+        platformDirectoryDialog.showModal();
+      } else {
+        platformDirectoryDialog.setAttribute("open", "");
+      }
+    }
+
+    function closePlatformDirectory() {
+      if (typeof platformDirectoryDialog.close === "function") {
+        platformDirectoryDialog.close();
+      } else {
+        platformDirectoryDialog.removeAttribute("open");
+      }
+    }
+
+    function openLoginCredentials(site, userId) {
+      const account = getConfigAccount(site, userId);
+      if (!account) {
+        setAppStatus("未找到要维护的账号。", "error");
+        return;
+      }
+      state.loginCredentialTarget = { site, userId };
+      loginCredentialTarget.textContent = `${site} / ${preferredName(account)} / ID ${userId}`;
+      loginUsernameInput.value = account.login_username || account.display_name || account.username || "";
+      loginPasswordInput.value = "";
+      setInlineStatus(loginCredentialStatus, account.has_login_password ? "已保存密码；留空可直接测试现有凭据。" : "尚未保存密码。", account.has_login_password ? "ok" : "normal");
+      if (typeof loginCredentialDialog.showModal === "function") {
+        loginCredentialDialog.showModal();
+      } else {
+        loginCredentialDialog.setAttribute("open", "");
+      }
+      loginUsernameInput.focus();
+    }
+
+    function closeLoginCredentials() {
+      loginPasswordInput.value = "";
+      state.loginCredentialTarget = null;
+      if (typeof loginCredentialDialog.close === "function") {
+        loginCredentialDialog.close();
+      } else {
+        loginCredentialDialog.removeAttribute("open");
+      }
+    }
+
+    async function submitLoginCredentials(save) {
+      const target = state.loginCredentialTarget;
+      const loginUsername = loginUsernameInput.value.trim();
+      if (!target || !loginUsername) {
+        setInlineStatus(loginCredentialStatus, "登录账号不能为空。", "error");
+        return;
+      }
+      const button = save ? saveLoginCredentialBtn : testLoginCredentialBtn;
+      setButtonBusy(button, true, save ? "验证中" : "测试中");
+      setInlineStatus(loginCredentialStatus, save ? "正在验证并保存…" : "正在测试登录…", "busy");
+      try {
+        const result = await fetchJson(save ? "/api/login-credentials" : "/api/test-login-credentials", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            site: target.site,
+            user_id: target.userId,
+            login_username: loginUsername,
+            login_password: loginPasswordInput.value,
+          }),
+        });
+        loginPasswordInput.value = "";
+        if (result.config) {
+          state.config = result.config;
+          renderConfigSelectors();
+        }
+        await loadAPIKeys();
+        renderAllViews();
+        setInlineStatus(loginCredentialStatus, `${result.message}；Key ${result.api_key_count} 个，分组 ${result.group_count} 个。`, "ok");
+        setAppStatus(`${target.site} / ${target.userId} 登录成功，读取到 ${result.group_count} 个分组`, "ok");
+      } catch (error) {
+        setInlineStatus(loginCredentialStatus, `${save ? "保存" : "测试"}失败: ${error.message}`, "error");
+        setAppStatus(`登录凭据${save ? "保存" : "测试"}失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
+    }
+
     function setSelectedTarget(siteName, userId) {
       if (!siteName || !userId) {
         return;
@@ -2169,6 +2429,11 @@
           editAccountDisplayName(button.dataset.site, button.dataset.editAccountLabel, button);
         });
       });
+      Array.from(configTableWrap.querySelectorAll("[data-edit-login-credential][data-site]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          openLoginCredentials(button.dataset.site, button.dataset.editLoginCredential);
+        });
+      });
       Array.from(configTableWrap.querySelectorAll("[data-toggle-access-key][data-site][data-user-id]")).forEach((button) => {
         button.addEventListener("click", () => {
           const accountKey = `${button.dataset.site}\u0000${button.dataset.userId}`;
@@ -2178,6 +2443,31 @@
             state.revealedAccessKeys.add(accountKey);
           }
           renderConfig(state.config);
+        });
+      });
+      Array.from(configTableWrap.querySelectorAll("[data-reveal-generated-key][data-site][data-user-id]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          revealGeneratedAPIKey(button.dataset.site, button.dataset.userId, Number(button.dataset.revealGeneratedKey), button);
+        });
+      });
+      Array.from(configTableWrap.querySelectorAll("[data-update-generated-group][data-site][data-user-id]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          const tokenId = Number(button.dataset.updateGeneratedGroup);
+          const select = Array.from(configTableWrap.querySelectorAll("[data-group-select][data-site][data-user-id]")).find((item) => (
+            Number(item.dataset.groupSelect) === tokenId
+            && item.dataset.site === button.dataset.site
+            && item.dataset.userId === button.dataset.userId
+          ));
+          const sub2 = select?.dataset.provider === "sub2api";
+          const selectedOption = select?.selectedOptions?.[0];
+          updateGeneratedAPIKeyGroup(
+            button.dataset.site,
+            button.dataset.userId,
+            tokenId,
+            selectedOption?.dataset.groupName || (sub2 ? "" : select?.value || ""),
+            sub2 ? Number(select?.value || 0) : 0,
+            button,
+          );
         });
       });
       Array.from(configTableWrap.querySelectorAll("[data-delete-site]")).forEach((button) => {
@@ -2195,6 +2485,55 @@
           deleteAccount(button.dataset.deleteAccountSite, button.dataset.deleteAccountUser, button.dataset.deleteAccountLabel, button);
         });
       });
+    }
+
+    function generatedKeyStateKey(site, userId, apiKeyId) {
+      return `${site}\u0000${userId}\u0000${apiKeyId}`;
+    }
+
+    async function revealGeneratedAPIKey(site, userId, apiKeyId, button) {
+      const stateKey = generatedKeyStateKey(site, userId, apiKeyId);
+      if (state.revealedGeneratedKeys.has(stateKey)) {
+        state.revealedGeneratedKeys.delete(stateKey);
+        renderConfig(state.config);
+        return;
+      }
+      setButtonBusy(button, true, "读取中");
+      try {
+        const result = await fetchJson("/api/reveal-api-key", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site, user_id: userId, api_key_id: apiKeyId }),
+        });
+        state.revealedGeneratedKeys.set(stateKey, result.key);
+        renderConfig(state.config);
+        setAppStatus(`${site} / ${userId} 的 ${result.name || "API Key"} 已显示`, "ok");
+      } catch (error) {
+        setAppStatus(`读取完整 API Key 失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
+    }
+
+    async function updateGeneratedAPIKeyGroup(site, userId, apiKeyId, group, groupId, button) {
+      if (!group && !groupId) {
+        setAppStatus("请选择目标分组。", "error");
+        return;
+      }
+      setButtonBusy(button, true, "更新中");
+      try {
+        const result = await fetchJson("/api/api-key-group", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site, user_id: userId, api_key_id: apiKeyId, group, group_id: groupId }),
+        });
+        await loadAPIKeys();
+        setAppStatus(`${site} / ${userId} 的 ${result.name || "API Key"} 已切换到 ${result.group}`, "ok");
+      } catch (error) {
+        setAppStatus(`更新 API Key 分组失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
     }
 
     function renderOverview() {
@@ -2366,6 +2705,62 @@
       `).join("");
     }
 
+    function generatedAPIKeysHtml(site, account, apiKeySummary) {
+      const provider = apiKeySummary?.provider || site.provider || "newapi";
+      const sub2 = provider === "sub2api";
+      const baseOptions = sub2
+        ? (apiKeySummary?.available_group_options || []).map((option) => ({ id: Number(option.id), name: option.name }))
+        : Array.from(new Set((apiKeySummary?.available_groups || []).filter(Boolean))).map((name) => ({ id: 0, name }));
+      const items = (apiKeySummary?.api_keys || []).map((item) => {
+        const stateKey = generatedKeyStateKey(site.name, account.user_id, item.id);
+        const revealedKey = state.revealedGeneratedKeys.get(stateKey);
+        const options = baseOptions.slice();
+        if (item.group && !options.some((option) => sub2 ? option.id === Number(item.group_id) : option.name === item.group)) {
+          options.unshift({ id: Number(item.group_id || 0), name: item.group });
+        }
+        return `
+          <div class="api-key-item">
+            <div class="api-key-line">
+              <code title="${escapeHtml(item.name || "未命名")}">${escapeHtml(revealedKey || item.masked_key)}</code>
+              <button
+                class="quick-action secondary"
+                type="button"
+                data-reveal-generated-key="${escapeHtml(item.id)}"
+                data-site="${escapeHtml(site.name)}"
+                data-user-id="${escapeHtml(account.user_id)}"
+              >${revealedKey ? "隐藏" : "显示"}</button>
+            </div>
+            <div class="group-control">
+              <select
+                data-group-select="${escapeHtml(item.id)}"
+                data-site="${escapeHtml(site.name)}"
+                data-user-id="${escapeHtml(account.user_id)}"
+                data-provider="${escapeHtml(provider)}"
+                aria-label="${escapeHtml(item.name || "API Key")} 分组"
+                ${options.length ? "" : "disabled"}
+              >
+                ${options.map((option) => {
+                  const value = sub2 ? String(option.id) : option.name;
+                  const selected = sub2 ? Number(option.id) === Number(item.group_id) : option.name === item.group;
+                  return `<option value="${escapeHtml(value)}" data-group-name="${escapeHtml(option.name)}" ${selected ? "selected" : ""}>${escapeHtml(option.name)}</option>`;
+                }).join("")}
+              </select>
+              <button
+                class="quick-action secondary"
+                type="button"
+                data-update-generated-group="${escapeHtml(item.id)}"
+                data-site="${escapeHtml(site.name)}"
+                data-user-id="${escapeHtml(account.user_id)}"
+                ${options.length ? "" : "disabled"}
+              >更新分组</button>
+            </div>
+          </div>
+        `;
+      }).join("");
+      const capability = apiKeySummary?.group_status === "ready" ? "完整分组已读取" : apiKeySummary?.group_message || "仅展示已知分组";
+      return `<div class="api-key-stack">${items || '<span class="dim">未生成</span>'}<div class="group-capability" title="${escapeHtml(apiKeySummary?.group_message || "")}">${escapeHtml(capability)}</div></div>`;
+    }
+
     function renderConfig(config) {
       if (!config) {
         configMeta.textContent = "暂无配置数据";
@@ -2413,16 +2808,20 @@
                       >${keyRevealed ? "隐藏" : "显示"}</button>
                     ` : ""}
                   </div>
-                `
+              `
               : '<span class="dim">已保存</span>';
+            const generated = apiKeySummary?.status === "ready" || apiKeySummary?.status === "missing"
+              ? generatedAPIKeysHtml(site, account, apiKeySummary)
+              : `<div class="group-capability">${escapeHtml(apiKeySummary?.group_message || "填写登录凭据后可读取和更新分组")}</div>`;
+            apiKeyHtml = `<div class="api-key-stack">${apiKeyHtml}${generated}</div>`;
           } else if (state.apiKeys?.load_error) {
             apiKeyHtml = '<span class="dim">读取失败</span>';
           } else if (apiKeySummary?.status === "ready") {
-            apiKeyHtml = (apiKeySummary.api_keys || [])
-              .map((item) => `<code title="${escapeHtml(item.name || "未命名")}">${escapeHtml(item.masked_key)}</code>`)
-              .join("<br>");
+            apiKeyHtml = generatedAPIKeysHtml(site, account, apiKeySummary);
           } else if (apiKeySummary?.status === "missing") {
-            apiKeyHtml = '<span class="dim">未生成</span>';
+            apiKeyHtml = `<div class="api-key-stack"><span class="dim">未生成</span><span class="group-capability">${escapeHtml(apiKeySummary.group_message || "暂无 token 可切换分组")}</span></div>`;
+          } else if (apiKeySummary?.status === "unsupported") {
+            apiKeyHtml = `<div class="api-key-stack"><span class="dim">使用配置 Key</span><span class="group-capability">${escapeHtml(apiKeySummary.group_message || "需要账号登录态")}</span></div>`;
           } else if (apiKeySummary?.status === "error") {
             apiKeyHtml = `<span class="dim" title="${escapeHtml(apiKeySummary.message || "API Key 读取失败")}">读取失败</span>`;
           } else if (state.apiKeys) {
@@ -2489,6 +2888,17 @@
                 >
                   编辑标识
                 </button>
+                ${readOnly ? `
+                  <button
+                    class="quick-action secondary"
+                    type="button"
+                    data-site="${escapeHtml(site.name)}"
+                    data-edit-login-credential="${escapeHtml(account.user_id)}"
+                    title="填写账号密码，用于读取和修改 API Key 分组"
+                  >
+                    登录凭据
+                  </button>
+                ` : ""}
                 <button
                   class="quick-action danger"
                   type="button"
@@ -2951,6 +3361,19 @@
         console.error("读取 API Key 摘要失败", error);
       }
       renderConfig(state.config);
+    }
+
+    async function refreshDirectoryKeys() {
+      setButtonBusy(refreshDirectoryKeysBtn, true, "读取中");
+      try {
+        state.revealedGeneratedKeys.clear();
+        await loadAPIKeys();
+        setAppStatus("API Key 与分组信息已重新读取", "ok");
+      } catch (error) {
+        setAppStatus(`重新读取 API Key 与分组失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(refreshDirectoryKeysBtn, false);
+      }
     }
 
     async function loadLastRun() {
@@ -3493,6 +3916,15 @@
     });
 
     reloadLocalBtn.addEventListener("click", loadLocalState);
+    openPlatformDirectoryBtn.addEventListener("click", openPlatformDirectory);
+    closePlatformDirectoryBtn.addEventListener("click", closePlatformDirectory);
+    closeLoginCredentialBtn.addEventListener("click", closeLoginCredentials);
+    testLoginCredentialBtn.addEventListener("click", () => submitLoginCredentials(false));
+    loginCredentialForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitLoginCredentials(true);
+    });
+    refreshDirectoryKeysBtn.addEventListener("click", refreshDirectoryKeys);
     refreshSiteBalanceBtn.addEventListener("click", refreshSiteBalance);
     syncSiteNamesBtn.addEventListener("click", syncSiteNames);
     saveConfigJsonBtn.addEventListener("click", saveConfigJson);

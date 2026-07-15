@@ -5014,6 +5014,17 @@ v0.1.149 拉取结果：
 - PASS：PostgreSQL、Redis 未重启。
 - 边界：未执行真实认证上游请求、Git push 或 registry push。
 
+## 2026-07-15 - 平台目录弹窗与 Key/分组管理
+
+- 执行者：Devil。
+- PASS：平台目录从主 Tab 移除，改为独立按钮打开原生大弹窗；主视图保留总览、签到记录、实时余额、月度历史。
+- PASS：NewAPI 生成 Key 支持默认脱敏、按需显示完整值、读取 token 当前分组及更新分组。
+- PASS：更新分组采用“重新读取完整 token -> 仅替换 group -> PUT /api/token/”，测试验证额度和模型限制字段未丢失。
+- PASS：Go service/handler/server、Vitest 3/3、Vue typecheck、生产构建、桌面与 390px Playwright 验证通过，浏览器控制台错误为 0。
+- OBSERVED：NewAPI 完整分组接口对当前 access key 返回权限不足，页面以 partial 状态展示已知分组；未伪装为完整列表。
+- OBSERVED：sub2api 的 `sk-` 不具备用户 JWT 登录态，两个用户管理接口均返回 `401 INVALID_TOKEN`；页面标记为不支持并说明需要账号登录凭据。
+- 边界：本轮未执行真实分组写入、Git commit、镜像构建或部署。
+
 ## 2026-07-15 sub-vcnovb 8 账号与完整 Key 展示验证 - Devil
 
 - PASS：生产库写入前已有 SQL 备份；8 个账号幂等写入后，`sub-vcnovb` 共 9 个账号，邮箱标识和独立出口档位均已落库。
@@ -5127,3 +5138,12 @@ v0.1.149 拉取结果：
 - PASS：管理员登录态页面显示主版本 `v0.1.152` 和镜像版本 `v0.1.152.5`；新增/编辑弹窗的基本、更多、模型设置三个 Tab 符合发布范围，未提交账号数据。
 - PASS：PostgreSQL、Redis 未重启。
 - 边界：未执行真实认证上游请求、Git push 或 registry push。
+
+## 2026-07-15 - sub2api 登录凭据验证与分组管理补全
+
+- 执行者：Devil。
+- PASS：VC 修正密码登录成功，JWT 仅在单次请求链内使用且不持久化；读取到 1 个 Key、28 个可用分组。
+- PASS：保存接口的配置摘要仅返回登录账号和 `has_login_password`，不返回密码；仓库当前改动中未检出新旧密码明文。
+- PASS：后端 NewAPICheckin service/repository/handler/routes 聚焦测试、前端 Vitest 3/3、Vue typecheck 和 diff check 通过。
+- PASS：平台目录弹窗在桌面与 390px 窄屏下可用，无前端 console warning/error。
+- 边界：未调用签到接口，未执行真实 Key 分组更新，未提交、构建镜像或部署。

@@ -43,6 +43,34 @@ type newAPICheckinAccountDisplayNameRequest struct {
 	DisplayName string `json:"display_name"`
 }
 
+// newAPICheckinAPIKeyRequest 定位账号下的上游 token。
+type newAPICheckinAPIKeyRequest struct {
+	// Site 是账号所属站点名。
+	Site string `json:"site"`
+	// UserID 是账号在签到工具中的稳定标识。
+	UserID string `json:"user_id"`
+	// APIKeyID 是上游 token ID。
+	APIKeyID int64 `json:"api_key_id"`
+}
+
+// newAPICheckinAPIKeyGroupRequest 是更新上游 token 分组的请求体。
+type newAPICheckinAPIKeyGroupRequest struct {
+	newAPICheckinAPIKeyRequest
+	// Group 是目标分组名称。
+	Group string `json:"group"`
+	// GroupID 是 sub2api 的目标分组 ID。
+	GroupID int64 `json:"group_id"`
+}
+
+// newAPICheckinLoginCredentialRequest 是账号登录凭据保存和测试请求体。
+type newAPICheckinLoginCredentialRequest struct {
+	newAPICheckinAccountRequest
+	// LoginUsername 是上游登录账号或邮箱。
+	LoginUsername string `json:"login_username"`
+	// LoginPassword 是新密码；测试时为空会使用已保存密码。
+	LoginPassword string `json:"login_password"`
+}
+
 // newAPICheckinSiteEnabledRequest 是站点签到启停请求体。
 type newAPICheckinSiteEnabledRequest struct {
 	// Site 是 NewApi 站点名。
@@ -72,6 +100,62 @@ func (h *NewAPICheckinHandler) GetConfig(c *gin.Context) {
 // GetAPIKeys GET /admin/newapi-checkin/api-keys
 func (h *NewAPICheckinHandler) GetAPIKeys(c *gin.Context) {
 	data, err := h.checkinService.APIKeys(c.Request.Context())
+	respondNewAPICheckin(c, data, err)
+}
+
+// RevealAPIKey POST /admin/newapi-checkin/reveal-api-key
+func (h *NewAPICheckinHandler) RevealAPIKey(c *gin.Context) {
+	var req newAPICheckinAPIKeyRequest
+	if !bindNewAPICheckinJSON(c, &req) {
+		return
+	}
+	if req.APIKeyID <= 0 {
+		response.BadRequest(c, "api_key_id 必须是正整数")
+		return
+	}
+	data, err := h.checkinService.RevealAPIKey(c.Request.Context(), strings.TrimSpace(req.Site), strings.TrimSpace(req.UserID), req.APIKeyID)
+	respondNewAPICheckin(c, data, err)
+}
+
+// UpdateAPIKeyGroup POST /admin/newapi-checkin/api-key-group
+func (h *NewAPICheckinHandler) UpdateAPIKeyGroup(c *gin.Context) {
+	var req newAPICheckinAPIKeyGroupRequest
+	if !bindNewAPICheckinJSON(c, &req) {
+		return
+	}
+	if req.APIKeyID <= 0 {
+		response.BadRequest(c, "api_key_id 必须是正整数")
+		return
+	}
+	data, err := h.checkinService.UpdateAPIKeyGroup(
+		c.Request.Context(), strings.TrimSpace(req.Site), strings.TrimSpace(req.UserID), req.APIKeyID, strings.TrimSpace(req.Group), req.GroupID,
+	)
+	respondNewAPICheckin(c, data, err)
+}
+
+// SaveLoginCredentials POST /admin/newapi-checkin/login-credentials
+func (h *NewAPICheckinHandler) SaveLoginCredentials(c *gin.Context) {
+	var req newAPICheckinLoginCredentialRequest
+	if !bindNewAPICheckinJSON(c, &req) {
+		return
+	}
+	data, err := h.checkinService.SetAccountLoginCredentials(
+		c.Request.Context(), strings.TrimSpace(req.Site), strings.TrimSpace(req.UserID),
+		strings.TrimSpace(req.LoginUsername), req.LoginPassword,
+	)
+	respondNewAPICheckin(c, data, err)
+}
+
+// TestLoginCredentials POST /admin/newapi-checkin/test-login-credentials
+func (h *NewAPICheckinHandler) TestLoginCredentials(c *gin.Context) {
+	var req newAPICheckinLoginCredentialRequest
+	if !bindNewAPICheckinJSON(c, &req) {
+		return
+	}
+	data, err := h.checkinService.TestAccountLoginCredentials(
+		c.Request.Context(), strings.TrimSpace(req.Site), strings.TrimSpace(req.UserID),
+		strings.TrimSpace(req.LoginUsername), req.LoginPassword,
+	)
 	respondNewAPICheckin(c, data, err)
 }
 

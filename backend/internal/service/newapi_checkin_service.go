@@ -129,6 +129,10 @@ type NewAPICheckinAccount struct {
 	UserID string `json:"user_id"`
 	// AccessKey 是 Authorization Bearer 使用的明文 access key，持久化在 NewApi 签到 SQL 配置表。
 	AccessKey string `json:"access_key"`
+	// LoginUsername 是上游用户登录账号，用于临时换取用户 JWT。
+	LoginUsername string `json:"login_username,omitempty"`
+	// LoginPassword 是上游用户登录密码，仅持久化使用，任何页面摘要都不得返回。
+	LoginPassword string `json:"login_password,omitempty"`
 	// IPProfile 是原脚本用于线路轮换的本地标记。
 	IPProfile string `json:"ip_profile,omitempty"`
 	// Enabled 控制账号是否参与查询和签到；缺省为 true。
@@ -203,28 +207,114 @@ type NewAPICheckinConfigAccountSummary struct {
 	AccessKey string `json:"access_key,omitempty"`
 	// AccessKeyMasked 是配置访问凭据的脱敏展示值。
 	AccessKeyMasked string `json:"access_key_masked,omitempty"`
+	// LoginUsername 是上游登录账号，允许管理员在平台目录中核对。
+	LoginUsername string `json:"login_username,omitempty"`
+	// HasLoginPassword 仅说明密码是否已保存，不返回密码内容。
+	HasLoginPassword bool `json:"has_login_password"`
 }
 
-// NewAPICheckinMaskedAPIKey 是允许返回管理页面的上游 API Key 脱敏摘要。
-type NewAPICheckinMaskedAPIKey struct {
+// NewAPICheckinGroupOption 是上游可用分组的稳定 ID 和名称。
+type NewAPICheckinGroupOption struct {
+	// ID 是 sub2api 分组 ID；NewAPI 只有名称时为 0。
+	ID int64 `json:"id"`
+	// Name 是页面展示的分组名称。
+	Name string `json:"name"`
+}
+
+// NewAPICheckinAPIKeySummary 是允许返回管理页面的上游 API Key 脱敏摘要。
+type NewAPICheckinAPIKeySummary struct {
+	// ID 是上游 token 的稳定标识，用于按需显示和更新分组。
+	ID int64 `json:"id"`
 	// Name 是上游 API Key 名称。
 	Name string `json:"name"`
 	// MaskedKey 固定使用 sk-前2位***后4位格式，不包含完整凭据。
 	MaskedKey string `json:"masked_key"`
+	// Group 是该 API Key 当前使用的上游分组。
+	Group string `json:"group"`
+	// GroupID 是 sub2api API Key 当前绑定的分组 ID。
+	GroupID int64 `json:"group_id,omitempty"`
 }
 
 // NewAPICheckinAccountAPIKeySummary 是单个签到账号的 API Key 查询结果。
 type NewAPICheckinAccountAPIKeySummary struct {
 	// Site 是账号所属站点名。
 	Site string `json:"site"`
+	// Provider 是站点协议类型。
+	Provider string `json:"provider"`
 	// UserID 是 NewApi 用户 ID。
 	UserID string `json:"user_id"`
-	// Status 是 ready、missing 或 error。
+	// Status 是 ready、missing、unsupported 或 error。
 	Status string `json:"status"`
 	// Message 是读取失败时的简短原因。
 	Message string `json:"message,omitempty"`
+	// GroupStatus 是 ready、partial、unsupported 或 error。
+	GroupStatus string `json:"group_status"`
+	// GroupMessage 说明完整分组读取能力或失败原因。
+	GroupMessage string `json:"group_message,omitempty"`
+	// AvailableGroups 是当前账号能够读取到的分组名称。
+	AvailableGroups []string `json:"available_groups"`
+	// AvailableGroupOptions 是带稳定 ID 的分组选项，供 sub2api 更新使用。
+	AvailableGroupOptions []NewAPICheckinGroupOption `json:"available_group_options,omitempty"`
 	// APIKeys 是该账号已生成的脱敏 API Key 列表。
-	APIKeys []NewAPICheckinMaskedAPIKey `json:"api_keys"`
+	APIKeys []NewAPICheckinAPIKeySummary `json:"api_keys"`
+}
+
+// NewAPICheckinAPIKeyRevealResult 是管理员按需查看完整上游 API Key 的结果。
+type NewAPICheckinAPIKeyRevealResult struct {
+	// Site 是账号所属站点名。
+	Site string `json:"site"`
+	// UserID 是账号在站点中的用户 ID。
+	UserID string `json:"user_id"`
+	// APIKeyID 是上游 token ID。
+	APIKeyID int64 `json:"api_key_id"`
+	// Name 是上游 token 名称。
+	Name string `json:"name"`
+	// Key 是按需返回的完整 sk- API Key。
+	Key string `json:"key"`
+	// MaskedKey 是默认展示的脱敏值。
+	MaskedKey string `json:"masked_key"`
+	// Group 是 token 当前分组。
+	Group string `json:"group"`
+}
+
+// NewAPICheckinAPIKeyGroupResult 是更新上游 token 分组后的结果。
+type NewAPICheckinAPIKeyGroupResult struct {
+	// Site 是账号所属站点名。
+	Site string `json:"site"`
+	// UserID 是账号在站点中的用户 ID。
+	UserID string `json:"user_id"`
+	// APIKeyID 是上游 token ID。
+	APIKeyID int64 `json:"api_key_id"`
+	// Name 是上游 token 名称。
+	Name string `json:"name"`
+	// Group 是更新后的分组。
+	Group string `json:"group"`
+	// GroupID 是更新后的 sub2api 分组 ID。
+	GroupID int64 `json:"group_id,omitempty"`
+	// Message 是上游成功消息。
+	Message string `json:"message"`
+}
+
+// NewAPICheckinLoginCredentialResult 是登录凭据保存或测试后的非敏感结果。
+type NewAPICheckinLoginCredentialResult struct {
+	// Site 是账号所属站点名。
+	Site string `json:"site"`
+	// UserID 是签到工具中的稳定账号标识。
+	UserID string `json:"user_id"`
+	// LoginUsername 是本次验证使用的登录账号。
+	LoginUsername string `json:"login_username"`
+	// HasLoginPassword 表示账号已经保存登录密码。
+	HasLoginPassword bool `json:"has_login_password"`
+	// LoginOK 表示上游登录是否成功。
+	LoginOK bool `json:"login_ok"`
+	// APIKeyCount 是登录后可见的 API Key 数量。
+	APIKeyCount int `json:"api_key_count"`
+	// GroupCount 是登录后可见的分组数量。
+	GroupCount int `json:"group_count"`
+	// Message 是非敏感结果说明。
+	Message string `json:"message"`
+	// Config 是保存成功后的最新脱敏配置摘要。
+	Config *NewAPICheckinConfigSummary `json:"config,omitempty"`
 }
 
 // NewAPICheckinAPIKeyPayload 是签到页面 API Key 列的只读载荷。
@@ -239,6 +329,8 @@ type NewAPICheckinAPIKeyPayload struct {
 	MissingCount int `json:"missing_count"`
 	// ErrorCount 是上游读取失败的账号数。
 	ErrorCount int `json:"error_count"`
+	// UnsupportedCount 是仅有网关 Key、缺少账号登录态的账号数。
+	UnsupportedCount int `json:"unsupported_count"`
 	// Accounts 按站点配置顺序返回每个账号的结果。
 	Accounts []NewAPICheckinAccountAPIKeySummary `json:"accounts"`
 }
@@ -780,6 +872,12 @@ type newAPICheckinAPIResult struct {
 	payload    map[string]any
 }
 
+type newAPICheckinSub2Session struct {
+	accessToken string
+	keys        []any
+	groups      []any
+}
+
 type newAPICheckinTask struct {
 	site    NewAPICheckinSite
 	account NewAPICheckinAccount
@@ -829,7 +927,7 @@ func (s *NewAPICheckinService) ConfigSummary(ctx context.Context) (NewAPICheckin
 	return s.configSummaryLocked(cfg), nil
 }
 
-// APIKeys 并发读取各签到账号已生成的 API Key，仅向页面返回脱敏摘要。
+// APIKeys 并发读取各账号已生成的 API Key 和分组能力，仅向页面返回脱敏摘要。
 func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKeyPayload, error) {
 	s.mu.Lock()
 	cfg, err := s.loadConfigLocked(ctx)
@@ -844,9 +942,6 @@ func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKey
 	}
 	targets := make([]target, 0)
 	for _, site := range cfg.Sites {
-		if isSub2APISite(site) {
-			continue
-		}
 		for _, account := range site.Accounts {
 			if account.Enabled {
 				targets = append(targets, target{site: site, account: account})
@@ -877,11 +972,108 @@ func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKey
 			payload.AvailableCount++
 		case "missing":
 			payload.MissingCount++
+		case "unsupported":
+			payload.UnsupportedCount++
 		default:
 			payload.ErrorCount++
 		}
 	}
 	return payload, nil
+}
+
+// RevealAPIKey 按站点、账号和 token ID 读取完整 NewAPI Key。
+func (s *NewAPICheckinService) RevealAPIKey(ctx context.Context, siteName, userID string, apiKeyID int64) (NewAPICheckinAPIKeyRevealResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	site, account, err := s.findConfiguredAccountLocked(ctx, siteName, userID)
+	if err != nil {
+		return NewAPICheckinAPIKeyRevealResult{}, err
+	}
+	if isSub2APISite(site) {
+		session, err := s.loginSub2AccountLocked(ctx, site, account)
+		if err != nil {
+			return NewAPICheckinAPIKeyRevealResult{}, err
+		}
+		item, err := findSub2APIKey(session.keys, apiKeyID)
+		if err != nil {
+			return NewAPICheckinAPIKeyRevealResult{}, err
+		}
+		key := normalizeNewAPIFullKey(cleanNewAPIText(item["key"]))
+		if key == "" {
+			return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("上游 Key %d 未返回完整 API Key", apiKeyID)
+		}
+		groupID := int64FromAny(item["group_id"])
+		return NewAPICheckinAPIKeyRevealResult{
+			Site: site.Name, UserID: account.UserID, APIKeyID: apiKeyID,
+			Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"), Key: key,
+			MaskedKey: maskNewAPIKey(key), Group: firstNonEmpty(sub2GroupNameFromKey(item), findSub2GroupName(session.groups, groupID)),
+		}, nil
+	}
+	item, err := s.findNewAPITokenLocked(ctx, site, account, apiKeyID)
+	if err != nil {
+		return NewAPICheckinAPIKeyRevealResult{}, err
+	}
+	key := normalizeNewAPIFullKey(cleanNewAPIText(item["key"]))
+	if key == "" {
+		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("上游 token %d 未返回完整 API Key", apiKeyID)
+	}
+	return NewAPICheckinAPIKeyRevealResult{
+		Site: site.Name, UserID: account.UserID, APIKeyID: apiKeyID,
+		Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
+		Key:  key, MaskedKey: maskNewAPIKey(key), Group: cleanNewAPIText(item["group"]),
+	}, nil
+}
+
+// UpdateAPIKeyGroup 保留上游 token 的完整字段，只替换 group 后提交更新。
+func (s *NewAPICheckinService) UpdateAPIKeyGroup(ctx context.Context, siteName, userID string, apiKeyID int64, groupName string, groupID int64) (NewAPICheckinAPIKeyGroupResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	groupName = cleanNewAPIText(groupName)
+	site, account, err := s.findConfiguredAccountLocked(ctx, siteName, userID)
+	if err != nil {
+		return NewAPICheckinAPIKeyGroupResult{}, err
+	}
+	if isSub2APISite(site) {
+		if groupID <= 0 {
+			return NewAPICheckinAPIKeyGroupResult{}, fmt.Errorf("sub2api 分组 ID 必须是正整数")
+		}
+		session, err := s.loginSub2AccountLocked(ctx, site, account)
+		if err != nil {
+			return NewAPICheckinAPIKeyGroupResult{}, err
+		}
+		item, err := findSub2APIKey(session.keys, apiKeyID)
+		if err != nil {
+			return NewAPICheckinAPIKeyGroupResult{}, err
+		}
+		groupName = firstNonEmpty(groupName, findSub2GroupName(session.groups, groupID))
+		result := s.requestJSONBodyLocked(ctx, http.MethodPut, joinNewAPIURL(site.BaseURL, fmt.Sprintf("/api/v1/keys/%d", apiKeyID)), site.BaseURL, sub2BearerHeaders(session.accessToken), map[string]any{"group_id": groupID})
+		if !result.ok {
+			return NewAPICheckinAPIKeyGroupResult{}, fmt.Errorf("更新 API Key 分组失败: %s", firstNonEmpty(result.message, "上游拒绝请求"))
+		}
+		return NewAPICheckinAPIKeyGroupResult{
+			Site: site.Name, UserID: account.UserID, APIKeyID: apiKeyID,
+			Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"), Group: groupName, GroupID: groupID,
+			Message: firstNonEmpty(result.message, "分组已更新"),
+		}, nil
+	}
+	if groupName == "" {
+		return NewAPICheckinAPIKeyGroupResult{}, fmt.Errorf("分组不能为空")
+	}
+	item, err := s.findNewAPITokenLocked(ctx, site, account, apiKeyID)
+	if err != nil {
+		return NewAPICheckinAPIKeyGroupResult{}, err
+	}
+	item["group"] = groupName
+	headers := newAPICheckinAccountHeaders(account)
+	result := s.requestJSONBodyLocked(ctx, http.MethodPut, joinNewAPIURL(site.BaseURL, "/api/token/"), site.BaseURL, headers, item)
+	if !result.ok {
+		return NewAPICheckinAPIKeyGroupResult{}, fmt.Errorf("更新 API Key 分组失败: %s", firstNonEmpty(result.message, "上游拒绝请求"))
+	}
+	return NewAPICheckinAPIKeyGroupResult{
+		Site: site.Name, UserID: account.UserID, APIKeyID: apiKeyID,
+		Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"), Group: groupName,
+		Message: firstNonEmpty(result.message, "分组已更新"),
+	}, nil
 }
 
 // LastRun 读取最近一次非空签到报告。
@@ -1049,6 +1241,13 @@ func (s *NewAPICheckinService) AddOrMergeSites(ctx context.Context, payload map[
 		siteUpdated := 0
 		for _, account := range nextAccounts {
 			if accountIdx, ok := existingByUser[account.UserID]; ok {
+				// JSON 合并未携带登录凭据时保留数据库中的原值，避免普通账号维护清空密码。
+				if account.LoginUsername == "" {
+					account.LoginUsername = next.Accounts[accountIdx].LoginUsername
+				}
+				if account.LoginPassword == "" {
+					account.LoginPassword = next.Accounts[accountIdx].LoginPassword
+				}
 				next.Accounts[accountIdx] = account
 				siteUpdated++
 				updatedAccounts++
@@ -1201,6 +1400,67 @@ func (s *NewAPICheckinService) SetAccountDisplayName(ctx context.Context, siteNa
 		return NewAPICheckinConfigSummary{}, err
 	}
 	return s.configSummaryLocked(cfg), nil
+}
+
+// SetAccountLoginCredentials 验证 sub2api 登录凭据后写入账号配置，密码不会进入返回摘要。
+func (s *NewAPICheckinService) SetAccountLoginCredentials(ctx context.Context, siteName, userID, loginUsername, loginPassword string) (NewAPICheckinLoginCredentialResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg, site, account, siteIdx, accountIdx, err := s.configuredAccountForUpdateLocked(ctx, siteName, userID)
+	if err != nil {
+		return NewAPICheckinLoginCredentialResult{}, err
+	}
+	loginUsername, loginPassword, err = resolveNewAPILoginCredentials(account, loginUsername, loginPassword)
+	if err != nil {
+		return NewAPICheckinLoginCredentialResult{}, err
+	}
+	probe, err := s.probeSub2LoginLocked(ctx, site, account, loginUsername, loginPassword)
+	if err != nil {
+		return NewAPICheckinLoginCredentialResult{}, err
+	}
+	account.LoginUsername = loginUsername
+	account.LoginPassword = loginPassword
+	site.Accounts[accountIdx] = account
+	cfg.Sites[siteIdx] = site
+	if err := s.saveConfigLocked(ctx, cfg); err != nil {
+		return NewAPICheckinLoginCredentialResult{}, err
+	}
+	summary := s.configSummaryLocked(cfg)
+	probe.Config = &summary
+	probe.HasLoginPassword = true
+	probe.Message = "登录验证成功，凭据已保存"
+	return probe, nil
+}
+
+// TestAccountLoginCredentials 使用提交值或已保存值登录 sub2api，仅返回 Key/分组数量，不保存配置。
+func (s *NewAPICheckinService) TestAccountLoginCredentials(ctx context.Context, siteName, userID, loginUsername, loginPassword string) (NewAPICheckinLoginCredentialResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	site, account, err := s.findConfiguredAccountLocked(ctx, siteName, userID)
+	if err != nil {
+		return NewAPICheckinLoginCredentialResult{}, err
+	}
+	loginUsername, loginPassword, err = resolveNewAPILoginCredentials(account, loginUsername, loginPassword)
+	if err != nil {
+		return NewAPICheckinLoginCredentialResult{}, err
+	}
+	return s.probeSub2LoginLocked(ctx, site, account, loginUsername, loginPassword)
+}
+
+func (s *NewAPICheckinService) configuredAccountForUpdateLocked(ctx context.Context, siteName, userID string) (NewAPICheckinConfig, NewAPICheckinSite, NewAPICheckinAccount, int, int, error) {
+	cfg, err := s.loadConfigLocked(ctx)
+	if err != nil {
+		return NewAPICheckinConfig{}, NewAPICheckinSite{}, NewAPICheckinAccount{}, -1, -1, err
+	}
+	site, siteIdx := findNewAPISite(cfg, siteName)
+	if siteIdx < 0 {
+		return NewAPICheckinConfig{}, NewAPICheckinSite{}, NewAPICheckinAccount{}, -1, -1, fmt.Errorf("站点不存在: %s", siteName)
+	}
+	account, accountIdx := findNewAPIAccount(site, userID)
+	if accountIdx < 0 {
+		return NewAPICheckinConfig{}, NewAPICheckinSite{}, NewAPICheckinAccount{}, -1, -1, fmt.Errorf("账号不存在: %s / %s", siteName, userID)
+	}
+	return cfg, site, account, siteIdx, accountIdx, nil
 }
 
 // RefreshAccountBalance 刷新单个账号的签到状态和余额。
@@ -1960,15 +2220,56 @@ func (s *NewAPICheckinService) queryAccountSelfLocked(ctx context.Context, site 
 
 func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount) NewAPICheckinAccountAPIKeySummary {
 	summary := NewAPICheckinAccountAPIKeySummary{
-		Site:    site.Name,
-		UserID:  account.UserID,
-		Status:  "missing",
-		APIKeys: []NewAPICheckinMaskedAPIKey{},
+		Site:            site.Name,
+		Provider:        normalizeNewAPIProvider(site.Provider),
+		UserID:          account.UserID,
+		Status:          "missing",
+		GroupStatus:     "error",
+		AvailableGroups: []string{},
+		APIKeys:         []NewAPICheckinAPIKeySummary{},
 	}
-	headers := map[string]string{
-		"Authorization": fmt.Sprintf("Bearer %s", account.AccessKey),
-		"New-Api-User":  account.UserID,
+	if isSub2APISite(site) {
+		if cleanNewAPIText(account.LoginUsername) == "" || account.LoginPassword == "" {
+			summary.Status = "unsupported"
+			summary.Message = "尚未保存 sub2api 登录凭据"
+			summary.GroupStatus = "unsupported"
+			summary.GroupMessage = "填写登录账号和密码后可读取 Key 与全部可用分组"
+			return summary
+		}
+		session, err := s.loginSub2AccountLocked(ctx, site, account)
+		if err != nil {
+			summary.Status = "error"
+			summary.Message = err.Error()
+			summary.GroupMessage = err.Error()
+			return summary
+		}
+		options := sub2GroupOptions(session.groups)
+		for _, option := range options {
+			summary.AvailableGroups = append(summary.AvailableGroups, option.Name)
+		}
+		summary.AvailableGroupOptions = options
+		for _, raw := range session.keys {
+			item := mapFromAny(raw)
+			key := normalizeNewAPIFullKey(cleanNewAPIText(item["key"]))
+			if key == "" {
+				continue
+			}
+			groupID := int64FromAny(item["group_id"])
+			summary.APIKeys = append(summary.APIKeys, NewAPICheckinAPIKeySummary{
+				ID: int64FromAny(item["id"]), Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
+				MaskedKey: maskNewAPIKey(key), Group: firstNonEmpty(sub2GroupNameFromKey(item), findSub2GroupName(session.groups, groupID)), GroupID: groupID,
+			})
+		}
+		if len(summary.APIKeys) > 0 {
+			summary.Status = "ready"
+		} else {
+			summary.Status = "missing"
+		}
+		summary.GroupStatus = "ready"
+		summary.GroupMessage = fmt.Sprintf("登录成功，已读取 %d 个可用分组", len(options))
+		return summary
 	}
+	headers := newAPICheckinAccountHeaders(account)
 	result := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/token/?p=1&size=100"), site.BaseURL, headers)
 	if !result.ok {
 		summary.Status = "error"
@@ -1976,6 +2277,7 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 		return summary
 	}
 
+	groupSet := map[string]struct{}{}
 	data := mapFromAny(result.payload["data"])
 	for _, raw := range sliceFromAny(data["items"]) {
 		item := mapFromAny(raw)
@@ -1983,15 +2285,245 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 		if masked == "" {
 			continue
 		}
-		summary.APIKeys = append(summary.APIKeys, NewAPICheckinMaskedAPIKey{
+		groupName := cleanNewAPIText(item["group"])
+		addNewAPIGroup(groupSet, groupName)
+		summary.APIKeys = append(summary.APIKeys, NewAPICheckinAPIKeySummary{
+			ID:        int64FromAny(item["id"]),
 			Name:      firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
 			MaskedKey: masked,
+			Group:     groupName,
 		})
 	}
+	self := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/user/self"), site.BaseURL, headers)
+	if self.ok {
+		selfData := mapFromAny(self.payload["data"])
+		if selfData == nil {
+			selfData = self.payload
+		}
+		addNewAPIGroup(groupSet, cleanNewAPIText(selfData["group"]))
+	}
+	groups := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/user/available_groups"), site.BaseURL, headers)
+	if groups.ok {
+		collectNewAPIGroupNames(groups.payload["data"], groupSet)
+		summary.GroupStatus = "ready"
+		summary.GroupMessage = "已读取上游完整可用分组"
+	} else if len(groupSet) > 0 {
+		summary.GroupStatus = "partial"
+		summary.GroupMessage = "上游完整分组接口未授权，当前仅展示账号和 token 已知分组"
+	} else {
+		summary.GroupMessage = firstNonEmpty(groups.message, "上游分组读取失败")
+	}
+	summary.AvailableGroups = sortedNewAPIGroups(groupSet)
 	if len(summary.APIKeys) > 0 {
 		summary.Status = "ready"
 	}
 	return summary
+}
+
+// probeSub2LoginLocked 验证登录后同时读取 Key 和分组数量，响应中不包含 JWT 或密码。
+func (s *NewAPICheckinService) probeSub2LoginLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount, loginUsername, loginPassword string) (NewAPICheckinLoginCredentialResult, error) {
+	if !isSub2APISite(site) {
+		return NewAPICheckinLoginCredentialResult{}, fmt.Errorf("%s 不是 sub2api 站点", site.Name)
+	}
+	account.LoginUsername = loginUsername
+	account.LoginPassword = loginPassword
+	session, err := s.loginSub2AccountLocked(ctx, site, account)
+	if err != nil {
+		return NewAPICheckinLoginCredentialResult{}, err
+	}
+	return NewAPICheckinLoginCredentialResult{
+		Site: site.Name, UserID: account.UserID, LoginUsername: loginUsername,
+		HasLoginPassword: loginPassword != "", LoginOK: true,
+		APIKeyCount: len(session.keys), GroupCount: len(sub2GroupOptions(session.groups)), Message: "登录验证成功",
+	}, nil
+}
+
+// loginSub2AccountLocked 使用账号密码临时换取 JWT，并读取当前用户的 Key 和可用分组。
+func (s *NewAPICheckinService) loginSub2AccountLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount) (newAPICheckinSub2Session, error) {
+	loginUsername := cleanNewAPIText(account.LoginUsername)
+	if loginUsername == "" || account.LoginPassword == "" {
+		return newAPICheckinSub2Session{}, fmt.Errorf("未保存登录账号或密码")
+	}
+	login := s.requestJSONBodyLocked(ctx, http.MethodPost, joinNewAPIURL(site.BaseURL, "/api/v1/auth/login"), site.BaseURL, nil, map[string]any{
+		"email": loginUsername, "password": account.LoginPassword,
+	})
+	if !login.ok {
+		return newAPICheckinSub2Session{}, fmt.Errorf("登录失败: %s", firstNonEmpty(login.message, "上游拒绝登录"))
+	}
+	loginData := mapFromAny(login.payload["data"])
+	if loginData == nil {
+		loginData = login.payload
+	}
+	accessToken := cleanNewAPIText(loginData["access_token"])
+	if accessToken == "" {
+		return newAPICheckinSub2Session{}, fmt.Errorf("登录成功但上游未返回 access_token")
+	}
+	headers := sub2BearerHeaders(accessToken)
+	keysResult := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/v1/keys"), site.BaseURL, headers)
+	if !keysResult.ok {
+		return newAPICheckinSub2Session{}, fmt.Errorf("读取 API Key 失败: %s", firstNonEmpty(keysResult.message, "上游拒绝请求"))
+	}
+	keysData := mapFromAny(keysResult.payload["data"])
+	keys := sliceFromAny(keysData["items"])
+	groupsResult := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/v1/groups/available"), site.BaseURL, headers)
+	if !groupsResult.ok {
+		return newAPICheckinSub2Session{}, fmt.Errorf("读取可用分组失败: %s", firstNonEmpty(groupsResult.message, "上游拒绝请求"))
+	}
+	groups := sliceFromAny(groupsResult.payload["data"])
+	return newAPICheckinSub2Session{accessToken: accessToken, keys: keys, groups: groups}, nil
+}
+
+func resolveNewAPILoginCredentials(account NewAPICheckinAccount, loginUsername, loginPassword string) (string, string, error) {
+	loginUsername = firstNonEmpty(cleanNewAPIText(loginUsername), cleanNewAPIText(account.LoginUsername))
+	if loginPassword == "" {
+		loginPassword = account.LoginPassword
+	}
+	if loginUsername == "" || loginPassword == "" {
+		return "", "", fmt.Errorf("登录账号和密码不能为空")
+	}
+	return loginUsername, loginPassword, nil
+}
+
+func sub2BearerHeaders(accessToken string) map[string]string {
+	return map[string]string{"Authorization": "Bearer " + accessToken}
+}
+
+func sub2GroupOptions(groups []any) []NewAPICheckinGroupOption {
+	options := make([]NewAPICheckinGroupOption, 0, len(groups))
+	seen := map[int64]struct{}{}
+	for _, raw := range groups {
+		group := mapFromAny(raw)
+		id := int64FromAny(group["id"])
+		name := cleanNewAPIText(group["name"])
+		if id <= 0 || name == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		options = append(options, NewAPICheckinGroupOption{ID: id, Name: name})
+	}
+	return options
+}
+
+func findSub2GroupName(groups []any, groupID int64) string {
+	for _, option := range sub2GroupOptions(groups) {
+		if option.ID == groupID {
+			return option.Name
+		}
+	}
+	return ""
+}
+
+func sub2GroupNameFromKey(item map[string]any) string {
+	if group := mapFromAny(item["group"]); group != nil {
+		return cleanNewAPIText(group["name"])
+	}
+	return cleanNewAPIText(item["group"])
+}
+
+func findSub2APIKey(keys []any, apiKeyID int64) (map[string]any, error) {
+	for _, raw := range keys {
+		item := mapFromAny(raw)
+		if int64FromAny(item["id"]) == apiKeyID {
+			return item, nil
+		}
+	}
+	return nil, fmt.Errorf("未找到上游 API Key: %d", apiKeyID)
+}
+
+func (s *NewAPICheckinService) findConfiguredAccountLocked(ctx context.Context, siteName, userID string) (NewAPICheckinSite, NewAPICheckinAccount, error) {
+	cfg, err := s.loadConfigLocked(ctx)
+	if err != nil {
+		return NewAPICheckinSite{}, NewAPICheckinAccount{}, err
+	}
+	site, siteIdx := findNewAPISite(cfg, siteName)
+	if siteIdx < 0 {
+		return NewAPICheckinSite{}, NewAPICheckinAccount{}, fmt.Errorf("站点不存在: %s", siteName)
+	}
+	account, accountIdx := findNewAPIAccount(site, userID)
+	if accountIdx < 0 {
+		return NewAPICheckinSite{}, NewAPICheckinAccount{}, fmt.Errorf("账号不存在: %s / %s", siteName, userID)
+	}
+	return site, account, nil
+}
+
+func (s *NewAPICheckinService) findNewAPITokenLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount, apiKeyID int64) (map[string]any, error) {
+	result := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/token/?p=1&size=100"), site.BaseURL, newAPICheckinAccountHeaders(account))
+	if !result.ok {
+		return nil, fmt.Errorf("API Key 读取失败: %s", firstNonEmpty(result.message, "上游拒绝请求"))
+	}
+	for _, raw := range sliceFromAny(mapFromAny(result.payload["data"])["items"]) {
+		item := mapFromAny(raw)
+		if int64FromAny(item["id"]) == apiKeyID {
+			return item, nil
+		}
+	}
+	return nil, fmt.Errorf("未找到上游 token: %d", apiKeyID)
+}
+
+func newAPICheckinAccountHeaders(account NewAPICheckinAccount) map[string]string {
+	return map[string]string{
+		"Authorization": fmt.Sprintf("Bearer %s", account.AccessKey),
+		"New-Api-User":  account.UserID,
+	}
+}
+
+func normalizeNewAPIFullKey(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "sk-") {
+		return value
+	}
+	return "sk-" + value
+}
+
+func addNewAPIGroup(groups map[string]struct{}, value string) {
+	value = cleanNewAPIText(value)
+	if value != "" {
+		groups[value] = struct{}{}
+	}
+}
+
+func collectNewAPIGroupNames(value any, groups map[string]struct{}) {
+	switch typed := value.(type) {
+	case string:
+		addNewAPIGroup(groups, typed)
+	case []any:
+		for _, item := range typed {
+			if row := mapFromAny(item); row != nil {
+				addNewAPIGroup(groups, firstNonEmpty(cleanNewAPIText(row["name"]), cleanNewAPIText(row["group"]), cleanNewAPIText(row["value"])))
+				continue
+			}
+			collectNewAPIGroupNames(item, groups)
+		}
+	case map[string]any:
+		for _, wrapper := range []string{"groups", "items", "available_groups"} {
+			if nested, ok := typed[wrapper]; ok {
+				collectNewAPIGroupNames(nested, groups)
+				return
+			}
+		}
+		if name := firstNonEmpty(cleanNewAPIText(typed["name"]), cleanNewAPIText(typed["group"]), cleanNewAPIText(typed["value"])); name != "" {
+			addNewAPIGroup(groups, name)
+			return
+		}
+		for name := range typed {
+			addNewAPIGroup(groups, name)
+		}
+	}
+}
+
+func sortedNewAPIGroups(groups map[string]struct{}) []string {
+	out := make([]string, 0, len(groups))
+	for group := range groups {
+		out = append(out, group)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func maskNewAPIKey(value string) string {
@@ -2222,6 +2754,48 @@ func (s *NewAPICheckinService) requestJSONLocked(ctx context.Context, method, ur
 	return newAPICheckinAPIResult{ok: true, statusCode: resp.StatusCode, message: message, payload: payload}
 }
 
+// requestJSONBodyLocked 发送带 JSON 请求体的上游请求，并复用统一响应解析。
+func (s *NewAPICheckinService) requestJSONBodyLocked(ctx context.Context, method, url, baseURL string, headers map[string]string, value any) newAPICheckinAPIResult {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return newAPICheckinAPIResult{ok: false, message: err.Error(), payload: map[string]any{}}
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(raw))
+	if err != nil {
+		return newAPICheckinAPIResult{ok: false, message: err.Error(), payload: map[string]any{}}
+	}
+	req.Header.Set("User-Agent", "Sub2API-NewApi-Checkin/1.0")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	if baseURL != "" {
+		req.Header.Set("Referer", strings.TrimRight(baseURL, "/")+"/")
+		req.Header.Set("Origin", strings.TrimRight(baseURL, "/"))
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return newAPICheckinAPIResult{ok: false, message: err.Error(), payload: map[string]any{}}
+	}
+	defer resp.Body.Close()
+	responseRaw, _ := io.ReadAll(resp.Body)
+	payload := map[string]any{}
+	if len(responseRaw) > 0 {
+		if err := json.Unmarshal(responseRaw, &payload); err != nil {
+			payload["message"] = string(responseRaw)
+		}
+	}
+	message := extractNewAPIMessage(payload)
+	if resp.StatusCode >= 400 {
+		return newAPICheckinAPIResult{ok: false, statusCode: resp.StatusCode, message: firstNonEmpty(message, string(responseRaw), resp.Status), payload: payload}
+	}
+	if success, ok := payload["success"].(bool); ok && !success {
+		return newAPICheckinAPIResult{ok: false, statusCode: resp.StatusCode, message: message, payload: payload}
+	}
+	return newAPICheckinAPIResult{ok: true, statusCode: resp.StatusCode, message: message, payload: payload}
+}
+
 func (s *NewAPICheckinService) buildBalanceAccount(site NewAPICheckinSite, account NewAPICheckinAccount, self newAPICheckinAPIResult, checkin NewAPICheckinStatusResult, status NewAPICheckinSiteStatus, ts string) NewAPICheckinBalanceAccount {
 	quota, _ := optionalInt64FromAny(self.payload["quota"])
 	used, _ := optionalInt64FromAny(self.payload["used_quota"])
@@ -2352,14 +2926,16 @@ func (s *NewAPICheckinService) configSummaryLocked(cfg NewAPICheckinConfig) NewA
 				continue
 			}
 			accounts = append(accounts, NewAPICheckinConfigAccountSummary{
-				Name:            account.Name,
-				Username:        account.Username,
-				DisplayName:     account.DisplayName,
-				Label:           resolveNewAPIAccountLabel(account, NewAPICheckinBalanceAccount{}),
-				UserID:          account.UserID,
-				IPProfile:       account.IPProfile,
-				AccessKey:       account.AccessKey,
-				AccessKeyMasked: maskNewAPIKey(account.AccessKey),
+				Name:             account.Name,
+				Username:         account.Username,
+				DisplayName:      account.DisplayName,
+				Label:            resolveNewAPIAccountLabel(account, NewAPICheckinBalanceAccount{}),
+				UserID:           account.UserID,
+				IPProfile:        account.IPProfile,
+				AccessKey:        account.AccessKey,
+				AccessKeyMasked:  maskNewAPIKey(account.AccessKey),
+				LoginUsername:    account.LoginUsername,
+				HasLoginPassword: account.LoginPassword != "",
 			})
 		}
 		totalAccounts += len(accounts)
@@ -3142,6 +3718,8 @@ func normalizeNewAPIAccount(raw map[string]any) (NewAPICheckinAccount, error) {
 		DisplayName:    cleanNewAPIText(raw["display_name"]),
 		UserID:         userID,
 		AccessKey:      accessKey,
+		LoginUsername:  cleanNewAPIText(raw["login_username"]),
+		LoginPassword:  cleanNewAPIText(raw["login_password"]),
 		IPProfile:      firstNonEmpty(cleanNewAPIText(raw["ip_profile"]), "ip-slot-manual"),
 		Enabled:        boolFromAny(raw["enabled"], true),
 		DisabledReason: cleanNewAPIText(raw["disabled_reason"]),

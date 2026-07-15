@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -80,17 +81,23 @@ func TestNewAPICheckinSetAccountDisplayName(t *testing.T) {
 	require.Equal(t, "owner@example.com", repo.config.Sites[0].Accounts[0].DisplayName)
 }
 
-// TestNewAPICheckinAPIKeysMasksGeneratedKeys 验证页面只接收带 sk- 前缀的脱敏 API Key。
+// TestNewAPICheckinAPIKeysMasksGeneratedKeys 验证页面只接收带 sk- 前缀的脱敏 API Key 和已知分组。
 func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
-	seen := make(chan string, 2)
+	seen := make(chan string, 6)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen <- r.Method + " " + r.URL.String() + " " + r.Header.Get("Authorization") + " " + r.Header.Get("New-Api-User")
 		w.Header().Set("Content-Type", "application/json")
-		switch r.Header.Get("New-Api-User") {
-		case "1001":
-			_, _ = w.Write([]byte(`{"success":true,"data":{"total":1,"items":[{"id":7,"name":"codex","key":"abcdef12345678","status":1}]}}`))
-		case "1002":
+		switch r.URL.Path {
+		case "/api/token/":
+			if r.Header.Get("New-Api-User") == "1001" {
+				_, _ = w.Write([]byte(`{"success":true,"data":{"total":1,"items":[{"id":7,"name":"codex","key":"abcdef12345678","status":1,"group":"codex-team"}]}}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"success":true,"data":{"total":0,"items":[]}}`))
+		case "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"group":"default"}}`))
+		case "/api/user/available_groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":["default","codex-team"]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -127,10 +134,115 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	require.Equal(t, "ready", payload.Accounts[0].Status)
 	require.Equal(t, "codex", payload.Accounts[0].APIKeys[0].Name)
 	require.Equal(t, "sk-ab***5678", payload.Accounts[0].APIKeys[0].MaskedKey)
+	require.Equal(t, int64(7), payload.Accounts[0].APIKeys[0].ID)
+	require.Equal(t, "codex-team", payload.Accounts[0].APIKeys[0].Group)
+	require.Equal(t, "ready", payload.Accounts[0].GroupStatus)
+	require.Equal(t, []string{"codex-team", "default"}, payload.Accounts[0].AvailableGroups)
 	require.Equal(t, "missing", payload.Accounts[1].Status)
 	require.Empty(t, payload.Accounts[1].APIKeys)
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-a 1001")
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-b 1002")
+}
+
+// TestNewAPICheckinRevealAndUpdateAPIKeyGroup 验证完整 Key 按需返回，分组更新保留原 token 字段。
+func TestNewAPICheckinRevealAndUpdateAPIKeyGroup(t *testing.T) {
+	var updated map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&updated))
+			_, _ = w.Write([]byte(`{"success":true,"message":"updated"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"codex","key":"abcdef12345678","status":1,"group":"default","remain_quota":12345,"unlimited_quota":false,"model_limits_enabled":true,"model_limits":"gpt-5"}]}}`))
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{"sites": []map[string]any{{
+		"name": "demo", "enabled": true, "base_url": upstream.URL,
+		"accounts": []map[string]any{{"name": "alpha", "user_id": "1001", "access_key": "access-a"}},
+	}}})
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+
+	revealed, err := svc.RevealAPIKey(context.Background(), "demo", "1001", 7)
+	require.NoError(t, err)
+	require.Equal(t, "sk-abcdef12345678", revealed.Key)
+	require.Equal(t, "sk-ab***5678", revealed.MaskedKey)
+
+	result, err := svc.UpdateAPIKeyGroup(context.Background(), "demo", "1001", 7, "codex-team", 0)
+	require.NoError(t, err)
+	require.Equal(t, "codex-team", result.Group)
+	require.Equal(t, "codex-team", updated["group"])
+	require.Equal(t, float64(12345), updated["remain_quota"])
+	require.Equal(t, true, updated["model_limits_enabled"])
+	require.Equal(t, "gpt-5", updated["model_limits"])
+}
+
+// TestNewAPICheckinSub2LoginCredentialsAndGroupManagement 验证 sub2api 登录凭据保存后可读取和修改 Key 分组。
+func TestNewAPICheckinSub2LoginCredentialsAndGroupManagement(t *testing.T) {
+	var updated map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login":
+			var login map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&login))
+			require.Equal(t, "owner@example.com", login["email"])
+			require.Equal(t, "fixture-password", login["password"])
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"jwt-token","token_type":"Bearer"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/keys":
+			require.Equal(t, "Bearer jwt-token", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":1067,"name":"codex","key":"90f918dd12345684cd","group_id":22,"group":{"id":22,"name":"尝鲜套餐"}}],"total":1}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups/available":
+			require.Equal(t, "Bearer jwt-token", r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":22,"name":"尝鲜套餐"},{"id":26,"name":"codex--pro"}]}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/keys/1067":
+			require.Equal(t, "Bearer jwt-token", r.Header.Get("Authorization"))
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&updated))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"id":1067},"message":"updated"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{"sites": []map[string]any{{
+		"name": "sub2-demo", "provider": "sub2api", "enabled": true, "base_url": upstream.URL,
+		"accounts": []map[string]any{{"name": "primary", "user_id": "primary", "access_key": "sk-gateway"}},
+	}}})
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+
+	saved, err := svc.SetAccountLoginCredentials(context.Background(), "sub2-demo", "primary", "owner@example.com", "fixture-password")
+	require.NoError(t, err)
+	require.True(t, saved.LoginOK)
+	require.Equal(t, 1, saved.APIKeyCount)
+	require.Equal(t, 2, saved.GroupCount)
+	require.NotNil(t, saved.Config)
+	require.Equal(t, "owner@example.com", saved.Config.Sites[0].Accounts[0].LoginUsername)
+	require.True(t, saved.Config.Sites[0].Accounts[0].HasLoginPassword)
+	encoded, err := json.Marshal(saved.Config)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "fixture-password")
+	require.NotContains(t, string(encoded), `"login_password":`)
+
+	payload, err := svc.APIKeys(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "ready", payload.Accounts[0].Status)
+	require.Equal(t, int64(1067), payload.Accounts[0].APIKeys[0].ID)
+	require.Equal(t, int64(22), payload.Accounts[0].APIKeys[0].GroupID)
+	require.Equal(t, "尝鲜套餐", payload.Accounts[0].APIKeys[0].Group)
+	require.Equal(t, "sk-90***84cd", payload.Accounts[0].APIKeys[0].MaskedKey)
+	require.Equal(t, []NewAPICheckinGroupOption{{ID: 22, Name: "尝鲜套餐"}, {ID: 26, Name: "codex--pro"}}, payload.Accounts[0].AvailableGroupOptions)
+
+	revealed, err := svc.RevealAPIKey(context.Background(), "sub2-demo", "primary", 1067)
+	require.NoError(t, err)
+	require.Equal(t, "sk-90f918dd12345684cd", revealed.Key)
+
+	groupResult, err := svc.UpdateAPIKeyGroup(context.Background(), "sub2-demo", "primary", 1067, "codex--pro", 26)
+	require.NoError(t, err)
+	require.Equal(t, int64(26), groupResult.GroupID)
+	require.Equal(t, "codex--pro", groupResult.Group)
+	require.Equal(t, map[string]any{"group_id": float64(26)}, updated)
 }
 
 // TestNewAPICheckinRefreshSub2AccountReadsUsageAndModelsOnly 验证 sub2 数据源只调用只读接口。
@@ -208,7 +320,11 @@ func TestNewAPICheckinSub2ProviderNeverRunsCheckin(t *testing.T) {
 
 	apiKeys, err := svc.APIKeys(context.Background())
 	require.NoError(t, err)
-	require.Zero(t, apiKeys.AccountCount)
+	require.Equal(t, 1, apiKeys.AccountCount)
+	require.Equal(t, 1, apiKeys.UnsupportedCount)
+	require.Zero(t, apiKeys.ErrorCount)
+	require.Equal(t, "unsupported", apiKeys.Accounts[0].Status)
+	require.Equal(t, "unsupported", apiKeys.Accounts[0].GroupStatus)
 
 	monthlyTasks := buildNewAPIMonthlyTasks(repo.config, "sub2-demo", "")
 	require.Empty(t, monthlyTasks)
