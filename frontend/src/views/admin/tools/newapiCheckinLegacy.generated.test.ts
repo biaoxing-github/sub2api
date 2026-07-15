@@ -86,6 +86,7 @@ describe('mountNewapiCheckinLegacyTool', () => {
     let revealPayload: Record<string, unknown> | null = null
     let groupPayload: Record<string, unknown> | null = null
     let linkPayload: Record<string, unknown> | null = null
+	let syncMethod = ''
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/config')) {
@@ -133,6 +134,10 @@ describe('mountNewapiCheckinLegacyTool', () => {
           ]
         })
       }
+	  if (url.endsWith('/api-keys/sync')) {
+		syncMethod = String(init?.method || 'GET')
+		return jsonResponse({ account_count: 2, available_count: 1, refreshed_count: 2, accounts: [] })
+	  }
       if (url.endsWith('/reveal-api-key')) {
         revealPayload = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
         return jsonResponse({ site: 'demo', user_id: '1001', api_key_id: 7, name: 'codex', key: 'sk-abcdef12345678', masked_key: 'sk-ab***5678', group: 'codex-team' })
@@ -195,7 +200,6 @@ describe('mountNewapiCheckinLegacyTool', () => {
       '/api/v1/admin/newapi-checkin/api-keys',
       expect.any(Object)
     )
-
     const revealButton = Array.from(root.querySelectorAll('[data-reveal-generated-key]'))[0] as HTMLButtonElement
     revealButton.click()
     await vi.waitFor(() => expect(root.querySelector('#configTableWrap')?.textContent).toContain('sk-abcdef12345678'))
@@ -211,6 +215,9 @@ describe('mountNewapiCheckinLegacyTool', () => {
     await vi.waitFor(() => expect(linkPayload).toEqual({
       site: 'demo', user_id: '1001', api_key_id: 7, target_account_id: 91, operation: 'append'
     }))
+
+    ;(root.querySelector('#refreshDirectoryKeysBtn') as HTMLButtonElement).click()
+	await vi.waitFor(() => expect(syncMethod).toBe('POST'))
 
     cleanup()
   })

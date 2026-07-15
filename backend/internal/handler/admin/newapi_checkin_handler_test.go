@@ -139,11 +139,12 @@ func newTestNewAPICheckinHandler(t *testing.T) *NewAPICheckinHandler {
 }
 
 type newAPICheckinHandlerMemoryRepo struct {
-	config  service.NewAPICheckinConfig
-	report  service.NewAPICheckinReport
-	balance service.NewAPICheckinBalancePayload
-	history service.NewAPICheckinHistoryPayload
-	monthly []service.NewAPICheckinMonthlyRecord
+	config      service.NewAPICheckinConfig
+	report      service.NewAPICheckinReport
+	balance     service.NewAPICheckinBalancePayload
+	history     service.NewAPICheckinHistoryPayload
+	monthly     []service.NewAPICheckinMonthlyRecord
+	apiKeyCache []service.NewAPICheckinAPIKeyCacheEntry
 }
 
 func (r *newAPICheckinHandlerMemoryRepo) LoadConfig(context.Context) (service.NewAPICheckinConfig, error) {
@@ -188,6 +189,15 @@ func (r *newAPICheckinHandlerMemoryRepo) LoadMonthlyRecords(context.Context) ([]
 
 func (r *newAPICheckinHandlerMemoryRepo) SaveMonthlyRecords(_ context.Context, records []service.NewAPICheckinMonthlyRecord) error {
 	r.monthly = records
+	return nil
+}
+
+func (r *newAPICheckinHandlerMemoryRepo) LoadAPIKeyCache(context.Context) ([]service.NewAPICheckinAPIKeyCacheEntry, error) {
+	return r.apiKeyCache, nil
+}
+
+func (r *newAPICheckinHandlerMemoryRepo) SaveAPIKeyCache(_ context.Context, entries []service.NewAPICheckinAPIKeyCacheEntry) error {
+	r.apiKeyCache = append(r.apiKeyCache, entries...)
 	return nil
 }
 

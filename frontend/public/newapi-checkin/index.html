@@ -3453,13 +3453,14 @@
     }
 
     async function refreshDirectoryKeys() {
-      setButtonBusy(refreshDirectoryKeysBtn, true, "读取中");
+      setButtonBusy(refreshDirectoryKeysBtn, true, "同步中");
       try {
         state.revealedGeneratedKeys.clear();
-        await loadAPIKeys();
-        setAppStatus("API Key 与分组信息已重新读取", "ok");
+        state.apiKeys = await fetchJson("/api/api-keys/sync", { method: "POST" });
+        renderConfig(state.config);
+        setAppStatus(`API Key 与分组已全量同步，更新 ${state.apiKeys?.refreshed_count || 0} 个账号`, "ok");
       } catch (error) {
-        setAppStatus(`重新读取 API Key 与分组失败: ${error.message}`, "error");
+        setAppStatus(`同步 API Key 与分组失败: ${error.message}`, "error");
       } finally {
         setButtonBusy(refreshDirectoryKeysBtn, false);
       }

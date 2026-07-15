@@ -226,3 +226,11 @@
 - PASS：三入口主资源和签到页面 SHA-256 分别一致，线上页面包含数据库引用标识、引用置顶和兼容站点标记。
 - PASS：blue `v0.1.155.5` 与 green `v0.1.155.4` 均 healthy/restart 0；PostgreSQL、Redis 未重启且 healthy/restart 0。
 - LIMIT：无管理员登录配置，未在线读取受保护版本接口；未执行生产账号 Key 追加/替换、签到或月度同步。
+
+## 2026-07-15 API Key 与分组数据库缓存 - Devil
+
+- PASS：`go test ./internal/repository -run TestNewAPICheckinRepositoryAPIKeyCacheRoundTrip -count=1`，验证摘要与服务端匹配 Key 分栏持久化、读取恢复及接口 JSON 不泄露匹配值。
+- PASS：`go test ./internal/service ./internal/handler/admin ./internal/repository ./internal/server/routes ./cmd/server`，覆盖缓存未命中首次拉取、未引用账号零上游读取、已引用账号实时刷新、手动全量同步和管理路由。
+- PASS：`npm run test:run -- src/views/admin/tools/newapiCheckinLegacy.generated.test.ts`，3/3 通过，覆盖普通 GET 与手动 POST 同步。
+- PASS：`npm run typecheck`、`npm run build` 和 `git diff --check` 通过；构建仅有既有动态导入与 chunk size 警告。
+- 边界：未连接生产数据库，未提交、未构建 Docker 镜像、未部署。

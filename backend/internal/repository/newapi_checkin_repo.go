@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
@@ -24,6 +25,94 @@ func NewAPICheckinRepository(db *sql.DB) service.NewAPICheckinRepository {
 
 func (r *newAPICheckinRepository) StorageLabel() string {
 	return "sql:newapi-checkin"
+}
+
+// LoadAPIKeyCache 读取签到账号已持久化的 API Key 与分组摘要。
+func (r *newAPICheckinRepository) LoadAPIKeyCache(ctx context.Context) ([]service.NewAPICheckinAPIKeyCacheEntry, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT s.name, a.user_id, c.summary, c.match_keys, c.refreshed_at
+FROM newapi_checkin_api_key_cache c
+JOIN newapi_checkin_accounts a ON a.id = c.account_id
+JOIN newapi_checkin_sites s ON s.id = a.site_id
+ORDER BY s.id ASC, a.id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	entries := make([]service.NewAPICheckinAPIKeyCacheEntry, 0)
+	for rows.Next() {
+		var entry service.NewAPICheckinAPIKeyCacheEntry
+		var summaryJSON, matchKeysJSON []byte
+		if err := rows.Scan(&entry.Site, &entry.UserID, &summaryJSON, &matchKeysJSON, &entry.RefreshedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(summaryJSON, &entry.Summary); err != nil {
+			return nil, err
+		}
+		matchKeys := map[string]string{}
+		if err := json.Unmarshal(matchKeysJSON, &matchKeys); err != nil {
+			return nil, err
+		}
+		for index := range entry.Summary.APIKeys {
+			entry.Summary.APIKeys[index].MatchKey = matchKeys[repositoryAPIKeyCacheID(entry.Summary.APIKeys[index].ID)]
+		}
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
+}
+
+// SaveAPIKeyCache 幂等写入本次成功读取的账号级 API Key 与分组摘要。
+func (r *newAPICheckinRepository) SaveAPIKeyCache(ctx context.Context, entries []service.NewAPICheckinAPIKeyCacheEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, entry := range entries {
+		matchKeys := make(map[string]string, len(entry.Summary.APIKeys))
+		for _, key := range entry.Summary.APIKeys {
+			if key.MatchKey != "" {
+				matchKeys[repositoryAPIKeyCacheID(key.ID)] = key.MatchKey
+			}
+		}
+		summaryJSON, err := json.Marshal(entry.Summary)
+		if err != nil {
+			return err
+		}
+		matchKeysJSON, err := json.Marshal(matchKeys)
+		if err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `
+INSERT INTO newapi_checkin_api_key_cache (account_id, summary, match_keys, refreshed_at, updated_at)
+SELECT a.id, $3::jsonb, $4::jsonb, $5, NOW()
+FROM newapi_checkin_accounts a
+JOIN newapi_checkin_sites s ON s.id = a.site_id
+WHERE s.name = $1 AND a.user_id = $2
+ON CONFLICT (account_id) DO UPDATE SET
+  summary = EXCLUDED.summary,
+  match_keys = EXCLUDED.match_keys,
+  refreshed_at = EXCLUDED.refreshed_at,
+			updated_at = NOW()`, entry.Site, entry.UserID, string(summaryJSON), string(matchKeysJSON), entry.RefreshedAt)
+		if err != nil {
+			return err
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			if err != nil {
+				return err
+			}
+			return errors.New("API Key 缓存对应的签到账号不存在")
+		}
+	}
+	return tx.Commit()
+}
+
+// repositoryAPIKeyCacheID 将上游 token ID 转为 JSON 对象的稳定键。
+func repositoryAPIKeyCacheID(id int64) string {
+	return fmt.Sprintf("%d", id)
 }
 
 func (r *newAPICheckinRepository) LoadConfig(ctx context.Context) (service.NewAPICheckinConfig, error) {

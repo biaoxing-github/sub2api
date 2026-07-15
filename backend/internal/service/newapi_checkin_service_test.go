@@ -36,7 +36,7 @@ func (r *newAPICheckinAccountRepoStub) Update(_ context.Context, account *Accoun
 // TestNewAPICheckinAttachMainAccountReferences 验证 URL 规范化、引用高亮与可关联账号标记。
 func TestNewAPICheckinAttachMainAccountReferences(t *testing.T) {
 	svc := NewNewAPICheckinService(NewAPICheckinOptions{})
-	summary := NewAPICheckinAccountAPIKeySummary{APIKeys: []NewAPICheckinAPIKeySummary{{ID: 7, fullKey: "sk-linked"}}}
+	summary := NewAPICheckinAccountAPIKeySummary{APIKeys: []NewAPICheckinAPIKeySummary{{ID: 7, MatchKey: "sk-linked"}}}
 	svc.attachMainAccountReferences(&summary, NewAPICheckinSite{BaseURL: "HTTPS://Demo.Example/"}, []Account{
 		{ID: 11, Name: "主账号", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://demo.example/v1", "api_keys": []any{"sk-linked"}}},
 		{ID: 12, Name: "其他站点", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://other.example", "api_keys": []any{"sk-linked"}}},
@@ -52,8 +52,8 @@ func TestNewAPICheckinAttachMainAccountReferences(t *testing.T) {
 func TestNewAPICheckinAttachMainAccountReferencesMatchesMaskedKeyAndAPISubdomain(t *testing.T) {
 	svc := NewNewAPICheckinService(NewAPICheckinOptions{})
 	summary := NewAPICheckinAccountAPIKeySummary{APIKeys: []NewAPICheckinAPIKeySummary{
-		{ID: 8, MaskedKey: "sk-zz***yyyy", fullKey: "sk-zzzz**********yyyy"},
-		{ID: 7, MaskedKey: "sk-4e***LIrz", fullKey: "sk-4eAb**********LIrz"},
+		{ID: 8, MaskedKey: "sk-zz***yyyy", MatchKey: "sk-zzzz**********yyyy"},
+		{ID: 7, MaskedKey: "sk-4e***LIrz", MatchKey: "sk-4eAb**********LIrz"},
 	}}
 	storedKey := "sk-4eAb123456789012345678901234567890123456789LIrz"
 	svc.attachMainAccountReferences(&summary, NewAPICheckinSite{BaseURL: "https://dawclaudecode.com"}, []Account{
@@ -232,6 +232,90 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	require.Empty(t, payload.Accounts[1].APIKeys)
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-a 1001")
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-b 1002")
+}
+
+// TestNewAPICheckinAPIKeysUsesCacheUntilManualSync 验证未引用账号普通读取不访问上游，手动同步才刷新数据库缓存。
+func TestNewAPICheckinAPIKeysUsesCacheUntilManualSync(t *testing.T) {
+	requestCount := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/token/":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"latest","key":"abcdef12345678","group":"latest-group"}]}}`))
+		case "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"group":"default"}}`))
+		case "/api/user/available_groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":["default","latest-group"]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{"sites": []map[string]any{{
+		"name": "demo", "enabled": true, "base_url": upstream.URL,
+		"accounts": []map[string]any{{"name": "alpha", "user_id": "1001", "access_key": "access-a"}},
+	}}})
+	repo.apiKeyCache = []NewAPICheckinAPIKeyCacheEntry{{
+		Site: "demo", UserID: "1001", RefreshedAt: "2026-07-14 12:00:00",
+		Summary: NewAPICheckinAccountAPIKeySummary{
+			Site: "demo", UserID: "1001", Status: "ready", GroupStatus: "ready",
+			AvailableGroups: []string{"cached-group"},
+			APIKeys:         []NewAPICheckinAPIKeySummary{{ID: 7, Name: "cached", MaskedKey: "sk-ab***5678", Group: "cached-group", MatchKey: "sk-abcdef12345678"}},
+		},
+	}}
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+
+	cached, err := svc.APIKeys(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, requestCount)
+	require.Equal(t, 1, cached.CachedCount)
+	require.Zero(t, cached.RefreshedCount)
+	require.Equal(t, "cached-group", cached.Accounts[0].APIKeys[0].Group)
+
+	synced, err := svc.SyncAPIKeys(context.Background())
+	require.NoError(t, err)
+	require.Greater(t, requestCount, 0)
+	require.Zero(t, synced.CachedCount)
+	require.Equal(t, 1, synced.RefreshedCount)
+	require.Equal(t, "latest-group", synced.Accounts[0].APIKeys[0].Group)
+	require.Equal(t, "latest-group", repo.apiKeyCache[0].Summary.APIKeys[0].Group)
+}
+
+// TestNewAPICheckinAPIKeysRefreshesReferencedCache 验证数据库已引用 Key 的账号在普通读取时实时访问上游。
+func TestNewAPICheckinAPIKeysRefreshesReferencedCache(t *testing.T) {
+	requestCount := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/token/" {
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"live","key":"abcdef12345678","group":"live"}]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"success":true,"data":[]}`))
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{"sites": []map[string]any{{
+		"name": "demo", "enabled": true, "base_url": upstream.URL,
+		"accounts": []map[string]any{{"name": "alpha", "user_id": "1001", "access_key": "access-a"}},
+	}}})
+	repo.apiKeyCache = []NewAPICheckinAPIKeyCacheEntry{{Site: "demo", UserID: "1001", Summary: NewAPICheckinAccountAPIKeySummary{
+		Site: "demo", UserID: "1001", Status: "ready", GroupStatus: "ready",
+		APIKeys: []NewAPICheckinAPIKeySummary{{ID: 7, MatchKey: "sk-abcdef12345678"}},
+	}}}
+	accountRepo := &newAPICheckinAccountRepoStub{accounts: []Account{{
+		ID: 11, Name: "主账号", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"base_url": upstream.URL, "api_key": "sk-abcdef12345678"},
+	}}}
+	svc := NewNewAPICheckinService(NewAPICheckinOptions{Repository: repo, AccountRepository: accountRepo, HTTPClient: upstream.Client(), Now: fixedNewAPICheckinNow})
+
+	payload, err := svc.APIKeys(context.Background())
+	require.NoError(t, err)
+	require.Greater(t, requestCount, 0)
+	require.Equal(t, 1, payload.RefreshedCount)
+	require.Len(t, payload.Accounts[0].APIKeys[0].ReferencedAccounts, 1)
 }
 
 // TestNewAPICheckinRevealAndUpdateAPIKeyGroup 验证完整 Key 按需返回，分组更新保留原 token 字段。
@@ -762,11 +846,12 @@ func TestAggregateMonthlyCountsEachAccountDayOnce(t *testing.T) {
 }
 
 type memoryNewAPICheckinRepository struct {
-	config  NewAPICheckinConfig
-	report  NewAPICheckinReport
-	balance NewAPICheckinBalancePayload
-	history NewAPICheckinHistoryPayload
-	monthly []NewAPICheckinMonthlyRecord
+	config      NewAPICheckinConfig
+	report      NewAPICheckinReport
+	balance     NewAPICheckinBalancePayload
+	history     NewAPICheckinHistoryPayload
+	monthly     []NewAPICheckinMonthlyRecord
+	apiKeyCache []NewAPICheckinAPIKeyCacheEntry
 }
 
 func newMemoryNewAPICheckinRepository(t *testing.T, rawConfig map[string]any) *memoryNewAPICheckinRepository {
@@ -823,6 +908,28 @@ func (r *memoryNewAPICheckinRepository) LoadMonthlyRecords(context.Context) ([]N
 
 func (r *memoryNewAPICheckinRepository) SaveMonthlyRecords(_ context.Context, records []NewAPICheckinMonthlyRecord) error {
 	r.monthly = records
+	return nil
+}
+
+func (r *memoryNewAPICheckinRepository) LoadAPIKeyCache(context.Context) ([]NewAPICheckinAPIKeyCacheEntry, error) {
+	return append([]NewAPICheckinAPIKeyCacheEntry(nil), r.apiKeyCache...), nil
+}
+
+func (r *memoryNewAPICheckinRepository) SaveAPIKeyCache(_ context.Context, entries []NewAPICheckinAPIKeyCacheEntry) error {
+	for _, entry := range entries {
+		key := newAPICheckinCacheKey(entry.Site, entry.UserID)
+		replaced := false
+		for index := range r.apiKeyCache {
+			if newAPICheckinCacheKey(r.apiKeyCache[index].Site, r.apiKeyCache[index].UserID) == key {
+				r.apiKeyCache[index] = entry
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			r.apiKeyCache = append(r.apiKeyCache, entry)
+		}
+	}
 	return nil
 }
 

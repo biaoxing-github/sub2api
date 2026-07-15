@@ -88,6 +88,10 @@ type NewAPICheckinRepository interface {
 	LoadMonthlyRecords(ctx context.Context) ([]NewAPICheckinMonthlyRecord, error)
 	// SaveMonthlyRecords 保存月度签到记录。
 	SaveMonthlyRecords(ctx context.Context, records []NewAPICheckinMonthlyRecord) error
+	// LoadAPIKeyCache 读取 API Key 与分组的账号级数据库缓存。
+	LoadAPIKeyCache(ctx context.Context) ([]NewAPICheckinAPIKeyCacheEntry, error)
+	// SaveAPIKeyCache 保存本次成功读取的 API Key 与分组账号级缓存。
+	SaveAPIKeyCache(ctx context.Context, entries []NewAPICheckinAPIKeyCacheEntry) error
 	// StorageLabel 返回兼容页面展示的存储位置说明。
 	StorageLabel() string
 }
@@ -248,7 +252,20 @@ type NewAPICheckinAPIKeySummary struct {
 	ReferencedAccounts []NewAPICheckinAccountReference `json:"referenced_accounts,omitempty"`
 	// TargetAccounts 是同站点下可执行追加或替换的主平台账号。
 	TargetAccounts []NewAPICheckinAccountReference `json:"target_accounts,omitempty"`
-	fullKey        string
+	// MatchKey 仅在服务端保存完整或上游脱敏 Key，用于数据库引用匹配，不写入接口 JSON。
+	MatchKey string `json:"-"`
+}
+
+// NewAPICheckinAPIKeyCacheEntry 是一个签到账号的 API Key 与分组数据库缓存。
+type NewAPICheckinAPIKeyCacheEntry struct {
+	// Site 是签到站点名称。
+	Site string `json:"site"`
+	// UserID 是签到账号在站点内的稳定标识。
+	UserID string `json:"user_id"`
+	// RefreshedAt 是最近一次成功访问上游的时间。
+	RefreshedAt string `json:"refreshed_at"`
+	// Summary 是不包含主平台引用派生信息的上游摘要。
+	Summary NewAPICheckinAccountAPIKeySummary `json:"summary"`
 }
 
 // NewAPICheckinAccountReference 描述与签到站点 URL 匹配的主平台账号。
@@ -366,6 +383,10 @@ type NewAPICheckinAPIKeyPayload struct {
 	ErrorCount int `json:"error_count"`
 	// UnsupportedCount 是仅有网关 Key、缺少账号登录态的账号数。
 	UnsupportedCount int `json:"unsupported_count"`
+	// CachedCount 是本次直接从数据库缓存返回的账号数。
+	CachedCount int `json:"cached_count"`
+	// RefreshedCount 是本次实时访问上游并更新缓存的账号数。
+	RefreshedCount int `json:"refreshed_count"`
 	// Accounts 按站点配置顺序返回每个账号的结果。
 	Accounts []NewAPICheckinAccountAPIKeySummary `json:"accounts"`
 }
@@ -963,13 +984,38 @@ func (s *NewAPICheckinService) ConfigSummary(ctx context.Context) (NewAPICheckin
 	return s.configSummaryLocked(cfg), nil
 }
 
-// APIKeys 并发读取各账号已生成的 API Key 和分组能力，仅向页面返回脱敏摘要。
+// APIKeys 从数据库缓存读取 Key 与分组，仅对缺少缓存或已被主平台引用的账号实时刷新。
 func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKeyPayload, error) {
+	return s.loadAPIKeys(ctx, false)
+}
+
+// SyncAPIKeys 强制从全部启用账号的上游同步最新 Key 与分组并更新数据库缓存。
+func (s *NewAPICheckinService) SyncAPIKeys(ctx context.Context) (NewAPICheckinAPIKeyPayload, error) {
+	return s.loadAPIKeys(ctx, true)
+}
+
+// loadAPIKeys 按页面普通读取或管理员手动同步策略组装 API Key 载荷。
+func (s *NewAPICheckinService) loadAPIKeys(ctx context.Context, forceRefresh bool) (NewAPICheckinAPIKeyPayload, error) {
 	s.mu.Lock()
 	cfg, err := s.loadConfigLocked(ctx)
 	s.mu.Unlock()
 	if err != nil {
 		return NewAPICheckinAPIKeyPayload{}, err
+	}
+	cacheEntries, err := s.repo.LoadAPIKeyCache(ctx)
+	if err != nil {
+		return NewAPICheckinAPIKeyPayload{}, fmt.Errorf("读取 API Key 数据库缓存失败: %w", err)
+	}
+	cacheByAccount := make(map[string]NewAPICheckinAPIKeyCacheEntry, len(cacheEntries))
+	for _, entry := range cacheEntries {
+		cacheByAccount[newAPICheckinCacheKey(entry.Site, entry.UserID)] = entry
+	}
+	mainAccounts := []Account{}
+	if s.accountRepo != nil {
+		mainAccounts, err = s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+		if err != nil {
+			return NewAPICheckinAPIKeyPayload{}, fmt.Errorf("读取主平台账号失败: %w", err)
+		}
 	}
 
 	type target struct {
@@ -986,33 +1032,62 @@ func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKey
 	}
 
 	accounts := make([]NewAPICheckinAccountAPIKeySummary, len(targets))
+	refresh := make([]bool, len(targets))
+	cachedCount := 0
+	for index, item := range targets {
+		entry, ok := cacheByAccount[newAPICheckinCacheKey(item.site.Name, item.account.UserID)]
+		if !ok {
+			refresh[index] = true
+			continue
+		}
+		accounts[index] = entry.Summary
+		if forceRefresh {
+			refresh[index] = true
+			continue
+		}
+		probe := cloneNewAPICheckinAPIKeySummary(entry.Summary)
+		s.attachMainAccountReferences(&probe, item.site, mainAccounts)
+		refresh[index] = newAPICheckinSummaryHasReferences(probe)
+		if !refresh[index] {
+			cachedCount++
+		}
+	}
+
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(newAPICheckinAPIKeyConcurrency)
 	for index, item := range targets {
 		index, item := index, item
+		if !refresh[index] {
+			continue
+		}
 		group.Go(func() error {
 			accounts[index] = s.queryAPIKeysLocked(groupCtx, item.site, item.account)
 			return nil
 		})
 	}
 	_ = group.Wait()
-	if s.accountRepo != nil {
-		mainAccounts, listErr := s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
-		if listErr != nil {
-			return NewAPICheckinAPIKeyPayload{}, fmt.Errorf("读取主平台账号失败: %w", listErr)
+	refreshedEntries := make([]NewAPICheckinAPIKeyCacheEntry, 0)
+	for index := range accounts {
+		if refresh[index] && accounts[index].Status != "error" {
+			refreshedEntries = append(refreshedEntries, NewAPICheckinAPIKeyCacheEntry{
+				Site: targets[index].site.Name, UserID: targets[index].account.UserID,
+				RefreshedAt: s.nowText(), Summary: cloneNewAPICheckinAPIKeySummary(accounts[index]),
+			})
 		}
-		for index := range accounts {
-			s.attachMainAccountReferences(&accounts[index], targets[index].site, mainAccounts)
-		}
-		sort.SliceStable(accounts, func(left, right int) bool {
-			return newAPICheckinSummaryHasReferences(accounts[left]) && !newAPICheckinSummaryHasReferences(accounts[right])
-		})
 	}
+	if err := s.repo.SaveAPIKeyCache(ctx, refreshedEntries); err != nil {
+		return NewAPICheckinAPIKeyPayload{}, fmt.Errorf("保存 API Key 数据库缓存失败: %w", err)
+	}
+	for index := range accounts {
+		s.attachMainAccountReferences(&accounts[index], targets[index].site, mainAccounts)
+	}
+	sort.SliceStable(accounts, func(left, right int) bool {
+		return newAPICheckinSummaryHasReferences(accounts[left]) && !newAPICheckinSummaryHasReferences(accounts[right])
+	})
 
 	payload := NewAPICheckinAPIKeyPayload{
-		GeneratedAt:  s.nowText(),
-		AccountCount: len(accounts),
-		Accounts:     accounts,
+		GeneratedAt: s.nowText(), AccountCount: len(accounts), Accounts: accounts,
+		CachedCount: cachedCount, RefreshedCount: len(targets) - cachedCount,
 	}
 	for _, account := range accounts {
 		switch account.Status {
@@ -1027,6 +1102,24 @@ func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKey
 		}
 	}
 	return payload, nil
+}
+
+// newAPICheckinCacheKey 返回站点与账号组成的稳定缓存索引。
+func newAPICheckinCacheKey(site, userID string) string {
+	return strings.TrimSpace(site) + "\x00" + strings.TrimSpace(userID)
+}
+
+// cloneNewAPICheckinAPIKeySummary 复制摘要并移除由主平台账号动态派生的引用列表。
+func cloneNewAPICheckinAPIKeySummary(summary NewAPICheckinAccountAPIKeySummary) NewAPICheckinAccountAPIKeySummary {
+	cloned := summary
+	cloned.AvailableGroups = append([]string(nil), summary.AvailableGroups...)
+	cloned.AvailableGroupOptions = append([]NewAPICheckinGroupOption(nil), summary.AvailableGroupOptions...)
+	cloned.APIKeys = append([]NewAPICheckinAPIKeySummary(nil), summary.APIKeys...)
+	for index := range cloned.APIKeys {
+		cloned.APIKeys[index].ReferencedAccounts = nil
+		cloned.APIKeys[index].TargetAccounts = nil
+	}
+	return cloned
 }
 
 // LinkAPIKeyToAccount 将签到工具生成的 Key 追加或替换到同站点的主平台账号。
@@ -1078,7 +1171,7 @@ func (s *NewAPICheckinService) attachMainAccountReferences(summary *NewAPIChecki
 			}
 			referenced := false
 			for _, existing := range storedAccountAPIKeys(account.Credentials) {
-				if newAPIGeneratedKeyMatchesStored(key.fullKey, existing) {
+				if newAPIGeneratedKeyMatchesStored(key.MatchKey, existing) {
 					referenced = true
 					break
 				}
@@ -1216,7 +1309,7 @@ func normalizeNewAPIAccountBaseURL(value string) string {
 	return strings.TrimRight(parsed.String(), "/")
 }
 
-// RevealAPIKey 按站点、账号和 token ID 读取完整 NewAPI Key。
+// RevealAPIKey 实时读取账号最新 Key 与分组、更新缓存，再按 token ID 返回完整 Key。
 func (s *NewAPICheckinService) RevealAPIKey(ctx context.Context, siteName, userID string, apiKeyID int64) (NewAPICheckinAPIKeyRevealResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1224,39 +1317,49 @@ func (s *NewAPICheckinService) RevealAPIKey(ctx context.Context, siteName, userI
 	if err != nil {
 		return NewAPICheckinAPIKeyRevealResult{}, err
 	}
-	if isSub2APISite(site) {
-		session, err := s.loginSub2AccountLocked(ctx, site, account)
-		if err != nil {
-			return NewAPICheckinAPIKeyRevealResult{}, err
-		}
-		item, err := findSub2APIKey(session.keys, apiKeyID)
-		if err != nil {
-			return NewAPICheckinAPIKeyRevealResult{}, err
-		}
-		key := normalizeNewAPIFullKey(cleanNewAPIText(item["key"]))
-		if key == "" {
-			return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("上游 Key %d 未返回完整 API Key", apiKeyID)
-		}
-		groupID := int64FromAny(item["group_id"])
-		return NewAPICheckinAPIKeyRevealResult{
-			Site: site.Name, UserID: account.UserID, APIKeyID: apiKeyID,
-			Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"), Key: key,
-			MaskedKey: maskNewAPIKey(key), Group: firstNonEmpty(sub2GroupNameFromKey(item), findSub2GroupName(session.groups, groupID)),
-		}, nil
+	summary := s.queryAPIKeysLocked(ctx, site, account)
+	if summary.Status == "error" || summary.Status == "unsupported" {
+		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("实时读取 API Key 失败: %s", firstNonEmpty(summary.Message, summary.GroupMessage))
 	}
-	item, err := s.findNewAPITokenLocked(ctx, site, account, apiKeyID)
-	if err != nil {
+	if err := s.saveAPIKeySummaryCacheLocked(ctx, site, account, summary); err != nil {
 		return NewAPICheckinAPIKeyRevealResult{}, err
 	}
-	key, err := s.resolveStoredFullAPIKey(ctx, cleanNewAPIText(item["key"]))
+	var selected *NewAPICheckinAPIKeySummary
+	for index := range summary.APIKeys {
+		if summary.APIKeys[index].ID == apiKeyID {
+			selected = &summary.APIKeys[index]
+			break
+		}
+	}
+	if selected == nil {
+		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("未找到 API Key %d", apiKeyID)
+	}
+	key := selected.MatchKey
+	if !isSub2APISite(site) {
+		key, err = s.resolveStoredFullAPIKey(ctx, key)
+	}
 	if err != nil {
 		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("读取 token %d 完整 API Key 失败: %w", apiKeyID, err)
 	}
+	if key == "" || strings.Contains(key, "*") {
+		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("上游 Key %d 未返回完整 API Key", apiKeyID)
+	}
 	return NewAPICheckinAPIKeyRevealResult{
 		Site: site.Name, UserID: account.UserID, APIKeyID: apiKeyID,
-		Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
-		Key:  key, MaskedKey: maskNewAPIKey(key), Group: cleanNewAPIText(item["group"]),
+		Name: selected.Name, Key: key, MaskedKey: maskNewAPIKey(key), Group: selected.Group,
 	}, nil
+}
+
+// saveAPIKeySummaryCacheLocked 保存单个账号刚从上游读取的 Key 与分组摘要。
+func (s *NewAPICheckinService) saveAPIKeySummaryCacheLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount, summary NewAPICheckinAccountAPIKeySummary) error {
+	entry := NewAPICheckinAPIKeyCacheEntry{
+		Site: site.Name, UserID: account.UserID, RefreshedAt: s.nowText(),
+		Summary: cloneNewAPICheckinAPIKeySummary(summary),
+	}
+	if err := s.repo.SaveAPIKeyCache(ctx, []NewAPICheckinAPIKeyCacheEntry{entry}); err != nil {
+		return fmt.Errorf("保存 API Key 数据库缓存失败: %w", err)
+	}
+	return nil
 }
 
 // UpdateAPIKeyGroup 保留上游 token 的完整字段，只替换 group 后提交更新。
@@ -1285,6 +1388,13 @@ func (s *NewAPICheckinService) UpdateAPIKeyGroup(ctx context.Context, siteName, 
 		if !result.ok {
 			return NewAPICheckinAPIKeyGroupResult{}, fmt.Errorf("更新 API Key 分组失败: %s", firstNonEmpty(result.message, "上游拒绝请求"))
 		}
+		refreshed := s.queryAPIKeysLocked(ctx, site, account)
+		if refreshed.Status == "error" {
+			return NewAPICheckinAPIKeyGroupResult{}, fmt.Errorf("分组已更新，但重新读取最新 Key 与分组失败: %s", refreshed.Message)
+		}
+		if err := s.saveAPIKeySummaryCacheLocked(ctx, site, account, refreshed); err != nil {
+			return NewAPICheckinAPIKeyGroupResult{}, err
+		}
 		return NewAPICheckinAPIKeyGroupResult{
 			Site: site.Name, UserID: account.UserID, APIKeyID: apiKeyID,
 			Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"), Group: groupName, GroupID: groupID,
@@ -1303,6 +1413,13 @@ func (s *NewAPICheckinService) UpdateAPIKeyGroup(ctx context.Context, siteName, 
 	result := s.requestJSONBodyLocked(ctx, http.MethodPut, joinNewAPIURL(site.BaseURL, "/api/token/"), site.BaseURL, headers, item)
 	if !result.ok {
 		return NewAPICheckinAPIKeyGroupResult{}, fmt.Errorf("更新 API Key 分组失败: %s", firstNonEmpty(result.message, "上游拒绝请求"))
+	}
+	refreshed := s.queryAPIKeysLocked(ctx, site, account)
+	if refreshed.Status == "error" {
+		return NewAPICheckinAPIKeyGroupResult{}, fmt.Errorf("分组已更新，但重新读取最新 Key 与分组失败: %s", refreshed.Message)
+	}
+	if err := s.saveAPIKeySummaryCacheLocked(ctx, site, account, refreshed); err != nil {
+		return NewAPICheckinAPIKeyGroupResult{}, err
 	}
 	return NewAPICheckinAPIKeyGroupResult{
 		Site: site.Name, UserID: account.UserID, APIKeyID: apiKeyID,
@@ -2493,7 +2610,7 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 			summary.APIKeys = append(summary.APIKeys, NewAPICheckinAPIKeySummary{
 				ID: int64FromAny(item["id"]), Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
 				MaskedKey: maskNewAPIKey(key), Group: firstNonEmpty(sub2GroupNameFromKey(item), findSub2GroupName(session.groups, groupID)), GroupID: groupID,
-				fullKey: key,
+				MatchKey: key,
 			})
 		}
 		if len(summary.APIKeys) > 0 {
@@ -2528,7 +2645,7 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 			Name:      firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
 			MaskedKey: masked,
 			Group:     groupName,
-			fullKey:   normalizeNewAPIFullKey(cleanNewAPIText(item["key"])),
+			MatchKey:  normalizeNewAPIFullKey(cleanNewAPIText(item["key"])),
 		})
 	}
 	self := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/user/self"), site.BaseURL, headers)

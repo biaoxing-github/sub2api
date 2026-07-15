@@ -114,6 +114,7 @@ func registerNewAPICheckinRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		checkin.GET("/config", h.Admin.NewAPICheckin.GetConfig)
 		checkin.GET("/api-keys", h.Admin.NewAPICheckin.GetAPIKeys)
+		checkin.POST("/api-keys/sync", h.Admin.NewAPICheckin.SyncAPIKeys)
 		checkin.GET("/last-run", h.Admin.NewAPICheckin.GetLastRun)
 		checkin.GET("/balances", h.Admin.NewAPICheckin.GetBalances)
 		checkin.GET("/history", h.Admin.NewAPICheckin.GetHistory)

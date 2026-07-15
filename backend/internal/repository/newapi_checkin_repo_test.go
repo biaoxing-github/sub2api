@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -12,6 +13,28 @@ import (
 )
 
 type newAPICheckinProviderDataJSONArg struct{}
+
+type newAPICheckinCacheSummaryJSONArg struct{}
+
+func (newAPICheckinCacheSummaryJSONArg) Match(value driver.Value) bool {
+	raw, ok := value.(string)
+	if !ok || raw == "" || strings.Contains(raw, "sk-secret") {
+		return false
+	}
+	var summary service.NewAPICheckinAccountAPIKeySummary
+	return json.Unmarshal([]byte(raw), &summary) == nil && len(summary.APIKeys) == 1 && summary.APIKeys[0].MaskedKey == "sk-se***cret"
+}
+
+type newAPICheckinCacheMatchKeysJSONArg struct{}
+
+func (newAPICheckinCacheMatchKeysJSONArg) Match(value driver.Value) bool {
+	raw, ok := value.(string)
+	if !ok {
+		return false
+	}
+	var keys map[string]string
+	return json.Unmarshal([]byte(raw), &keys) == nil && keys["7"] == "sk-secret"
+}
 
 func (newAPICheckinProviderDataJSONArg) Match(value driver.Value) bool {
 	var raw []byte
@@ -75,5 +98,41 @@ func TestNewAPICheckinRepositorySaveBalanceCachePersistsProviderData(t *testing.
 	})
 
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestNewAPICheckinRepositoryAPIKeyCacheRoundTrip 验证摘要与匹配 Key 分栏持久化并能恢复引用匹配信息。
+func TestNewAPICheckinRepositoryAPIKeyCacheRoundTrip(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO newapi_checkin_api_key_cache").
+		WithArgs("demo", "1001", newAPICheckinCacheSummaryJSONArg{}, newAPICheckinCacheMatchKeysJSONArg{}, "2026-07-15 19:00:00").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	summaryJSON := `{"site":"demo","provider":"newapi","user_id":"1001","status":"ready","group_status":"ready","available_groups":["default"],"api_keys":[{"id":7,"name":"codex","masked_key":"sk-se***cret","group":"default"}]}`
+	mock.ExpectQuery("SELECT s.name, a.user_id, c.summary, c.match_keys, c.refreshed_at").
+		WillReturnRows(sqlmock.NewRows([]string{"name", "user_id", "summary", "match_keys", "refreshed_at"}).
+			AddRow("demo", "1001", []byte(summaryJSON), []byte(`{"7":"sk-secret"}`), "2026-07-15 19:00:00"))
+
+	repo := NewAPICheckinRepository(db)
+	err = repo.SaveAPIKeyCache(context.Background(), []service.NewAPICheckinAPIKeyCacheEntry{{
+		Site: "demo", UserID: "1001", RefreshedAt: "2026-07-15 19:00:00",
+		Summary: service.NewAPICheckinAccountAPIKeySummary{
+			Site: "demo", Provider: "newapi", UserID: "1001", Status: "ready", GroupStatus: "ready",
+			AvailableGroups: []string{"default"},
+			APIKeys:         []service.NewAPICheckinAPIKeySummary{{ID: 7, Name: "codex", MaskedKey: "sk-se***cret", Group: "default", MatchKey: "sk-secret"}},
+		},
+	}})
+	require.NoError(t, err)
+	entries, err := repo.LoadAPIKeyCache(context.Background())
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "sk-secret", entries[0].Summary.APIKeys[0].MatchKey)
+	encoded, err := json.Marshal(entries[0].Summary)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "sk-secret")
 	require.NoError(t, mock.ExpectationsWereMet())
 }

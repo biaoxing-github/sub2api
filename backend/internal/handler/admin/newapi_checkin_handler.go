@@ -112,6 +112,12 @@ func (h *NewAPICheckinHandler) GetAPIKeys(c *gin.Context) {
 	respondNewAPICheckin(c, data, err)
 }
 
+// SyncAPIKeys POST /admin/newapi-checkin/api-keys/sync 强制同步全部启用账号的 Key 与分组缓存。
+func (h *NewAPICheckinHandler) SyncAPIKeys(c *gin.Context) {
+	data, err := h.checkinService.SyncAPIKeys(c.Request.Context())
+	respondNewAPICheckin(c, data, err)
+}
+
 // RevealAPIKey POST /admin/newapi-checkin/reveal-api-key
 func (h *NewAPICheckinHandler) RevealAPIKey(c *gin.Context) {
 	var req newAPICheckinAPIKeyRequest
