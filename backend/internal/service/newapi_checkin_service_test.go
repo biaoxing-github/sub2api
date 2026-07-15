@@ -318,6 +318,52 @@ func TestNewAPICheckinAPIKeysRefreshesReferencedCache(t *testing.T) {
 	require.Len(t, payload.Accounts[0].APIKeys[0].ReferencedAccounts, 1)
 }
 
+// TestNewAPICheckinAPIKeysRefreshesReferencedAccountWithStaleUnsupportedCache 验证旧缓存没有 Key 时，
+// 签到账号自身的 access key 被主平台引用也会触发实时刷新并修复数据库缓存。
+func TestNewAPICheckinAPIKeysRefreshesReferencedAccountWithStaleUnsupportedCache(t *testing.T) {
+	requestCount := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"jwt-token"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":7,"name":"live","key":"referenced-key","group_id":22,"group":{"id":22,"name":"live-group"}}]}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":22,"name":"live-group"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{"sites": []map[string]any{{
+		"name": "sub2-demo", "provider": "sub2api", "enabled": true, "base_url": upstream.URL,
+		"accounts": []map[string]any{{
+			"name": "alpha", "user_id": "1001", "access_key": "sk-referenced-key",
+			"login_username": "owner@example.com", "login_password": "fixture-password",
+		}},
+	}}})
+	repo.apiKeyCache = []NewAPICheckinAPIKeyCacheEntry{{Site: "sub2-demo", UserID: "1001", Summary: NewAPICheckinAccountAPIKeySummary{
+		Site: "sub2-demo", UserID: "1001", Status: "unsupported", GroupStatus: "unsupported",
+		Message: "尚未保存 sub2api 登录凭据",
+	}}}
+	accountRepo := &newAPICheckinAccountRepoStub{accounts: []Account{{
+		ID: 11, Name: "主账号", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{"base_url": upstream.URL, "api_keys": []string{"sk-referenced-key"}},
+	}}}
+	svc := NewNewAPICheckinService(NewAPICheckinOptions{Repository: repo, AccountRepository: accountRepo, HTTPClient: upstream.Client(), Now: fixedNewAPICheckinNow})
+
+	payload, err := svc.APIKeys(context.Background())
+	require.NoError(t, err)
+	require.Greater(t, requestCount, 0)
+	require.Equal(t, 1, payload.RefreshedCount)
+	require.Equal(t, "ready", payload.Accounts[0].Status)
+	require.Len(t, payload.Accounts[0].APIKeys[0].ReferencedAccounts, 1)
+	require.Equal(t, "ready", repo.apiKeyCache[0].Summary.Status)
+}
+
 // TestNewAPICheckinRevealAndUpdateAPIKeyGroup 验证完整 Key 按需返回，分组更新保留原 token 字段。
 func TestNewAPICheckinRevealAndUpdateAPIKeyGroup(t *testing.T) {
 	var updated map[string]any
@@ -394,6 +440,9 @@ func TestNewAPICheckinSub2LoginCredentialsAndGroupManagement(t *testing.T) {
 	require.NotNil(t, saved.Config)
 	require.Equal(t, "owner@example.com", saved.Config.Sites[0].Accounts[0].LoginUsername)
 	require.True(t, saved.Config.Sites[0].Accounts[0].HasLoginPassword)
+	require.Len(t, repo.apiKeyCache, 1)
+	require.Equal(t, "ready", repo.apiKeyCache[0].Summary.Status)
+	require.Equal(t, "尝鲜套餐", repo.apiKeyCache[0].Summary.APIKeys[0].Group)
 	encoded, err := json.Marshal(saved.Config)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "fixture-password")

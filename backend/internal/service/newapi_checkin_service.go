@@ -1045,6 +1045,10 @@ func (s *NewAPICheckinService) loadAPIKeys(ctx context.Context, forceRefresh boo
 			refresh[index] = true
 			continue
 		}
+		if newAPICheckinAccountHasMainReference(item.account, mainAccounts) {
+			refresh[index] = true
+			continue
+		}
 		probe := cloneNewAPICheckinAPIKeySummary(entry.Summary)
 		s.attachMainAccountReferences(&probe, item.site, mainAccounts)
 		refresh[index] = newAPICheckinSummaryHasReferences(probe)
@@ -1198,6 +1202,23 @@ func newAPICheckinSummaryHasReferences(summary NewAPICheckinAccountAPIKeySummary
 	for _, key := range summary.APIKeys {
 		if len(key.ReferencedAccounts) > 0 {
 			return true
+		}
+	}
+	return false
+}
+
+// newAPICheckinAccountHasMainReference 使用签到账号自身的 access key 判断是否已被主平台引用。
+// 该判断不依赖旧缓存，确保 unsupported 等无 Key 缓存也能在保存凭据后实时恢复。
+func newAPICheckinAccountHasMainReference(checkinAccount NewAPICheckinAccount, accounts []Account) bool {
+	for index := range accounts {
+		account := &accounts[index]
+		if account.Type != AccountTypeAPIKey {
+			continue
+		}
+		for _, existing := range storedAccountAPIKeys(account.Credentials) {
+			if newAPIGeneratedKeyMatchesStored(checkinAccount.AccessKey, existing) {
+				return true
+			}
 		}
 	}
 	return false
@@ -1766,7 +1787,7 @@ func (s *NewAPICheckinService) SetAccountLoginCredentials(ctx context.Context, s
 	if err != nil {
 		return NewAPICheckinLoginCredentialResult{}, err
 	}
-	probe, err := s.probeSub2LoginLocked(ctx, site, account, loginUsername, loginPassword)
+	probe, refreshed, err := s.probeSub2LoginLocked(ctx, site, account, loginUsername, loginPassword)
 	if err != nil {
 		return NewAPICheckinLoginCredentialResult{}, err
 	}
@@ -1775,6 +1796,9 @@ func (s *NewAPICheckinService) SetAccountLoginCredentials(ctx context.Context, s
 	site.Accounts[accountIdx] = account
 	cfg.Sites[siteIdx] = site
 	if err := s.saveConfigLocked(ctx, cfg); err != nil {
+		return NewAPICheckinLoginCredentialResult{}, err
+	}
+	if err := s.saveAPIKeySummaryCacheLocked(ctx, site, account, refreshed); err != nil {
 		return NewAPICheckinLoginCredentialResult{}, err
 	}
 	summary := s.configSummaryLocked(cfg)
@@ -1796,7 +1820,8 @@ func (s *NewAPICheckinService) TestAccountLoginCredentials(ctx context.Context, 
 	if err != nil {
 		return NewAPICheckinLoginCredentialResult{}, err
 	}
-	return s.probeSub2LoginLocked(ctx, site, account, loginUsername, loginPassword)
+	probe, _, err := s.probeSub2LoginLocked(ctx, site, account, loginUsername, loginPassword)
+	return probe, err
 }
 
 func (s *NewAPICheckinService) configuredAccountForUpdateLocked(ctx context.Context, siteName, userID string) (NewAPICheckinConfig, NewAPICheckinSite, NewAPICheckinAccount, int, int, error) {
@@ -2595,32 +2620,7 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 			summary.GroupMessage = err.Error()
 			return summary
 		}
-		options := sub2GroupOptions(session.groups)
-		for _, option := range options {
-			summary.AvailableGroups = append(summary.AvailableGroups, option.Name)
-		}
-		summary.AvailableGroupOptions = options
-		for _, raw := range session.keys {
-			item := mapFromAny(raw)
-			key := normalizeNewAPIFullKey(cleanNewAPIText(item["key"]))
-			if key == "" {
-				continue
-			}
-			groupID := int64FromAny(item["group_id"])
-			summary.APIKeys = append(summary.APIKeys, NewAPICheckinAPIKeySummary{
-				ID: int64FromAny(item["id"]), Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
-				MaskedKey: maskNewAPIKey(key), Group: firstNonEmpty(sub2GroupNameFromKey(item), findSub2GroupName(session.groups, groupID)), GroupID: groupID,
-				MatchKey: key,
-			})
-		}
-		if len(summary.APIKeys) > 0 {
-			summary.Status = "ready"
-		} else {
-			summary.Status = "missing"
-		}
-		summary.GroupStatus = "ready"
-		summary.GroupMessage = fmt.Sprintf("登录成功，已读取 %d 个可用分组", len(options))
-		return summary
+		return buildSub2APIKeySummary(site, account, session)
 	}
 	headers := newAPICheckinAccountHeaders(account)
 	result := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/token/?p=1&size=100"), site.BaseURL, headers)
@@ -2674,22 +2674,54 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 	return summary
 }
 
-// probeSub2LoginLocked 验证登录后同时读取 Key 和分组数量，响应中不包含 JWT 或密码。
-func (s *NewAPICheckinService) probeSub2LoginLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount, loginUsername, loginPassword string) (NewAPICheckinLoginCredentialResult, error) {
+// probeSub2LoginLocked 验证登录后同时返回数量和可持久化的最新 Key/分组摘要，响应中不包含 JWT 或密码。
+func (s *NewAPICheckinService) probeSub2LoginLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount, loginUsername, loginPassword string) (NewAPICheckinLoginCredentialResult, NewAPICheckinAccountAPIKeySummary, error) {
 	if !isSub2APISite(site) {
-		return NewAPICheckinLoginCredentialResult{}, fmt.Errorf("%s 不是 sub2api 站点", site.Name)
+		return NewAPICheckinLoginCredentialResult{}, NewAPICheckinAccountAPIKeySummary{}, fmt.Errorf("%s 不是 sub2api 站点", site.Name)
 	}
 	account.LoginUsername = loginUsername
 	account.LoginPassword = loginPassword
 	session, err := s.loginSub2AccountLocked(ctx, site, account)
 	if err != nil {
-		return NewAPICheckinLoginCredentialResult{}, err
+		return NewAPICheckinLoginCredentialResult{}, NewAPICheckinAccountAPIKeySummary{}, err
 	}
-	return NewAPICheckinLoginCredentialResult{
+	result := NewAPICheckinLoginCredentialResult{
 		Site: site.Name, UserID: account.UserID, LoginUsername: loginUsername,
 		HasLoginPassword: loginPassword != "", LoginOK: true,
 		APIKeyCount: len(session.keys), GroupCount: len(sub2GroupOptions(session.groups)), Message: "登录验证成功",
-	}, nil
+	}
+	return result, buildSub2APIKeySummary(site, account, session), nil
+}
+
+// buildSub2APIKeySummary 把一次登录读取到的 Key 与分组转换成页面和数据库共用的账号摘要。
+func buildSub2APIKeySummary(site NewAPICheckinSite, account NewAPICheckinAccount, session newAPICheckinSub2Session) NewAPICheckinAccountAPIKeySummary {
+	summary := NewAPICheckinAccountAPIKeySummary{
+		Site: site.Name, Provider: normalizeNewAPIProvider(site.Provider), UserID: account.UserID,
+		Status: "missing", GroupStatus: "ready", AvailableGroups: []string{}, APIKeys: []NewAPICheckinAPIKeySummary{},
+	}
+	options := sub2GroupOptions(session.groups)
+	for _, option := range options {
+		summary.AvailableGroups = append(summary.AvailableGroups, option.Name)
+	}
+	summary.AvailableGroupOptions = options
+	for _, raw := range session.keys {
+		item := mapFromAny(raw)
+		key := normalizeNewAPIFullKey(cleanNewAPIText(item["key"]))
+		if key == "" {
+			continue
+		}
+		groupID := int64FromAny(item["group_id"])
+		summary.APIKeys = append(summary.APIKeys, NewAPICheckinAPIKeySummary{
+			ID: int64FromAny(item["id"]), Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
+			MaskedKey: maskNewAPIKey(key), Group: firstNonEmpty(sub2GroupNameFromKey(item), findSub2GroupName(session.groups, groupID)), GroupID: groupID,
+			MatchKey: key,
+		})
+	}
+	if len(summary.APIKeys) > 0 {
+		summary.Status = "ready"
+	}
+	summary.GroupMessage = fmt.Sprintf("登录成功，已读取 %d 个可用分组", len(options))
+	return summary
 }
 
 // loginSub2AccountLocked 使用账号密码临时换取 JWT，并读取当前用户的 Key 和可用分组。

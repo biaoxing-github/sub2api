@@ -244,3 +244,12 @@
 - PASS：三入口主资源与签到页 SHA-256 分别一致；缓存 GET、同步 POST 和 Responses 未登录均为 401。
 - PASS：green、blue、PostgreSQL、Redis 均 healthy/restart 0。
 - LIMIT：浏览器无管理员登录态，未在线核对受保护版本接口和版本下拉；未执行真实同步或账号写入。
+
+## 2026-07-15 vc 引用实时刷新与凭据保存缓存 - Devil
+
+- PASS：新增测试先复现旧 `unsupported` 缓存不会因签到账号 access key 已被主平台引用而刷新，修复后实时请求上游、恢复 `ready`、写回缓存并生成引用标识。
+- PASS：增强 sub2api 登录凭据测试，验证保存凭据的同一次登录结果立即持久化 Key、分组和匹配键摘要。
+- PASS：`go test ./internal/service -count=1`，耗时 29.029 秒。
+- PASS：`go test ./internal/repository ./internal/handler/admin -count=1`。
+- PASS：`git diff --check`。
+- 边界：仅只读查询生产 PostgreSQL；未写生产数据、未提交、未构建镜像、未部署。

@@ -5178,6 +5178,15 @@ v0.1.149 拉取结果：
 - LIMIT：无可用管理员登录配置，未在线读取受保护版本接口；OCI 标签与线上资源已核验。
 - 边界：未执行真实 Key 追加/替换、签到、月度同步、Git push 或镜像 registry push。
 
+## 2026-07-15 - vc 引用标识与数据库缓存刷新修复
+
+- 执行者：Devil。
+- PASS：生产只读证据确认 `accounts.id=501 / vc` 引用了 `sk-06...08e4`，对应签到账号 249；该账号已保存登录字段，但缓存仍是 `unsupported / 尚未保存 sub2api 登录凭据`。
+- PASS：普通加载新增签到账号 access key 与主平台 Key 的直接匹配，不再依赖旧缓存必须先含生成 Key；匹配账号实时请求上游，其他有缓存账号继续只读 PostgreSQL。
+- PASS：保存登录凭据后立即把同次登录读取的最新 Key、分组和匹配键写入 `newapi_checkin_api_key_cache`；手动同步仍强制刷新全部启用账号并持久化。
+- PASS：service、repository、admin handler 测试与 diff check 全部通过。
+- 边界：未修改生产数据库、未提交、未部署；现网仍运行 `sub2api:v0.1.155.6`。
+
 ## 2026-07-15 - API Key 与分组数据库缓存
 
 - 执行者：Devil。
