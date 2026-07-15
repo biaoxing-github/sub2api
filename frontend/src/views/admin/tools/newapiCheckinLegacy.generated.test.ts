@@ -332,6 +332,8 @@ describe('mountNewapiCheckinLegacyTool', () => {
     expect(root.querySelector('#configTableWrap')?.textContent).not.toContain('sk-test-full-key')
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('登录 owner@example.com')
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('完整分组已读取')
+    expect(root.querySelector('#configTableWrap')?.textContent).toContain('$25')
+    expect(root.querySelector('#configTableWrap')?.textContent).toContain('累计已用 $0.02')
 
     const revealKeyButton = Array.from(root.querySelectorAll('button')).find(button => button.textContent?.trim() === '显示')
     expect(revealKeyButton).toBeTruthy()

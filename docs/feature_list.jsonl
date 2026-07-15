@@ -415,3 +415,5 @@
 {"date":"2026-07-15T21:23:06+08:00","actor":"Devil","feature":"vc 引用标识实时刷新与登录凭据缓存更新","status":"implemented_verified_local","passes":true,"summary":"已引用判断同时使用签到账号 access key 和数据库缓存生成 Key；旧 unsupported 缓存也可实时恢复。保存登录凭据后立即持久化同次读取的 Key、分组和匹配键；未引用账号继续读取 PostgreSQL 缓存，手动同步继续全量刷新。","source":"backend/internal/service/newapi_checkin_service.go; backend/internal/service/newapi_checkin_service_test.go","verification":"service、repository、admin handler 测试和 git diff check 通过；生产数据库仅只读核对。"}
 
 {"date":"2026-07-15T21:47:47+08:00","actor":"Devil","feature":"vc 引用与凭据缓存修复 v0.1.155.7 发布","status":"deployed_verified_runtime","passes":true,"summary":"已引用账号可绕过旧 unsupported 缓存实时刷新；保存登录凭据立即持久化最新 Key、分组和匹配键；未引用账号继续数据库优先。","source":"backend/internal/service/newapi_checkin_service.go; backend/internal/service/newapi_checkin_service_test.go; docs/releases/v0.1.155.7.md","verification":"提交 2273d9d14a25；镜像 v0.1.155.7；候选和切流后稳定观察、三入口资源哈希、401 契约及关键日志检查通过；active blue healthy/restart 0。"}
+
+{"date":"2026-07-15","executor":"Devil","feature":"平台目录展示账号余额","behavior":"平台目录按站点和用户ID展示数据库缓存的当前余额与累计已用；无缓存显示暂无缓存，悬停可查看缓存更新时间","passes":true}

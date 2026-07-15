@@ -262,3 +262,11 @@
 - PASS：代理从 green 切到 blue；切流后 7 轮三入口持续 200，blue/proxy 新增关键日志为 0。
 - PASS：三入口主资源和签到页面 SHA-256 分别一致；blue、green、PostgreSQL、Redis 均 healthy/restart 0。
 - LIMIT：无管理员登录态，未在线核对版本下拉；未执行真实同步、Key/分组写入或签到。
+
+## 2026-07-15 平台目录余额展示 - Devil
+
+- PASS：`pnpm exec vitest run src/views/admin/tools/newapiCheckinLegacy.generated.test.ts`，3 个测试全部通过。
+- PASS：`pnpm run typecheck`。
+- PASS：`pnpm run build`，Vite 生产构建成功；仅有既有动态导入和 chunk 体积提示。
+- PASS：`git diff --check`，并确认公开 HTML 与生成 TypeScript 的余额逻辑标记一致。
+- 边界：复用数据库余额缓存，不发起新增上游请求；未提交、未部署。

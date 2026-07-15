@@ -1134,11 +1134,21 @@ export function mountNewapiCheckinLegacyTool(scope: LegacyToolScope): LegacyTool
       const apiKeyAccounts = new Map(
         (state.apiKeys?.accounts || []).map((account) => [`${account.site}\u0000${account.user_id}`, account]),
       );
+      const balanceAccounts = new Map(
+        (state.balances?.accounts || []).map((account) => [`${account.site}\u0000${account.user_id}`, account]),
+      );
       const rows = [];
       visibleSites.forEach((site) => {
         (site.accounts || []).forEach((account, index) => {
           const readOnly = isReadOnlySite(site);
           const apiKeySummary = apiKeyAccounts.get(`${site.name}\u0000${account.user_id}`);
+          const balance = balanceAccounts.get(`${site.name}\u0000${account.user_id}`);
+          const balanceHtml = balance
+            ? `<div class="cell-stack" title="余额缓存更新于 ${escapeHtml(balance.last_refreshed_at || state.balances?.generated_at || "-")}">
+                <strong>${escapeHtml(formatDisplayValue(balance.quota_display))}</strong>
+                <span class="dim">累计已用 ${escapeHtml(formatDisplayValue(balance.used_quota_display))}</span>
+              </div>`
+            : '<span class="dim">暂无缓存</span>';
           let apiKeyHtml = '<span class="dim">读取中</span>';
           if (readOnly) {
             const accountKey = `${site.name}\u0000${account.user_id}`;
@@ -1202,6 +1212,7 @@ export function mountNewapiCheckinLegacyTool(scope: LegacyToolScope): LegacyTool
             route: account.ip_profile || "-",
             endpoint: readOnly ? "/v1/usage + /v1/models" : "/api/user/checkin",
             display: account.display_name || "-",
+            balanceHtml,
             apiKeyHtml,
             action: `
               <div class="action-cluster">
@@ -1292,6 +1303,7 @@ export function mountNewapiCheckinLegacyTool(scope: LegacyToolScope): LegacyTool
           { label: "站点", value: (row) => row.siteHtml },
           { label: "名称 / 账号", value: (row) => identityHtml(row.identity) },
           { label: "展示名称", value: (row) => `<span class="dim">${escapeHtml(row.display)}</span>` },
+          { label: "余额 / 已用", value: (row) => row.balanceHtml },
           { label: "API Key", value: (row) => row.apiKeyHtml },
           { label: "出口档位", value: (row) => `<span class="route-badge">${escapeHtml(row.route)}</span>` },
           { label: "数据接口", value: (row) => `<span class="dim">${escapeHtml(row.endpoint)}</span>` },
