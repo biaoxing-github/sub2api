@@ -122,3 +122,20 @@
 - 切流后连续 62 秒采样 `8080/18081/18083`，全部为 200；blue/proxy restart 0，关键日志匹配 0。
 - 使用管理员登录态 Chrome 验证主版本、镜像版本和签到平台目录 API Key 脱敏展示，未执行签到、创建 Key 或配置写入。
 - 最终 active blue=`sub2api:v0.1.152.6`；rollback green=`sub2api:v0.1.152.5`；PostgreSQL、Redis 未重启。
+
+## 2026-07-14 Devil - 修复签到总览卡片响应式布局
+
+- 使用 CodeGraph、PowerShell 定向读取和截图确认固定双列站点网格、固定三列统计以及金额强制断词共同导致窄容器样式崩坏。
+- 先新增嵌入样式回归测试并执行 RED，再修改公共签到 HTML，机械同步 `newapiCheckinLegacy.generated.ts`。
+- 将站点卡片和统计项改为容器感知的 `auto-fit/minmax` 布局；标题区允许换行，金额保持单行。
+- 运行目标 Vitest、Vue TypeScript 检查、生产构建和 diff 检查，全部通过。
+- 启动本地 Vite 服务并用 Playwright 验证 1600、1024、768、390px，无页面、卡片或金额溢出。
+
+## 2026-07-15 Devil - 增加 sub2api 只读数据源和手工账号标识
+
+- 使用 CodeGraph 和源码定向读取确认 `/v1/usage` 已通过 API Key 识别用户，但当前响应契约不返回 username/email；现有 Key 调用用户登录态接口会返回 401。
+- 在签到工具增加 `sub2api` provider，只读取 `/v1/usage?days=30` 和 `/v1/models`，保存并展示套餐、余额、用量、到期时间及模型分组，不执行签到或月度同步。
+- 增加 `POST /admin/newapi-checkin/account-display-name`，平台目录提供“编辑标识”，允许管理员手工填写用户名或邮箱并写入现有 `display_name` 配置字段。
+- 未增加账号密码字段或模拟登录流程；未调用目标站点签到、模型生成或 Key 创建接口。
+- 用户明确要求停止检测后，仅完成代码、格式化、公共 HTML 到嵌入 TS 的机械同步和差异检查；未继续运行测试、浏览器检查、构建或部署。
+- 停止本轮遗留的本地 `3001/3002` 监听进程。

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -41,7 +42,7 @@ WHERE id = 1`).Scan(&cfg.DefaultCheckinPath, &cfg.DelayBetweenCheckinsSec, &cfg.
 	cfg.NotifyFeishu = notify
 
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, enabled, disabled_reason, background_checkin_enabled, base_url, checkin_path,
+SELECT id, name, provider, enabled, disabled_reason, background_checkin_enabled, base_url, checkin_path,
        site_status_ok, site_status_message, quota_display_type, quota_per_unit, custom_currency_symbol
 FROM newapi_checkin_sites
 ORDER BY id ASC`)
@@ -55,7 +56,7 @@ ORDER BY id ASC`)
 		var id int64
 		var site service.NewAPICheckinSite
 		if err := rows.Scan(
-			&id, &site.Name, &site.Enabled, &site.DisabledReason, &site.BackgroundCheckinEnabled, &site.BaseURL, &site.CheckinPath,
+			&id, &site.Name, &site.Provider, &site.Enabled, &site.DisabledReason, &site.BackgroundCheckinEnabled, &site.BaseURL, &site.CheckinPath,
 			&site.SiteStatus.OK, &site.SiteStatus.Message, &site.SiteStatus.QuotaDisplayType, &site.SiteStatus.QuotaPerUnit, &site.SiteStatus.CustomCurrencySymbol,
 		); err != nil {
 			return cfg, err
@@ -122,10 +123,11 @@ ON CONFLICT (id) DO UPDATE SET
 		var siteID int64
 		if err := tx.QueryRowContext(ctx, `
 INSERT INTO newapi_checkin_sites (
-  name, enabled, disabled_reason, background_checkin_enabled, base_url, checkin_path,
+  name, provider, enabled, disabled_reason, background_checkin_enabled, base_url, checkin_path,
   site_status_ok, site_status_message, quota_display_type, quota_per_unit, custom_currency_symbol, updated_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
 ON CONFLICT (name) DO UPDATE SET
+  provider = EXCLUDED.provider,
   enabled = EXCLUDED.enabled,
   disabled_reason = EXCLUDED.disabled_reason,
   background_checkin_enabled = EXCLUDED.background_checkin_enabled,
@@ -138,7 +140,7 @@ ON CONFLICT (name) DO UPDATE SET
   custom_currency_symbol = EXCLUDED.custom_currency_symbol,
   updated_at = NOW()
 RETURNING id`,
-			site.Name, site.Enabled, site.DisabledReason, site.BackgroundCheckinEnabled, site.BaseURL, site.CheckinPath,
+			site.Name, firstNonEmptyRepository(site.Provider, "newapi"), site.Enabled, site.DisabledReason, site.BackgroundCheckinEnabled, site.BaseURL, site.CheckinPath,
 			status.OK, status.Message, status.QuotaDisplayType, status.QuotaPerUnit, status.CustomCurrencySymbol,
 		).Scan(&siteID); err != nil {
 			return err
@@ -291,11 +293,11 @@ ORDER BY id ASC`)
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-SELECT s.name, s.enabled, a.name, a.username, a.display_name, a.user_id, a.ip_profile,
+SELECT s.name, s.provider, s.enabled, a.name, a.username, a.display_name, a.user_id, a.ip_profile,
        COALESCE(b.status,''), COALESCE(b.message,''), b.checkin_ok, b.checkin_success, b.checked_in_today,
        COALESCE(b.checkin_status,''), COALESCE(b.checkin_status_tone,''), COALESCE(b.checkin_message,''), COALESCE(b.checkin_date,''),
        b.quota, COALESCE(b.quota_display,''), b.used_quota, COALESCE(b.used_quota_display,''),
-       b.quota_awarded, COALESCE(b.quota_awarded_display,''), COALESCE(b.last_refreshed_at,'')
+       b.quota_awarded, COALESCE(b.quota_awarded_display,''), COALESCE(b.last_refreshed_at,''), COALESCE(b.provider_data, '{}'::jsonb)
 FROM newapi_checkin_accounts a
 JOIN newapi_checkin_sites s ON s.id = a.site_id
 LEFT JOIN newapi_checkin_account_balances b ON b.account_id = a.id
@@ -309,13 +311,17 @@ ORDER BY s.id ASC, a.id ASC`)
 		var row service.NewAPICheckinBalanceAccount
 		var checkinOK, checkinSuccess, checkedInToday sql.NullBool
 		var quota, usedQuota, quotaAwarded sql.NullInt64
+		var providerData []byte
 		if err := rows.Scan(
-			&row.Site, &row.Enabled, &row.Account, &row.Username, &row.DisplayName, &row.UserID, &row.IPProfile,
+			&row.Site, &row.Provider, &row.Enabled, &row.Account, &row.Username, &row.DisplayName, &row.UserID, &row.IPProfile,
 			&row.Status, &row.Message, &checkinOK, &checkinSuccess, &checkedInToday,
 			&row.CheckinStatus, &row.CheckinStatusTone, &row.CheckinMessage, &row.CheckinDate,
 			&quota, &row.QuotaDisplay, &usedQuota, &row.UsedQuotaDisplay,
-			&quotaAwarded, &row.QuotaAwardedDisplay, &row.LastRefreshedAt,
+			&quotaAwarded, &row.QuotaAwardedDisplay, &row.LastRefreshedAt, &providerData,
 		); err != nil {
+			return payload, err
+		}
+		if err := json.Unmarshal(providerData, &row.ProviderData); err != nil {
 			return payload, err
 		}
 		row.CheckinOK = nullableBoolValue(checkinOK)
@@ -362,12 +368,20 @@ WHERE name = $1`,
 		if err != nil {
 			return err
 		}
+		providerData := row.ProviderData
+		if providerData == nil {
+			providerData = map[string]any{}
+		}
+		providerDataJSON, err := json.Marshal(providerData)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO newapi_checkin_account_balances (
   account_id, status, message, checkin_ok, checkin_success, checked_in_today, checkin_status, checkin_status_tone,
   checkin_message, checkin_date, quota, quota_display, used_quota, used_quota_display,
-  quota_awarded, quota_awarded_display, last_refreshed_at, source, updated_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW())
+  quota_awarded, quota_awarded_display, last_refreshed_at, source, provider_data, updated_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NOW())
 ON CONFLICT (account_id) DO UPDATE SET
   status = EXCLUDED.status,
   message = EXCLUDED.message,
@@ -386,11 +400,12 @@ ON CONFLICT (account_id) DO UPDATE SET
   quota_awarded_display = EXCLUDED.quota_awarded_display,
   last_refreshed_at = EXCLUDED.last_refreshed_at,
   source = EXCLUDED.source,
+  provider_data = EXCLUDED.provider_data,
   updated_at = NOW()`,
 			accountID, row.Status, row.Message, nullableBoolAny(row.CheckinOK), nullableBoolAny(row.CheckinSuccess), nullableBoolAny(row.CheckedInToday),
 			row.CheckinStatus, row.CheckinStatusTone, row.CheckinMessage, row.CheckinDate, nullableInt64Ptr(row.Quota), row.QuotaDisplay,
 			nullableInt64Ptr(row.UsedQuota), row.UsedQuotaDisplay, nullableInt64Ptr(row.QuotaAwarded), row.QuotaAwardedDisplay,
-			row.LastRefreshedAt, cache.Source,
+			row.LastRefreshedAt, cache.Source, providerDataJSON,
 		); err != nil {
 			return err
 		}

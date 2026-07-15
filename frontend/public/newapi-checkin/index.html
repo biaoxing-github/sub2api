@@ -647,7 +647,7 @@
     .overview-site-grid,
     .overview-balance-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
       gap: 10px;
     }
 
@@ -670,12 +670,15 @@
 
     .overview-top {
       display: flex;
+      flex-wrap: wrap;
       justify-content: space-between;
       gap: 10px;
       align-items: start;
     }
 
     .overview-site {
+      min-width: 0;
+      flex: 1 1 150px;
       display: grid;
       gap: 4px;
     }
@@ -684,6 +687,12 @@
       font-size: 17px;
       font-family: "Fira Sans", "Microsoft YaHei", sans-serif; font-weight: 600;
       line-height: 1;
+      overflow-wrap: anywhere;
+    }
+
+    .overview-top .chip-row {
+      flex: 0 1 auto;
+      justify-content: flex-end;
     }
 
     .overview-sub {
@@ -739,12 +748,13 @@
 
     .overview-metrics {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+      gap: 10px;
       margin-top: auto;
     }
 
     .overview-metric {
+      min-width: 0;
       padding-top: 8px;
       border-top: 1px solid color-mix(in oklab, var(--line) 78%, white);
     }
@@ -752,16 +762,18 @@
     .overview-metric-label {
       color: var(--muted);
       font-size: 12px;
+      white-space: nowrap;
     }
 
     .overview-metric-value {
       font-family: "Fira Code", monospace;
       margin-top: 4px;
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 700;
       font-variant-numeric: tabular-nums;
-      word-break: break-all;
-      overflow-wrap: anywhere;
+      white-space: nowrap;
+      word-break: normal;
+      overflow-wrap: normal;
     }
 
     .feed-list {
@@ -1030,6 +1042,30 @@
       background: color-mix(in oklab, var(--surface-2) 88%, white);
       border-color: var(--line);
       color: var(--ink);
+    }
+
+    .model-list {
+      max-width: 360px;
+      margin-top: 6px;
+      color: var(--muted);
+      line-height: 1.65;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    #balanceAccountTable table {
+      min-width: 980px;
+    }
+
+    #balanceAccountTable td {
+      vertical-align: top;
+    }
+
+    .cell-stack {
+      display: grid;
+      gap: 4px;
+      min-width: 120px;
+      white-space: normal;
     }
 
     .quick-action.danger {
@@ -1339,7 +1375,7 @@
                 <h2 class="panel-title">平台目录</h2>
                 <div class="panel-meta" id="configMeta">等待配置</div>
               </div>
-              <div class="panel-meta">按站点分组，随时把任意账号设为补签目标</div>
+              <div class="panel-meta">按站点分组，提供各数据源支持的刷新与账号操作</div>
             </div>
             <div class="table-summary" id="configSummaryBadges"></div>
             <div class="table-wrap catalog-wrap" id="configTableWrap"></div>
@@ -1630,6 +1666,15 @@
       return getConfigSites().find((site) => site.name === siteName) || null;
     }
 
+    function siteProvider(site) {
+      return site?.provider === "sub2api" ? "sub2api" : "newapi";
+    }
+
+    function isReadOnlySite(siteOrName) {
+      const site = typeof siteOrName === "string" ? getConfigSite(siteOrName) : siteOrName;
+      return siteProvider(site) === "sub2api";
+    }
+
     function getConfigAccount(siteName, userId) {
       const site = getConfigSite(siteName);
       return site?.accounts?.find((item) => String(item.user_id) === String(userId)) || null;
@@ -1855,6 +1900,7 @@
     function defaultConfigJsonText() {
       return JSON.stringify({
         name: "new-platform",
+        provider: "newapi",
         enabled: true,
         base_url: "https://example.com",
         accounts: [
@@ -2010,10 +2056,22 @@
         return;
       }
       title.textContent = preferredName(account);
-      meta.textContent = site.enabled
+      meta.textContent = isReadOnlySite(site)
+        ? `${site.name} · sub2api 只读数据源 · ${account.access_key_masked || "访问 Key 已保存"}`
+        : site.enabled
         ? `${site.name} · ID ${account.user_id} · ${account.ip_profile || "-"}`
         : `${site.name} 已停用签到 · ID ${account.user_id} · ${site.disabled_reason || "仍可查看记录和刷新余额"}`;
-      singleRunBtn.disabled = !site.enabled;
+      singleRunBtn.disabled = !site.enabled || isReadOnlySite(site);
+      updateProviderActions();
+    }
+
+    function updateProviderActions() {
+      const remoteSite = getConfigSite(selectedSiteForRemoteAction());
+      const readOnly = isReadOnlySite(remoteSite);
+      syncSiteNamesBtn.disabled = readOnly;
+      syncMonthlySiteBtn.disabled = readOnly;
+      syncMonthlyAccountBtn.disabled = readOnly;
+      refreshSiteBalanceBtn.textContent = readOnly ? "刷新套餐/用量/模型" : "刷新当前站点余额/签到";
     }
 
     function renderConfigSelectors() {
@@ -2060,8 +2118,10 @@
     function attachConfigActions() {
       Array.from(configTableWrap.querySelectorAll("[data-pick-site][data-pick-user]")).forEach((button) => {
         button.addEventListener("click", () => {
-          if (!isSiteEnabled(button.dataset.pickSite)) {
-            singleRunStatus.textContent = `${button.dataset.pickSite} 已停用签到，不能设为补签目标。`;
+          if (!isSiteEnabled(button.dataset.pickSite) || isReadOnlySite(button.dataset.pickSite)) {
+            singleRunStatus.textContent = isReadOnlySite(button.dataset.pickSite)
+              ? `${button.dataset.pickSite} 是只读数据源，不能设为补签目标。`
+              : `${button.dataset.pickSite} 已停用签到，不能设为补签目标。`;
             singleRunStatus.dataset.tone = "warn";
             return;
           }
@@ -2078,6 +2138,11 @@
       Array.from(configTableWrap.querySelectorAll("[data-sync-account][data-site]")).forEach((button) => {
         button.addEventListener("click", () => {
           syncAccountName(button.dataset.site, button.dataset.syncAccount, button);
+        });
+      });
+      Array.from(configTableWrap.querySelectorAll("[data-edit-account-label][data-site]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          editAccountDisplayName(button.dataset.site, button.dataset.editAccountLabel, button);
         });
       });
       Array.from(configTableWrap.querySelectorAll("[data-delete-site]")).forEach((button) => {
@@ -2208,7 +2273,7 @@
           tone: "ok",
           tag: "运行平稳",
           meta: `${getActiveSiteLabel()} 范围内未发现失败项`,
-          body: "如果要补签个别账号，可以直接从平台目录里点“设为补签”。",
+          body: "需要更新账号数据时，可以从平台目录使用该数据源支持的刷新操作。",
         });
       }
 
@@ -2232,12 +2297,16 @@
         body: state.activeSite === "all" ? "适合看整体趋势和平台对比。" : "适合处理单个站点的补签和余额核对。",
       });
       if (selectedAccount) {
+        const selectedSite = getConfigSite(siteSelect.value);
+        const selectedReadOnly = isReadOnlySite(selectedSite);
         contextItems.push({
           title: preferredName(selectedAccount),
           tone: "ok",
-          tag: "补签目标",
+          tag: selectedReadOnly ? "只读账号" : "补签目标",
           meta: `${siteSelect.value} · ID ${selectedAccount.user_id} · ${selectedAccount.ip_profile || "-"}`,
-          body: "单账号签到会沿用配置里的 token 和出口档位。",
+          body: selectedReadOnly
+            ? "该账号只读取套餐、用量和可用模型，不会触发签到或模型请求。"
+            : "单账号签到会沿用配置里的 token 和出口档位。",
         });
       }
       if (state.lastRun?.quota_awarded_display) {
@@ -2286,9 +2355,14 @@
       const rows = [];
       visibleSites.forEach((site) => {
         (site.accounts || []).forEach((account, index) => {
+          const readOnly = isReadOnlySite(site);
           const apiKeySummary = apiKeyAccounts.get(`${site.name}\u0000${account.user_id}`);
           let apiKeyHtml = '<span class="dim">读取中</span>';
-          if (state.apiKeys?.load_error) {
+          if (readOnly) {
+            apiKeyHtml = account.access_key_masked
+              ? `<code title="sub2api 访问 Key">${escapeHtml(account.access_key_masked)}</code>`
+              : '<span class="dim">已保存</span>';
+          } else if (state.apiKeys?.load_error) {
             apiKeyHtml = '<span class="dim">读取失败</span>';
           } else if (apiKeySummary?.status === "ready") {
             apiKeyHtml = (apiKeySummary.api_keys || [])
@@ -2307,6 +2381,7 @@
                   <div class="site-top">
                     <strong>${escapeHtml(site.name)}</strong>
                     ${badge(site.enabled ? "启用" : "停用", site.enabled ? "ok" : "warn")}
+                    ${badge(readOnly ? "sub2api 只读" : "NewAPI", readOnly ? "neutral" : "ok")}
                   </div>
                   <div class="site-url">${escapeHtml(site.base_url)}</div>
                   <div class="site-note">${escapeHtml(site.disabled_reason || "按当前配置参与轮询")}</div>
@@ -2321,7 +2396,7 @@
             siteHtml,
             identity: account,
             route: account.ip_profile || "-",
-            endpoint: `/api/user/checkin`,
+            endpoint: readOnly ? "/v1/usage + /v1/models" : "/api/user/checkin",
             display: account.display_name || "-",
             apiKeyHtml,
             action: `
@@ -2331,8 +2406,8 @@
                   type="button"
                   data-pick-site="${escapeHtml(site.name)}"
                   data-pick-user="${escapeHtml(account.user_id)}"
-                  ${site.enabled ? "" : "disabled"}
-                  title="${site.enabled ? "设为单账号补签目标" : "站点已停用签到，不能补签"}"
+                  ${site.enabled && !readOnly ? "" : "disabled"}
+                  title="${readOnly ? "sub2api 是只读数据源" : site.enabled ? "设为单账号补签目标" : "站点已停用签到，不能补签"}"
                 >
                   设为补签
                 </button>
@@ -2342,15 +2417,24 @@
                   data-site="${escapeHtml(site.name)}"
                   data-refresh-account="${escapeHtml(account.user_id)}"
                 >
-                  ${site.enabled ? "刷余额/签到" : "刷余额"}
+                  ${readOnly ? "刷套餐/模型" : site.enabled ? "刷余额/签到" : "刷余额"}
                 </button>
                 <button
                   class="quick-action secondary"
                   type="button"
                   data-site="${escapeHtml(site.name)}"
                   data-sync-account="${escapeHtml(account.user_id)}"
+                  ${readOnly ? "disabled" : ""}
                 >
                   同步名
+                </button>
+                <button
+                  class="quick-action secondary"
+                  type="button"
+                  data-site="${escapeHtml(site.name)}"
+                  data-edit-account-label="${escapeHtml(account.user_id)}"
+                >
+                  编辑标识
                 </button>
                 <button
                   class="quick-action danger"
@@ -2368,9 +2452,9 @@
                     type="button"
                     data-toggle-site="${escapeHtml(site.name)}"
                     data-site-enabled-target="${site.enabled ? "false" : "true"}"
-                    title="${site.enabled ? "禁用该站点后不会再执行签到" : "重新允许该站点参与签到"}"
+                    title="${readOnly ? "控制该只读数据源是否纳入余额汇总" : site.enabled ? "禁用该站点后不会再执行签到" : "重新允许该站点参与签到"}"
                   >
-                    ${site.enabled ? "禁用签到" : "启用签到"}
+                    ${readOnly ? (site.enabled ? "停用数据源" : "启用数据源") : (site.enabled ? "禁用签到" : "启用签到")}
                   </button>
                   <button
                     class="quick-action danger"
@@ -2395,7 +2479,7 @@
           { label: "展示名称", value: (row) => `<span class="dim">${escapeHtml(row.display)}</span>` },
           { label: "API Key", value: (row) => row.apiKeyHtml },
           { label: "出口档位", value: (row) => `<span class="route-badge">${escapeHtml(row.route)}</span>` },
-          { label: "签到路径", value: (row) => `<span class="dim">${escapeHtml(row.endpoint)}</span>` },
+          { label: "数据接口", value: (row) => `<span class="dim">${escapeHtml(row.endpoint)}</span>` },
           { label: "操作", value: (row) => row.action },
         ],
         rows,
@@ -2763,10 +2847,26 @@
         [
           { label: "站点", value: (row) => escapeHtml(row.site) },
           { label: "名称 / 账号", value: (row) => identityHtml(row) },
-          { label: "IP 档位", value: (row) => `<span class="route-badge">${escapeHtml(row.ip_profile || "-")}</span>` },
-          { label: "签到状态", value: (row) => badge(row.checkin_status || row.status, row.checkin_status_tone || (row.ok === false ? "danger" : "ok")) },
-          { label: "余额($)", value: (row) => escapeHtml(formatDisplayValue(row.quota_display)) },
-          { label: "已用($)", value: (row) => escapeHtml(formatDisplayValue(row.used_quota_display)) },
+          { label: "类型 / 状态", value: (row) => `<div class="cell-stack">
+            ${badge(row.provider === "sub2api" ? "sub2api 只读" : "NewAPI", row.provider === "sub2api" ? "neutral" : "ok")}
+            ${badge(row.checkin_status || row.status, row.checkin_status_tone || (row.status?.includes("失败") ? "danger" : "ok"))}
+          </div>` },
+          { label: "余额 / 成本", value: (row) => `<div class="cell-stack">
+            <strong>${escapeHtml(formatDisplayValue(row.quota_display))}</strong>
+            <span class="dim">累计 ${escapeHtml(formatDisplayValue(row.used_quota_display))}</span>
+          </div>` },
+          { label: "套餐 / 到期", value: (row) => `<div class="cell-stack">
+            <strong>${escapeHtml(row.provider_data?.plan_name || "-")}</strong>
+            <span class="dim">${escapeHtml(row.provider_data?.expires_at || "-")}</span>
+          </div>` },
+          { label: "用量 / 模型", value: (row) => {
+            const total = row.provider_data?.usage?.total;
+            const models = row.provider_data?.models || [];
+            return `<div class="cell-stack">
+              <span class="dim">${total ? `${escapeHtml(total.requests ?? 0)} 请求 · ${escapeHtml(total.total_tokens ?? 0)} Token` : "-"}</span>
+              ${models.length ? `<details><summary>${escapeHtml(models.length)} 个模型</summary><div class="model-list">${models.map(escapeHtml).join(" · ")}</div></details>` : '<span class="dim">-</span>'}
+            </div>`;
+          } },
           { label: "消息", value: (row) => `<span class="dim">${escapeHtml(row.checkin_message || row.message || "-")}</span>` },
         ],
         (payload.accounts || []).filter(matchesActiveSite),
@@ -2782,6 +2882,7 @@
       renderMonthly(state.monthly);
       renderOverview();
       setStats();
+      updateProviderActions();
     }
 
     async function loadConfig() {
@@ -2857,7 +2958,8 @@
         setAppStatus("请先选择一个站点。", "error");
         return;
       }
-      setAppStatus(`正在刷新 ${site} 的余额与签到状态…`, "busy");
+      const readOnly = isReadOnlySite(site);
+      setAppStatus(readOnly ? `正在读取 ${site} 的套餐、用量和模型…` : `正在刷新 ${site} 的余额与签到状态…`, "busy");
       setButtonBusy(refreshSiteBalanceBtn, true, "刷新中");
       try {
         const result = await fetchJson("/api/refresh-site-balances", {
@@ -2870,7 +2972,10 @@
         state.lastRun = result.last_run || state.lastRun;
         state.monthly = result.monthly || state.monthly;
         renderAllViews();
-        setAppStatus(`${site} 已写入 JSON：签到成功 ${result.success_count}，今日已签 ${result.already_done_count}，异常 ${result.failed_count}`, result.failed_count > 0 ? "error" : "ok");
+        setAppStatus(readOnly
+          ? `${site} 只读数据已写入 SQL 缓存：账号 ${result.account_count}，异常 ${result.failed_count}`
+          : `${site} 已写入 SQL：签到成功 ${result.success_count}，今日已签 ${result.already_done_count}，异常 ${result.failed_count}`,
+        result.failed_count > 0 ? "error" : "ok");
         pulseRow(site, "", result.failed_count > 0 ? "error" : "ok");
       } catch (error) {
         setAppStatus(`刷新站点余额失败: ${error.message}`, "error");
@@ -2883,6 +2988,10 @@
       const site = selectedSiteForRemoteAction();
       if (!site) {
         setAppStatus("请先选择一个站点。", "error");
+        return;
+      }
+      if (isReadOnlySite(site)) {
+        setAppStatus(`${site} 是只读数据源，不支持名称同步。`, "warn");
         return;
       }
       setAppStatus(`正在同步 ${site} 的账号名称…`, "busy");
@@ -2906,7 +3015,8 @@
     }
 
     async function refreshAccountBalance(site, userId, button) {
-      setAppStatus(`正在刷新 ${site} / ${userId} 的余额与签到状态…`, "busy");
+      const readOnly = isReadOnlySite(site);
+      setAppStatus(readOnly ? `正在读取 ${site} / ${userId} 的套餐、用量和模型…` : `正在刷新 ${site} / ${userId} 的余额与签到状态…`, "busy");
       setButtonBusy(button, true, "刷新中");
       try {
         const result = await fetchJson("/api/refresh-account-balance", {
@@ -2919,7 +3029,7 @@
         state.lastRun = result.last_run || state.lastRun;
         state.monthly = result.monthly || state.monthly;
         renderAllViews();
-        setAppStatus(`${site} / ${userId} 已写入 JSON：${result.checkin?.checkin_status || result.message || "状态已刷新"}`, result.ok ? "ok" : "error");
+        setAppStatus(`${site} / ${userId} 已写入 SQL：${readOnly ? (result.message || "只读数据已刷新") : (result.checkin?.checkin_status || result.message || "状态已刷新")}`, result.ok ? "ok" : "error");
         pulseRow(site, userId, result.ok ? "ok" : "error");
       } catch (error) {
         setAppStatus(`刷新账号余额失败: ${error.message}`, "error");
@@ -2944,6 +3054,38 @@
         pulseRow(site, userId, result.changed ? "ok" : "pending");
       } catch (error) {
         setAppStatus(`同步账号名称失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
+    }
+
+    async function editAccountDisplayName(site, userId, button) {
+      const account = getConfigAccount(site, userId);
+      const displayName = window.prompt("输入该账号的用户名或邮箱", account?.display_name || account?.username || "");
+      if (displayName === null) {
+        return;
+      }
+      const normalized = displayName.trim();
+      if (!normalized) {
+        setAppStatus("用户名或邮箱不能为空。", "error");
+        return;
+      }
+
+      setAppStatus(`正在保存 ${site} / ${userId} 的账号标识…`, "busy");
+      setButtonBusy(button, true, "保存中");
+      try {
+        state.config = await fetchJson("/api/account-display-name", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site, user_id: userId, display_name: normalized }),
+        });
+        await loadBalances();
+        renderConfigSelectors();
+        renderAllViews();
+        setAppStatus(`${site} / ${userId} 的账号标识已保存为 ${normalized}`, "ok");
+        pulseRow(site, userId, "ok");
+      } catch (error) {
+        setAppStatus(`保存账号标识失败: ${error.message}`, "error");
       } finally {
         setButtonBusy(button, false);
       }
@@ -3152,6 +3294,10 @@
         setInlineStatus(monthlySyncStatus, "请先选择一个账号。", "error");
         return;
       }
+      if (isReadOnlySite(site)) {
+        setInlineStatus(monthlySyncStatus, `${site} 是只读数据源，不支持月度签到同步。`, "warn");
+        return;
+      }
 
       setInlineStatus(monthlySyncStatus, `已提交 ${month} ${site}${userId ? ` / ${userId}` : ""} 月度同步，后台会慢慢查。`, "busy");
       setButtonBusy(button, true, "同步中");
@@ -3234,6 +3380,11 @@
       }
       if (!isSiteEnabled(site)) {
         singleRunStatus.textContent = `${site} 已停用签到，不能执行单账号签到；可以继续刷新余额、查看签到记录和月度记录。`;
+        singleRunStatus.dataset.tone = "warn";
+        return;
+      }
+      if (isReadOnlySite(site)) {
+        singleRunStatus.textContent = `${site} 是只读数据源，只能读取套餐、用量和模型，不能执行签到。`;
         singleRunStatus.dataset.tone = "warn";
         return;
       }

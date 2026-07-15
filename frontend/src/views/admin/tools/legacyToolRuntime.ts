@@ -25,6 +25,7 @@ export interface LegacyWindowFacade {
   requestAnimationFrame(callback: FrameRequestCallback): number
   cancelAnimationFrame(handle: number): void
   confirm(message?: string): boolean
+  prompt(message?: string, defaultValue?: string): string | null
 }
 
 export interface LegacyToolScope {
@@ -141,6 +142,9 @@ export function createLegacyToolScope(root: ShadowRoot, options: LegacyToolScope
     },
     confirm(message?: string) {
       return window.confirm(message)
+    },
+    prompt(message?: string, defaultValue?: string) {
+      return window.prompt(message, defaultValue)
     }
   }
 

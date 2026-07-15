@@ -60,6 +60,25 @@ func TestNewAPICheckinConfigSummaryCountsAndKeepsDisabledSiteVisible(t *testing.
 	require.Equal(t, "Turnstile 保护站点，仅保留余额与月度记录查询", summary.Sites[1].DisabledReason)
 }
 
+// TestNewAPICheckinSetAccountDisplayName 验证管理员可手工保存用户名或邮箱标识。
+func TestNewAPICheckinSetAccountDisplayName(t *testing.T) {
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{{
+			"name":     "sub2-demo",
+			"provider": "sub2api",
+			"enabled":  true,
+			"base_url": "https://sub2.example",
+			"accounts": []map[string]any{{"name": "primary", "user_id": "primary", "access_key": "sk-secret"}},
+		}},
+	})
+	svc := newTestNewAPICheckinService(t, repo, nil)
+
+	summary, err := svc.SetAccountDisplayName(context.Background(), "sub2-demo", "primary", "owner@example.com")
+	require.NoError(t, err)
+	require.Equal(t, "owner@example.com", summary.Sites[0].Accounts[0].DisplayName)
+	require.Equal(t, "owner@example.com", repo.config.Sites[0].Accounts[0].DisplayName)
+}
+
 // TestNewAPICheckinAPIKeysMasksGeneratedKeys 验证页面只接收带 sk- 前缀的脱敏 API Key。
 func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	var seen []string
@@ -106,6 +125,87 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	require.Empty(t, payload.Accounts[1].APIKeys)
 	require.Contains(t, seen, "GET /api/token/?p=1&size=100 Bearer access-a 1001")
 	require.Contains(t, seen, "GET /api/token/?p=1&size=100 Bearer access-b 1002")
+}
+
+// TestNewAPICheckinRefreshSub2AccountReadsUsageAndModelsOnly 验证 sub2 数据源只调用只读接口。
+func TestNewAPICheckinRefreshSub2AccountReadsUsageAndModelsOnly(t *testing.T) {
+	var seen []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.String()+" "+r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/usage":
+			_, _ = w.Write([]byte(`{"mode":"unrestricted","isValid":true,"planName":"尝鲜套餐","remaining":25,"unit":"USD","subscription":{"daily_limit_usd":25,"daily_usage_usd":0,"expires_at":"2026-08-12T13:55:02+08:00"},"usage":{"today":{"requests":0,"cost":0},"total":{"requests":6,"total_tokens":7648,"cost":0.0199075,"actual_cost":0.00117365}},"daily_usage":[{"date":"2026-07-12","requests":3,"cost":0.0193875}],"model_stats":[{"model":"gpt-5.6-terra","requests":6,"cost":0.0199075}]}`))
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"gpt-5.6-terra"},{"id":"gpt-5.6-sol"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{
+			{
+				"name":     "sub2-demo",
+				"provider": "sub2api",
+				"enabled":  true,
+				"base_url": upstream.URL,
+				"accounts": []map[string]any{
+					{"name": "primary", "user_id": "primary", "access_key": "sk-test-secret"},
+				},
+			},
+		},
+	})
+
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+	result, err := svc.RefreshAccountBalance(context.Background(), "sub2-demo", "primary")
+	require.NoError(t, err)
+	require.True(t, result.OK)
+	require.Equal(t, "sub2api", result.Account.Provider)
+	require.Equal(t, "$25", result.Account.QuotaDisplay)
+	require.Equal(t, "$0.0199075", result.Account.UsedQuotaDisplay)
+	require.Equal(t, "尝鲜套餐", result.Account.ProviderData["plan_name"])
+	require.Equal(t, float64(2), result.Account.ProviderData["model_count"])
+	require.Equal(t, []any{"gpt-5.6-terra", "gpt-5.6-sol"}, result.Account.ProviderData["models"])
+	require.Equal(t, []string{
+		"GET /v1/usage?days=30 Bearer sk-test-secret",
+		"GET /v1/models Bearer sk-test-secret",
+	}, seen)
+	require.Empty(t, result.History.Entries)
+	require.Empty(t, result.LastRun.AccountResults)
+	require.Empty(t, result.Monthly.Records)
+}
+
+// TestNewAPICheckinSub2ProviderNeverRunsCheckin 验证 sub2 数据源不会进入签到或 Key 枚举流程。
+func TestNewAPICheckinSub2ProviderNeverRunsCheckin(t *testing.T) {
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{
+			{
+				"name":     "sub2-demo",
+				"provider": "sub2api",
+				"enabled":  true,
+				"base_url": "https://sub2.example",
+				"accounts": []map[string]any{
+					{"name": "primary", "user_id": "primary", "access_key": "sk-test-secret"},
+				},
+			},
+		},
+	})
+	svc := newTestNewAPICheckinService(t, repo, nil)
+
+	report, err := svc.RunFullCheckin(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, report.TaskCount)
+	_, err = svc.RunSingleCheckin(context.Background(), "sub2-demo", "primary")
+	require.ErrorContains(t, err, "只读数据源")
+
+	apiKeys, err := svc.APIKeys(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, apiKeys.AccountCount)
+
+	monthlyTasks := buildNewAPIMonthlyTasks(repo.config, "sub2-demo", "")
+	require.Empty(t, monthlyTasks)
 }
 
 func TestNewAPICheckinSetSiteEnabledPersistsReasonAndSummary(t *testing.T) {

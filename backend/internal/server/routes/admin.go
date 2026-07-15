@@ -126,6 +126,7 @@ func registerNewAPICheckinRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		checkin.POST("/config-site", h.Admin.NewAPICheckin.AddOrMergeSite)
 		checkin.POST("/delete-site", h.Admin.NewAPICheckin.DeleteSite)
 		checkin.POST("/delete-account", h.Admin.NewAPICheckin.DeleteAccount)
+		checkin.POST("/account-display-name", h.Admin.NewAPICheckin.SetAccountDisplayName)
 		checkin.POST("/site-enabled", h.Admin.NewAPICheckin.SetSiteEnabled)
 		checkin.POST("/refresh-site-balances", h.Admin.NewAPICheckin.RefreshSiteBalances)
 		checkin.POST("/refresh-account-balance", h.Admin.NewAPICheckin.RefreshAccountBalance)

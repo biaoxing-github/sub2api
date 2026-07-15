@@ -101,3 +101,20 @@
 - PASS：Chrome 管理员登录态确认主版本 `v0.1.152`、镜像版本 `v0.1.152.6`，平台目录显示 `API Key` 列、`sk-前2位***后4位` 和“未生成”。
 - PASS：验收过程未执行签到、创建 Key 或配置写入；PostgreSQL、Redis 未重启。
 - 未执行：Git push、registry push。
+
+## 2026-07-14 签到总览卡片响应式样式修复 - Devil
+
+- RED：目标 Vitest 新增布局规则测试按预期失败，确认旧样式仍使用固定双列/三列和 `word-break: break-all`。
+- PASS：目标 Vitest 2/2 通过。
+- PASS：`.\node_modules\.bin\vue-tsc.cmd --noEmit` 退出码 0。
+- PASS：`npm run build` 完成，Vite 转换 945 个模块并成功生成生产资源；仅保留既有动态导入、chunk 大小和 Browserslist 提示。
+- PASS：Playwright 在 1600、1024、768、390px 宽度检查，无页面、卡片或金额水平溢出，金额多行计数为 0。
+- PASS：`git diff --check` 通过。
+
+## 2026-07-15 sub2api 只读数据源与手工账号标识 - Devil
+
+- PASS（用户停止检测前）：sub2 service 聚焦测试、全部 `TestNewAPICheckin*` service 测试、repository/migration 测试和 server 编译切片通过。
+- PASS（用户停止检测前）：签到工具目标 Vitest 3/3、Vue typecheck、生产前端构建通过。
+- PASS（用户停止检测前）：浏览器确认 sub2 站点不会出现可用签到/月度同步动作，并修正余额明细宽表布局。
+- 未执行：最终紧凑表格布局和 `POST /account-display-name` 手工标识接口未再运行测试或浏览器检查；原因是用户明确要求后续自行检测。
+- 未执行：提交、镜像构建、部署、线上数据库写入。

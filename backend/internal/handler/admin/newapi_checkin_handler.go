@@ -33,6 +33,16 @@ type newAPICheckinAccountRequest struct {
 	UserID string `json:"user_id"`
 }
 
+// newAPICheckinAccountDisplayNameRequest 是管理员手工维护账号标识的请求体。
+type newAPICheckinAccountDisplayNameRequest struct {
+	// Site 是账号所属站点名。
+	Site string `json:"site"`
+	// UserID 是账号在签到工具配置中的稳定标识。
+	UserID string `json:"user_id"`
+	// DisplayName 是管理员填写的用户名或邮箱。
+	DisplayName string `json:"display_name"`
+}
+
 // newAPICheckinSiteEnabledRequest 是站点签到启停请求体。
 type newAPICheckinSiteEnabledRequest struct {
 	// Site 是 NewApi 站点名。
@@ -147,6 +157,21 @@ func (h *NewAPICheckinHandler) DeleteAccount(c *gin.Context) {
 		return
 	}
 	data, err := h.checkinService.DeleteAccount(c.Request.Context(), req.Site, req.UserID)
+	respondNewAPICheckin(c, data, err)
+}
+
+// SetAccountDisplayName POST /admin/newapi-checkin/account-display-name
+func (h *NewAPICheckinHandler) SetAccountDisplayName(c *gin.Context) {
+	var req newAPICheckinAccountDisplayNameRequest
+	if !bindNewAPICheckinJSON(c, &req) {
+		return
+	}
+	data, err := h.checkinService.SetAccountDisplayName(
+		c.Request.Context(),
+		strings.TrimSpace(req.Site),
+		strings.TrimSpace(req.UserID),
+		strings.TrimSpace(req.DisplayName),
+	)
 	respondNewAPICheckin(c, data, err)
 }
 

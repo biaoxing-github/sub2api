@@ -5014,6 +5014,24 @@ v0.1.149 拉取结果：
 - PASS：PostgreSQL、Redis 未重启。
 - 边界：未执行真实认证上游请求、Git push 或 registry push。
 
+## 2026-07-15 sub2api 只读数据源与账号标识边界 - Devil
+
+- 已实现：`provider=sub2api` 只调用 `GET /v1/usage?days=30` 与 `GET /v1/models`，不进入签到、月度同步、NewAPI Key 枚举或名称同步流程。
+- 已实现：套餐、余额、累计请求/Token/成本、到期时间和模型列表持久化到余额缓存并在页面展示。
+- 已确认：当前目标站点的 `/v1/usage` 响应不包含 username/email，API Key 也不能访问 `/api/v1/auth/me`，因此不能仅凭现有 Key 自动取得用户名或邮箱。
+- 已实现：管理端新增 `POST /admin/newapi-checkin/account-display-name`，平台目录可手工填写用户名或邮箱，复用现有 `display_name` 字段，不保存密码。
+- 验证边界：此前 sub2 读取链路的 Go/Vitest/typecheck/build/browser 检查已通过；手工标识接口和最终页面变更按用户要求未继续检测，结果待用户自行验证。
+
+## 2026-07-14 - 签到总览卡片响应式样式修复
+
+- 执行者：Devil。
+- PASS：站点卡片网格改为按容器宽度自动换列，不再依赖浏览器视口断点。
+- PASS：站点标题和状态徽标允许合理换行，长站点名不会挤压或覆盖徽标。
+- PASS：统计项按最小 92px 自动重排；金额使用 16px 等宽数字并保持单行，不再逐字符断行。
+- PASS：目标 Vitest 2/2、Vue TypeScript 检查、生产构建和 `git diff --check` 全部通过。
+- PASS：1600、1024、768、390px 浏览器几何检查均无页面、卡片、数值水平溢出，数值无多行。
+- 边界：本轮未提交、未构建 Docker 镜像、未部署线上环境。
+
 ## 2026-07-14 - v0.1.152.6 蓝绿发布验证
 
 - 执行者：Devil。

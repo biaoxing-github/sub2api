@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,8 @@ const (
 	newAPICheckinDateTimeLayout    = "2006-01-02 15:04:05"
 	newAPICheckinMonthlySourceSync = "manual-refresh"
 	newAPICheckinAPIKeyConcurrency = 6
+	newAPICheckinProviderNewAPI    = "newapi"
+	newAPICheckinProviderSub2API   = "sub2api"
 )
 
 // NewAPICheckinOptions 描述 NewApi 签到迁移功能的运行选项。
@@ -96,6 +99,8 @@ type NewAPICheckinConfig struct {
 type NewAPICheckinSite struct {
 	// Name 是 dashboard 中展示和过滤使用的平台名。
 	Name string `json:"name"`
+	// Provider 是站点协议类型，newapi 支持签到，sub2api 仅支持只读用量查询。
+	Provider string `json:"provider"`
 	// Enabled 控制自动/手动签到，禁用后仍保留余额和月度查询能力。
 	Enabled bool `json:"enabled"`
 	// DisabledReason 是禁用签到时展示给用户的原因。
@@ -166,6 +171,8 @@ type NewAPICheckinConfigSummary struct {
 type NewAPICheckinConfigSiteSummary struct {
 	// Name 是站点名。
 	Name string `json:"name"`
+	// Provider 是页面区分可签到站点和只读数据源的协议类型。
+	Provider string `json:"provider"`
 	// Enabled 表示站点是否参与签到。
 	Enabled bool `json:"enabled"`
 	// DisabledReason 是站点禁用原因。
@@ -192,6 +199,8 @@ type NewAPICheckinConfigAccountSummary struct {
 	UserID string `json:"user_id"`
 	// IPProfile 是线路标记。
 	IPProfile string `json:"ip_profile"`
+	// AccessKeyMasked 是配置访问凭据的脱敏展示值。
+	AccessKeyMasked string `json:"access_key_masked,omitempty"`
 }
 
 // NewAPICheckinMaskedAPIKey 是允许返回管理页面的上游 API Key 脱敏摘要。
@@ -448,6 +457,10 @@ type NewAPICheckinBalanceSiteSummary struct {
 type NewAPICheckinBalanceAccount struct {
 	// Site 是站点名。
 	Site string `json:"site"`
+	// Provider 是账号所属站点的协议类型。
+	Provider string `json:"provider"`
+	// ProviderData 保存协议特有的只读套餐、用量和模型信息。
+	ProviderData map[string]any `json:"provider_data,omitempty"`
 	// Enabled 表示所在站点是否参与签到。
 	Enabled bool `json:"enabled"`
 	// Account 是本地账号名。
@@ -829,6 +842,9 @@ func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKey
 	}
 	targets := make([]target, 0)
 	for _, site := range cfg.Sites {
+		if isSub2APISite(site) {
+			continue
+		}
 		for _, account := range site.Accounts {
 			if account.Enabled {
 				targets = append(targets, target{site: site, account: account})
@@ -1154,6 +1170,37 @@ func (s *NewAPICheckinService) DeleteAccount(ctx context.Context, siteName, user
 	return s.deleteResultLocked(ctx, cfg, siteName, userID, 1, removedCache, removedHistory, removedMonthly, lastRun)
 }
 
+// SetAccountDisplayName 保存管理员手工填写的用户名或邮箱标识，不读取远端账号凭据。
+func (s *NewAPICheckinService) SetAccountDisplayName(ctx context.Context, siteName, userID, displayName string) (NewAPICheckinConfigSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	siteName = cleanNewAPIText(siteName)
+	userID = cleanNewAPIText(userID)
+	displayName = cleanNewAPIText(displayName)
+	if siteName == "" || userID == "" || displayName == "" {
+		return NewAPICheckinConfigSummary{}, errors.New("site、user_id 和 display_name 均不能为空")
+	}
+	cfg, err := s.loadConfigLocked(ctx)
+	if err != nil {
+		return NewAPICheckinConfigSummary{}, err
+	}
+	site, siteIdx := findNewAPISite(cfg, siteName)
+	if siteIdx < 0 {
+		return NewAPICheckinConfigSummary{}, fmt.Errorf("未找到站点: %s", siteName)
+	}
+	account, accountIdx := findNewAPIAccount(site, userID)
+	if accountIdx < 0 {
+		return NewAPICheckinConfigSummary{}, fmt.Errorf("未找到账号: %s/%s", siteName, userID)
+	}
+	account.DisplayName = displayName
+	site.Accounts[accountIdx] = account
+	cfg.Sites[siteIdx] = site
+	if err := s.saveConfigLocked(ctx, cfg); err != nil {
+		return NewAPICheckinConfigSummary{}, err
+	}
+	return s.configSummaryLocked(cfg), nil
+}
+
 // RefreshAccountBalance 刷新单个账号的签到状态和余额。
 func (s *NewAPICheckinService) RefreshAccountBalance(ctx context.Context, siteName, userID string) (NewAPICheckinRefreshAccountResult, error) {
 	s.mu.Lock()
@@ -1172,11 +1219,22 @@ func (s *NewAPICheckinService) RefreshSiteBalances(ctx context.Context, siteName
 func (s *NewAPICheckinService) SyncAccountName(ctx context.Context, siteName, userID string) (NewAPICheckinRefreshAccountResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	cfg, err := s.loadConfigLocked(ctx)
+	if err != nil {
+		return NewAPICheckinRefreshAccountResult{}, err
+	}
+	configuredSite, configuredSiteIdx := findNewAPISite(cfg, siteName)
+	if configuredSiteIdx < 0 {
+		return NewAPICheckinRefreshAccountResult{}, fmt.Errorf("未找到站点: %s", siteName)
+	}
+	if isSub2APISite(configuredSite) {
+		return NewAPICheckinRefreshAccountResult{}, fmt.Errorf("%s 是只读数据源，不支持名称同步", siteName)
+	}
 	result, err := s.refreshAccountBalanceLocked(ctx, siteName, userID, false, "account-name-sync")
 	if err != nil {
 		return NewAPICheckinRefreshAccountResult{}, err
 	}
-	cfg, err := s.loadConfigLocked(ctx)
+	cfg, err = s.loadConfigLocked(ctx)
 	if err != nil {
 		return NewAPICheckinRefreshAccountResult{}, err
 	}
@@ -1208,11 +1266,22 @@ func (s *NewAPICheckinService) SyncAccountName(ctx context.Context, siteName, us
 func (s *NewAPICheckinService) SyncSiteNames(ctx context.Context, siteName string) (NewAPICheckinRefreshSiteResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	cfg, err := s.loadConfigLocked(ctx)
+	if err != nil {
+		return NewAPICheckinRefreshSiteResult{}, err
+	}
+	configuredSite, configuredSiteIdx := findNewAPISite(cfg, siteName)
+	if configuredSiteIdx < 0 {
+		return NewAPICheckinRefreshSiteResult{}, fmt.Errorf("未找到站点: %s", siteName)
+	}
+	if isSub2APISite(configuredSite) {
+		return NewAPICheckinRefreshSiteResult{}, fmt.Errorf("%s 是只读数据源，不支持名称同步", siteName)
+	}
 	result, err := s.refreshSiteBalancesLocked(ctx, siteName, true, "site-name-sync")
 	if err != nil {
 		return NewAPICheckinRefreshSiteResult{}, err
 	}
-	cfg, err := s.loadConfigLocked(ctx)
+	cfg, err = s.loadConfigLocked(ctx)
 	if err != nil {
 		return NewAPICheckinRefreshSiteResult{}, err
 	}
@@ -1382,6 +1451,9 @@ func (s *NewAPICheckinService) RunSingleCheckin(ctx context.Context, siteName, u
 	if siteIdx < 0 {
 		return nil, fmt.Errorf("未找到站点: %s", siteName)
 	}
+	if isSub2APISite(site) {
+		return nil, fmt.Errorf("%s 是只读数据源，不支持签到", siteName)
+	}
 	if !site.Enabled {
 		reason := cleanNewAPIText(site.DisabledReason)
 		if reason == "" {
@@ -1502,6 +1574,9 @@ func (s *NewAPICheckinService) refreshAccountBalanceLocked(ctx context.Context, 
 	if err != nil {
 		return NewAPICheckinRefreshAccountResult{}, err
 	}
+	if isSub2APISite(site) {
+		return s.refreshSub2AccountBalanceLocked(ctx, site, account, cache, source)
+	}
 	status := normalizeNewAPISiteStatus(cache.SiteStatuses[site.Name])
 	if refreshSiteStatus || status.Message == "本地默认折算" {
 		status = s.querySiteStatusLocked(ctx, site)
@@ -1569,6 +1644,9 @@ func (s *NewAPICheckinService) refreshSiteBalancesLocked(ctx context.Context, si
 	cache, err := s.loadBalanceCacheLocked(ctx)
 	if err != nil {
 		return NewAPICheckinRefreshSiteResult{}, err
+	}
+	if isSub2APISite(site) {
+		return s.refreshSub2SiteBalancesLocked(ctx, site, cache, source)
 	}
 	status := normalizeNewAPISiteStatus(cache.SiteStatuses[site.Name])
 	if refreshSiteStatus || status.Message == "本地默认折算" {
@@ -1647,6 +1725,152 @@ func (s *NewAPICheckinService) refreshSiteBalancesLocked(ctx context.Context, si
 		LastRun:          lastRun,
 		Monthly:          monthly,
 	}, nil
+}
+
+// refreshSub2AccountBalanceLocked 只读取 sub2api 的用量和模型，不写入任何签到记录。
+func (s *NewAPICheckinService) refreshSub2AccountBalanceLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount, cache NewAPICheckinBalancePayload, source string) (NewAPICheckinRefreshAccountResult, error) {
+	row, ok := s.querySub2AccountLocked(ctx, site, account)
+	cache.SiteStatuses[site.Name] = normalizeNewAPISiteStatus(site.SiteStatus)
+	cache.Accounts = replaceNewAPIBalanceRows(cache.Accounts, []NewAPICheckinBalanceAccount{row})
+	cache.GeneratedAt = s.nowText()
+	cache.Source = fmt.Sprintf("%s:%s/%s", source, site.Name, account.UserID)
+	balances := s.rebuildBalancePayloadLocked(cache)
+	if err := s.saveBalanceCacheLocked(ctx, balances); err != nil {
+		return NewAPICheckinRefreshAccountResult{}, err
+	}
+	history, err := s.buildHistoryPayloadLocked(ctx)
+	if err != nil {
+		return NewAPICheckinRefreshAccountResult{}, err
+	}
+	lastRun, err := s.loadReportLocked(ctx)
+	if err != nil {
+		return NewAPICheckinRefreshAccountResult{}, err
+	}
+	monthly, err := s.buildMonthlyPayloadLocked(ctx, s.currentMonth(), site.Name, account.UserID)
+	if err != nil {
+		return NewAPICheckinRefreshAccountResult{}, err
+	}
+	return NewAPICheckinRefreshAccountResult{
+		GeneratedAt: s.nowText(),
+		Site:        site.Name,
+		UserID:      account.UserID,
+		OK:          ok,
+		Message:     row.Message,
+		Account:     row,
+		Balances:    balances,
+		History:     history,
+		LastRun:     s.rebuildReportLocked(lastRun),
+		Monthly:     monthly,
+	}, nil
+}
+
+// refreshSub2SiteBalancesLocked 批量刷新 sub2api 账号，同时保持签到历史和月度缓存不变。
+func (s *NewAPICheckinService) refreshSub2SiteBalancesLocked(ctx context.Context, site NewAPICheckinSite, cache NewAPICheckinBalancePayload, source string) (NewAPICheckinRefreshSiteResult, error) {
+	refreshed := make([]NewAPICheckinBalanceAccount, 0, len(site.Accounts))
+	failedCount := 0
+	for _, account := range site.Accounts {
+		if !account.Enabled {
+			continue
+		}
+		row, ok := s.querySub2AccountLocked(ctx, site, account)
+		if !ok {
+			failedCount++
+		}
+		refreshed = append(refreshed, row)
+	}
+	cache.SiteStatuses[site.Name] = normalizeNewAPISiteStatus(site.SiteStatus)
+	cache.Accounts = replaceNewAPIBalanceRows(removeNewAPIBalanceRows(cache.Accounts, site.Name, ""), refreshed)
+	cache.GeneratedAt = s.nowText()
+	cache.Source = fmt.Sprintf("%s:%s", source, site.Name)
+	balances := s.rebuildBalancePayloadLocked(cache)
+	if err := s.saveBalanceCacheLocked(ctx, balances); err != nil {
+		return NewAPICheckinRefreshSiteResult{}, err
+	}
+	history, err := s.buildHistoryPayloadLocked(ctx)
+	if err != nil {
+		return NewAPICheckinRefreshSiteResult{}, err
+	}
+	lastRun, err := s.loadReportLocked(ctx)
+	if err != nil {
+		return NewAPICheckinRefreshSiteResult{}, err
+	}
+	monthly, err := s.buildMonthlyPayloadLocked(ctx, s.currentMonth(), site.Name, "")
+	if err != nil {
+		return NewAPICheckinRefreshSiteResult{}, err
+	}
+	return NewAPICheckinRefreshSiteResult{
+		GeneratedAt:  s.nowText(),
+		Site:         site.Name,
+		AccountCount: len(refreshed),
+		FailedCount:  failedCount,
+		Accounts:     refreshed,
+		Balances:     balances,
+		History:      history,
+		LastRun:      s.rebuildReportLocked(lastRun),
+		Monthly:      monthly,
+	}, nil
+}
+
+// querySub2AccountLocked 合并 sub2api 的订阅用量和 Key 可用模型两个只读接口。
+func (s *NewAPICheckinService) querySub2AccountLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount) (NewAPICheckinBalanceAccount, bool) {
+	headers := map[string]string{"Authorization": fmt.Sprintf("Bearer %s", account.AccessKey)}
+	usage := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/v1/usage?days=30"), site.BaseURL, headers)
+	modelsResult := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/v1/models"), site.BaseURL, headers)
+
+	models := make([]any, 0)
+	for _, raw := range sliceFromAny(modelsResult.payload["data"]) {
+		if modelID := cleanNewAPIText(mapFromAny(raw)["id"]); modelID != "" {
+			models = append(models, modelID)
+		}
+	}
+	planName := cleanNewAPIText(usage.payload["planName"])
+	remaining, hasRemaining := optionalFloat64FromAny(usage.payload["remaining"])
+	usageSummary := mapFromAny(usage.payload["usage"])
+	totalUsage := mapFromAny(usageSummary["total"])
+	used, hasUsed := optionalFloat64FromAny(totalUsage["cost"])
+	providerData := map[string]any{
+		"plan_name":    planName,
+		"mode":         cleanNewAPIText(usage.payload["mode"]),
+		"unit":         firstNonEmpty(cleanNewAPIText(usage.payload["unit"]), "USD"),
+		"is_valid":     boolFromAny(usage.payload["isValid"], false),
+		"subscription": mapFromAny(usage.payload["subscription"]),
+		"usage":        usageSummary,
+		"daily_usage":  sliceFromAny(usage.payload["daily_usage"]),
+		"model_stats":  sliceFromAny(usage.payload["model_stats"]),
+		"model_count":  float64(len(models)),
+		"models":       models,
+	}
+	providerData["expires_at"] = cleanNewAPIText(mapFromAny(providerData["subscription"])["expires_at"])
+	ok := usage.ok && modelsResult.ok && boolFromAny(usage.payload["isValid"], true)
+	message := "sub2api 套餐、用量和模型读取成功"
+	if !ok {
+		message = firstNonEmpty(usage.message, modelsResult.message, "sub2api 数据读取失败")
+	}
+	row := NewAPICheckinBalanceAccount{
+		Site:            site.Name,
+		Provider:        newAPICheckinProviderSub2API,
+		ProviderData:    providerData,
+		Enabled:         site.Enabled,
+		Account:         account.Name,
+		Label:           firstNonEmpty(account.Name, account.UserID),
+		UserID:          account.UserID,
+		IPProfile:       account.IPProfile,
+		Status:          map[bool]string{true: "只读数据正常", false: "只读数据失败"}[ok],
+		Message:         message,
+		LastRefreshedAt: s.nowText(),
+	}
+	status := normalizeNewAPISiteStatus(site.SiteStatus)
+	if hasRemaining {
+		quota := sub2AmountToQuota(remaining, status)
+		row.Quota = &quota
+		row.QuotaDisplay = formatSub2Amount(remaining, status)
+	}
+	if hasUsed {
+		usedQuota := sub2AmountToQuota(used, status)
+		row.UsedQuota = &usedQuota
+		row.UsedQuotaDisplay = formatSub2Amount(used, status)
+	}
+	return row, ok
 }
 
 func (s *NewAPICheckinService) syncMonthlyRecordsForScope(ctx context.Context, month, siteName, userID, source string) (NewAPICheckinMonthlyPayload, error) {
@@ -2126,12 +2350,13 @@ func (s *NewAPICheckinService) configSummaryLocked(cfg NewAPICheckinConfig) NewA
 				continue
 			}
 			accounts = append(accounts, NewAPICheckinConfigAccountSummary{
-				Name:        account.Name,
-				Username:    account.Username,
-				DisplayName: account.DisplayName,
-				Label:       resolveNewAPIAccountLabel(account, NewAPICheckinBalanceAccount{}),
-				UserID:      account.UserID,
-				IPProfile:   account.IPProfile,
+				Name:            account.Name,
+				Username:        account.Username,
+				DisplayName:     account.DisplayName,
+				Label:           resolveNewAPIAccountLabel(account, NewAPICheckinBalanceAccount{}),
+				UserID:          account.UserID,
+				IPProfile:       account.IPProfile,
+				AccessKeyMasked: maskNewAPIKey(account.AccessKey),
 			})
 		}
 		totalAccounts += len(accounts)
@@ -2141,6 +2366,7 @@ func (s *NewAPICheckinService) configSummaryLocked(cfg NewAPICheckinConfig) NewA
 		}
 		sites = append(sites, NewAPICheckinConfigSiteSummary{
 			Name:           site.Name,
+			Provider:       normalizeNewAPIProvider(site.Provider),
 			Enabled:        site.Enabled,
 			DisabledReason: site.DisabledReason,
 			BaseURL:        site.BaseURL,
@@ -2351,6 +2577,7 @@ func (s *NewAPICheckinService) mergeBalanceCacheWithConfigLocked(cache NewAPIChe
 			label := resolveNewAPIAccountLabel(account, NewAPICheckinBalanceAccount{})
 			configRows[site.Name+"\x00"+account.UserID] = NewAPICheckinBalanceAccount{
 				Site:             site.Name,
+				Provider:         normalizeNewAPIProvider(site.Provider),
 				Enabled:          site.Enabled,
 				Account:          account.Name,
 				Username:         account.Username,
@@ -2377,9 +2604,10 @@ func (s *NewAPICheckinService) mergeBalanceCacheWithConfigLocked(cache NewAPIChe
 			continue
 		}
 		row.Enabled = configRow.Enabled
+		row.Provider = configRow.Provider
 		row.Account = firstNonEmpty(configRow.Account, row.Account)
 		row.Username = firstNonEmpty(row.Username, configRow.Username)
-		row.DisplayName = firstNonEmpty(row.DisplayName, configRow.DisplayName)
+		row.DisplayName = firstNonEmpty(configRow.DisplayName, row.DisplayName)
 		row.Label = firstNonEmpty(resolveNewAPIAccountLabel(NewAPICheckinAccount{
 			Name:        row.Account,
 			Username:    row.Username,
@@ -2887,6 +3115,7 @@ func normalizeNewAPISite(raw map[string]any) (NewAPICheckinSite, error) {
 	}
 	site := NewAPICheckinSite{
 		Name:                     name,
+		Provider:                 normalizeNewAPIProvider(cleanNewAPIText(raw["provider"])),
 		Enabled:                  boolFromAny(raw["enabled"], true),
 		DisabledReason:           cleanNewAPIText(raw["disabled_reason"]),
 		BackgroundCheckinEnabled: boolFromAny(raw["background_checkin_enabled"], true),
@@ -2982,6 +3211,9 @@ func findNewAPIAccount(site NewAPICheckinSite, userID string) (NewAPICheckinAcco
 func buildNewAPICheckinTasks(cfg NewAPICheckinConfig, includeDisabledSites bool) []newAPICheckinTask {
 	maxAccounts := 0
 	for _, site := range cfg.Sites {
+		if isSub2APISite(site) {
+			continue
+		}
 		if !includeDisabledSites && !site.Enabled {
 			continue
 		}
@@ -2992,6 +3224,9 @@ func buildNewAPICheckinTasks(cfg NewAPICheckinConfig, includeDisabledSites bool)
 	tasks := []newAPICheckinTask{}
 	for accountIdx := 0; accountIdx < maxAccounts; accountIdx++ {
 		for _, site := range cfg.Sites {
+			if isSub2APISite(site) {
+				continue
+			}
 			if !includeDisabledSites && !site.Enabled {
 				continue
 			}
@@ -3013,6 +3248,9 @@ func buildNewAPIMonthlyTasks(cfg NewAPICheckinConfig, siteName, userID string) [
 	userID = cleanNewAPIText(userID)
 	tasks := []newAPICheckinTask{}
 	for _, site := range cfg.Sites {
+		if isSub2APISite(site) {
+			continue
+		}
 		if siteName != "" && site.Name != siteName {
 			continue
 		}
@@ -3031,6 +3269,47 @@ func buildNewAPIMonthlyTasks(cfg NewAPICheckinConfig, siteName, userID string) [
 
 func joinNewAPIURL(baseURL, path string) string {
 	return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(path, "/")
+}
+
+func normalizeNewAPIProvider(provider string) string {
+	if strings.EqualFold(strings.TrimSpace(provider), newAPICheckinProviderSub2API) {
+		return newAPICheckinProviderSub2API
+	}
+	return newAPICheckinProviderNewAPI
+}
+
+func isSub2APISite(site NewAPICheckinSite) bool {
+	return normalizeNewAPIProvider(site.Provider) == newAPICheckinProviderSub2API
+}
+
+func optionalFloat64FromAny(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func sub2AmountToQuota(amount float64, status NewAPICheckinSiteStatus) int64 {
+	return int64(amount*float64(status.QuotaPerUnit) + 0.5)
+}
+
+func formatSub2Amount(amount float64, status NewAPICheckinSiteStatus) string {
+	symbol := firstNonEmpty(status.CustomCurrencySymbol, newAPICheckinDefaultSymbol)
+	return symbol + strconv.FormatFloat(amount, 'f', -1, 64)
 }
 
 func cleanNewAPIText(value any) string {
