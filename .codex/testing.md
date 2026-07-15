@@ -253,3 +253,12 @@
 - PASS：`go test ./internal/repository ./internal/handler/admin -count=1`。
 - PASS：`git diff --check`。
 - 边界：仅只读查询生产 PostgreSQL；未写生产数据、未提交、未构建镜像、未部署。
+
+## 2026-07-15 v0.1.155.7 蓝绿发布验证 - Devil
+
+- PASS：功能提交 `2273d9d14a25`，从 committed HEAD 构建并核验 `sub2api:v0.1.155.7`，OCI revision 和二进制 image_version 一致。
+- PASS：仅部署 idle blue；候选 health/首页/签到页面为 200，管理 Key、手动同步和 Responses 未登录为 401。
+- PASS：启动期一次 `pq: canceling statement due to user request` 后重新建立独立观察窗口，7 次采样健康且新增关键日志为 0。
+- PASS：代理从 green 切到 blue；切流后 7 轮三入口持续 200，blue/proxy 新增关键日志为 0。
+- PASS：三入口主资源和签到页面 SHA-256 分别一致；blue、green、PostgreSQL、Redis 均 healthy/restart 0。
+- LIMIT：无管理员登录态，未在线核对版本下拉；未执行真实同步、Key/分组写入或签到。

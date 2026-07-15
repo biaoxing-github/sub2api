@@ -5187,6 +5187,16 @@ v0.1.149 拉取结果：
 - PASS：service、repository、admin handler 测试与 diff check 全部通过。
 - 边界：未修改生产数据库、未提交、未部署；现网仍运行 `sub2api:v0.1.155.6`。
 
+## 2026-07-15 - v0.1.155.7 发布完成
+
+- 执行者：Devil。
+- PASS：业务提交 `2273d9d14a25`，不可变镜像 `sub2api:v0.1.155.7` 从 committed HEAD 构建并部署。
+- PASS：仅更新 idle blue，候选稳定后代理从 green 零停机切换到 blue；PostgreSQL、Redis 未重启。
+- PASS：启动期日志闸门后完成独立候选观察；切流后 7 轮三入口持续 200，blue/proxy 新增关键日志为 0。
+- PASS：三入口资源哈希和 401 契约一致；active blue `v0.1.155.7`、rollback green `v0.1.155.6`、PostgreSQL、Redis 均 healthy/restart 0。
+- LIMIT：无管理员登录态，未在线核对版本下拉；未执行真实上游同步、Key/分组写入或签到。
+- 边界：未执行 Git push 或镜像 registry push。
+
 ## 2026-07-15 - API Key 与分组数据库缓存
 
 - 执行者：Devil。
