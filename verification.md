@@ -5178,6 +5178,18 @@ v0.1.149 拉取结果：
 - LIMIT：无可用管理员登录配置，未在线读取受保护版本接口；OCI 标签与线上资源已核验。
 - 边界：未执行真实 Key 追加/替换、签到、月度同步、Git push 或镜像 registry push。
 
+## 2026-07-15 - v0.1.156 可更新项评估
+
+- 执行者：Devil。
+- PASS：tag `v0.1.156` 已拉取并校验，目标提交为 `12f991dde8a58e183d4bd16a87ef6fd0df714757`。
+- PASS：以实际本地主线 `f33701edc` 而非独立 `codex/merge-v0.1.155` worktree 为基线重新检查主要提交组。
+- PASS：五项第一批候选在临时 worktree 中组合后通过 repository、handler 编译、apicompat 和 service 测试。
+- PASS：第一批为 GPT-5.6 长上下文成本、failover 代理日志、OAuth 图片尺寸、内容会话 seed 扫描、并行 tool_use block index 修复。
+- OBSERVED：三次组合 cherry-pick 冲突后停止扩大候选集合；对应 WebSocket 日志、内容审核和 Antigravity 组改列为手工适配。
+- OBSERVED：Ops 投影查询存在未包含依赖，不能独立吸收。
+- PASS：一次性 probe worktree 已清理；主工作树原有修改和未跟踪文件保持不变。
+- 边界：没有业务提交被合并，没有构建或部署 `v0.1.156`。
+
 ## 2026-07-15 - vc 引用标识与数据库缓存刷新修复
 
 - 执行者：Devil。

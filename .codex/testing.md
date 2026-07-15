@@ -270,3 +270,14 @@
 - PASS：`pnpm run build`，Vite 生产构建成功；仅有既有动态导入和 chunk 体积提示。
 - PASS：`git diff --check`，并确认公开 HTML 与生成 TypeScript 的余额逻辑标记一致。
 - 边界：复用数据库余额缓存，不发起新增上游请求；未提交、未部署。
+
+## 2026-07-15 v0.1.156 tag 更新评估 - Devil
+
+- PASS：精确拉取 annotated tag `v0.1.156`，tag 对象 `9cc1b469a24e`，目标提交 `12f991dde8a5`。
+- PASS：核对差异规模为 48 个 first-parent 组、253 个文件、31408 行新增、1710 行删除。
+- PASS：对 40 个主要候选执行基于当前主线 `f33701edc` 的 `git apply --check --3way`。
+- PASS：一次性 detached worktree 组合验证 GPT-5.6 长上下文成本、failover 代理日志、OAuth 图片尺寸、会话 seed 扫描和并行 tool_use index 修复。
+- PASS：组合后 `go test ./internal/repository -count=1`、handler 编译、`go test ./internal/pkg/apicompat ./internal/service -count=1`。
+- OBSERVED：WebSocket 代理日志、内容审核热路径、Antigravity refresh token 在组合 cherry-pick 中出现上下文冲突，已降为手工适配。
+- OBSERVED：Ops 投影查询测试依赖当前主线不存在的 `normalizeSQLWhitespace`，已从第一批移出。
+- 边界：只拉取 tag 和执行临时探针；未合并当前分支、未构建镜像、未部署。

@@ -169,3 +169,14 @@
 - 验证线上静态主资源包含显示/隐藏实现且不含真实 Key，生产库仍为 9 个启用账号；未请求上游或签到。
 - Chrome 验证公开签到页桌面/移动布局；管理登录态过期且无可用部署密码，未修改认证配置。
 - 最终 active green=`sub2api:v0.1.155.2`，rollback blue=`sub2api:v0.1.155.1`；PostgreSQL、Redis 未重启。
+
+## 2026-07-15 Devil - v0.1.156 tag 更新评估
+
+- 读取 Obsidian 前馈入口、Memory、项目流水、当前工作树和 worktree 列表；确认主工作树存在用户原有修改并保持不动。
+- 从 origin 精确拉取 `v0.1.156`，校验 annotated tag 和目标提交。
+- 使用 first-parent log、stat、name-status 和逐提交三方补丁检查拆解 48 个上游变更组。
+- 发现实际开发/发布主线为 `f33701edc`，不包含独立 worktree 的 `f1ffeacc`，据此重跑可应用性评估。
+- CodeGraph 在 `D:\sub2api-src-155` 未初始化，改用已初始化的主项目索引确认 `FailoverState` 影响多个网关入口。
+- 创建一次性 detached worktree 组合验证低冲突候选；连续三次组合冲突后停止扩大范围并收敛到已成功组合项。
+- 移除存在测试依赖缺口的 Ops 投影组，剩余五项通过 repository、handler 编译、apicompat 和 service 测试。
+- 验证完成后清理一次性 worktree；未合并当前分支、未构建镜像、未部署。
