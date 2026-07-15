@@ -301,3 +301,13 @@
 - PASS：`go test ./internal/pkg/apicompat ./internal/service -count=1`，包含新增图片尺寸、会话 seed 和并行 tool_use 测试。
 - PASS：`go test ./... -run '^$' -count=1`，后端全部 Go package 编译通过。
 - 边界：本轮未修改版本号、未构建镜像、未部署、未推送。
+
+## 2026-07-15 v0.1.156 第二阶段融入 - Devil
+
+- PASS：取消感知 failover 聚焦测试通过，覆盖入口取消、退避期间取消、选号耗尽和 499 状态。
+- PASS：`go test ./internal/pkg/apicompat -count=1`，additional-tools 新增测试通过。
+- PASS：`go test -tags unit ./internal/service -run '^(TestIsGrokImageGenerationModel|TestCodexImageGenerationBridge_PreservesClientImageFunctionTools)$' -count=1`。
+- PASS：`go test ./internal/service -count=1`；首次全量并发运行发生既有支付测试唯一键碰撞，单测在第一/第二阶段基线均通过，复跑全量通过。
+- PASS：`go test ./... -run '^$' -count=1`，后端全包编译通过。
+- PASS：Antigravity composable Vitest 2/2，`pnpm run typecheck` 通过。
+- 边界：未修改版本号、未构建镜像、未部署、未推送。

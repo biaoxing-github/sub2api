@@ -189,3 +189,13 @@
 - 按顺序以 `git cherry-pick -m 1` 合并 `1f91b69ca`、`65093591c`、`8d13bbbea`、`7cb8ece8d`、`65d744d0e`，全部无冲突。
 - 并行执行 repository、handler、apicompat/service 聚焦测试和后端全包编译，全部通过。
 - 本轮只完成第一批代码合并与本地验证；未改版本号、未构建镜像、未部署、未推送。
+
+## 2026-07-15 Devil - v0.1.156 第二阶段融入
+
+- 从第一阶段验证提交 `381862edc` 创建 `codex/merge-v0.1.156-batch2` 隔离分支。
+- 逐组检查 16 个第二阶段候选的 first-parent 三方适用性；依赖本地缺失模块的 passthrough、SSE、静态缓存等组继续暂缓。
+- 手工适配取消感知 failover，保留本地已删除 handler，不恢复旧代码；核心取消和 499 测试通过。
+- 融入 additional-tools 判别、Codex 图片 function tool 保护、Grok 图片端点拦截和 Antigravity refresh token 保留。
+- 上游取消端到端夹具连续三次停在本地调度前置条件后按闸门收敛，移除不兼容夹具，保留本地核心与入口编译验证。
+- service 首次全量并发测试遇到既有支付测试唯一键碰撞；提取精确失败后，在第一/第二阶段分别单跑通过，第二阶段全量复跑通过。
+- 完成后端全包编译、前端 Vitest 和 TypeScript 类型检查；未改版本号、未构建镜像、未部署、未推送。
