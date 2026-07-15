@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +39,8 @@ const (
 type NewAPICheckinOptions struct {
 	// Repository 是 NewApi 签到配置、缓存、历史和月度记录的 SQL 存储端口。
 	Repository NewAPICheckinRepository
+	// AccountRepository 用于按站点地址关联主平台的 OpenAI API Key 账号。
+	AccountRepository NewAPICheckinAccountRepository
 	// HTTPClient 是访问各 NewApi 站点的客户端；为空时使用带超时的默认客户端。
 	HTTPClient *http.Client
 	// Now 返回当前时间，测试中用于固定时间。
@@ -46,13 +49,21 @@ type NewAPICheckinOptions struct {
 
 // NewAPICheckinService 承载 NewApi 多站点签到 dashboard 的业务逻辑。
 type NewAPICheckinService struct {
-	repo       NewAPICheckinRepository
-	httpClient *http.Client
-	now        func() time.Time
+	repo        NewAPICheckinRepository
+	accountRepo NewAPICheckinAccountRepository
+	httpClient  *http.Client
+	now         func() time.Time
 
 	mu               sync.Mutex
 	checkinJobState  NewAPICheckinJobState
 	monthlySyncState NewAPICheckinMonthlySyncState
+}
+
+// NewAPICheckinAccountRepository 是签到工具关联主平台账号所需的最小持久化端口。
+type NewAPICheckinAccountRepository interface {
+	ListByPlatform(ctx context.Context, platform string) ([]Account, error)
+	GetByID(ctx context.Context, id int64) (*Account, error)
+	Update(ctx context.Context, account *Account) error
 }
 
 // NewAPICheckinRepository 定义 NewApi 签到功能的 SQL 持久化端口。
@@ -233,6 +244,30 @@ type NewAPICheckinAPIKeySummary struct {
 	Group string `json:"group"`
 	// GroupID 是 sub2api API Key 当前绑定的分组 ID。
 	GroupID int64 `json:"group_id,omitempty"`
+	// ReferencedAccounts 是当前已经引用该 Key 的主平台账号。
+	ReferencedAccounts []NewAPICheckinAccountReference `json:"referenced_accounts,omitempty"`
+	// TargetAccounts 是同站点下可执行追加或替换的主平台账号。
+	TargetAccounts []NewAPICheckinAccountReference `json:"target_accounts,omitempty"`
+	fullKey        string
+}
+
+// NewAPICheckinAccountReference 描述与签到站点 URL 匹配的主平台账号。
+type NewAPICheckinAccountReference struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Referenced bool   `json:"referenced"`
+}
+
+// NewAPICheckinLinkAPIKeyResult 是签到 Key 写入主平台账号后的结果。
+type NewAPICheckinLinkAPIKeyResult struct {
+	Site              string `json:"site"`
+	UserID            string `json:"user_id"`
+	APIKeyID          int64  `json:"api_key_id"`
+	TargetAccountID   int64  `json:"target_account_id"`
+	TargetAccountName string `json:"target_account_name"`
+	Operation         string `json:"operation"`
+	KeyCount          int    `json:"key_count"`
+	Message           string `json:"message"`
 }
 
 // NewAPICheckinAccountAPIKeySummary 是单个签到账号的 API Key 查询结果。
@@ -898,9 +933,10 @@ func NewNewAPICheckinService(options NewAPICheckinOptions) *NewAPICheckinService
 		now = time.Now
 	}
 	return &NewAPICheckinService{
-		repo:       options.Repository,
-		httpClient: client,
-		now:        now,
+		repo:        options.Repository,
+		accountRepo: options.AccountRepository,
+		httpClient:  client,
+		now:         now,
 		checkinJobState: NewAPICheckinJobState{
 			Message: "空闲",
 			Report:  NewAPICheckinReport{},
@@ -912,8 +948,8 @@ func NewNewAPICheckinService(options NewAPICheckinOptions) *NewAPICheckinService
 }
 
 // ProvideNewAPICheckinService 使用 SQL 仓储创建 NewApi 签到服务。
-func ProvideNewAPICheckinService(repo NewAPICheckinRepository) *NewAPICheckinService {
-	return NewNewAPICheckinService(NewAPICheckinOptions{Repository: repo})
+func ProvideNewAPICheckinService(repo NewAPICheckinRepository, accountRepo AccountRepository) *NewAPICheckinService {
+	return NewNewAPICheckinService(NewAPICheckinOptions{Repository: repo, AccountRepository: accountRepo})
 }
 
 // ConfigSummary 返回脱敏后的平台目录和启用数量。
@@ -960,6 +996,15 @@ func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKey
 		})
 	}
 	_ = group.Wait()
+	if s.accountRepo != nil {
+		mainAccounts, listErr := s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+		if listErr != nil {
+			return NewAPICheckinAPIKeyPayload{}, fmt.Errorf("读取主平台账号失败: %w", listErr)
+		}
+		for index := range accounts {
+			s.attachMainAccountReferences(&accounts[index], targets[index].site, mainAccounts)
+		}
+	}
 
 	payload := NewAPICheckinAPIKeyPayload{
 		GeneratedAt:  s.nowText(),
@@ -979,6 +1024,99 @@ func (s *NewAPICheckinService) APIKeys(ctx context.Context) (NewAPICheckinAPIKey
 		}
 	}
 	return payload, nil
+}
+
+// LinkAPIKeyToAccount 将签到工具生成的 Key 追加或替换到同站点的主平台账号。
+func (s *NewAPICheckinService) LinkAPIKeyToAccount(ctx context.Context, siteName, userID string, apiKeyID, targetAccountID int64, operation string) (NewAPICheckinLinkAPIKeyResult, error) {
+	if s.accountRepo == nil {
+		return NewAPICheckinLinkAPIKeyResult{}, fmt.Errorf("主平台账号关联服务不可用")
+	}
+	operation = strings.ToLower(strings.TrimSpace(operation))
+	if operation != "append" && operation != "replace" {
+		return NewAPICheckinLinkAPIKeyResult{}, fmt.Errorf("operation 必须是 append 或 replace")
+	}
+	revealed, err := s.RevealAPIKey(ctx, siteName, userID, apiKeyID)
+	if err != nil {
+		return NewAPICheckinLinkAPIKeyResult{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	site, _, err := s.findConfiguredAccountLocked(ctx, siteName, userID)
+	if err != nil {
+		return NewAPICheckinLinkAPIKeyResult{}, err
+	}
+	target, err := s.accountRepo.GetByID(ctx, targetAccountID)
+	if err != nil {
+		return NewAPICheckinLinkAPIKeyResult{}, err
+	}
+	if target.Platform != PlatformOpenAI || target.Type != AccountTypeAPIKey || normalizeNewAPIAccountBaseURL(target.GetCredential("base_url")) != normalizeNewAPIAccountBaseURL(site.BaseURL) {
+		return NewAPICheckinLinkAPIKeyResult{}, fmt.Errorf("目标账号与签到站点 URL 不匹配")
+	}
+	if operation == "append" {
+		target.Credentials = MergeAccountCredentialsForUpdate(target.Credentials, map[string]any{"api_keys_append": []string{revealed.Key}})
+	} else {
+		target.Credentials = MergeAccountCredentialsForUpdate(target.Credentials, map[string]any{"api_keys": []string{revealed.Key}})
+		delete(target.Credentials, CredentialAPIKeysDisabled)
+	}
+	if err := s.accountRepo.Update(ctx, target); err != nil {
+		return NewAPICheckinLinkAPIKeyResult{}, err
+	}
+	return NewAPICheckinLinkAPIKeyResult{Site: site.Name, UserID: userID, APIKeyID: apiKeyID, TargetAccountID: target.ID, TargetAccountName: target.Name, Operation: operation, KeyCount: len(target.GetAPIKeys()), Message: "主平台账号 Key 已更新"}, nil
+}
+
+// attachMainAccountReferences 依据规范化站点 URL 标注可关联账号与已引用账号。
+func (s *NewAPICheckinService) attachMainAccountReferences(summary *NewAPICheckinAccountAPIKeySummary, site NewAPICheckinSite, accounts []Account) {
+	baseURL := normalizeNewAPIAccountBaseURL(site.BaseURL)
+	for keyIndex := range summary.APIKeys {
+		key := &summary.APIKeys[keyIndex]
+		for index := range accounts {
+			account := &accounts[index]
+			if account.Type != AccountTypeAPIKey || normalizeNewAPIAccountBaseURL(account.GetCredential("base_url")) != baseURL {
+				continue
+			}
+			referenced := false
+			for _, existing := range storedAccountAPIKeys(account.Credentials) {
+				if strings.TrimSpace(existing) == key.fullKey {
+					referenced = true
+					break
+				}
+			}
+			ref := NewAPICheckinAccountReference{ID: account.ID, Name: account.Name, Referenced: referenced}
+			key.TargetAccounts = append(key.TargetAccounts, ref)
+			if referenced {
+				key.ReferencedAccounts = append(key.ReferencedAccounts, ref)
+			}
+		}
+	}
+}
+
+// storedAccountAPIKeys 返回账号保存的全部 Key，包括暂时禁用的 Key，用于准确标记引用关系。
+func storedAccountAPIKeys(credentials map[string]any) []string {
+	keys := normalizeAPIKeys(credentials["api_keys"])
+	if len(keys) == 0 {
+		if legacy, ok := credentials["api_key"].(string); ok && strings.TrimSpace(legacy) != "" {
+			keys = []string{strings.TrimSpace(legacy)}
+		}
+	}
+	return keys
+}
+
+// normalizeNewAPIAccountBaseURL 统一协议、主机、末尾斜杠和常见 /v1 后缀用于站点关联。
+func normalizeNewAPIAccountBaseURL(value string) string {
+	value = strings.TrimSpace(value)
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" {
+		return strings.ToLower(strings.TrimRight(value, "/"))
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	if strings.EqualFold(parsed.Path, "/v1") {
+		parsed.Path = ""
+	}
+	return strings.TrimRight(parsed.String(), "/")
 }
 
 // RevealAPIKey 按站点、账号和 token ID 读取完整 NewAPI Key。
@@ -2258,6 +2396,7 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 			summary.APIKeys = append(summary.APIKeys, NewAPICheckinAPIKeySummary{
 				ID: int64FromAny(item["id"]), Name: firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
 				MaskedKey: maskNewAPIKey(key), Group: firstNonEmpty(sub2GroupNameFromKey(item), findSub2GroupName(session.groups, groupID)), GroupID: groupID,
+				fullKey: key,
 			})
 		}
 		if len(summary.APIKeys) > 0 {
@@ -2292,6 +2431,7 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 			Name:      firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
 			MaskedKey: masked,
 			Group:     groupName,
+			fullKey:   normalizeNewAPIFullKey(cleanNewAPIText(item["key"])),
 		})
 	}
 	self := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/user/self"), site.BaseURL, headers)

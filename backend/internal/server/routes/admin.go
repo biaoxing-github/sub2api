@@ -131,6 +131,7 @@ func registerNewAPICheckinRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		checkin.POST("/test-login-credentials", h.Admin.NewAPICheckin.TestLoginCredentials)
 		checkin.POST("/reveal-api-key", h.Admin.NewAPICheckin.RevealAPIKey)
 		checkin.POST("/api-key-group", h.Admin.NewAPICheckin.UpdateAPIKeyGroup)
+		checkin.POST("/link-api-key", h.Admin.NewAPICheckin.LinkAPIKeyToAccount)
 		checkin.POST("/site-enabled", h.Admin.NewAPICheckin.SetSiteEnabled)
 		checkin.POST("/refresh-site-balances", h.Admin.NewAPICheckin.RefreshSiteBalances)
 		checkin.POST("/refresh-account-balance", h.Admin.NewAPICheckin.RefreshAccountBalance)

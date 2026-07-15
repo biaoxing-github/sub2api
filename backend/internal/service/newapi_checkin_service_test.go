@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,41 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+type newAPICheckinAccountRepoStub struct {
+	accounts []Account
+	updated  *Account
+}
+
+func (r *newAPICheckinAccountRepoStub) ListByPlatform(_ context.Context, platform string) ([]Account, error) {
+	return r.accounts, nil
+}
+func (r *newAPICheckinAccountRepoStub) GetByID(_ context.Context, id int64) (*Account, error) {
+	for index := range r.accounts {
+		if r.accounts[index].ID == id {
+			return &r.accounts[index], nil
+		}
+	}
+	return nil, fmt.Errorf("account not found")
+}
+func (r *newAPICheckinAccountRepoStub) Update(_ context.Context, account *Account) error {
+	r.updated = account
+	return nil
+}
+
+// TestNewAPICheckinAttachMainAccountReferences 验证 URL 规范化、引用高亮与可关联账号标记。
+func TestNewAPICheckinAttachMainAccountReferences(t *testing.T) {
+	svc := NewNewAPICheckinService(NewAPICheckinOptions{})
+	summary := NewAPICheckinAccountAPIKeySummary{APIKeys: []NewAPICheckinAPIKeySummary{{ID: 7, fullKey: "sk-linked"}}}
+	svc.attachMainAccountReferences(&summary, NewAPICheckinSite{BaseURL: "HTTPS://Demo.Example/"}, []Account{
+		{ID: 11, Name: "主账号", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://demo.example/v1", "api_keys": []any{"sk-linked"}}},
+		{ID: 12, Name: "其他站点", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://other.example", "api_keys": []any{"sk-linked"}}},
+	})
+	require.Len(t, summary.APIKeys[0].TargetAccounts, 1)
+	require.Equal(t, int64(11), summary.APIKeys[0].TargetAccounts[0].ID)
+	require.True(t, summary.APIKeys[0].TargetAccounts[0].Referenced)
+	require.Len(t, summary.APIKeys[0].ReferencedAccounts, 1)
+}
 
 func fixedNewAPICheckinNow() time.Time {
 	return time.Date(2026, 7, 8, 9, 10, 11, 0, time.Local)

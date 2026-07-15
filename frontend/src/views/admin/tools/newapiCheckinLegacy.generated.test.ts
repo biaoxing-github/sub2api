@@ -85,6 +85,7 @@ describe('mountNewapiCheckinLegacyTool', () => {
   it('opens the platform directory modal and manages generated NewAPI keys and groups', async () => {
     let revealPayload: Record<string, unknown> | null = null
     let groupPayload: Record<string, unknown> | null = null
+    let linkPayload: Record<string, unknown> | null = null
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/config')) {
@@ -115,7 +116,11 @@ describe('mountNewapiCheckinLegacyTool', () => {
             {
               site: 'demo', provider: 'newapi', user_id: '1001', status: 'ready',
               group_status: 'ready', group_message: '已读取上游完整可用分组', available_groups: ['codex-team', 'default'],
-              api_keys: [{ id: 7, name: 'codex', masked_key: 'sk-ab***5678', group: 'codex-team' }]
+              api_keys: [{
+                id: 7, name: 'codex', masked_key: 'sk-ab***5678', group: 'codex-team',
+                referenced_accounts: [{ id: 91, name: 'demo-main', referenced: true }],
+                target_accounts: [{ id: 91, name: 'demo-main', referenced: true }]
+              }]
             },
             { site: 'demo', provider: 'newapi', user_id: '1002', status: 'missing', group_status: 'partial', group_message: '仅展示已知分组', available_groups: ['default'], api_keys: [] }
           ]
@@ -128,6 +133,10 @@ describe('mountNewapiCheckinLegacyTool', () => {
       if (url.endsWith('/api-key-group')) {
         groupPayload = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
         return jsonResponse({ site: 'demo', user_id: '1001', api_key_id: 7, name: 'codex', group: 'default', message: 'updated' })
+      }
+      if (url.endsWith('/link-api-key')) {
+        linkPayload = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+        return jsonResponse({ target_account_name: 'demo-main', key_count: 2, operation: 'append' })
       }
       if (url.endsWith('/last-run')) return jsonResponse({})
       if (url.endsWith('/balances')) return jsonResponse({ site_statuses: {}, accounts: [] })
@@ -172,6 +181,8 @@ describe('mountNewapiCheckinLegacyTool', () => {
     directoryButton.click()
     expect(root.querySelector('#platformDirectoryDialog')?.hasAttribute('open')).toBe(true)
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('未生成')
+    expect(root.querySelector('#configTableWrap')?.textContent).toContain('已引用 · demo-main')
+    expect(root.querySelector('.api-key-item.referenced')).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/admin/newapi-checkin/api-keys',
       expect.any(Object)
@@ -187,6 +198,11 @@ describe('mountNewapiCheckinLegacyTool', () => {
     const updateButton = root.querySelector('[data-update-generated-group="7"]') as HTMLButtonElement
     updateButton.click()
     await vi.waitFor(() => expect(groupPayload).toEqual({ site: 'demo', user_id: '1001', api_key_id: 7, group: 'default', group_id: 0 }))
+
+    ;(root.querySelector('[data-link-generated-key="7"][data-operation="append"]') as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(linkPayload).toEqual({
+      site: 'demo', user_id: '1001', api_key_id: 7, target_account_id: 91, operation: 'append'
+    }))
 
     cleanup()
   })

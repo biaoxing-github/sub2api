@@ -176,6 +176,15 @@
 - LIMIT：本地管理 API 未登录，浏览器账号目录为空；登录凭据弹窗、密码不回显、Key 显示和 group_id 提交由 Vitest 覆盖。
 - 边界：未签到、未执行真实分组更新、未提交、未构建镜像、未部署。
 
+## 2026-07-15 签到 Key 关联主平台账号 - Devil
+
+- PASS：`go test -tags=unit ./internal/service -run TestNewAPICheckin`，覆盖 `/v1` 与末尾斜杠 URL 归一化、引用账号识别。
+- PASS：admin handler/routes 单测与 `go test ./cmd/server` 通过，Wire 注入可编译。
+- PASS：签到工具 Vitest 3/3，覆盖已引用高亮、目标账号标识、追加确认及请求体；`vue-tsc --noEmit` 通过。
+- PASS：Vite 生产构建成功；HTML 与 generated TypeScript 关联标记同步检查通过。
+- PASS：Browser 在 1440x900 与 390x844 检查平台目录弹窗；无横向溢出、按钮越界或 console warning/error。
+- LIMIT：全量 service 测试存在 2 条与本功能无关的既有 Codex User-Agent 断言失败；本功能聚焦测试通过。
+
 ## 2026-07-15 v0.1.155.3 蓝绿发布验证 - Devil
 
 - PASS：业务提交 `c47c17ba202d`，从 committed HEAD 构建 `sub2api:v0.1.155.3`，OCI 标签、ImageID 和二进制版本一致。

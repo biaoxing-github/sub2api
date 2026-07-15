@@ -62,6 +62,15 @@ type newAPICheckinAPIKeyGroupRequest struct {
 	GroupID int64 `json:"group_id"`
 }
 
+// newAPICheckinLinkAPIKeyRequest 描述签到 Key 写入主平台账号的目标与操作。
+type newAPICheckinLinkAPIKeyRequest struct {
+	newAPICheckinAPIKeyRequest
+	// TargetAccountID 是与站点 URL 匹配的主平台账号 ID。
+	TargetAccountID int64 `json:"target_account_id"`
+	// Operation 是 append 或 replace。
+	Operation string `json:"operation"`
+}
+
 // newAPICheckinLoginCredentialRequest 是账号登录凭据保存和测试请求体。
 type newAPICheckinLoginCredentialRequest struct {
 	newAPICheckinAccountRequest
@@ -130,6 +139,20 @@ func (h *NewAPICheckinHandler) UpdateAPIKeyGroup(c *gin.Context) {
 	data, err := h.checkinService.UpdateAPIKeyGroup(
 		c.Request.Context(), strings.TrimSpace(req.Site), strings.TrimSpace(req.UserID), req.APIKeyID, strings.TrimSpace(req.Group), req.GroupID,
 	)
+	respondNewAPICheckin(c, data, err)
+}
+
+// LinkAPIKeyToAccount POST /admin/newapi-checkin/link-api-key 将签到 Key 写入主平台账号。
+func (h *NewAPICheckinHandler) LinkAPIKeyToAccount(c *gin.Context) {
+	var req newAPICheckinLinkAPIKeyRequest
+	if !bindNewAPICheckinJSON(c, &req) {
+		return
+	}
+	if req.APIKeyID <= 0 || req.TargetAccountID <= 0 {
+		response.BadRequest(c, "api_key_id 和 target_account_id 必须是正整数")
+		return
+	}
+	data, err := h.checkinService.LinkAPIKeyToAccount(c.Request.Context(), strings.TrimSpace(req.Site), strings.TrimSpace(req.UserID), req.APIKeyID, req.TargetAccountID, strings.TrimSpace(req.Operation))
 	respondNewAPICheckin(c, data, err)
 }
 

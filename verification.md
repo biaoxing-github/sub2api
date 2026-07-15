@@ -5157,3 +5157,13 @@ v0.1.149 拉取结果：
 - PASS：blue `v0.1.155.3` healthy/restart 0；green `v0.1.155.2` healthy/restart 0；PostgreSQL、Redis running/restart 0。
 - PASS：线上静态资源包含登录凭据、登录测试、完整 Key 与 group_id 分组更新代码。
 - 边界：未把用户密码写入生产库，未执行签到或真实分组更新，未 push Git 或镜像。
+
+## 2026-07-15 - 签到 Key 与主平台账号关联
+
+- 执行者：Devil。
+- PASS：签到 Key 摘要可按规范化 `base_url` 识别主平台 `openai/apikey` 账号，并返回已引用账号和全部可关联账号。
+- PASS：新增 append/replace 写入接口；append 复用既有去重合并，replace 清理旧 Key 禁用状态并仅保留目标 Key。
+- PASS：页面对已引用 Key 高亮，显示主账号名称；追加/替换前明确确认目标账号和覆盖影响。
+- PASS：Go 聚焦测试、server 编译、Vitest、Vue typecheck、Vite build、HTML/generated 同步检查、diff check 均通过。
+- PASS：桌面与移动浏览器弹窗验证通过，console warning/error 为 0。
+- LIMIT：未对生产账号执行真实追加或替换；未提交、未部署。

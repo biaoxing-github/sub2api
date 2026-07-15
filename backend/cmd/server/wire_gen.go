@@ -264,7 +264,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	contentModerationService := service.NewContentModerationService(settingRepository, contentModerationRepository, contentModerationHashCache, groupRepository, userRepository, apiKeyAuthCacheInvalidator, emailService)
 	contentModerationHandler := admin.NewContentModerationHandler(contentModerationService)
 	newAPICheckinRepository := repository.NewAPICheckinRepository(db)
-	newAPICheckinService := service.ProvideNewAPICheckinService(newAPICheckinRepository)
+	newAPICheckinService := service.ProvideNewAPICheckinService(newAPICheckinRepository, accountRepository)
 	newAPICheckinHandler := admin.NewNewAPICheckinHandler(newAPICheckinService)
 	tokenCostRepository := repository.NewTokenCostRepository(db)
 	tokenCostService := service.ProvideTokenCostService(tokenCostRepository)

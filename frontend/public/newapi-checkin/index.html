@@ -715,6 +715,24 @@
       background: var(--surface-2);
     }
 
+    .api-key-item.referenced {
+      border-color: color-mix(in oklab, var(--ok) 46%, var(--line));
+      background: color-mix(in oklab, var(--ok-soft) 48%, var(--surface-2));
+    }
+
+    .account-reference-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .account-reference-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 12px;
+    }
+
     .api-key-line,
     .group-control {
       display: flex;
@@ -2470,6 +2488,19 @@
           );
         });
       });
+      Array.from(configTableWrap.querySelectorAll("[data-link-generated-key][data-site][data-user-id][data-target-account-id]")).forEach((button) => {
+        button.addEventListener("click", () => {
+          linkGeneratedAPIKey(
+            button.dataset.site,
+            button.dataset.userId,
+            Number(button.dataset.linkGeneratedKey),
+            Number(button.dataset.targetAccountId),
+            button.dataset.targetAccountName,
+            button.dataset.operation,
+            button,
+          );
+        });
+      });
       Array.from(configTableWrap.querySelectorAll("[data-delete-site]")).forEach((button) => {
         button.addEventListener("click", () => {
           deleteSite(button.dataset.deleteSite, button);
@@ -2531,6 +2562,32 @@
         setAppStatus(`${site} / ${userId} 的 ${result.name || "API Key"} 已切换到 ${result.group}`, "ok");
       } catch (error) {
         setAppStatus(`更新 API Key 分组失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(button, false);
+      }
+    }
+
+    async function linkGeneratedAPIKey(site, userId, apiKeyId, targetAccountId, targetAccountName, operation, button) {
+      const operationLabel = operation === "replace" ? "替换" : "追加";
+      const warning = operation === "replace" ? "这会删除该账号当前保存的其他 Key。" : "现有 Key 会保留。";
+      if (!window.confirm(`确认将此签到 Key ${operationLabel}到主平台账号「${targetAccountName}」？\n${warning}`)) return;
+      setButtonBusy(button, true, "处理中");
+      try {
+        const result = await fetchJson("/api/link-api-key", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            site,
+            user_id: userId,
+            api_key_id: apiKeyId,
+            target_account_id: targetAccountId,
+            operation,
+          }),
+        });
+        await loadAPIKeys();
+        setAppStatus(`已${operationLabel}到主平台账号 ${result.target_account_name}，当前 ${result.key_count} 个 Key`, "ok");
+      } catch (error) {
+        setAppStatus(`${operationLabel}主平台账号 Key 失败: ${error.message}`, "error");
       } finally {
         setButtonBusy(button, false);
       }
@@ -2718,8 +2775,27 @@
         if (item.group && !options.some((option) => sub2 ? option.id === Number(item.group_id) : option.name === item.group)) {
           options.unshift({ id: Number(item.group_id || 0), name: item.group });
         }
+        const references = item.referenced_accounts || [];
+        const targets = item.target_accounts || [];
+        const referenceHtml = targets.length ? `
+          <div class="account-reference-list">
+            ${targets.map((target) => `
+              <div class="account-reference-row">
+                ${badge(target.referenced ? `已引用 · ${target.name}` : `可关联 · ${target.name}`, target.referenced ? "ok" : "neutral")}
+                <button class="quick-action secondary" type="button"
+                  data-link-generated-key="${escapeHtml(item.id)}" data-site="${escapeHtml(site.name)}"
+                  data-user-id="${escapeHtml(account.user_id)}" data-target-account-id="${escapeHtml(target.id)}"
+                  data-target-account-name="${escapeHtml(target.name)}" data-operation="append">追加</button>
+                <button class="quick-action ${target.referenced ? "secondary" : "danger"}" type="button"
+                  data-link-generated-key="${escapeHtml(item.id)}" data-site="${escapeHtml(site.name)}"
+                  data-user-id="${escapeHtml(account.user_id)}" data-target-account-id="${escapeHtml(target.id)}"
+                  data-target-account-name="${escapeHtml(target.name)}" data-operation="replace">替换</button>
+              </div>
+            `).join("")}
+          </div>
+        ` : '<div class="group-capability">主平台暂无相同站点 URL 的 OpenAI API Key 账号</div>';
         return `
-          <div class="api-key-item">
+          <div class="api-key-item ${references.length ? "referenced" : ""}">
             <div class="api-key-line">
               <code title="${escapeHtml(item.name || "未命名")}">${escapeHtml(revealedKey || item.masked_key)}</code>
               <button
@@ -2754,6 +2830,7 @@
                 ${options.length ? "" : "disabled"}
               >更新分组</button>
             </div>
+            ${referenceHtml}
           </div>
         `;
       }).join("");
