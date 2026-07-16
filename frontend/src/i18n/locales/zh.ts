@@ -4370,6 +4370,12 @@ export default {
         baseUrlHint: '默认使用 xAI 官方 API 地址 https://api.x.ai/v1',
         apiKeyHint: '您的 xAI API Key'
       },
+      grokCustomBaseUrl: {
+        presets: {
+          cli: 'Grok Build CLI',
+          official: '官方 API'
+        }
+      },
       // Re-Auth Modal
       reAuthorizeAccount: '重新授权账号',
       claudeCodeAccount: 'Claude Code 账号',

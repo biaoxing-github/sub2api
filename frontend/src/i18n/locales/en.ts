@@ -4244,6 +4244,12 @@ export default {
         baseUrlHint: 'Uses the official xAI API base URL by default: https://api.x.ai/v1',
         apiKeyHint: 'Your xAI API Key'
       },
+      grokCustomBaseUrl: {
+        presets: {
+          cli: 'Grok Build CLI',
+          official: 'Official API'
+        }
+      },
       // Re-Auth Modal
       reAuthorizeAccount: 'Re-Authorize Account',
       claudeCodeAccount: 'Claude Code Account',

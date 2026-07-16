@@ -214,6 +214,33 @@ func TestOpenAIRequestBaseURLs(t *testing.T) {
 	}
 }
 
+func TestGetGrokBaseURLHonorsManualEndpointSwitch(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseURL  string
+		expected string
+	}{
+		{name: "empty falls back to CLI proxy", expected: xai.DefaultCLIBaseURL},
+		{name: "official API is honored", baseURL: xai.DefaultBaseURL, expected: xai.DefaultBaseURL},
+		{name: "regional API is honored", baseURL: "https://us-west-2.api.x.ai/v1", expected: "https://us-west-2.api.x.ai/v1"},
+		{name: "custom relay is honored", baseURL: "https://relay.example.com/v1", expected: "https://relay.example.com/v1"},
+		{name: "unparseable value falls back to CLI proxy", baseURL: "not a url", expected: xai.DefaultCLIBaseURL},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := Account{
+				Type:        AccountTypeOAuth,
+				Platform:    PlatformGrok,
+				Credentials: map[string]any{"base_url": tt.baseURL},
+			}
+			if got := account.GetGrokBaseURL(); got != tt.expected {
+				t.Fatalf("GetGrokBaseURL() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestAnthropicRequestBaseURLs(t *testing.T) {
 	tests := []struct {
 		name     string
