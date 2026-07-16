@@ -337,3 +337,14 @@
 - PASS：相关后端测试、Vitest 3/3、类型检查、生产构建、候选与切流后观察通过。
 - PASS：active green=`v0.1.156.5`，rollback blue=`v0.1.156.3`，数据库组件未重启。
 - NOTE：失败候选 `.4` 未创建镜像、未部署且不复用。
+
+## 2026-07-16 v0.1.156 批次 1-3 主线集成验证 - Devil
+
+- PASS：`git diff --cached --check`，无未解决冲突、冲突标记或迁移文件。
+- PASS：`go test ./internal/service -count=1`。
+- PASS：`go test ./internal/pkg/apicompat -count=1`。
+- PASS：handler 取消感知 failover 与首输出超时聚焦测试。
+- PASS：`go test ./internal/server/routes -count=1` 与新增 config 聚焦测试。
+- PASS：`go test ./... -run '^$' -count=1`，全仓 Go 包编译切片通过。
+- PASS：Antigravity OAuth Vitest 2/2 与 `pnpm run typecheck`。
+- 边界：此阶段仅完成合并和本地验证，尚未构建、部署或切流。

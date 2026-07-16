@@ -2,11 +2,14 @@ package handler
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,6 +20,44 @@ import (
 // mockTempUnscheduler 记录 TempUnscheduleRetryableError 的调用信息。
 type mockTempUnscheduler struct {
 	calls []tempUnscheduleCall
+}
+
+func TestFailoverClientGone(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("活跃请求不终止", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+		require.False(t, failoverClientGone(c))
+		require.Equal(t, http.StatusOK, c.Writer.Status())
+	})
+
+	t.Run("已取消请求标记499", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+
+		require.True(t, failoverClientGone(c))
+		require.Equal(t, statusClientClosedRequest, c.Writer.Status())
+	})
+
+	t.Run("已提交响应不覆盖状态码", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
+		c.String(http.StatusOK, "partial")
+
+		require.True(t, failoverClientGone(c))
+		require.Equal(t, http.StatusOK, c.Writer.Status())
+	})
+
+	require.False(t, failoverClientGone(nil))
 }
 
 type tempUnscheduleCall struct {
@@ -498,16 +539,36 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 		err := newTestFailoverErr(400, true, false)
 
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // 立即取消
+		go func() {
+			time.Sleep(30 * time.Millisecond)
+			cancel()
+		}()
 
 		start := time.Now()
 		action := fs.HandleFailoverError(ctx, mock, 100, "openai", err)
 		elapsed := time.Since(start)
 
 		require.Equal(t, FailoverCanceled, action)
-		require.Less(t, elapsed, 100*time.Millisecond, "应立即返回")
-		// 重试计数仍应递增
+		require.Less(t, elapsed, 400*time.Millisecond, "sleep 应被取消打断")
+		// 已进入重试分支，计数应递增。
 		require.Equal(t, 1, fs.SameAccountRetryCount[100])
+	})
+
+	t.Run("入口即已取消不修改failover状态", func(t *testing.T) {
+		mock := &mockTempUnscheduler{}
+		fs := NewFailoverState(3, false)
+		err := newTestFailoverErr(520, false, false)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		action := fs.HandleFailoverError(ctx, mock, 100, "openai", err)
+
+		require.Equal(t, FailoverCanceled, action)
+		require.Zero(t, fs.SwitchCount)
+		require.Zero(t, fs.SameAccountRetryCount[100])
+		require.Empty(t, fs.FailedAccountIDs)
+		require.Nil(t, fs.LastFailoverErr)
+		require.Empty(t, mock.calls)
 	})
 
 	t.Run("Antigravity延迟期间context取消", func(t *testing.T) {

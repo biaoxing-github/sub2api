@@ -750,6 +750,27 @@ func TestEnsureOpenAIResponsesImageGenerationTool_PreservesExistingImageTool(t *
 	require.Equal(t, "webp", tool["output_format"])
 }
 
+func TestCodexImageGenerationBridge_PreservesClientImageFunctionTools(t *testing.T) {
+	for _, tool := range []map[string]any{
+		{"type": "function", "name": "image_gen.imagegen"},
+		{"type": "function", "function": map[string]any{"name": "image_gen.imagegen"}},
+	} {
+		reqBody := map[string]any{
+			"model":        "gpt-5.5",
+			"input":        "draw a cat",
+			"instructions": "existing instructions",
+			"tools":        []any{tool},
+		}
+
+		require.True(t, hasCodexImageGenerationFunctionTool(reqBody))
+		require.False(t, ensureOpenAIResponsesImageGenerationTool(reqBody))
+		require.False(t, ensureOpenAIResponsesImageGenerationToolChoiceAuto(reqBody))
+		require.False(t, applyCodexImageGenerationBridgeInstructions(reqBody))
+		require.NotContains(t, reqBody, "tool_choice")
+		require.Equal(t, "existing instructions", reqBody["instructions"])
+	}
+}
+
 func TestApplyCodexImageGenerationBridgeInstructions_AppendsBridgeOnce(t *testing.T) {
 	reqBody := map[string]any{
 		"model":        "gpt-5.4",

@@ -63,6 +63,20 @@ func TestGatewayRoutesOpenAIResponsesCompactPathIsRegistered(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesRootModelsAliasIsRegistered(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformOpenAI)
+	registered := make(map[string]string)
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodGet {
+			registered[route.Path] = route.Handler
+		}
+	}
+
+	require.NotEmpty(t, registered["/v1/models"])
+	require.NotEmpty(t, registered["/models"])
+	require.Equal(t, registered["/v1/models"], registered["/models"])
+}
+
 func TestGatewayRoutesOpenAIAlphaSearchPathsAreRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformOpenAI)
 	registered := make(map[string]bool)

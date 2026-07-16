@@ -5317,3 +5317,12 @@ v0.1.149 拉取结果：
 - PASS：三入口资源路径、主资源哈希、签到页面哈希和三个功能标记一致；容器二进制 image_version=`v0.1.155.5`、commit=`9e0f58d64547`。
 - PASS：blue、green、PostgreSQL、Redis 均 healthy/restart 0，数据库和缓存未重启。
 - 边界：未执行真实 Key 追加/替换、签到、月度同步、Git push 或镜像 registry push。
+
+## 2026-07-16 - v0.1.156 批次 1-3 主线集成
+
+- 执行者：Devil。
+- PASS：批次 1-3 已合并到基于 `e46ed941f` 的隔离发布分支，47 个文件的暂存差异无冲突和空白错误。
+- PASS：service、apicompat、routes、配置新增项、handler 取消/首输出超时聚焦测试均通过。
+- PASS：后端全仓编译切片、前端 Antigravity OAuth Vitest 2/2 与 TypeScript 类型检查通过。
+- PASS：无新增迁移；本次发布不需要数据库写入。
+- 边界：镜像构建、idle blue 候选部署、切流和线上观察将在提交后执行；未执行 Git push 或 registry push。

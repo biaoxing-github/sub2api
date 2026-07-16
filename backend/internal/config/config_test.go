@@ -93,6 +93,39 @@ func TestLoadDefaultOpenAIRequestHeaderTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultOpenAIFirstOutputTimeoutsDisabled(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Zero(t, cfg.Gateway.OpenAIFirstOutputTimeoutSeconds)
+	require.Zero(t, cfg.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds)
+}
+
+func TestLoadOpenAIFirstOutputTimeoutsFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_OPENAI_FIRST_OUTPUT_TIMEOUT_SECONDS", "90")
+	t.Setenv("GATEWAY_OPENAI_HIGH_EFFORT_FIRST_OUTPUT_TIMEOUT_SECONDS", "240")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 90, cfg.Gateway.OpenAIFirstOutputTimeoutSeconds)
+	require.Equal(t, 240, cfg.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds)
+}
+
+func TestValidateOpenAIFirstOutputTimeoutMinimum(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	cfg.Gateway.OpenAIFirstOutputTimeoutSeconds = 30
+	require.NoError(t, cfg.Validate())
+	cfg.Gateway.OpenAIFirstOutputTimeoutSeconds = 29
+	require.ErrorContains(t, cfg.Validate(), "gateway.openai_first_output_timeout_seconds")
+	cfg.Gateway.OpenAIFirstOutputTimeoutSeconds = 0
+	cfg.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds = 1801
+	require.ErrorContains(t, cfg.Validate(), "gateway.openai_high_effort_first_output_timeout_seconds")
+}
+
 func TestLoadDefaultSchedulerRetryConfig(t *testing.T) {
 	resetViperWithJWTSecret(t)
 

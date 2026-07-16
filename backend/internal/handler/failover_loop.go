@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"go.uber.org/zap"
@@ -99,6 +101,10 @@ func (s *FailoverState) HandleFailoverError(
 	platform string,
 	failoverErr *service.UpstreamFailoverError,
 ) FailoverAction {
+	// 请求已取消后继续重试只会把 context canceled 误报为账号耗尽。
+	if ctx != nil && ctx.Err() != nil {
+		return FailoverCanceled
+	}
 	s.LastFailoverErr = failoverErr
 
 	// 缓存计费判断
@@ -226,6 +232,10 @@ func tempUnscheduleFailoverAccount(ctx context.Context, gatewayService TempUnsch
 // 返回 FailoverExhausted 时，调用方应返回错误响应。
 // 返回 FailoverCanceled 时，调用方应直接 return。
 func (s *FailoverState) HandleSelectionExhausted(ctx context.Context, infiniteWait bool) FailoverAction {
+	if ctx.Err() != nil {
+		return FailoverCanceled
+	}
+
 	// 修复：退避前检查唯一候选账号是否仍在熔断期，避免空转
 	if !infiniteWait && len(s.FailedAccountIDs) == 1 {
 		for accountID := range s.FailedAccountIDs {
@@ -301,6 +311,20 @@ func singleAccountExhaustionBackoffDelay(base time.Duration, retryCount int) tim
 // 粘性会话切换账号、或上游明确标记时，将 input_tokens 转为 cache_read 计费。
 func needForceCacheBilling(hasBoundSession bool, failoverErr *service.UpstreamFailoverError) bool {
 	return hasBoundSession || (failoverErr != nil && failoverErr.ForceCacheBilling)
+}
+
+// failoverClientGone 在客户端断开后停止新的选号和上游重试。
+func failoverClientGone(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.Context().Err() == nil {
+		return false
+	}
+	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+		return true
+	}
+	if !c.Writer.Written() {
+		c.Status(statusClientClosedRequest)
+	}
+	return true
 }
 
 // sleepWithContext 等待指定时长，返回 false 表示 context 已取消。

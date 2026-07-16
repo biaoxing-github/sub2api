@@ -196,3 +196,11 @@
 - 完成验证并提交 `cd446b9d4b3f`；`.4` 构建前失败并跳过，从 committed HEAD 构建核验 `.5`。
 - 仅部署 idle green，完成候选观察、nginx 切流、切流后观察、401 契约和三入口哈希验证。
 - 最终 active green=`sub2api:v0.1.156.5`，rollback blue=`sub2api:v0.1.156.3`；未推送远程。
+
+## 2026-07-16 Devil - v0.1.156 批次 1-3 主线集成
+
+- 在隔离 worktree `D:\sub2api-src-156-release` 将 batch3 分支合并到最新已发布主线，业务代码自动合并，仅追加型记录需要保留双方历史。
+- 复核暂存区无未解决冲突、冲突标记、SQL 或迁移文件；主工作树无关脏文件保持不动。
+- 并行核对版本与部署基线：`v0.1.156.6` 未占用，active green=`v0.1.156.5`，idle blue=`v0.1.156.3`。
+- 完成 service、apicompat、handler、routes、config、全仓编译切片、前端 Vitest 和 typecheck 验证。
+- 当前停在合并提交前；后续从 committed HEAD 创建 `.6` 发布记录、构建镜像并执行蓝绿发布。
