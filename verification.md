@@ -5326,3 +5326,13 @@ v0.1.149 拉取结果：
 - PASS：后端全仓编译切片、前端 Antigravity OAuth Vitest 2/2 与 TypeScript 类型检查通过。
 - PASS：无新增迁移；本次发布不需要数据库写入。
 - 边界：镜像构建、idle blue 候选部署、切流和线上观察将在提交后执行；未执行 Git push 或 registry push。
+
+## 2026-07-16 - v0.1.156.9 发布完成
+
+- 执行者：Devil。
+- PASS：批次 1-3、主版本 `v0.1.156` 和根 `/models` 嵌入前端放行修复均已提交、测试并进入不可变镜像 `.9`。
+- PASS：镜像 ID `sha256:028c516d5b5e05eaa6f99942d8c38ad52eb7e873f69dee60549a2c830e19cc00`，revision=`962d2db5ff24`。
+- PASS：候选和切流后独立观察窗口、三入口 HTTP 契约、模型别名、静态资源哈希和关键日志检查通过。
+- PASS：active blue `.9`、rollback green `.5`、PostgreSQL、Redis 均 healthy/restart 0。
+- NOTE：`.6-.8` 的失败原因和未复用边界已分别记录到对应发布文档。
+- 边界：无管理员登录态，未在线核对版本下拉；二进制、OCI 和未登录 API 契约已自动验证。未执行 Git push 或 registry push。

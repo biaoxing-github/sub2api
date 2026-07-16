@@ -204,3 +204,12 @@
 - 并行核对版本与部署基线：`v0.1.156.6` 未占用，active green=`v0.1.156.5`，idle blue=`v0.1.156.3`。
 - 完成 service、apicompat、handler、routes、config、全仓编译切片、前端 Vitest 和 typecheck 验证。
 - 当前停在合并提交前；后续从 committed HEAD 创建 `.6` 发布记录、构建镜像并执行蓝绿发布。
+
+## 2026-07-16 Devil - v0.1.156.9 蓝绿发布
+
+- 提交批次 1-3 合并，发现并修正嵌入式主版本仍为 `v0.1.152`；`.6` 在镜像生成前终止。
+- `.7` 候选测试通过后切流，真实请求发现根 `/models` 被嵌入前端截获，立即回滚 green `.5`。
+- 按系统化调试定位到 `shouldBypassEmbeddedFrontend` 缺少 `/models`，补 RED 测试、最小修复并完成 embed/routes/编译验证。
+- `.8` 因 Docker 网络瞬时失败未生成镜像；验证 TUNA、USTC 和 npm 前置后从 committed HEAD 构建 `.9`。
+- `.9` 仅重建 idle blue，完成候选窗口、模型别名 401、nginx 切流、切流后窗口和三入口资源哈希验证。
+- 最终 active blue=`sub2api:v0.1.156.9`，rollback green=`sub2api:v0.1.156.5`；PostgreSQL、Redis 未重启，未推送远程。

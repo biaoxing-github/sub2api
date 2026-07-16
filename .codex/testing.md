@@ -348,3 +348,13 @@
 - PASS：`go test ./... -run '^$' -count=1`，全仓 Go 包编译切片通过。
 - PASS：Antigravity OAuth Vitest 2/2 与 `pnpm run typecheck`。
 - 边界：此阶段仅完成合并和本地验证，尚未构建、部署或切流。
+
+## 2026-07-16 v0.1.156.9 蓝绿发布与根模型路由修复 - Devil
+
+- FAIL→PASS：真实 `.7` 候选发现 `/models` 被嵌入前端返回 SPA HTML；补充两套 embed RED 测试后放行根模型路由。
+- PASS：`go test -tags embed ./internal/web -count=1`、routes 测试和全仓编译切片通过。
+- PASS：`.9` 镜像版本、OCI 标签、二进制 commit/image_version 完全一致。
+- PASS：候选独立 71.6 秒窗口和切流后 73.7 秒窗口通过，blue/proxy 关键日志 0。
+- PASS：三入口 health、401 契约、模型别名一致性和资源 SHA-256 通过。
+- PASS：active blue=`v0.1.156.9`，rollback green=`v0.1.156.5`，数据库组件未重启。
+- NOTE：`.6` 旧主版本、`.7` 运行时契约、`.8` 网络构建失败，均不复用。
