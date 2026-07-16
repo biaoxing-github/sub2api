@@ -189,7 +189,7 @@ func TestNewAPICheckinSetAccountDisplayName(t *testing.T) {
 
 // TestNewAPICheckinAPIKeysMasksGeneratedKeys 验证页面只接收带 sk- 前缀的脱敏 API Key 和已知分组。
 func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
-	seen := make(chan string, 6)
+	seen := make(chan string, 16)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen <- r.Method + " " + r.URL.String() + " " + r.Header.Get("Authorization") + " " + r.Header.Get("New-Api-User")
 		w.Header().Set("Content-Type", "application/json")
@@ -202,8 +202,10 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 			_, _ = w.Write([]byte(`{"success":true,"data":{"total":0,"items":[]}}`))
 		case "/api/user/self":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"group":"default"}}`))
-		case "/api/user/available_groups":
+		case "/api/user/self/groups":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"group_ratio":{"default":1,"codex-team":0.8}}}`))
+		case "/api/user/groups", "/api/pricing", "/api/user/available_groups":
+			_, _ = w.Write([]byte(`{"success":false,"message":"not enabled"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -252,6 +254,7 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	require.Equal(t, "missing", payload.Accounts[1].Status)
 	require.Empty(t, payload.Accounts[1].APIKeys)
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-a 1001")
+	require.Contains(t, requests, "GET /api/user/self/groups Bearer access-a 1001")
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-b 1002")
 }
 

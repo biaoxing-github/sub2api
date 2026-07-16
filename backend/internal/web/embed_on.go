@@ -322,6 +322,10 @@ func serveEmbeddedStaticFile(c *gin.Context, fsys fs.FS, cleanPath string) bool 
 		c.Abort()
 		return true
 	}
+	// 独立工具页不经过 SPA 注入流程，发送 HTML 前仍需替换本次请求的 CSP nonce。
+	if strings.EqualFold(pathpkg.Ext(target), ".html") {
+		content = replaceNoncePlaceholder(content, middleware.GetNonceFromContext(c))
+	}
 	http.ServeContent(c.Writer, c.Request, pathpkg.Base(target), info.ModTime(), bytes.NewReader(content))
 	c.Abort()
 	return true

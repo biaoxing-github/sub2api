@@ -551,6 +551,11 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		require.NoError(t, err)
 
 		router := gin.New()
+		const standaloneNonce = "standalone-tool-nonce"
+		router.Use(func(c *gin.Context) {
+			c.Set(middleware.CSPNonceKey, standaloneNonce)
+			c.Next()
+		})
 		router.Use(server.Middleware())
 
 		cases := []struct {
@@ -572,6 +577,10 @@ func TestFrontendServer_Middleware(t *testing.T) {
 				assert.Contains(t, w.Body.String(), "<title>"+tc.title+"</title>")
 				assert.NotContains(t, w.Body.String(), "Sub2API - AI API Gateway")
 				assert.NotContains(t, w.Body.String(), "window.__APP_CONFIG__")
+				if tc.path == "/newapi-checkin/index.html" {
+					assert.Contains(t, w.Body.String(), `nonce="`+standaloneNonce+`"`)
+					assert.NotContains(t, w.Body.String(), NonceHTMLPlaceholder)
+				}
 			})
 		}
 	})

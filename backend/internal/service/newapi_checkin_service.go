@@ -2663,16 +2663,27 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 		}
 		addNewAPIGroupOption(groupOptions, cleanNewAPIText(selfData["group"]), nil)
 	}
-	groups := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/user/available_groups"), site.BaseURL, headers)
-	if groups.ok {
+	groupLoaded := false
+	groupMessage := ""
+	// NewAPI 新版从 self/groups 返回用户可用分组及倍率，旧版和衍生站点可能只开放其余端点。
+	for _, endpoint := range []string{"/api/user/self/groups", "/api/user/groups", "/api/pricing", "/api/user/available_groups"} {
+		groups := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, endpoint), site.BaseURL, headers)
+		if !groups.ok {
+			groupMessage = firstNonEmpty(groupMessage, groups.message)
+			continue
+		}
+		groupLoaded = true
 		collectNewAPIGroupOptions(groups.payload["data"], groupOptions)
+		collectNewAPIGroupOptions(groups.payload["group_ratio"], groupOptions)
+	}
+	if groupLoaded {
 		summary.GroupStatus = "ready"
 		summary.GroupMessage = "已读取上游完整可用分组"
 	} else if len(groupOptions) > 0 {
 		summary.GroupStatus = "partial"
 		summary.GroupMessage = "上游完整分组接口未授权，当前仅展示账号和 token 已知分组"
 	} else {
-		summary.GroupMessage = firstNonEmpty(groups.message, "上游分组读取失败")
+		summary.GroupMessage = firstNonEmpty(groupMessage, "上游分组读取失败")
 	}
 	summary.AvailableGroupOptions = sortedNewAPIGroupOptions(groupOptions)
 	for _, option := range summary.AvailableGroupOptions {
