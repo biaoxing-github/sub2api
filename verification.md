@@ -5188,6 +5188,15 @@ v0.1.149 拉取结果：
 - PASS：只读检查生产库 92 个 OpenAI API Key 账号，当前没有 `base_url` 缺失或等于 OpenAI 官方地址的记录，无需数据修复。
 - 边界：未执行真实 Key 追加/替换，未提交、未构建、未部署。
 
+## 2026-07-16 - v0.1.156.2 发布完成
+
+- 执行者：Devil。
+- PASS：功能提交 `9d2316b326a4`，不可变镜像 `sub2api:v0.1.156.2` 从 committed HEAD 构建并核验完整版本信息。
+- PASS：仅部署 idle green，候选独立 60 秒干净窗口通过后，代理从 blue 零停机切换到 green。
+- PASS：切流后 7 次三入口健康采样、401 契约、资源哈希和关键日志检查通过。
+- PASS：active green `v0.1.156.2` healthy/restart 0；rollback blue `v0.1.156.1` healthy/restart 7；PostgreSQL、Redis healthy/restart 0。
+- 边界：未执行真实 Key 追加/替换，未重启数据库或 Redis，未执行 Git push 或 registry push。
+
 ## 2026-07-15 - 调度池优先级快速调整与并发容量调度
 
 - 执行者：Devil。

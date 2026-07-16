@@ -311,3 +311,13 @@
 - PASS：`go test ./internal/repository ./internal/handler/admin -count=1`。
 - PASS：聚焦症状测试与 `git diff --check`。
 - 边界：生产 PostgreSQL 仅只读检查；未执行真实 Key 追加/替换，未提交、未构建、未部署。
+
+## 2026-07-16 v0.1.156.2 蓝绿发布验证 - Devil
+
+- PASS：功能提交 `9d2316b326a4`；镜像 `sub2api:v0.1.156.2` 的 OCI revision、主版本、image_version 和二进制 commit 一致。
+- PASS：仅重建 idle green；候选 health/首页/签到页为 200，管理配置与 Responses 未登录为 401。
+- PASS：启动期日志闸门后重新建立独立 60 秒候选窗口，7 次采样 healthy/restart 0、HTTP 200、新增关键日志 0。
+- PASS：代理从 blue 切到 green；切流后 7 轮三入口持续 200，green/proxy 新增关键日志为 0。
+- PASS：三入口主资源和签到页面 SHA-256 分别一致。
+- PASS：active green healthy/restart 0；rollback blue healthy/restart 7（发布前既有基线）；PostgreSQL、Redis healthy/restart 0。
+- LIMIT：无管理员登录态，未在线执行真实 Key 追加/替换或核对版本下拉。
