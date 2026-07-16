@@ -1287,7 +1287,7 @@ type RedisConfig struct {
 	ReadTimeoutSeconds int `mapstructure:"read_timeout_seconds"`
 	// WriteTimeoutSeconds: 写入超时，避免慢写入阻塞连接池
 	WriteTimeoutSeconds int `mapstructure:"write_timeout_seconds"`
-	// PoolSize: 连接池大小，控制最大并发连接数
+	// PoolSize: 基础连接池大小；Redis 客户端初始化时同时将其作为最大活动连接硬上限
 	PoolSize int `mapstructure:"pool_size"`
 	// MinIdleConns: 最小空闲连接数，保持热连接减少冷启动延迟
 	MinIdleConns int `mapstructure:"min_idle_conns"`

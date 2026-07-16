@@ -1612,7 +1612,26 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 // SelectAccountWithLoadAwareness selects account with load-awareness and wait plan.
 // metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
 // sub2apiUserID: 系统用户 ID，用于二维亲和调度
-func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
+func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (selection *AccountSelectionResult, err error) {
+	selectionStartedAt := time.Now()
+	defer func() {
+		labels := OpsRequestMetricLabels{
+			Result:     OpsRequestResultFailure,
+			ErrorClass: OpsRequestErrorClassInternal,
+		}
+		switch {
+		case err == nil && selection != nil:
+			labels.Result = OpsRequestResultSuccess
+			labels.ErrorClass = OpsRequestErrorClassNone
+		case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
+			labels.Result = OpsRequestResultCanceled
+			labels.ErrorClass = OpsRequestErrorClassCanceled
+		case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded):
+			labels.ErrorClass = OpsRequestErrorClassTimeout
+		}
+		RecordOpsRequestStage(OpsRequestStageSelection, time.Since(selectionStartedAt), labels)
+	}()
+
 	// 调试日志：记录调度入口参数
 	excludedIDsList := make([]int64, 0, len(excludedIDs))
 	for id := range excludedIDs {
@@ -2646,6 +2665,12 @@ func requestSchedulingAccountByID(ctx context.Context, groupID *int64, platform 
 
 func (s *GatewayService) withRequestSchedulingPrefetch(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool, accounts []Account) context.Context {
 	snapshot := requestSchedulingSnapshotFromContext(ctx, groupID, platform, hasForcePlatform)
+	if snapshot != nil && snapshot.windowPrefetchLoaded && snapshot.rpmPrefetchLoaded {
+		RecordOpsSchedulingEvent(OpsSchedulingEventSnapshotHit)
+	} else {
+		// 首次填充、部分填充和未携带请求快照都需要执行新的预取。
+		RecordOpsSchedulingEvent(OpsSchedulingEventSnapshotMiss)
+	}
 	if snapshot == nil {
 		ctx = s.withWindowCostPrefetch(ctx, accounts)
 		ctx = s.withRPMPrefetch(ctx, accounts)

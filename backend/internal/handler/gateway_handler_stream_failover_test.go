@@ -16,6 +16,52 @@ import (
 const partialMessageStartSSE = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_01\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-5\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n" +
 	"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
 
+// partialOpenAICompatibleSSE 模拟 Responses 与 Chat Completions 已写出的真实语义内容。
+const partialOpenAICompatibleSSE = "data: {\"choices\":[{\"delta\":{\"content\":\"already visible\"}}]}\n\n"
+
+// TestStreamWrittenGuard_OpenAICompatiblePaths_AbortFailoverAfterSemanticOutput 验证 Responses 和
+// Chat Completions 在输出可见语义内容后，故障转移只允许结束当前请求，绝不能追加耗尽错误或重新切号。
+func TestStreamWrittenGuard_OpenAICompatiblePaths_AbortFailoverAfterSemanticOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, tc := range []struct {
+		name   string
+		path   string
+		handle func(*GatewayHandler, *gin.Context, *service.UpstreamFailoverError)
+	}{
+		{
+			name: "responses",
+			path: "/v1/responses",
+			handle: func(h *GatewayHandler, c *gin.Context, failoverErr *service.UpstreamFailoverError) {
+				h.handleResponsesFailoverExhausted(c, failoverErr, true)
+			},
+		},
+		{
+			name: "chat_completions",
+			path: "/v1/chat/completions",
+			handle: func(h *GatewayHandler, c *gin.Context, failoverErr *service.UpstreamFailoverError) {
+				h.handleCCFailoverExhausted(c, failoverErr, true)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writer := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(writer)
+			c.Request = httptest.NewRequest(http.MethodPost, tc.path, nil)
+
+			writerSizeBeforeForward := c.Writer.Size()
+			_, err := c.Writer.Write([]byte(partialOpenAICompatibleSSE))
+			require.NoError(t, err)
+			require.NotEqual(t, writerSizeBeforeForward, c.Writer.Size(), "真实语义输出后不得进入下一账号")
+
+			tc.handle(&GatewayHandler{}, c, &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway})
+
+			require.Equal(t, partialOpenAICompatibleSSE, writer.Body.String(), "输出后不得追加 failover 错误或第二段流")
+			require.NotContains(t, writer.Body.String(), "All available accounts exhausted")
+		})
+	}
+}
+
 // TestStreamWrittenGuard_MessagesPath_AbortFailoverOnSSEContentWritten 验证：
 // 当 Forward 在返回 UpstreamFailoverError 前已向客户端写入 SSE 内容时，
 // 故障转移保护逻辑必须终止循环并发送 SSE 错误事件，而不是进行下一次 Forward。

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,6 +153,136 @@ func TestRedisContextJournalReplaySafetyReasons(t *testing.T) {
 	require.Equal(t, ContextJournalBackendRedis, missing.Backend)
 	require.Equal(t, 0, missing.TurnCount)
 	require.Equal(t, int64(1024), missing.MaxSessionBytes)
+}
+
+func TestRedisContextJournalRestartExpiryCorruptionAndReplayBoundaries(t *testing.T) {
+	ctx := context.Background()
+	initialRedis := startContextJournalRedis(t, ctx)
+	redisAddr := initialRedis.Options().Addr
+	journalBeforeRestart := NewRedisContextJournal(initialRedis, ContextJournalOptions{
+		TTL:              time.Hour,
+		MaxSessionBytes:  1024,
+		OperationTimeout: 250 * time.Millisecond,
+	})
+
+	turn, err := journalBeforeRestart.AppendTurn(ctx, ContextJournalAppendInput{
+		GroupID:     7,
+		SessionHash: "sess-restart",
+		AccountID:   42,
+		Protocol:    ContextJournalProtocolOpenAIResponses,
+		RequestBody: []byte(`{"input":"restart-safe"}`),
+		ResponseID:  "resp_restart",
+	})
+	require.NoError(t, err)
+	require.NoError(t, journalBeforeRestart.BindResponse(ctx, 7, "resp_restart", ContextJournalResponseRef{
+		SessionHash: "sess-restart",
+		AccountID:   42,
+		TurnID:      turn.TurnID,
+	}, time.Minute))
+
+	// 使用全新的 Redis client 和 Journal 实例模拟应用进程重启后的恢复读取。
+	require.NoError(t, initialRedis.Close())
+	restartedRedis := redis.NewClient(&redis.Options{Addr: redisAddr})
+	t.Cleanup(func() { _ = restartedRedis.Close() })
+	require.NoError(t, restartedRedis.Ping(ctx).Err())
+	journalAfterRestart := NewRedisContextJournal(restartedRedis, ContextJournalOptions{
+		TTL:              time.Hour,
+		MaxSessionBytes:  1024,
+		OperationTimeout: 250 * time.Millisecond,
+	})
+
+	ref, err := journalAfterRestart.GetResponse(ctx, 7, "resp_restart")
+	require.NoError(t, err)
+	require.NotNil(t, ref)
+	require.Equal(t, "sess-restart", ref.SessionHash)
+	replay, err := journalAfterRestart.BuildReplay(ctx, 7, "sess-restart")
+	require.NoError(t, err)
+	require.True(t, replay.Safe)
+	require.Equal(t, []byte(`{"input":"restart-safe"}`), replay.RequestBody)
+
+	t.Run("expired response binding", func(t *testing.T) {
+		require.NoError(t, journalAfterRestart.BindResponse(ctx, 7, "resp_expiring", ContextJournalResponseRef{
+			SessionHash: "sess-restart",
+			AccountID:   42,
+			TurnID:      turn.TurnID,
+		}, 30*time.Millisecond))
+		require.Eventually(t, func() bool {
+			expired, getErr := journalAfterRestart.GetResponse(ctx, 7, "resp_expiring")
+			return getErr == nil && expired == nil
+		}, time.Second, 10*time.Millisecond)
+	})
+
+	t.Run("corrupt JSON is rejected without exposing stored content", func(t *testing.T) {
+		const secretMarker = "FULL_REQUEST_BODY_MUST_NOT_APPEAR"
+		responseKey := redisContextJournalResponseKey(7, "resp_corrupt")
+		require.NoError(t, restartedRedis.Set(ctx, responseKey, `{"broken":"`+secretMarker, time.Minute).Err())
+		_, getErr := journalAfterRestart.GetResponse(ctx, 7, "resp_corrupt")
+		require.Error(t, getErr)
+		require.NotContains(t, getErr.Error(), secretMarker)
+
+		stateKey := redisContextJournalStateKey(7, "sess-corrupt-state")
+		require.NoError(t, restartedRedis.Set(ctx, stateKey, `{"broken":"`+secretMarker, time.Minute).Err())
+		_, replayErr := journalAfterRestart.BuildReplay(ctx, 7, "sess-corrupt-state")
+		require.Error(t, replayErr)
+		require.NotContains(t, replayErr.Error(), secretMarker)
+
+		_, appendErr := journalAfterRestart.AppendTurn(ctx, ContextJournalAppendInput{
+			GroupID:     7,
+			SessionHash: "sess-corrupt-turn",
+			AccountID:   42,
+			RequestBody: []byte(`{"input":"valid-before-corruption"}`),
+		})
+		require.NoError(t, appendErr)
+		turnsKey := redisContextJournalTurnsKey(7, "sess-corrupt-turn")
+		require.NoError(t, restartedRedis.Del(ctx, turnsKey).Err())
+		require.NoError(t, restartedRedis.RPush(ctx, turnsKey, `{"broken":"`+secretMarker).Err())
+		_, replayErr = journalAfterRestart.BuildReplay(ctx, 7, "sess-corrupt-turn")
+		require.Error(t, replayErr)
+		require.NotContains(t, replayErr.Error(), secretMarker)
+	})
+
+	protectedCases := []struct {
+		name                string
+		body                []byte
+		clientOutputStarted bool
+		wantReason          ContextReplayReason
+	}{
+		{
+			name:       "function call output",
+			body:       []byte(`{"input":[{"type":"function_call_output","output":"ok"}]}`),
+			wantReason: ContextReplayReasonFunctionCallOutput,
+		},
+		{
+			name:       "encrypted reasoning",
+			body:       []byte(`{"input":[{"type":"reasoning","encrypted_content":"opaque"}]}`),
+			wantReason: ContextReplayReasonEncryptedReasoning,
+		},
+		{
+			name:                "client output started",
+			body:                []byte(`{"input":"already-visible"}`),
+			clientOutputStarted: true,
+			wantReason:          ContextReplayReasonClientOutputStarted,
+		},
+	}
+	for _, tc := range protectedCases {
+		t.Run(tc.name, func(t *testing.T) {
+			sessionHash := "sess-protected-" + strings.ReplaceAll(tc.name, " ", "-")
+			_, appendErr := journalAfterRestart.AppendTurn(ctx, ContextJournalAppendInput{
+				GroupID:             7,
+				SessionHash:         sessionHash,
+				AccountID:           42,
+				Protocol:            ContextJournalProtocolOpenAIResponses,
+				RequestBody:         tc.body,
+				ClientOutputStarted: tc.clientOutputStarted,
+			})
+			require.NoError(t, appendErr)
+			protectedReplay, replayErr := journalAfterRestart.BuildReplay(ctx, 7, sessionHash)
+			require.NoError(t, replayErr)
+			require.False(t, protectedReplay.Safe)
+			require.Equal(t, tc.wantReason, protectedReplay.Reason)
+			require.Empty(t, protectedReplay.RequestBody, "protected turn must not produce a replay body")
+		})
+	}
 }
 
 func TestProvideContextJournalUsesRedisWhenAvailable(t *testing.T) {

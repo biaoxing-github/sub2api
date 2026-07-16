@@ -14,7 +14,10 @@ import (
 )
 
 type OpsHandler struct {
+	// opsService 提供管理端 Ops 查询和监控开关校验。
 	opsService *service.OpsService
+	// runtimeMetrics 提供进程内低基数实时指标快照。
+	runtimeMetrics *service.OpsRuntimeMetrics
 }
 
 // GetErrorLogByID returns ops error log detail.
@@ -69,7 +72,35 @@ func parseOpsViewParam(c *gin.Context) string {
 }
 
 func NewOpsHandler(opsService *service.OpsService) *OpsHandler {
-	return &OpsHandler{opsService: opsService}
+	return NewOpsHandlerWithRuntimeMetrics(opsService, service.DefaultOpsRuntimeMetrics())
+}
+
+// NewOpsHandlerWithRuntimeMetrics 创建带指定运行时指标注册表的 Ops 管理端处理器。
+// 生产环境使用共享注册表；该构造函数支持测试或专用实例注入隔离注册表。
+func NewOpsHandlerWithRuntimeMetrics(opsService *service.OpsService, runtimeMetrics *service.OpsRuntimeMetrics) *OpsHandler {
+	if runtimeMetrics == nil {
+		runtimeMetrics = service.DefaultOpsRuntimeMetrics()
+	}
+	return &OpsHandler{opsService: opsService, runtimeMetrics: runtimeMetrics}
+}
+
+// GetRuntimeMetrics 返回请求阶段、调度、缓存和连接池的进程内累计指标。
+// GET /api/v1/admin/ops/runtime/metrics
+func (h *OpsHandler) GetRuntimeMetrics(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	runtimeMetrics := h.runtimeMetrics
+	if runtimeMetrics == nil {
+		runtimeMetrics = service.DefaultOpsRuntimeMetrics()
+	}
+	response.Success(c, runtimeMetrics.Snapshot())
 }
 
 // applyOpsErrorSortParams 将列表排序参数写入过滤器，列白名单由 repository 统一控制。

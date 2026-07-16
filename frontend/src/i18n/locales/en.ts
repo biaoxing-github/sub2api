@@ -5278,6 +5278,57 @@ export default {
     ops: {
       title: 'Ops Monitoring',
       description: 'Operational monitoring and troubleshooting',
+      runtimeMetrics: {
+        title: 'Gateway Runtime Summary',
+        generatedAt: 'Snapshot',
+        requestStages: 'Request Stages',
+        average: 'Avg',
+        maximum: 'Max',
+        failures: 'Failed',
+        caches: 'Caches',
+        hitMiss: 'Hit {hit} / miss {miss}',
+        writeIssues: 'Write issues',
+        failover: 'Scheduling and Failover',
+        failovers: 'Account switches',
+        snapshotReuse: 'Snapshot reuse',
+        slotWaits: 'Slot waits',
+        slotTimeouts: 'Wait timeouts',
+        connectionPools: 'Connection Pools',
+        poolActivity: 'Acquire {acquire} / reuse {reuse}',
+        poolIssues: 'Error {error} / timeout {timeout}',
+        poolCurrent: 'In use {inUse} / open {open} / idle {idle} / capacity {capacity}',
+        poolHTTPCurrent: 'Clients {entries} / capacity {capacity} / in flight {inFlight} / oldest idle {idleAge}',
+        poolHitRate: 'Idle connection hit rate',
+        poolBaseSize: 'Base pool',
+        poolHTTPChanges: 'Created {created} / evicted {evicted}',
+        poolWait: 'Wait {count} / {duration} / timeout {timeout}',
+        poolRetired: 'Closed {closed} / stale {stale}',
+        noData: 'No runtime samples yet',
+        stages: {
+          unknown: 'Unknown stage',
+          selection: 'Account selection',
+          slot_wait: 'Slot wait',
+          connect: 'Upstream connect',
+          header_wait: 'Header wait',
+          ttft: 'TTFT',
+          stream: 'Streaming'
+        },
+        cacheNames: {
+          unknown: 'Unknown cache',
+          billing: 'Billing cache',
+          api_key_l1: 'API key process cache',
+          api_key_l2: 'API key Redis cache',
+          context_journal: 'Context Journal',
+          scheduler_snapshot: 'Scheduler snapshot'
+        },
+        connectionPoolNames: {
+          unknown: 'Unknown pool',
+          upstream_http: 'Upstream HTTP',
+          redis: 'Redis',
+          postgres: 'PostgreSQL',
+          openai_ws: 'OpenAI WebSocket'
+        }
+      },
       // Dashboard
       systemHealth: 'System Health',
       overview: 'Overview',

@@ -48,7 +48,10 @@ type ContextJournal interface {
 type ContextJournalOptions struct {
 	TTL             time.Duration
 	MaxSessionBytes int64
-	Now             func() time.Time
+	// OperationTimeout 限制 Redis Journal 单次公开操作的总延迟预算。
+	// 内存实现不使用该字段；零值由 Redis 实现收敛到短默认值。
+	OperationTimeout time.Duration
+	Now              func() time.Time
 }
 
 type ContextJournalAppendInput struct {

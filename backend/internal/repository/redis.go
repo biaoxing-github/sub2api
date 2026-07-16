@@ -17,7 +17,7 @@ import (
 // 2. 无超时控制可能导致慢操作阻塞
 //
 // 新实现支持可配置的连接池和超时参数：
-// 1. PoolSize: 控制最大并发连接数（默认 128）
+// 1. PoolSize: 配置基础池大小，并同步作为 MaxActiveConns 硬上限（默认 128）
 // 2. MinIdleConns: 保持最小空闲连接，减少冷启动延迟（默认 10）
 // 3. DialTimeout/ReadTimeout/WriteTimeout: 精确控制各阶段超时
 func InitRedis(cfg *config.Config) *redis.Client {
@@ -28,14 +28,15 @@ func InitRedis(cfg *config.Config) *redis.Client {
 // 从配置文件读取连接池和超时参数，支持生产环境调优
 func buildRedisOptions(cfg *config.Config) *redis.Options {
 	opts := &redis.Options{
-		Addr:         cfg.Redis.Address(),
-		Password:     cfg.Redis.Password,
-		DB:           cfg.Redis.DB,
-		DialTimeout:  time.Duration(cfg.Redis.DialTimeoutSeconds) * time.Second,  // 建连超时
-		ReadTimeout:  time.Duration(cfg.Redis.ReadTimeoutSeconds) * time.Second,  // 读取超时
-		WriteTimeout: time.Duration(cfg.Redis.WriteTimeoutSeconds) * time.Second, // 写入超时
-		PoolSize:     cfg.Redis.PoolSize,                                         // 连接池大小
-		MinIdleConns: cfg.Redis.MinIdleConns,                                     // 最小空闲连接
+		Addr:           cfg.Redis.Address(),
+		Password:       cfg.Redis.Password,
+		DB:             cfg.Redis.DB,
+		DialTimeout:    time.Duration(cfg.Redis.DialTimeoutSeconds) * time.Second,  // 建连超时
+		ReadTimeout:    time.Duration(cfg.Redis.ReadTimeoutSeconds) * time.Second,  // 读取超时
+		WriteTimeout:   time.Duration(cfg.Redis.WriteTimeoutSeconds) * time.Second, // 写入超时
+		PoolSize:       cfg.Redis.PoolSize,                                         // 基础连接池大小
+		MaxActiveConns: cfg.Redis.PoolSize,                                         // 硬上限，防止客户端越过服务端连接预算
+		MinIdleConns:   cfg.Redis.MinIdleConns,                                     // 最小空闲连接
 	}
 
 	if cfg.Redis.EnableTLS {

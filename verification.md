@@ -5336,3 +5336,46 @@ v0.1.149 拉取结果：
 - PASS：active blue `.9`、rollback green `.5`、PostgreSQL、Redis 均 healthy/restart 0。
 - NOTE：`.6-.8` 的失败原因和未复用边界已分别记录到对应发布文档。
 - 边界：无管理员登录态，未在线核对版本下拉；二进制、OCI 和未登录 API 契约已自动验证。未执行 Git push 或 registry push。
+
+## 2026-07-16 - 上游中转站稳定性、性能与缓存开发计划验证
+
+- PASS：计划文档存在，共 411 行，包含日期、执行者、维护者旅程、现状基线、分阶段计划、测试矩阵、发布回滚和实施任务。
+- PASS：文档引用的 handler/service/repository/config 共 12 个路径全部存在。
+- PASS：文档无非预期尾随空白，`docs/*` ignore 规则已确认。
+- NOTE：本次仅产出计划文档，未修改 Go/Vue/SQL，因此未运行编译或业务测试。
+- NOTE：本机没有 `jq`，未生成 gstack tasks JSONL；实施任务已完整写入文档第 10 节。
+- PASS：`gstack-review-read` 回读到本次 `plan-devex-review` 记录，状态 `clean`、评分 `6.6 -> 9`、未决项 `0`、commit `b8eb3d331`。
+- PASS：计划文件末尾已追加结构化 `GSTACK REVIEW REPORT`，最终状态为 `NO UNRESOLVED DECISIONS`。
+- PASS：最终计划共 425 行、7 个 PR、7 个实施任务、19 个验收复选项；23 个唯一源码/文档引用全部可定位。
+
+## 2026-07-16 - 上游中转站稳定性 PR1-PR3 实现验证
+
+- 执行者：Devil。
+- PASS：运行时指标为固定数组与 atomic 累加，未知维度归并 `unknown`；`GET /api/v1/admin/ops/runtime/metrics` 受现有管理端认证和 monitoring 开关保护。
+- PASS：Responses、Chat Completions 与 Anthropic Messages 的快照契约通过；Responses/Chat 首次选号前安装同一请求快照。
+- PASS：BillingCache 在 queue full、closed、worker Redis error/timeout 后旁路旧正缓存；余额、订阅、API Key 限流均以 3 秒上限 singleflight 回源，API Key 回填走异步队列。
+- PASS：`go test ./internal/service -count=1`（37.472 秒）、BillingCache `unit` 回归、handler/admin 聚焦回归、`go test ./... -run '^$' -count=1`、`git diff --check`。
+- PASS：故障风暴 8 候选基准为 `572600 ns/op`、`69808 B/op`、`400 allocs/op`，候选列表和三类批量预取各为一次读取。
+- LIMIT：DB/Redis pool wait、HTTP client cache create/evict、header wait、TTFT 和 stream producer 将在 PR4/PR6 接入；跨实例 Redis 强一致 epoch/失效协议尚未实现。
+- LIMIT：未执行 `-race`，原因是本机 CGo/gcc 不可用；未写生产数据库、未提交、未构建、未部署或推送。
+
+## 2026-07-16 - 上游中转站稳定性 PR4-PR7 本地验证
+
+- 执行者：Devil。
+- PASS：HTTP 上游客户端池、Context Journal、连接池运行时快照与管理端诊断闭环已完成。HTTP 客户端池在活动请求淘汰后延迟关闭；Context Journal 默认 Redis 操作预算为 100ms；Redis `MaxActiveConns` 等于配置 `PoolSize`，使容量成为硬上限。
+- PASS：后端 service（38.022 秒）、Context Journal Docker integration（17.842 秒）、repository 全包、全仓 Go 编译切片、PR4/PR5/PR6/admin handler 聚焦测试均通过。前端 Vitest 2 files/5 tests、typecheck 和 production build（947 modules）通过。
+- PASS：HTTP 客户端池 1 秒稳态基准：共享代理 128 账号 652.4 ns/op、独享代理 64 账号 925.4 ns/op、多 Base URL 16 地址 963.4 ns/op；各拓扑缓存命中率 100%，条目数为 1/64/16。
+- PASS：应用内 Browser 在已登录 `http://localhost:8080/admin/openai-route-trace` 验证 20 行列表加载、打开/关闭“请求路由追踪”弹窗、桌面 1897x935 与移动 433x938 布局；`localhost:8080` 控制台无错误。当前源码 `localhost:3000` 因端口隔离登录态被守卫导向登录页，PR7 新摘要的真实视觉检查未执行，组件交互以 Vitest、typecheck、build 覆盖。
+- LIMITED：完整 `go test ./internal/handler` 的 2 个 retry-window（期望 60 秒而实现 30 秒）与 3 个 OpenAI WebSocket stub（nil panic/EOF）失败已在本轮前存在，相关文件未修改；`-race` 因 `CGO_ENABLED=0` 且缺 gcc 未运行。
+- 边界：未写数据库、未提交、未构建、未部署、未推送；保留用户原有 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/` 和 `tmp_body.json`。
+
+## 2026-07-16 - 上游中转站稳定性收尾审计
+
+- 执行者：Devil。
+- PASS：仅用运行容器的只读命令核验真实数据库、Redis 和应用配置；发现 PostgreSQL/Redis 服务端限额分别为 100/10000，与部署 `.env` 的 1024/50000 不一致。未写数据库、未更新 `.env` 或 compose。
+- PASS：现有两实例 DB `max_open=256`、`max_idle=128` 与 PostgreSQL 可用连接 97 不匹配；但采样仅 16 条连接且应用未设置 `application_name`，不能归因或确定最终调参值。Redis 528 条连接中 509 条也无法归因。
+- PASS：`/api/v1/admin/ops/runtime/metrics` 在 8080、18082、18083 均返回 404，当前镜像未含新路由；生产调优延后至修复服务端限额声明漂移并在 idle 候选采集 Wait/Timeout/P95 后执行。
+- PASS：当前源码组件的隔离 Vite 转换链路返回 200 且解析到 fixture runtime metrics API；原有 Vitest 5/5、typecheck 和生产构建仍是组件状态切换、失败隐藏与数据汇总的自动化证据。
+- LIMITED：Browser 连接可枚举标签但返回的标签不属于当前会话，无法生成新截图；不把这项限制表述为通过。临时文件、Vite 缓存和服务均已移除。
+- LIMITED：本机没有 CGo 所需 C 编译器，`-race` 未执行。
+- PASS：`git diff --check` 通过。

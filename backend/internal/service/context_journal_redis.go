@@ -11,11 +11,15 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// defaultContextJournalRedisOperationTimeout 是单次 Redis Journal 公开操作的默认总预算。
+const defaultContextJournalRedisOperationTimeout = 100 * time.Millisecond
+
 type redisContextJournal struct {
-	rdb      *redis.Client
-	ttl      time.Duration
-	maxBytes int64
-	now      func() time.Time
+	rdb              *redis.Client
+	ttl              time.Duration
+	maxBytes         int64
+	operationTimeout time.Duration // 单次公开操作的总 deadline 与 Redis 读写预算
+	now              func() time.Time
 }
 
 func NewRedisContextJournal(rdb *redis.Client, options ContextJournalOptions) ContextJournal {
@@ -27,15 +31,26 @@ func NewRedisContextJournal(rdb *redis.Client, options ContextJournalOptions) Co
 	if maxBytes <= 0 {
 		maxBytes = defaultContextJournalMaxSessionBytes
 	}
+	operationTimeout := options.OperationTimeout
+	if operationTimeout <= 0 {
+		operationTimeout = defaultContextJournalRedisOperationTimeout
+	}
 	now := options.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
+	journalRedis := rdb
+	if rdb != nil {
+		// journal 与其他缓存共享连接池，但使用独立的短读写预算和调用方 deadline。
+		journalRedis = rdb.WithTimeout(operationTimeout)
+		journalRedis.Options().ContextTimeoutEnabled = true
+	}
 	return &redisContextJournal{
-		rdb:      rdb,
-		ttl:      ttl,
-		maxBytes: maxBytes,
-		now:      now,
+		rdb:              journalRedis,
+		ttl:              ttl,
+		maxBytes:         maxBytes,
+		operationTimeout: operationTimeout,
+		now:              now,
 	}
 }
 
@@ -46,6 +61,8 @@ func (j *redisContextJournal) AppendTurn(ctx context.Context, input ContextJourn
 	if j == nil || j.rdb == nil {
 		return nil, errors.New("redis context journal is not configured")
 	}
+	operationCtx, cancel := j.withOperationTimeout(ctx)
+	defer cancel()
 	sessionHash := strings.TrimSpace(input.SessionHash)
 	if sessionHash == "" {
 		return nil, errors.New("context journal session hash is required")
@@ -57,7 +74,7 @@ func (j *redisContextJournal) AppendTurn(ctx context.Context, input ContextJourn
 	stateKey := redisContextJournalStateKey(input.GroupID, sessionHash)
 	turnsKey := redisContextJournalTurnsKey(input.GroupID, sessionHash)
 
-	state, ok, err := j.getSessionState(ctx, input.GroupID, sessionHash)
+	state, ok, err := j.getSessionState(operationCtx, input.GroupID, sessionHash)
 	if err != nil {
 		return nil, err
 	}
@@ -68,10 +85,10 @@ func (j *redisContextJournal) AppendTurn(ctx context.Context, input ContextJourn
 		state.Overflow = true
 		state.UpdatedAt = now
 		state.ExpiresAt = expiresAt
-		if err := j.setSessionState(ctx, stateKey, state); err != nil {
+		if err := j.setSessionState(operationCtx, stateKey, state); err != nil {
 			return nil, err
 		}
-		_ = j.rdb.Expire(ctx, turnsKey, j.ttl).Err()
+		_ = j.rdb.Expire(operationCtx, turnsKey, j.ttl).Err()
 		return nil, ErrContextJournalSessionOverflow
 	}
 	protocol := strings.TrimSpace(input.RequestProtocol)
@@ -107,11 +124,11 @@ func (j *redisContextJournal) AppendTurn(ctx context.Context, input ContextJourn
 	state.UpdatedAt = now
 	state.ExpiresAt = expiresAt
 	pipe := j.rdb.TxPipeline()
-	pipe.Set(ctx, stateKey, mustJSON(state), j.ttl)
-	pipe.RPush(ctx, turnsKey, raw)
-	pipe.Expire(ctx, turnsKey, j.ttl)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return nil, err
+	pipe.Set(operationCtx, stateKey, mustJSON(state), j.ttl)
+	pipe.RPush(operationCtx, turnsKey, raw)
+	pipe.Expire(operationCtx, turnsKey, j.ttl)
+	if _, err := pipe.Exec(operationCtx); err != nil {
+		return nil, redisContextJournalError(operationCtx, err)
 	}
 	out := cloneContextJournalTurn(turn)
 	return &out, nil
@@ -124,13 +141,15 @@ func (j *redisContextJournal) ListTurns(ctx context.Context, groupID int64, sess
 	if j == nil || j.rdb == nil {
 		return nil, errors.New("redis context journal is not configured")
 	}
+	operationCtx, cancel := j.withOperationTimeout(ctx)
+	defer cancel()
 	turnsKey := redisContextJournalTurnsKey(groupID, sessionHash)
 	if turnsKey == "" {
 		return nil, nil
 	}
-	rawItems, err := j.rdb.LRange(ctx, turnsKey, 0, -1).Result()
+	rawItems, err := j.rdb.LRange(operationCtx, turnsKey, 0, -1).Result()
 	if err != nil {
-		return nil, err
+		return nil, redisContextJournalError(operationCtx, err)
 	}
 	turns := make([]ContextJournalTurn, 0, len(rawItems))
 	for _, raw := range rawItems {
@@ -150,6 +169,8 @@ func (j *redisContextJournal) BindResponse(ctx context.Context, groupID int64, r
 	if j == nil || j.rdb == nil {
 		return errors.New("redis context journal is not configured")
 	}
+	operationCtx, cancel := j.withOperationTimeout(ctx)
+	defer cancel()
 	responseID = strings.TrimSpace(responseID)
 	if responseID == "" {
 		return nil
@@ -163,7 +184,7 @@ func (j *redisContextJournal) BindResponse(ctx context.Context, groupID int64, r
 	ref.TurnID = strings.TrimSpace(ref.TurnID)
 	ref.CreatedAt = now
 	ref.ExpiresAt = now.Add(ttl)
-	return j.rdb.Set(ctx, redisContextJournalResponseKey(groupID, responseID), mustJSON(ref), ttl).Err()
+	return redisContextJournalError(operationCtx, j.rdb.Set(operationCtx, redisContextJournalResponseKey(groupID, responseID), mustJSON(ref), ttl).Err())
 }
 
 func (j *redisContextJournal) GetResponse(ctx context.Context, groupID int64, responseID string) (*ContextJournalResponseRef, error) {
@@ -173,16 +194,18 @@ func (j *redisContextJournal) GetResponse(ctx context.Context, groupID int64, re
 	if j == nil || j.rdb == nil {
 		return nil, errors.New("redis context journal is not configured")
 	}
+	operationCtx, cancel := j.withOperationTimeout(ctx)
+	defer cancel()
 	key := redisContextJournalResponseKey(groupID, responseID)
 	if key == "" {
 		return nil, nil
 	}
-	raw, err := j.rdb.Get(ctx, key).Result()
+	raw, err := j.rdb.Get(operationCtx, key).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, redisContextJournalError(operationCtx, err)
 	}
 	var ref ContextJournalResponseRef
 	if err := json.Unmarshal([]byte(raw), &ref); err != nil {
@@ -196,7 +219,9 @@ func (j *redisContextJournal) GetResponseBinding(ctx context.Context, groupID in
 }
 
 func (j *redisContextJournal) BuildReplay(ctx context.Context, groupID int64, sessionHash string) (*ContextJournalReplay, error) {
-	safety, turns, err := j.replaySafetyAndTurns(ctx, groupID, sessionHash)
+	operationCtx, cancel := j.withOperationTimeout(ctx)
+	defer cancel()
+	safety, turns, err := j.replaySafetyAndTurns(operationCtx, groupID, sessionHash)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +236,9 @@ func (j *redisContextJournal) BuildReplay(ctx context.Context, groupID int64, se
 }
 
 func (j *redisContextJournal) IsReplaySafe(ctx context.Context, groupID int64, sessionHash string) (ContextJournalReplaySafetyResult, error) {
-	safety, _, err := j.replaySafetyAndTurns(ctx, groupID, sessionHash)
+	operationCtx, cancel := j.withOperationTimeout(ctx)
+	defer cancel()
+	safety, _, err := j.replaySafetyAndTurns(operationCtx, groupID, sessionHash)
 	return safety, err
 }
 
@@ -264,7 +291,7 @@ func (j *redisContextJournal) getSessionState(ctx context.Context, groupID int64
 		return ContextJournalSessionState{}, false, nil
 	}
 	if err != nil {
-		return ContextJournalSessionState{}, false, err
+		return ContextJournalSessionState{}, false, redisContextJournalError(ctx, err)
 	}
 	var state ContextJournalSessionState
 	if err := json.Unmarshal([]byte(raw), &state); err != nil {
@@ -277,7 +304,31 @@ func (j *redisContextJournal) setSessionState(ctx context.Context, key string, s
 	if key == "" {
 		return nil
 	}
-	return j.rdb.Set(ctx, key, mustJSON(state), j.ttl).Err()
+	return redisContextJournalError(ctx, j.rdb.Set(ctx, key, mustJSON(state), j.ttl).Err())
+}
+
+// withOperationTimeout 将每个公开 Journal 操作限制在同一个总预算内。
+// 嵌套调用沿用更早的父 deadline，不会为每个 Redis 命令重新获得完整预算。
+func (j *redisContextJournal) withOperationTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := defaultContextJournalRedisOperationTimeout
+	if j != nil && j.operationTimeout > 0 {
+		timeout = j.operationTimeout
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+// redisContextJournalError 优先返回稳定的 context 错误，便于调用方区分预算耗尽和 Redis 断连。
+func redisContextJournalError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
 func redisContextJournalStateKey(groupID int64, sessionHash string) string {

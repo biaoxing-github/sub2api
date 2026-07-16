@@ -358,3 +358,43 @@
 - PASS：三入口 health、401 契约、模型别名一致性和资源 SHA-256 通过。
 - PASS：active blue=`v0.1.156.9`，rollback green=`v0.1.156.5`，数据库组件未重启。
 - NOTE：`.6` 旧主版本、`.7` 运行时契约、`.8` 网络构建失败，均不复用。
+
+## 2026-07-16 - 上游中转站稳定性、性能与缓存开发计划文档检查
+
+- `Get-Content` 结构检查：PASS，关键章节 6/7/8/10 均存在。
+- 引用路径 `Test-Path` 检查：PASS，12/12 存在。
+- 尾随空白检查：PASS，`NO_TRAILING_WHITESPACE`。
+- 业务测试：未执行；本次没有业务代码、配置或 SQL 行为变更。
+- `gstack-review-log` / `gstack-review-read`：PASS，机器可读 DX 审查记录已写入并回读。
+- 计划终端报告检查：PASS，最后一个二级标题为 `GSTACK REVIEW REPORT`，最后非空行为 `NO UNRESOLVED DECISIONS`。
+- 最终结构检查：PASS，425 行、7 个 PR、7 个任务、19 个复选项、23/23 引用存在、尾随空白 0。
+
+## 2026-07-16 - 上游中转站稳定性 PR1-PR3 本地验证 - Devil
+
+- PASS：`go test ./internal/service -count=1`，37.472 秒。
+- PASS：`go test -tags unit ./internal/service -run '^TestBillingCacheService' -count=1`，覆盖队列满、关闭、Redis error/timeout、nil cache、订阅与 API Key singleflight。
+- PASS：快照契约、流输出保护、Ops runtime metrics handler 与 routes 编译切片通过。
+- PASS：故障风暴基准（8 个候选，`-benchtime=1x`）为 `572600 ns/op`、`69808 B/op`、`400 allocs/op`。
+- PASS：`go test ./... -run '^$' -count=1` 与 `git diff --check`。
+- FIXED：高负载旧测试仍要求 queue-full 时同步 Redis 回退；按新契约调整为“工作池完成或标记 unsafe”，隔离复现和全量 service 回归均通过。
+- LIMITED：`-race` 未执行，本机默认 `CGO_ENABLED=0` 且启用 CGo 后无 gcc；`TestHandleFailoverError_*` 包含真实等待，单独运行超过 120 秒未采集最终结果，改由取消、耗尽和流输出保护的无等待聚焦用例覆盖。
+- 边界：未写数据库、未提交、未构建、未部署、未推送。
+
+## 2026-07-16 上游中转站稳定性 PR4-PR7 本地验证 - Devil
+
+- PASS：`go test ./internal/service -count=1`，38.022 秒；Context Journal Docker integration 17.842 秒；repository 全包与全仓 Go 编译切片通过。
+- PASS：PR4 HTTP 池、PR5 Context Journal、PR6 runtime metrics、admin handler 聚焦测试通过；PR4 生命周期、淘汰和 HTTP/2 恢复聚焦测试通过。
+- PASS：Vitest 2 个文件 5 个用例、`pnpm run typecheck`、`pnpm run build`（947 modules）均通过；仅保留既有 chunk 与 Browserslist 提示。
+- PASS：HTTP 客户端池三拓扑 1 秒稳态基准通过，共享代理 128 账号 652.4 ns/op、独享代理 64 账号 925.4 ns/op、多 Base URL 16 地址 963.4 ns/op，三者缓存命中率均为 100%。
+- PASS：应用内 Browser 使用已登录 `localhost:8080` 验证路由追踪列表、打开/关闭弹窗、桌面 1897x935 与移动 433x938 基线布局，`localhost:8080` 控制台无错误。
+- LIMITED：当前源码 `localhost:3000` 被端口隔离的登录态导向登录页，PR7 新摘要未获得真实视觉验收；完整 `go test ./internal/handler` 的 retry-window 与 WebSocket stub 为本轮外既有失败；`-race` 因 `CGO_ENABLED=0` 且缺 gcc 未运行。
+- 边界：未写数据库、未提交、未构建、未部署、未推送。
+
+## 2026-07-16 上游中转站稳定性收尾审计 - Devil
+
+- PASS：只读容量审计确认 PostgreSQL 实际 `max_connections=100`、预留 3、总连接 16；两应用实例均配置 DB `256/128`，潜在并发明显超过服务端可用 97。未更改生产连接池参数。
+- PASS：Redis 实际 `maxclients=10000`、connected clients=528、blocked=0；两应用实例均配置 Redis `4096/256`。当前 509 个普通连接无法按蓝绿实例归因，故不据此盲目下调。
+- PASS：候选、代理与对外端口的 runtime metrics 均为 404，证明当前部署镜像未包含本轮路由，不能获得 `WaitCount`、`WaitDuration` 或 Redis `PoolStats` 的生产基线。
+- PASS：隔离 Vite 夹具已编译当前 `OpsRuntimeMetricsSummary.vue`，并确认转换模块使用 fixture API；独立 QA 曾验证四个摘要区、三类连接池、刷新和隐藏控件可渲染，未出现框架错误覆盖层。
+- LIMITED：应用内 Browser 的历史标签与当前会话不匹配，不能采集新的可操作 DOM 或截图；临时夹具已清理。当前源码真实视觉验收仍需携带管理员登录态的候选镜像。
+- LIMITED：`go env` 显示 `CGO_ENABLED=0`、`CC=gcc`，且系统没有可用 gcc/clang/zig，`-race` 仍未执行；`git diff --check` 通过。

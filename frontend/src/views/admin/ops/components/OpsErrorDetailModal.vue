@@ -108,6 +108,8 @@
         </div>
       </div>
 
+      <OpsRuntimeMetricsSummary :active="show" :refresh-key="requestId || errorId" />
+
       <!-- Response content (client request -> error_body; upstream -> upstream_error_detail/message) -->
       <div class="rounded-xl bg-gray-50 p-6 dark:bg-dark-900">
         <h3 class="text-sm font-black uppercase tracking-wider text-gray-900 dark:text-white">{{ t('admin.ops.errorDetail.responseBody') }}</h3>
@@ -196,6 +198,7 @@ import { useAppStore } from '@/stores'
 import { opsAPI, type OpsErrorDetail } from '@/api/admin/ops'
 import { formatDateTime } from '@/utils/format'
 import { resolvePrimaryResponseBody, resolveUpstreamPayload } from '../utils/errorDetailResponse'
+import OpsRuntimeMetricsSummary from './OpsRuntimeMetricsSummary.vue'
 
 interface Props {
   show: boolean

@@ -31,6 +31,7 @@ func TestBuildRedisOptions(t *testing.T) {
 	require.Equal(t, 3*time.Second, opts.ReadTimeout)
 	require.Equal(t, 4*time.Second, opts.WriteTimeout)
 	require.Equal(t, 100, opts.PoolSize)
+	require.Equal(t, 100, opts.MaxActiveConns)
 	require.Equal(t, 10, opts.MinIdleConns)
 	require.Nil(t, opts.TLSConfig)
 

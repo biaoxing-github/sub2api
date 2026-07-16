@@ -114,6 +114,17 @@ type upstreamClientEntry struct {
 	fallbackKey  string       // OpenAI HTTP/2 回退隔离键（账号+代理+request_base_url）
 	lastUsed     int64        // 最后使用时间戳（纳秒），用于 LRU 淘汰
 	inFlight     int64        // 当前进行中的请求数，>0 时不可淘汰
+	retired      atomic.Bool  // 是否已从活动缓存移除，退休条目在请求归零后关闭空闲连接
+	closeOnce    sync.Once    // 保证退休条目的空闲连接只关闭一次
+}
+
+// httpUpstreamPoolMetrics 保存上游 HTTP 客户端缓存的固定维度指标。
+type httpUpstreamPoolMetrics struct {
+	cacheHitTotal    atomic.Int64 // 缓存命中累计次数
+	cacheMissTotal   atomic.Int64 // 缓存未命中累计次数
+	cacheCreateTotal atomic.Int64 // 客户端创建累计次数
+	cacheEvictTotal  atomic.Int64 // 客户端淘汰累计次数
+	inFlight         atomic.Int64 // 活动及退休条目的进行中请求数
 }
 
 // httpUpstreamService 通用 HTTP 上游服务
@@ -138,6 +149,7 @@ type httpUpstreamService struct {
 	mu                   sync.RWMutex                    // 保护 clients map 的读写锁
 	clients              map[string]*upstreamClientEntry // 客户端缓存池，key 由隔离策略决定
 	openAIHTTP2Fallbacks sync.Map                        // OpenAI HTTP/2 兼容性回退状态，key=账号+代理+baseURL
+	metrics              httpUpstreamPoolMetrics         // 客户端缓存固定维度指标
 }
 
 // NewHTTPUpstream 创建通用 HTTP 上游服务
@@ -153,6 +165,107 @@ func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
 		cfg:     cfg,
 		clients: make(map[string]*upstreamClientEntry),
 	}
+}
+
+// SnapshotHTTPUpstreamPoolMetrics 返回上游 HTTP 客户端缓存的当前快照。
+func (s *httpUpstreamService) SnapshotHTTPUpstreamPoolMetrics() service.HTTPUpstreamPoolMetricsSnapshot {
+	if s == nil {
+		return service.HTTPUpstreamPoolMetricsSnapshot{}
+	}
+
+	nowUnix := time.Now().UnixNano()
+	oldestIdleAgeNanos := int64(0)
+	s.mu.RLock()
+	entries := int64(len(s.clients))
+	for _, entry := range s.clients {
+		if entry == nil || atomic.LoadInt64(&entry.inFlight) != 0 {
+			continue
+		}
+		lastUsed := atomic.LoadInt64(&entry.lastUsed)
+		if lastUsed <= 0 || lastUsed > nowUnix {
+			continue
+		}
+		if idleAge := nowUnix - lastUsed; idleAge > oldestIdleAgeNanos {
+			oldestIdleAgeNanos = idleAge
+		}
+	}
+	s.mu.RUnlock()
+
+	return service.HTTPUpstreamPoolMetricsSnapshot{
+		CacheHitTotal:    s.metrics.cacheHitTotal.Load(),
+		CacheMissTotal:   s.metrics.cacheMissTotal.Load(),
+		CacheCreateTotal: s.metrics.cacheCreateTotal.Load(),
+		CacheEvictTotal:  s.metrics.cacheEvictTotal.Load(),
+		Entries:          entries,
+		Capacity:         int64(s.maxUpstreamClients()),
+		InFlight:         s.metrics.inFlight.Load(),
+		OldestIdleAgeMs:  time.Duration(oldestIdleAgeNanos).Milliseconds(),
+	}
+}
+
+// recordClientAcquire 记录一次客户端缓存获取尝试。
+func (s *httpUpstreamService) recordClientAcquire() {
+	service.RecordOpsConnectionPoolEvent(service.OpsConnectionPoolUpstreamHTTP, service.OpsConnectionPoolEventAcquire)
+}
+
+// recordClientCacheHit 记录一次客户端缓存命中。
+func (s *httpUpstreamService) recordClientCacheHit() {
+	s.metrics.cacheHitTotal.Add(1)
+	service.RecordOpsConnectionPoolEvent(service.OpsConnectionPoolUpstreamHTTP, service.OpsConnectionPoolEventReuse)
+}
+
+// recordClientCacheMiss 记录一次需要创建或重建客户端的缓存未命中。
+func (s *httpUpstreamService) recordClientCacheMiss() {
+	s.metrics.cacheMissTotal.Add(1)
+}
+
+// recordClientCreated 记录一次客户端创建成功。
+func (s *httpUpstreamService) recordClientCreated() {
+	s.metrics.cacheCreateTotal.Add(1)
+	service.RecordOpsConnectionPoolEvent(service.OpsConnectionPoolUpstreamHTTP, service.OpsConnectionPoolEventDial)
+}
+
+// recordClientEvicted 记录一次客户端从活动缓存移除。
+func (s *httpUpstreamService) recordClientEvicted() {
+	s.metrics.cacheEvictTotal.Add(1)
+	service.RecordOpsConnectionPoolEvent(service.OpsConnectionPoolUpstreamHTTP, service.OpsConnectionPoolEventEvict)
+}
+
+// markClientInFlight 标记客户端开始承载一个请求。
+func (s *httpUpstreamService) markClientInFlight(entry *upstreamClientEntry) {
+	atomic.AddInt64(&entry.inFlight, 1)
+	s.metrics.inFlight.Add(1)
+}
+
+// releaseClient 释放客户端上的请求占用，并关闭已经退休且完全空闲的连接。
+func (s *httpUpstreamService) releaseClient(entry *upstreamClientEntry) {
+	remaining := atomic.AddInt64(&entry.inFlight, -1)
+	s.metrics.inFlight.Add(-1)
+	atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+	if remaining == 0 {
+		entry.closeIdleConnectionsIfRetired()
+	}
+}
+
+// retire 从活动缓存淘汰条目；仍有请求时推迟连接清理到最后一次释放。
+func (entry *upstreamClientEntry) retire() {
+	if entry == nil {
+		return
+	}
+	entry.retired.Store(true)
+	entry.closeIdleConnectionsIfRetired()
+}
+
+// closeIdleConnectionsIfRetired 只关闭已退休且没有进行中请求的空闲连接。
+func (entry *upstreamClientEntry) closeIdleConnectionsIfRetired() {
+	if entry == nil || !entry.retired.Load() || atomic.LoadInt64(&entry.inFlight) != 0 {
+		return
+	}
+	entry.closeOnce.Do(func() {
+		if entry.client != nil {
+			entry.client.CloseIdleConnections()
+		}
+	})
 }
 
 // Do 执行 HTTP 请求
@@ -190,8 +303,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	resp, err := entry.client.Do(req)
 	if err != nil {
 		// 请求失败，立即减少计数
-		atomic.AddInt64(&entry.inFlight, -1)
-		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+		s.releaseClient(entry)
 		return nil, err
 	}
 
@@ -201,8 +313,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	// 包装响应体，在关闭时自动减少计数并更新时间戳
 	// 这确保了流式响应（如 SSE）在完全读取前不会被淘汰
 	resp.Body = wrapTrackedBody(resp.Body, func() {
-		atomic.AddInt64(&entry.inFlight, -1)
-		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+		s.releaseClient(entry)
 	})
 
 	return resp, nil
@@ -246,8 +357,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 
 	resp, err := entry.client.Do(req)
 	if err != nil {
-		atomic.AddInt64(&entry.inFlight, -1)
-		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+		s.releaseClient(entry)
 		slog.Debug("tls_fingerprint_request_failed", "account_id", accountID, "error", err)
 		return nil, err
 	}
@@ -255,8 +365,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	decompressResponseBody(resp)
 
 	resp.Body = wrapTrackedBody(resp.Body, func() {
-		atomic.AddInt64(&entry.inFlight, -1)
-		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+		s.releaseClient(entry)
 	})
 
 	return resp, nil
@@ -320,16 +429,14 @@ func (s *httpUpstreamService) doOpenAIProfile(req *http.Request, proxyURL string
 	resp, err := entry.client.Do(req)
 	if err != nil {
 		s.recordOpenAIHTTP2Failure(protocolMode, fallbackKey, err)
-		atomic.AddInt64(&entry.inFlight, -1)
-		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+		s.releaseClient(entry)
 		return nil, err
 	}
 
 	s.recordOpenAIHTTP2Success(protocolMode, fallbackKey)
 	decompressResponseBody(resp)
 	resp.Body = wrapTrackedBody(resp.Body, func() {
-		atomic.AddInt64(&entry.inFlight, -1)
-		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+		s.releaseClient(entry)
 	})
 	return resp, nil
 }
@@ -338,11 +445,13 @@ func (s *httpUpstreamService) getOrCreateOpenAIClient(cacheKey, poolKey, proxyKe
 	now := time.Now()
 	nowUnix := now.UnixNano()
 	isolation := s.getIsolationMode()
+	s.recordClientAcquire()
 
 	s.mu.RLock()
 	if entry, ok := s.clients[cacheKey]; ok && s.shouldReuseOpenAIEntry(entry, isolation, proxyKey, poolKey, protocolMode, fallbackKey) {
 		atomic.StoreInt64(&entry.lastUsed, nowUnix)
-		atomic.AddInt64(&entry.inFlight, 1)
+		s.markClientInFlight(entry)
+		s.recordClientCacheHit()
 		s.mu.RUnlock()
 		return entry, nil
 	}
@@ -352,12 +461,14 @@ func (s *httpUpstreamService) getOrCreateOpenAIClient(cacheKey, poolKey, proxyKe
 	if entry, ok := s.clients[cacheKey]; ok {
 		if s.shouldReuseOpenAIEntry(entry, isolation, proxyKey, poolKey, protocolMode, fallbackKey) {
 			atomic.StoreInt64(&entry.lastUsed, nowUnix)
-			atomic.AddInt64(&entry.inFlight, 1)
+			s.markClientInFlight(entry)
+			s.recordClientCacheHit()
 			s.mu.Unlock()
 			return entry, nil
 		}
 		s.removeClientLocked(cacheKey, entry)
 	}
+	s.recordClientCacheMiss()
 
 	if s.maxUpstreamClients() > 0 {
 		s.evictIdleLocked(now)
@@ -386,8 +497,9 @@ func (s *httpUpstreamService) getOrCreateOpenAIClient(cacheKey, poolKey, proxyKe
 		fallbackKey:  fallbackKey,
 	}
 	atomic.StoreInt64(&entry.lastUsed, nowUnix)
-	atomic.StoreInt64(&entry.inFlight, 1)
+	s.markClientInFlight(entry)
 	s.clients[cacheKey] = entry
+	s.recordClientCreated()
 	s.evictIdleLocked(now)
 	s.evictOverLimitLocked()
 	s.mu.Unlock()
@@ -665,6 +777,7 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	if err != nil {
 		return nil, err
 	}
+	s.recordClientAcquire()
 	// TLS 指纹客户端使用独立的缓存键，加 "tls:" 前缀
 	cacheKey := "tls:" + buildCacheKey(isolation, proxyKey, accountID)
 	poolKey := s.buildPoolKey(isolation, accountConcurrency) + ":tls"
@@ -677,8 +790,9 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	if entry, ok := s.clients[cacheKey]; ok && s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
 		atomic.StoreInt64(&entry.lastUsed, nowUnix)
 		if markInFlight {
-			atomic.AddInt64(&entry.inFlight, 1)
+			s.markClientInFlight(entry)
 		}
+		s.recordClientCacheHit()
 		s.mu.RUnlock()
 		slog.Debug("tls_fingerprint_reusing_client", "account_id", accountID, "cache_key", cacheKey)
 		return entry, nil
@@ -691,8 +805,9 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 		if s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
 			atomic.StoreInt64(&entry.lastUsed, nowUnix)
 			if markInFlight {
-				atomic.AddInt64(&entry.inFlight, 1)
+				s.markClientInFlight(entry)
 			}
+			s.recordClientCacheHit()
 			s.mu.Unlock()
 			slog.Debug("tls_fingerprint_reusing_client", "account_id", accountID, "cache_key", cacheKey)
 			return entry, nil
@@ -704,6 +819,7 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 			"pool_changed", entry.poolKey != poolKey)
 		s.removeClientLocked(cacheKey, entry)
 	}
+	s.recordClientCacheMiss()
 
 	// 超出缓存上限时尝试淘汰
 	if enforceLimit && s.maxUpstreamClients() > 0 {
@@ -737,9 +853,10 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	}
 	atomic.StoreInt64(&entry.lastUsed, nowUnix)
 	if markInFlight {
-		atomic.StoreInt64(&entry.inFlight, 1)
+		s.markClientInFlight(entry)
 	}
 	s.clients[cacheKey] = entry
+	s.recordClientCreated()
 
 	s.evictIdleLocked(now)
 	s.evictOverLimitLocked()
@@ -817,6 +934,7 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 	if err != nil {
 		return nil, err
 	}
+	s.recordClientAcquire()
 	// 构建缓存键（根据隔离策略不同）
 	cacheKey := buildCacheKey(isolation, proxyKey, accountID)
 	// 构建连接池配置键（用于检测配置变更）
@@ -830,8 +948,9 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 	if entry, ok := s.clients[cacheKey]; ok && s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
 		atomic.StoreInt64(&entry.lastUsed, nowUnix)
 		if markInFlight {
-			atomic.AddInt64(&entry.inFlight, 1)
+			s.markClientInFlight(entry)
 		}
+		s.recordClientCacheHit()
 		s.mu.RUnlock()
 		return entry, nil
 	}
@@ -843,13 +962,15 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 		if s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
 			atomic.StoreInt64(&entry.lastUsed, nowUnix)
 			if markInFlight {
-				atomic.AddInt64(&entry.inFlight, 1)
+				s.markClientInFlight(entry)
 			}
+			s.recordClientCacheHit()
 			s.mu.Unlock()
 			return entry, nil
 		}
 		s.removeClientLocked(cacheKey, entry)
 	}
+	s.recordClientCacheMiss()
 
 	// 超出缓存上限时尝试淘汰，无法淘汰则拒绝新建
 	if enforceLimit && s.maxUpstreamClients() > 0 {
@@ -880,9 +1001,10 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 	}
 	atomic.StoreInt64(&entry.lastUsed, nowUnix)
 	if markInFlight {
-		atomic.StoreInt64(&entry.inFlight, 1)
+		s.markClientInFlight(entry)
 	}
 	s.clients[cacheKey] = entry
+	s.recordClientCreated()
 
 	// 执行淘汰策略：先淘汰空闲超时的，再淘汰超出数量限制的
 	s.evictIdleLocked(now)
@@ -914,11 +1036,9 @@ func (s *httpUpstreamService) shouldReuseEntry(entry *upstreamClientEntry, isola
 //   - entry: 客户端条目
 func (s *httpUpstreamService) removeClientLocked(key string, entry *upstreamClientEntry) {
 	delete(s.clients, key)
-	if entry != nil && entry.client != nil {
-		// 关闭空闲连接，释放系统资源
-		// 注意：这不会中断活跃连接
-		entry.client.CloseIdleConnections()
-	}
+	s.recordClientEvicted()
+	// 活跃条目只退出缓存；最后一个请求释放后再关闭其空闲连接。
+	entry.retire()
 }
 
 // evictIdleLocked 淘汰空闲超时的客户端（需持有锁）

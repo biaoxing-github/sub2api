@@ -814,6 +814,129 @@ func TestSelectAccountWithLoadAwareness_RequestSchedulingSnapshotReusesPrefetchA
 	require.Equal(t, int64(0), rpmCache.singleCalls.Load())
 }
 
+// requestSchedulingFailureStormFixture 固化候选失败风暴的调度依赖，供回归测试与 benchmark 共享。
+type requestSchedulingFailureStormFixture struct {
+	svc         *GatewayService
+	accountRepo *modelsListAccountRepoStub
+	windowCache *sessionLimitCacheHotpathStub
+	usageRepo   *usageLogWindowBatchRepoStub
+	rpmCache    *rpmCacheHotpathStub
+}
+
+// newRequestSchedulingFailureStormFixture 构建 N 个可调度候选账号及其批量缓存数据。
+func newRequestSchedulingFailureStormFixture(candidateCount int, firstAccountID int64) *requestSchedulingFailureStormFixture {
+	windowStart := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
+	windowEnd := windowStart.Add(5 * time.Hour)
+	accounts := make([]Account, 0, candidateCount)
+	windowCosts := make(map[int64]float64, candidateCount)
+	rpmCounts := make(map[int64]int, candidateCount)
+	usageStats := make(map[int64]*usagestats.AccountStats, candidateCount)
+	loadMap := make(map[int64]*AccountLoadInfo, candidateCount)
+	for index := 0; index < candidateCount; index++ {
+		accountID := firstAccountID + int64(index)
+		lastUsedAt := time.Now().Add(time.Duration(index-candidateCount) * time.Minute)
+		accounts = append(accounts, Account{
+			ID:                 accountID,
+			Platform:           PlatformAnthropic,
+			Type:               AccountTypeOAuth,
+			Status:             StatusActive,
+			Schedulable:        true,
+			Concurrency:        2,
+			Priority:           1,
+			LastUsedAt:         &lastUsedAt,
+			Extra:              map[string]any{"window_cost_limit": 100.0, "base_rpm": 100},
+			SessionWindowStart: &windowStart,
+			SessionWindowEnd:   &windowEnd,
+		})
+		// 仅首个候选命中窗口缓存，其余候选必须走同一次 usage 批量回源。
+		if index == 0 {
+			windowCosts[accountID] = float64(index + 1)
+		}
+		rpmCounts[accountID] = index
+		usageStats[accountID] = &usagestats.AccountStats{StandardCost: float64(index + 1)}
+		loadMap[accountID] = &AccountLoadInfo{AccountID: accountID, LoadRate: index}
+	}
+
+	fixture := &requestSchedulingFailureStormFixture{
+		accountRepo: &modelsListAccountRepoStub{all: accounts},
+		windowCache: &sessionLimitCacheHotpathStub{batchData: windowCosts},
+		usageRepo:   &usageLogWindowBatchRepoStub{batchResult: usageStats},
+		rpmCache:    &rpmCacheHotpathStub{batchData: rpmCounts},
+	}
+	fixture.svc = &GatewayService{
+		accountRepo:        fixture.accountRepo,
+		usageLogRepo:       fixture.usageRepo,
+		sessionLimitCache:  fixture.windowCache,
+		rpmCache:           fixture.rpmCache,
+		cfg:                &config.Config{RunMode: config.RunModeStandard, Gateway: config.GatewayConfig{Scheduling: config.GatewaySchedulingConfig{LoadBatchEnabled: true, FallbackWaitTimeout: time.Second, FallbackMaxWaiting: 1}}},
+		concurrencyService: NewConcurrencyService(stubConcurrencyCache{loadMap: loadMap}),
+		userGroupRateCache: gocache.New(time.Minute, time.Minute),
+		modelsListCache:    gocache.New(time.Minute, time.Minute),
+		modelsListCacheTTL: time.Minute,
+	}
+	return fixture
+}
+
+// TestSelectAccountWithLoadAwareness_RequestSchedulingSnapshotFailureStorm 保证一个请求内 N 个候选
+// 依次失败时，候选快照与批量预取始终只执行一次；账号选择本身仍按 N 次尝试推进。
+func TestSelectAccountWithLoadAwareness_RequestSchedulingSnapshotFailureStorm(t *testing.T) {
+	resetGatewayHotpathStatsForTest()
+
+	const candidateCount = 8
+	fixture := newRequestSchedulingFailureStormFixture(candidateCount, 1000)
+
+	ctx := context.WithValue(context.Background(), ctxkey.ForcePlatform, PlatformAnthropic)
+	ctx = fixture.svc.WithRequestSchedulingSnapshot(ctx, nil, PlatformAnthropic, true)
+	excludedAccountIDs := make(map[int64]struct{}, candidateCount)
+	selectedAccountIDs := make(map[int64]struct{}, candidateCount)
+	for attempt := 0; attempt < candidateCount; attempt++ {
+		selection, err := fixture.svc.SelectAccountWithLoadAwareness(ctx, nil, "", "", excludedAccountIDs, "", 0)
+		require.NoError(t, err)
+		require.NotNil(t, selection)
+		require.NotNil(t, selection.Account)
+		require.NotContains(t, selectedAccountIDs, selection.Account.ID, "故障风暴中的每次尝试必须转向未失败账号")
+
+		selectedAccountIDs[selection.Account.ID] = struct{}{}
+		excludedAccountIDs[selection.Account.ID] = struct{}{}
+		if selection.ReleaseFunc != nil {
+			selection.ReleaseFunc()
+		}
+	}
+
+	require.Len(t, selectedAccountIDs, candidateCount)
+	require.Equal(t, int64(1), fixture.accountRepo.listAllCalls.Load(), "候选账号列表必须为请求级 O(1) 读取")
+	require.Equal(t, int64(1), fixture.windowCache.batchCalls.Load(), "窗口成本预取必须为请求级 O(1) 批量读取")
+	require.Equal(t, int64(1), fixture.usageRepo.batchCalls.Load(), "窗口用量预取必须为请求级 O(1) 批量读取")
+	require.Equal(t, int64(1), fixture.rpmCache.batchCalls.Load(), "RPM 预取必须为请求级 O(1) 批量读取")
+	require.Equal(t, int64(0), fixture.usageRepo.singleCalls.Load())
+	require.Equal(t, int64(0), fixture.rpmCache.singleCalls.Load())
+}
+
+// BenchmarkSelectAccountWithLoadAwareness_RequestSchedulingSnapshotFailureStorm 测量 N 候选故障转移的
+// 服务层热路径。每轮都会建立一个新请求快照，并依次排除全部候选，避免把跨请求缓存误计入结果。
+func BenchmarkSelectAccountWithLoadAwareness_RequestSchedulingSnapshotFailureStorm(b *testing.B) {
+	const candidateCount = 8
+	fixture := newRequestSchedulingFailureStormFixture(candidateCount, 2000)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		ctx := context.WithValue(context.Background(), ctxkey.ForcePlatform, PlatformAnthropic)
+		ctx = fixture.svc.WithRequestSchedulingSnapshot(ctx, nil, PlatformAnthropic, true)
+		excludedAccountIDs := make(map[int64]struct{}, candidateCount)
+		for attempt := 0; attempt < candidateCount; attempt++ {
+			selection, err := fixture.svc.SelectAccountWithLoadAwareness(ctx, nil, "", "", excludedAccountIDs, "", 0)
+			if err != nil {
+				b.Fatal(err)
+			}
+			excludedAccountIDs[selection.Account.ID] = struct{}{}
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		}
+	}
+}
+
 func TestInvalidateAvailableModelsCache_ByDimensions(t *testing.T) {
 	svc := &GatewayService{
 		modelsListCache: gocache.New(time.Minute, time.Minute),

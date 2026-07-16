@@ -213,3 +213,38 @@
 - `.8` 因 Docker 网络瞬时失败未生成镜像；验证 TUNA、USTC 和 npm 前置后从 committed HEAD 构建 `.9`。
 - `.9` 仅重建 idle blue，完成候选窗口、模型别名 401、nginx 切流、切流后窗口和三入口资源哈希验证。
 - 最终 active blue=`sub2api:v0.1.156.9`，rollback green=`sub2api:v0.1.156.5`；PostgreSQL、Redis 未重启，未推送远程。
+
+## 2026-07-16 - 上游中转站稳定性、性能与缓存开发计划
+
+- 使用 CodeGraph 核对 `/v1/responses`、调度预取、failover、路径健康、HTTP 上游客户端缓存、BillingCache 和 Context Journal 调用边界。
+- 读取当前配置与既有优化记录，确认请求级调度快照和 Redis Context Journal 已存在，不重复建设。
+- 新增 `docs/UPSTREAM_RELAY_STABILITY_PERFORMANCE_CACHE_PLAN_CN.md`，形成 7 个 PR 的分阶段路线、测试矩阵、验收与回滚边界。
+- 文档结构、引用路径和尾随空白自动检查通过；本次未修改业务代码、数据库、运行配置或部署状态。
+- 按 `plan-devex-review` 终端闸门补充 `GSTACK REVIEW REPORT`，并通过官方 `gstack-review-log` / `gstack-review-read` 持久化、回读 DX 评分。
+- 排障确认 Windows 到 WSL 的 JSON 内容完整；初始失败来自 WSL 命中依赖缺失的 Windows Bun shim，使用等价 Node JSON 校验契约完成官方脚本调用。
+
+## 2026-07-16 Devil - 上游中转站稳定性 PR1-PR3 并行实现
+
+- 并行实现固定低基数 Ops runtime metrics、BillingCache 队列拥塞正确性和 failover 快照回归；主线程完成路由接线、交叉审查和统一验证。
+- 运行时指标接入调度快照、selection、实际 failover 与 BillingCache；连接池和完整上游阶段 producer 明确保留给后续 PR，不伪造指标。
+- BillingCache 改为 queue full/closed/worker error 后按键标记 unsafe，读取经主数据 singleflight 恢复；修复 nil cache 分支绕过 singleflight 的 DB 穿透风险。
+- 故障风暴基准证明 8 候选切换不重复构建候选及三类批量预取；Responses/Chat 现与 Anthropic 使用相同请求级快照契约。
+- 全量 service 测试初次暴露旧高负载测试依赖同步 Redis 回退；完成根因分析后将断言迁移到新“完成或 unsafe”契约，复测全部通过。
+- 未写数据库、未提交、未构建、未部署、未推送。
+
+## 2026-07-16 Devil - 上游中转站稳定性 PR4-PR7 收口
+
+- 前馈：读取项目 `AGENTS.md`、Obsidian `Projects/00-项目总览.md` 与 `Areas/开发知识库/00-总览.md`，并核对已有过程/功能 JSONL 尾部。
+- 验证：执行 `go test .\internal\repository -run '^$' -bench '^BenchmarkHTTPUpstreamPoolTopologies$' -benchtime=1s -count=1`；三拓扑命中率均为 100%，entries 为 1/64/16。
+- Browser：启动临时 Vite 开发服务，确认当前源码路由受端口隔离登录态保护；使用已有 `localhost:8080` 管理员会话完成列表加载、追踪弹窗打开/关闭和桌面/移动截图，随后恢复原调度池页面并停止临时服务。
+- 审计：`git diff --check` 通过；未发现 PR4-PR7 阻断稳定性、并发、缓存或 TypeScript 回归；无 dist/generated 变更。
+- 边界：不改线上 pool 默认值，不部署、不写数据库、不提交、不推送；保留 `.codegraph/daemon.pid`、`backend/cmd/codex-live-probe/` 与 `tmp_body.json`。
+
+## 2026-07-16T23:30:08+08:00 Devil - 上游中转站稳定性剩余项收尾
+
+- `codegraph_status`：索引健康，2323 files、72299 nodes；继续沿用已验证的 PR4-PR7 调用边界。
+- `docker inspect`、PostgreSQL `pg_stat_activity`/`pg_settings` 与 Redis `INFO clients`/`CLIENT LIST`：只读容量审计完成，发现服务端限额与部署声明漂移；不具备安全生产调参的归因和负载证据。
+- `Invoke-WebRequest`：部署三入口 runtime metrics 返回 404；隔离 Vite 的 HTML、当前组件转换模块与 fixture API 返回 200，组件转换模块确认指向 fixture API。
+- Browser：读取恢复说明、枚举标签、尝试新建与认领标签；历史标签与当前会话不匹配，停止重试并记录视觉截图限制。
+- `go env`、`Get-Command`：确认 `CGO_ENABLED=0`，未发现 gcc/clang/zig，保留 `-race` 环境阻塞结论。
+- `git diff --check`：通过。临时 Vite 服务和 `%LOCALAPPDATA%\\Temp\\sub2api-ops-qa` 已清理。

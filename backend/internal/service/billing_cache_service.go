@@ -50,6 +50,7 @@ type cacheWriteKind int
 const (
 	cacheWriteSetBalance cacheWriteKind = iota
 	cacheWriteSetSubscription
+	cacheWriteSetAPIKeyRateLimit
 	cacheWriteUpdateSubscriptionUsage
 	cacheWriteDeductBalance
 	cacheWriteUpdateRateLimitUsage
@@ -66,7 +67,7 @@ const (
 // 新实现使用固定大小的工作池：
 // 1. 预创建 10 个 worker goroutine，避免频繁创建销毁
 // 2. 使用带缓冲的 channel（1000）作为任务队列，平滑写入峰值
-// 3. 非阻塞写入，队列满时关键任务同步回退，非关键任务丢弃并告警
+// 3. 非阻塞写入，队列满时标记缓存不安全并由下一次读取回源主数据
 // 4. 统一超时控制，避免慢操作阻塞工作池
 const (
 	cacheWriteWorkerCount     = 10              // 工作协程数量
@@ -74,17 +75,28 @@ const (
 	cacheWriteTimeout         = 2 * time.Second // 单个写入操作超时
 	cacheWriteDropLogInterval = 5 * time.Second // 丢弃日志节流间隔
 	balanceLoadTimeout        = 3 * time.Second
+	subscriptionLoadTimeout   = 3 * time.Second
+	rateLimitLoadTimeout      = 3 * time.Second
 )
 
 // cacheWriteTask 缓存写入任务
 type cacheWriteTask struct {
-	kind             cacheWriteKind
-	userID           int64
-	groupID          int64
-	apiKeyID         int64
-	balance          float64
-	amount           float64
-	subscriptionData *subscriptionCacheData
+	kind               cacheWriteKind
+	userID             int64
+	groupID            int64
+	apiKeyID           int64
+	balance            float64
+	amount             float64
+	subscriptionData   *subscriptionCacheData
+	rateLimitData      *APIKeyRateLimitCacheData
+	cacheSafetyKey     string
+	cacheSafetyVersion uint64
+}
+
+// cacheSafetyMarker 标识一个未被 Redis 确认的缓存键版本。
+// 只有主数据的完整快照写入成功时才能清除，增量成功不能覆盖先前丢失的增量。
+type cacheSafetyMarker struct {
+	version uint64
 }
 
 // apiKeyRateLimitLoader defines the interface for loading rate limit data from DB.
@@ -125,7 +137,10 @@ type BillingCacheService struct {
 	cacheWriteMu       sync.RWMutex
 	stopped            atomic.Bool
 	balanceLoadSF      singleflight.Group
+	subscriptionLoadSF singleflight.Group
 	quotaLoadSF        singleflight.Group
+	rateLimitLoadSF    singleflight.Group
+	unsafeCacheEntries sync.Map
 	// 丢弃日志节流计数器（减少高负载下日志噪音）
 	cacheWriteDropFullCount     uint64
 	cacheWriteDropFullLastLog   int64
@@ -199,10 +214,111 @@ func (s *BillingCacheService) startCacheWriteWorkers() {
 	}
 }
 
+// balanceCacheEntryKey 返回用户余额缓存的进程内安全标记键。
+func balanceCacheEntryKey(userID int64) string {
+	return "balance:" + strconv.FormatInt(userID, 10)
+}
+
+// subscriptionCacheEntryKey 返回订阅缓存的进程内安全标记键。
+func subscriptionCacheEntryKey(userID, groupID int64) string {
+	return "subscription:" + strconv.FormatInt(userID, 10) + ":" + strconv.FormatInt(groupID, 10)
+}
+
+// apiKeyRateLimitCacheEntryKey 返回 API Key 限流缓存的进程内安全标记键。
+func apiKeyRateLimitCacheEntryKey(keyID int64) string {
+	return "api_key_rate_limit:" + strconv.FormatInt(keyID, 10)
+}
+
+// cacheWriteSafetyKey 将异步任务映射为必须保持一致性的缓存键。
+func cacheWriteSafetyKey(task cacheWriteTask) string {
+	switch task.kind {
+	case cacheWriteSetBalance, cacheWriteDeductBalance:
+		return balanceCacheEntryKey(task.userID)
+	case cacheWriteSetSubscription, cacheWriteUpdateSubscriptionUsage:
+		return subscriptionCacheEntryKey(task.userID, task.groupID)
+	case cacheWriteSetAPIKeyRateLimit, cacheWriteUpdateRateLimitUsage:
+		return apiKeyRateLimitCacheEntryKey(task.apiKeyID)
+	default:
+		return ""
+	}
+}
+
+// cacheEntryUnsafe 返回缓存键是否有未确认的增量写入。
+func (s *BillingCacheService) cacheEntryUnsafe(key string) bool {
+	if s == nil || key == "" {
+		return false
+	}
+	_, ok := s.unsafeCacheEntries.Load(key)
+	return ok
+}
+
+// cacheSafetyVersion 返回当前不安全标记的版本；无标记时返回零。
+func (s *BillingCacheService) cacheSafetyVersion(key string) uint64 {
+	if s == nil || key == "" {
+		return 0
+	}
+	marker, ok := s.unsafeCacheEntries.Load(key)
+	if !ok {
+		return 0
+	}
+	return marker.(cacheSafetyMarker).version
+}
+
+// markCacheEntryUnsafe 保留最新失败版本，避免较早任务的成功结果解除较新的失败标记。
+func (s *BillingCacheService) markCacheEntryUnsafe(key string) {
+	if s == nil || key == "" {
+		return
+	}
+	for {
+		current, exists := s.unsafeCacheEntries.Load(key)
+		if !exists {
+			if _, loaded := s.unsafeCacheEntries.LoadOrStore(key, cacheSafetyMarker{version: 1}); !loaded {
+				return
+			}
+			continue
+		}
+		marker := current.(cacheSafetyMarker)
+		if s.unsafeCacheEntries.CompareAndSwap(key, marker, cacheSafetyMarker{version: marker.version + 1}) {
+			return
+		}
+	}
+}
+
+// markCacheEntryFresh 仅接受与当前失败版本一致的完整主数据快照。
+func (s *BillingCacheService) markCacheEntryFresh(key string, safetyVersion uint64) {
+	if s == nil || key == "" || safetyVersion == 0 {
+		return
+	}
+	current, exists := s.unsafeCacheEntries.Load(key)
+	if !exists {
+		return
+	}
+	marker := current.(cacheSafetyMarker)
+	if marker.version == safetyVersion {
+		s.unsafeCacheEntries.CompareAndDelete(key, marker)
+	}
+}
+
+// markCacheWriteUnsafe 将一个未确认的异步任务对应缓存键标记为不安全。
+func (s *BillingCacheService) markCacheWriteUnsafe(task cacheWriteTask) {
+	key := task.cacheSafetyKey
+	if key == "" {
+		key = cacheWriteSafetyKey(task)
+	}
+	s.markCacheEntryUnsafe(key)
+}
+
 // enqueueCacheWrite 尝试将任务入队，队列满时返回 false（并记录告警）。
 func (s *BillingCacheService) enqueueCacheWrite(task cacheWriteTask) (enqueued bool) {
+	if task.cacheSafetyKey == "" {
+		task.cacheSafetyKey = cacheWriteSafetyKey(task)
+	}
+	task.cacheSafetyVersion = s.cacheSafetyVersion(task.cacheSafetyKey)
+
 	if s.stopped.Load() {
 		s.logCacheWriteDrop(task, "closed")
+		s.markCacheWriteUnsafe(task)
+		RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventWriteDrop)
 		return false
 	}
 
@@ -211,6 +327,8 @@ func (s *BillingCacheService) enqueueCacheWrite(task cacheWriteTask) (enqueued b
 
 	if s.cacheWriteChan == nil {
 		s.logCacheWriteDrop(task, "closed")
+		s.markCacheWriteUnsafe(task)
+		RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventWriteDrop)
 		return false
 	}
 
@@ -218,8 +336,10 @@ func (s *BillingCacheService) enqueueCacheWrite(task cacheWriteTask) (enqueued b
 	case s.cacheWriteChan <- task:
 		return true
 	default:
-		// 队列满时不阻塞主流程，交由调用方决定是否同步回退。
+		// 队列满时不阻塞主流程；标记后续读取旁路可能陈旧的 Redis 快照。
 		s.logCacheWriteDrop(task, "full")
+		s.markCacheWriteUnsafe(task)
+		RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventWriteDrop)
 		return false
 	}
 }
@@ -228,31 +348,42 @@ func (s *BillingCacheService) cacheWriteWorker(ch <-chan cacheWriteTask) {
 	defer s.cacheWriteWg.Done()
 	for task := range ch {
 		ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
+		var err error
 		switch task.kind {
 		case cacheWriteSetBalance:
-			s.setBalanceCache(ctx, task.userID, task.balance)
+			err = s.setBalanceCache(ctx, task.userID, task.balance)
 		case cacheWriteSetSubscription:
-			s.setSubscriptionCache(ctx, task.userID, task.groupID, task.subscriptionData)
+			err = s.setSubscriptionCache(ctx, task.userID, task.groupID, task.subscriptionData)
+		case cacheWriteSetAPIKeyRateLimit:
+			if s.cache != nil {
+				err = s.cache.SetAPIKeyRateLimit(ctx, task.apiKeyID, task.rateLimitData)
+			}
 		case cacheWriteUpdateSubscriptionUsage:
 			if s.cache != nil {
-				if err := s.cache.UpdateSubscriptionUsage(ctx, task.userID, task.groupID, task.amount); err != nil {
-					logger.LegacyPrintf("service.billing_cache", "Warning: update subscription cache failed for user %d group %d: %v", task.userID, task.groupID, err)
-				}
+				err = s.cache.UpdateSubscriptionUsage(ctx, task.userID, task.groupID, task.amount)
 			}
 		case cacheWriteDeductBalance:
 			if s.cache != nil {
-				if err := s.cache.DeductUserBalance(ctx, task.userID, task.amount); err != nil {
-					logger.LegacyPrintf("service.billing_cache", "Warning: deduct balance cache failed for user %d: %v", task.userID, err)
-				}
+				err = s.cache.DeductUserBalance(ctx, task.userID, task.amount)
 			}
 		case cacheWriteUpdateRateLimitUsage:
 			if s.cache != nil {
-				if err := s.cache.UpdateAPIKeyRateLimitUsage(ctx, task.apiKeyID, task.amount); err != nil {
-					logger.LegacyPrintf("service.billing_cache", "Warning: update rate limit usage cache failed for api key %d: %v", task.apiKeyID, err)
-				}
+				err = s.cache.UpdateAPIKeyRateLimitUsage(ctx, task.apiKeyID, task.amount)
 			}
 		}
 		cancel()
+
+		if err != nil {
+			s.markCacheWriteUnsafe(task)
+			RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventWriteError)
+			logger.LegacyPrintf("service.billing_cache", "Warning: cache write failed kind=%s user=%d group=%d api_key=%d: %v",
+				cacheWriteKindName(task.kind), task.userID, task.groupID, task.apiKeyID, err)
+			continue
+		}
+		RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventWrite)
+		if task.kind == cacheWriteSetBalance || task.kind == cacheWriteSetSubscription || task.kind == cacheWriteSetAPIKeyRateLimit {
+			s.markCacheEntryFresh(task.cacheSafetyKey, task.cacheSafetyVersion)
+		}
 	}
 }
 
@@ -263,6 +394,8 @@ func cacheWriteKindName(kind cacheWriteKind) string {
 		return "set_balance"
 	case cacheWriteSetSubscription:
 		return "set_subscription"
+	case cacheWriteSetAPIKeyRateLimit:
+		return "set_api_key_rate_limit"
 	case cacheWriteUpdateSubscriptionUsage:
 		return "update_subscription_usage"
 	case cacheWriteDeductBalance:
@@ -322,16 +455,26 @@ func (s *BillingCacheService) logCacheWriteDrop(task cacheWriteTask, reason stri
 func (s *BillingCacheService) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
 	if s.cache == nil {
 		// Redis不可用，直接查询数据库
-		return s.getUserBalanceFromDB(ctx, userID)
+		RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventMiss)
+		return s.loadUserBalanceFromDB(userID)
 	}
 
-	// 尝试从缓存读取
-	balance, err := s.cache.GetUserBalance(ctx, userID)
-	if err == nil {
-		return balance, nil
+	cacheKey := balanceCacheEntryKey(userID)
+	if !s.cacheEntryUnsafe(cacheKey) {
+		// 仅在该键没有未确认写入时读取缓存，避免使用丢失扣减后的旧正余额。
+		balance, err := s.cache.GetUserBalance(ctx, userID)
+		if err == nil {
+			RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventHit)
+			return balance, nil
+		}
 	}
+	RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventMiss)
 
-	// 缓存未命中：singleflight 合并同一 userID 的并发回源请求。
+	return s.loadUserBalanceFromDB(userID)
+}
+
+// loadUserBalanceFromDB 合并同一用户的主数据回源，并在可用时异步回填缓存。
+func (s *BillingCacheService) loadUserBalanceFromDB(userID int64) (float64, error) {
 	value, err, _ := s.balanceLoadSF.Do(strconv.FormatInt(userID, 10), func() (any, error) {
 		loadCtx, cancel := context.WithTimeout(context.Background(), balanceLoadTimeout)
 		defer cancel()
@@ -341,12 +484,14 @@ func (s *BillingCacheService) GetUserBalance(ctx context.Context, userID int64) 
 			return nil, err
 		}
 
-		// 异步建立缓存
-		_ = s.enqueueCacheWrite(cacheWriteTask{
-			kind:    cacheWriteSetBalance,
-			userID:  userID,
-			balance: balance,
-		})
+		if s.cache != nil {
+			// 异步建立缓存；入队失败时 enqueueCacheWrite 会保留不安全标记。
+			s.enqueueCacheWrite(cacheWriteTask{
+				kind:    cacheWriteSetBalance,
+				userID:  userID,
+				balance: balance,
+			})
+		}
 		return balance, nil
 	})
 	if err != nil {
@@ -369,13 +514,15 @@ func (s *BillingCacheService) getUserBalanceFromDB(ctx context.Context, userID i
 }
 
 // setBalanceCache 设置余额缓存
-func (s *BillingCacheService) setBalanceCache(ctx context.Context, userID int64, balance float64) {
+func (s *BillingCacheService) setBalanceCache(ctx context.Context, userID int64, balance float64) error {
 	if s.cache == nil {
-		return
+		return nil
 	}
 	if err := s.cache.SetUserBalance(ctx, userID, balance); err != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: set balance cache failed for user %d: %v", userID, err)
+		return err
 	}
+	return nil
 }
 
 // DeductBalanceCache 扣减余额缓存（同步调用）
@@ -386,24 +533,18 @@ func (s *BillingCacheService) DeductBalanceCache(ctx context.Context, userID int
 	return s.cache.DeductUserBalance(ctx, userID, amount)
 }
 
-// QueueDeductBalance 异步扣减余额缓存
+// QueueDeductBalance 异步扣减余额缓存。
+// 主数据已先于此调用持久化；入队失败时标记该键不安全，由后续主数据快照恢复缓存。
 func (s *BillingCacheService) QueueDeductBalance(userID int64, amount float64) {
 	if s.cache == nil {
 		return
 	}
-	// 队列满时同步回退，避免关键扣减被静默丢弃。
-	if s.enqueueCacheWrite(cacheWriteTask{
+	task := cacheWriteTask{
 		kind:   cacheWriteDeductBalance,
 		userID: userID,
 		amount: amount,
-	}) {
-		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
-	defer cancel()
-	if err := s.DeductBalanceCache(ctx, userID, amount); err != nil {
-		logger.LegacyPrintf("service.billing_cache", "Warning: deduct balance cache fallback failed for user %d: %v", userID, err)
-	}
+	s.enqueueCacheWrite(task)
 }
 
 // InvalidateUserBalance 失效用户余额缓存
@@ -412,6 +553,7 @@ func (s *BillingCacheService) InvalidateUserBalance(ctx context.Context, userID 
 		return nil
 	}
 	if err := s.cache.InvalidateUserBalance(ctx, userID); err != nil {
+		s.markCacheEntryUnsafe(balanceCacheEntryKey(userID))
 		logger.LegacyPrintf("service.billing_cache", "Warning: invalidate balance cache failed for user %d: %v", userID, err)
 		return err
 	}
@@ -425,28 +567,26 @@ func (s *BillingCacheService) InvalidateUserBalance(ctx context.Context, userID 
 // GetSubscriptionStatus 获取订阅状态（优先从缓存读取）
 func (s *BillingCacheService) GetSubscriptionStatus(ctx context.Context, userID, groupID int64) (*subscriptionCacheData, error) {
 	if s.cache == nil {
-		return s.getSubscriptionFromDB(ctx, userID, groupID)
+		RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventMiss)
+		return s.loadSubscriptionFromDB(userID, groupID)
 	}
 
-	// 尝试从缓存读取
-	cacheData, err := s.cache.GetSubscriptionCache(ctx, userID, groupID)
-	if err == nil && cacheData != nil {
-		return s.convertFromPortsData(cacheData), nil
+	cacheKey := subscriptionCacheEntryKey(userID, groupID)
+	if !s.cacheEntryUnsafe(cacheKey) {
+		// 只有订阅用量的增量写入已确认时，才允许采用 Redis 快照。
+		cacheData, err := s.cache.GetSubscriptionCache(ctx, userID, groupID)
+		if err == nil && cacheData != nil {
+			RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventHit)
+			return s.convertFromPortsData(cacheData), nil
+		}
 	}
+	RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventMiss)
 
-	// 缓存未命中，从数据库读取
-	data, err := s.getSubscriptionFromDB(ctx, userID, groupID)
+	// 缓存未命中或未确认写入：用短超时合并同一 user/group 的主数据回源。
+	data, err := s.loadSubscriptionFromDB(userID, groupID)
 	if err != nil {
 		return nil, err
 	}
-
-	// 异步建立缓存
-	_ = s.enqueueCacheWrite(cacheWriteTask{
-		kind:             cacheWriteSetSubscription,
-		userID:           userID,
-		groupID:          groupID,
-		subscriptionData: data,
-	})
 
 	return data, nil
 }
@@ -490,14 +630,47 @@ func (s *BillingCacheService) getSubscriptionFromDB(ctx context.Context, userID,
 	}, nil
 }
 
+// loadSubscriptionFromDB 合并同一订阅的主数据回源，并仅回填一次缓存快照。
+func (s *BillingCacheService) loadSubscriptionFromDB(userID, groupID int64) (*subscriptionCacheData, error) {
+	key := strconv.FormatInt(userID, 10) + ":" + strconv.FormatInt(groupID, 10)
+	value, err, _ := s.subscriptionLoadSF.Do(key, func() (any, error) {
+		loadCtx, cancel := context.WithTimeout(context.Background(), subscriptionLoadTimeout)
+		defer cancel()
+		data, err := s.getSubscriptionFromDB(loadCtx, userID, groupID)
+		if err != nil {
+			return nil, err
+		}
+		if s.cache != nil {
+			// singleflight 范围内只回填一次，避免同一订阅并发旁路时放大 Redis 写入。
+			s.enqueueCacheWrite(cacheWriteTask{
+				kind:             cacheWriteSetSubscription,
+				userID:           userID,
+				groupID:          groupID,
+				subscriptionData: data,
+			})
+		}
+		return data, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	data, ok := value.(*subscriptionCacheData)
+	if !ok {
+		return nil, fmt.Errorf("unexpected subscription cache data type: %T", value)
+	}
+	return data, nil
+}
+
 // setSubscriptionCache 设置订阅缓存
-func (s *BillingCacheService) setSubscriptionCache(ctx context.Context, userID, groupID int64, data *subscriptionCacheData) {
+func (s *BillingCacheService) setSubscriptionCache(ctx context.Context, userID, groupID int64, data *subscriptionCacheData) error {
 	if s.cache == nil || data == nil {
-		return
+		return nil
 	}
 	if err := s.cache.SetSubscriptionCache(ctx, userID, groupID, s.convertToPortsData(data)); err != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: set subscription cache failed for user %d group %d: %v", userID, groupID, err)
+		return err
 	}
+	return nil
 }
 
 // UpdateSubscriptionUsage 更新订阅用量缓存（同步调用）
@@ -508,25 +681,19 @@ func (s *BillingCacheService) UpdateSubscriptionUsage(ctx context.Context, userI
 	return s.cache.UpdateSubscriptionUsage(ctx, userID, groupID, costUSD)
 }
 
-// QueueUpdateSubscriptionUsage 异步更新订阅用量缓存
+// QueueUpdateSubscriptionUsage 异步更新订阅用量缓存。
+// 入队失败不做同步 Redis 回退，避免请求热路径被 Redis 阻塞。
 func (s *BillingCacheService) QueueUpdateSubscriptionUsage(userID, groupID int64, costUSD float64) {
 	if s.cache == nil {
 		return
 	}
-	// 队列满时同步回退，确保订阅用量及时更新。
-	if s.enqueueCacheWrite(cacheWriteTask{
+	task := cacheWriteTask{
 		kind:    cacheWriteUpdateSubscriptionUsage,
 		userID:  userID,
 		groupID: groupID,
 		amount:  costUSD,
-	}) {
-		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cacheWriteTimeout)
-	defer cancel()
-	if err := s.UpdateSubscriptionUsage(ctx, userID, groupID, costUSD); err != nil {
-		logger.LegacyPrintf("service.billing_cache", "Warning: update subscription cache fallback failed for user %d group %d: %v", userID, groupID, err)
-	}
+	s.enqueueCacheWrite(task)
 }
 
 // InvalidateSubscription 失效指定订阅缓存
@@ -535,6 +702,7 @@ func (s *BillingCacheService) InvalidateSubscription(ctx context.Context, userID
 		return nil
 	}
 	if err := s.cache.InvalidateSubscriptionCache(ctx, userID, groupID); err != nil {
+		s.markCacheEntryUnsafe(subscriptionCacheEntryKey(userID, groupID))
 		logger.LegacyPrintf("service.billing_cache", "Warning: invalidate subscription cache failed for user %d group %d: %v", userID, groupID, err)
 		return err
 	}
@@ -571,6 +739,7 @@ func (s *BillingCacheService) InvalidateAPIKeyRateLimit(ctx context.Context, key
 		return nil
 	}
 	if err := s.cache.InvalidateAPIKeyRateLimit(ctx, keyID); err != nil {
+		s.markCacheEntryUnsafe(apiKeyRateLimitCacheEntryKey(keyID))
 		logger.LegacyPrintf("service.billing_cache", "Warning: invalidate api key rate limit cache failed for key %d: %v", keyID, err)
 		return err
 	}
@@ -581,51 +750,88 @@ func (s *BillingCacheService) InvalidateAPIKeyRateLimit(ctx context.Context, key
 // API Key 限速缓存方法
 // ============================================
 
+// rateLimitCacheDataFromDB 将主数据限流窗口转换为缓存快照。
+func rateLimitCacheDataFromDB(data *APIKeyRateLimitData) *APIKeyRateLimitCacheData {
+	cacheEntry := &APIKeyRateLimitCacheData{
+		Usage5h: data.Usage5h,
+		Usage1d: data.Usage1d,
+		Usage7d: data.Usage7d,
+	}
+	if data.Window5hStart != nil {
+		cacheEntry.Window5h = data.Window5hStart.Unix()
+	}
+	if data.Window1dStart != nil {
+		cacheEntry.Window1d = data.Window1dStart.Unix()
+	}
+	if data.Window7dStart != nil {
+		cacheEntry.Window7d = data.Window7dStart.Unix()
+	}
+	return cacheEntry
+}
+
+// loadAPIKeyRateLimitFromDB 使用短超时合并同一 API Key 的缓存旁路回源。
+func (s *BillingCacheService) loadAPIKeyRateLimitFromDB(keyID int64) (*APIKeyRateLimitCacheData, error) {
+	if s.apiKeyRateLimitLoader == nil {
+		return nil, errBillingCacheUnavailable
+	}
+	value, err, _ := s.rateLimitLoadSF.Do(strconv.FormatInt(keyID, 10), func() (any, error) {
+		loadCtx, cancel := context.WithTimeout(context.Background(), rateLimitLoadTimeout)
+		defer cancel()
+
+		data, err := s.apiKeyRateLimitLoader.GetRateLimitData(loadCtx, keyID)
+		if err != nil {
+			return nil, err
+		}
+		cacheData := rateLimitCacheDataFromDB(data)
+		// singleflight 范围内只回填一次，Redis 慢或写失败也不会同步阻塞网关请求。
+		s.refreshAPIKeyRateLimitCache(keyID, cacheData)
+		return cacheData, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	cacheData, ok := value.(*APIKeyRateLimitCacheData)
+	if !ok {
+		return nil, fmt.Errorf("unexpected API key rate limit type: %T", value)
+	}
+	return cacheData, nil
+}
+
+// refreshAPIKeyRateLimitCache 异步回填 API Key 限流快照，避免 Redis 写入阻塞请求热路径。
+func (s *BillingCacheService) refreshAPIKeyRateLimitCache(keyID int64, data *APIKeyRateLimitCacheData) {
+	if s.cache == nil || data == nil {
+		return
+	}
+	s.enqueueCacheWrite(cacheWriteTask{
+		kind:          cacheWriteSetAPIKeyRateLimit,
+		apiKeyID:      keyID,
+		rateLimitData: data,
+	})
+}
+
 // checkAPIKeyRateLimits checks rate limit windows for an API key.
 // It loads usage from Redis cache (falling back to DB on cache miss),
 // resets expired windows in-memory and triggers async DB reset,
 // and returns an error if any window limit is exceeded.
 func (s *BillingCacheService) checkAPIKeyRateLimits(ctx context.Context, apiKey *APIKey) error {
-	if s.cache == nil {
-		// No cache: fall back to reading from DB directly
-		if s.apiKeyRateLimitLoader == nil {
-			return nil
-		}
-		data, err := s.apiKeyRateLimitLoader.GetRateLimitData(ctx, apiKey.ID)
-		if err != nil {
-			return nil // Don't block requests on DB errors
-		}
-		return s.evaluateRateLimits(ctx, apiKey, data.Usage5h, data.Usage1d, data.Usage7d,
-			data.Window5hStart, data.Window1dStart, data.Window7dStart)
+	if apiKey == nil {
+		return nil
 	}
 
-	cacheData, err := s.cache.GetAPIKeyRateLimit(ctx, apiKey.ID)
-	if err != nil {
-		// Cache miss: load from DB and populate cache
-		if s.apiKeyRateLimitLoader == nil {
-			return nil
+	cacheKey := apiKeyRateLimitCacheEntryKey(apiKey.ID)
+	var cacheData *APIKeyRateLimitCacheData
+	if s.cache != nil && !s.cacheEntryUnsafe(cacheKey) {
+		cacheData, _ = s.cache.GetAPIKeyRateLimit(ctx, apiKey.ID)
+	}
+	if cacheData == nil {
+		RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventMiss)
+		var err error
+		cacheData, err = s.loadAPIKeyRateLimitFromDB(apiKey.ID)
+		if err != nil {
+			return nil // Preserve the existing fail-open contract for rate-limit DB errors.
 		}
-		dbData, dbErr := s.apiKeyRateLimitLoader.GetRateLimitData(ctx, apiKey.ID)
-		if dbErr != nil {
-			return nil // Don't block requests on DB errors
-		}
-		// Build cache entry from DB data
-		cacheEntry := &APIKeyRateLimitCacheData{
-			Usage5h: dbData.Usage5h,
-			Usage1d: dbData.Usage1d,
-			Usage7d: dbData.Usage7d,
-		}
-		if dbData.Window5hStart != nil {
-			cacheEntry.Window5h = dbData.Window5hStart.Unix()
-		}
-		if dbData.Window1dStart != nil {
-			cacheEntry.Window1d = dbData.Window1dStart.Unix()
-		}
-		if dbData.Window7dStart != nil {
-			cacheEntry.Window7d = dbData.Window7dStart.Unix()
-		}
-		_ = s.cache.SetAPIKeyRateLimit(ctx, apiKey.ID, cacheEntry)
-		cacheData = cacheEntry
+	} else {
+		RecordOpsCacheEvent(OpsCacheBilling, OpsCacheEventHit)
 	}
 
 	var w5h, w1d, w7d *time.Time
@@ -705,11 +911,12 @@ func (s *BillingCacheService) QueueUpdateAPIKeyRateLimitUsage(apiKeyID int64, co
 	if s.cache == nil {
 		return
 	}
-	s.enqueueCacheWrite(cacheWriteTask{
+	task := cacheWriteTask{
 		kind:     cacheWriteUpdateRateLimitUsage,
 		apiKeyID: apiKeyID,
 		amount:   cost,
-	})
+	}
+	s.enqueueCacheWrite(task)
 }
 
 // IncrementUserPlatformQuotaUsage 同步累加 user × platform usage 到 Redis 缓存。

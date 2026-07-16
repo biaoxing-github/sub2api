@@ -199,6 +199,7 @@ func (s *FailoverState) HandleFailoverError(
 
 	// 递增切换计数
 	s.SwitchCount++
+	service.RecordOpsSchedulingEvent(service.OpsSchedulingEventFailover)
 	logger.FromContext(ctx).Warn("gateway.failover_switch_account",
 		zap.Int64("account_id", accountID),
 		zap.Int("upstream_status", statusCode),

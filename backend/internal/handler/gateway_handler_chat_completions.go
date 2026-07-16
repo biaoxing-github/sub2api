@@ -87,6 +87,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 
+	// 同一请求内的 failover 复用一次调度快照，避免每次切号重复加载候选账号与批量预取。
+	snapshotGroupID, snapshotPlatform, snapshotHasForce := resolveGatewayRequestSchedulingSnapshotKey(c.Request.Context(), apiKey)
+	snapshotCtx := h.gatewayService.WithRequestSchedulingSnapshot(c.Request.Context(), snapshotGroupID, snapshotPlatform, snapshotHasForce)
+	c.Request = c.Request.WithContext(snapshotCtx)
+
 	// Claude Code only restriction
 	if apiKey.Group != nil && apiKey.Group.ClaudeCodeOnly {
 		h.chatCompletionsErrorResponse(c, http.StatusForbidden, "permission_error",

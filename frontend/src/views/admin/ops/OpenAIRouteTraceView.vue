@@ -117,6 +117,8 @@
           </div>
         </section>
 
+        <OpsRuntimeMetricsSummary :active="traceOpen" :refresh-key="selectedRow.request_id" />
+
         <section v-if="diagnosis" class="grid gap-3 md:grid-cols-2">
           <div v-for="section in diagnosisSections" :key="section.key" class="rounded-lg border border-gray-200 p-3 dark:border-dark-700">
             <h3 class="mb-2 text-sm font-semibold text-gray-900 dark:text-gray-100">{{ section.title }}</h3>
@@ -163,6 +165,7 @@ import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
 import { opsAPI, type OpsCodexDiagnosis, type OpsRequestDetail, type OpsRequestDetailsParams, type OpsRequestTimeline } from '@/api/admin/ops'
+import OpsRuntimeMetricsSummary from './components/OpsRuntimeMetricsSummary.vue'
 import { formatDateTime, parseTimeRangeMinutes } from './utils/opsFormatters'
 
 const { t } = useI18n()

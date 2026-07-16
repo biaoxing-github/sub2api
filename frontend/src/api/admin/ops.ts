@@ -890,6 +890,83 @@ export interface OpsRuntimeLogConfig {
   updated_by_user_id?: number
 }
 
+// OpsRequestStageMetricSnapshot 表示固定请求阶段的进程内累计指标。
+export interface OpsRequestStageMetricSnapshot {
+  stage: string
+  result: string
+  protocol: string
+  error_class: string
+  count: number
+  total_duration_ms: number
+  max_duration_ms: number
+}
+
+// OpsRuntimeCounterSnapshot 表示调度、缓存或连接池的固定事件计数。
+export interface OpsRuntimeCounterSnapshot {
+  name: string
+  event: string
+  count: number
+}
+
+// OpsConnectionPoolStatsSnapshot 归一化 PostgreSQL、Redis 与上游 HTTP 客户端池状态。
+export interface OpsConnectionPoolStatsSnapshot {
+  // name 是固定连接池名称。
+  name: string
+  // capacity 是配置的最大连接数；驱动未暴露时为零。
+  capacity: number
+  // base_size 是 go-redis 配置的基础连接池大小。
+  base_size?: number
+  // open 是当前打开或已建立的连接数。
+  open: number
+  // in_use 是当前正在使用的连接数。
+  in_use: number
+  // idle 是当前空闲连接数。
+  idle: number
+  // wait_count 是累计等待连接次数。
+  wait_count: number
+  // wait_duration_ms 是累计等待连接时长。
+  wait_duration_ms: number
+  // hits 是 Redis 空闲连接命中次数。
+  hits: number
+  // misses 是 Redis 新建连接次数。
+  misses: number
+  // timeouts 是 Redis 等待连接超时次数。
+  timeouts: number
+  // closed_idle 是超过最大空闲连接数后的关闭次数。
+  closed_idle: number
+  // closed_idle_time 是超过空闲时间后的关闭次数。
+  closed_idle_time: number
+  // closed_lifetime 是超过连接生命周期后的关闭次数。
+  closed_lifetime: number
+  // stale 是 Redis 移除失效连接次数。
+  stale: number
+  // cache_hit_total 是上游 HTTP 客户端缓存累计命中次数。
+  cache_hit_total?: number
+  // cache_miss_total 是上游 HTTP 客户端缓存累计未命中次数。
+  cache_miss_total?: number
+  // cache_create_total 是上游 HTTP 客户端累计创建次数。
+  cache_create_total?: number
+  // cache_evict_total 是上游 HTTP 客户端累计淘汰次数。
+  cache_evict_total?: number
+  // entries 是上游 HTTP 客户端缓存当前活动条目数。
+  entries?: number
+  // in_flight 是活动与退休条目上的进行中请求数。
+  in_flight?: number
+  // oldest_idle_age_ms 是最久空闲活动条目的空闲毫秒数。
+  oldest_idle_age_ms?: number
+}
+
+// OpsRuntimeMetricsSnapshot 是网关进程内只读运行时指标快照。
+export interface OpsRuntimeMetricsSnapshot {
+  generated_at: string
+  request_stages: OpsRequestStageMetricSnapshot[]
+  scheduling: OpsRuntimeCounterSnapshot[]
+  caches: OpsRuntimeCounterSnapshot[]
+  connection_pools: OpsRuntimeCounterSnapshot[]
+  // connection_pool_stats 由较新后端提供；可选以兼容独立部署或滚动升级。
+  connection_pool_stats?: OpsConnectionPoolStatsSnapshot[]
+}
+
 export interface OpsSystemLog {
   id: number
   created_at: string
@@ -1300,6 +1377,14 @@ export async function updateEmailNotificationConfig(config: EmailNotificationCon
   return data
 }
 
+// Runtime metrics (process-local, read-only)
+export async function getRuntimeMetrics(options: OpsRequestOptions = {}): Promise<OpsRuntimeMetricsSnapshot> {
+  const { data } = await apiClient.get<OpsRuntimeMetricsSnapshot>('/admin/ops/runtime/metrics', {
+    signal: options.signal
+  })
+  return data
+}
+
 // Runtime settings (DB-backed)
 export async function getAlertRuntimeSettings(): Promise<OpsAlertRuntimeSettings> {
   const { data } = await apiClient.get<OpsAlertRuntimeSettings>('/admin/ops/runtime/alert')
@@ -1404,6 +1489,7 @@ export const opsAPI = {
   createAlertSilence,
   getEmailNotificationConfig,
   updateEmailNotificationConfig,
+  getRuntimeMetrics,
   getAlertRuntimeSettings,
   updateAlertRuntimeSettings,
   getRuntimeLogConfig,

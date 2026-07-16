@@ -85,8 +85,10 @@ func TestBillingCacheServiceQueueHighLoad(t *testing.T) {
 		return atomic.LoadInt64(&cache.balanceUpdates) > 0
 	}, 2*time.Second, 10*time.Millisecond)
 
+	// 高负载下订阅任务要么由工作池完成，要么被显式标记为不安全；不得同步回退阻塞调用方。
 	require.Eventually(t, func() bool {
-		return atomic.LoadInt64(&cache.subscriptionUpdates) > 0
+		return atomic.LoadInt64(&cache.subscriptionUpdates) > 0 ||
+			svc.cacheEntryUnsafe(subscriptionCacheEntryKey(1, 2))
 	}, 2*time.Second, 10*time.Millisecond)
 }
 

@@ -5425,6 +5425,57 @@ export default {
     ops: {
       title: '运维监控',
       description: '运维监控与排障',
+      runtimeMetrics: {
+        title: '网关运行时摘要',
+        generatedAt: '快照时间',
+        requestStages: '请求阶段',
+        average: '平均',
+        maximum: '最大',
+        failures: '失败',
+        caches: '缓存',
+        hitMiss: '命中 {hit} / 未命中 {miss}',
+        writeIssues: '写入异常',
+        failover: '调度与 Failover',
+        failovers: '账号切换',
+        snapshotReuse: '快照复用率',
+        slotWaits: '槽位等待',
+        slotTimeouts: '等待超时',
+        connectionPools: '连接池',
+        poolActivity: '获取 {acquire} / 复用 {reuse}',
+        poolIssues: '错误 {error} / 超时 {timeout}',
+        poolCurrent: '占用 {inUse} / 打开 {open} / 空闲 {idle} / 容量 {capacity}',
+        poolHTTPCurrent: '客户端 {entries} / 容量 {capacity} / 请求中 {inFlight} / 最久空闲 {idleAge}',
+        poolHitRate: '空闲连接命中率',
+        poolBaseSize: '基础池',
+        poolHTTPChanges: '新建 {created} / 淘汰 {evicted}',
+        poolWait: '等待 {count} 次 / {duration} / 超时 {timeout}',
+        poolRetired: '关闭 {closed} / 失效 {stale}',
+        noData: '暂无运行时样本',
+        stages: {
+          unknown: '未知阶段',
+          selection: '账号选择',
+          slot_wait: '槽位等待',
+          connect: '上游连接',
+          header_wait: '响应头等待',
+          ttft: '首 Token',
+          stream: '流式传输'
+        },
+        cacheNames: {
+          unknown: '未知缓存',
+          billing: '计费缓存',
+          api_key_l1: 'API Key 进程缓存',
+          api_key_l2: 'API Key Redis 缓存',
+          context_journal: 'Context Journal',
+          scheduler_snapshot: '调度快照'
+        },
+        connectionPoolNames: {
+          unknown: '未知连接池',
+          upstream_http: '上游 HTTP',
+          redis: 'Redis',
+          postgres: 'PostgreSQL',
+          openai_ws: 'OpenAI WebSocket'
+        }
+      },
       // Dashboard
       systemHealth: '系统健康',
       overview: '概览',

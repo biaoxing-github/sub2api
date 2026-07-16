@@ -87,6 +87,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	if service.IsImageGenerationIntent("/v1/responses", reqModel, body) {
 		requestCtx = service.WithOpenAIImageGenerationIntent(requestCtx)
 	}
+	// 同一请求内的 failover 复用一次调度快照，避免每次切号重复加载候选账号与批量预取。
+	snapshotGroupID, snapshotPlatform, snapshotHasForce := resolveGatewayRequestSchedulingSnapshotKey(requestCtx, apiKey)
+	requestCtx = h.gatewayService.WithRequestSchedulingSnapshot(requestCtx, snapshotGroupID, snapshotPlatform, snapshotHasForce)
+	c.Request = c.Request.WithContext(requestCtx)
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(requestCtx, apiKey.GroupID, reqModel)
