@@ -775,6 +775,7 @@ export default {
       copy: 'Copy',
       copied: 'Copied',
       note: 'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
+      claudeSettingsHint: 'User-level persistent configuration. Do not commit this file containing your API key to a project repository.',
       noGroupTitle: 'Please assign a group first',
       noGroupDescription: 'This API key has not been assigned to a group. Please click the group column in the key list to assign one before viewing the configuration.',
       openai: {
@@ -788,6 +789,7 @@ export default {
         geminiCli: 'Gemini CLI',
         codexCli: 'Codex CLI',
         codexCliWs: 'Codex CLI (WebSocket)',
+        grokCli: 'Grok Build',
         opencode: 'OpenCode',
       },
       antigravity: {
@@ -801,6 +803,18 @@ export default {
         description: 'Add the following environment variables to your terminal profile or run directly in terminal to configure Gemini CLI access.',
         modelComment: 'If you have Gemini 3 access, you can use: gemini-3-pro-preview',
         note: 'These environment variables will be active in the current terminal session. For permanent configuration, add them to ~/.bashrc, ~/.zshrc, or the appropriate configuration file.',
+      },
+      grok: {
+        description: 'Configure Grok Build, Claude Code, Codex, or OpenCode to send requests through your Sub2API Grok group.',
+        claudeDescription: 'Configure Claude Code to send Messages API traffic through your Sub2API Grok group.',
+        codexDescription: 'Configure Codex to send Responses API traffic through your Sub2API Grok group.',
+        configTomlHint: 'Back up an existing config.toml before merging this model entry. Run grok inspect after saving to verify the effective configuration.',
+        codexConfigTomlHint: 'Back up an existing config.toml before merging this provider configuration.',
+        note: 'Save the file as ~/.grok/config.toml, then run grok inspect and select grok from /model.',
+        noteWindows: 'Save the file as %USERPROFILE%\\.grok\\config.toml, then run grok inspect and select grok from /model.',
+        claudeNote: 'Choose one method: run the terminal commands for the current session, or save settings.json for user-level persistent configuration.',
+        codexNote: 'Save config.toml under ~/.codex and set SUB2API_API_KEY before starting Codex.',
+        codexNoteWindows: 'Save config.toml under %USERPROFILE%\\.codex and set SUB2API_API_KEY in PowerShell before starting Codex.'
       },
       opencode: {
         title: 'OpenCode Example',
