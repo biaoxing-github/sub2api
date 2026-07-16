@@ -203,7 +203,7 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 		case "/api/user/self":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"group":"default"}}`))
 		case "/api/user/available_groups":
-			_, _ = w.Write([]byte(`{"success":true,"data":["default","codex-team"]}`))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"group_ratio":{"default":1,"codex-team":0.8}}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -244,6 +244,11 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	require.Equal(t, "codex-team", payload.Accounts[0].APIKeys[0].Group)
 	require.Equal(t, "ready", payload.Accounts[0].GroupStatus)
 	require.Equal(t, []string{"codex-team", "default"}, payload.Accounts[0].AvailableGroups)
+	require.Len(t, payload.Accounts[0].AvailableGroupOptions, 2)
+	require.Equal(t, "codex-team", payload.Accounts[0].AvailableGroupOptions[0].Name)
+	require.Equal(t, 0.8, *payload.Accounts[0].AvailableGroupOptions[0].RateMultiplier)
+	require.Equal(t, "default", payload.Accounts[0].AvailableGroupOptions[1].Name)
+	require.Equal(t, 1.0, *payload.Accounts[0].AvailableGroupOptions[1].RateMultiplier)
 	require.Equal(t, "missing", payload.Accounts[1].Status)
 	require.Empty(t, payload.Accounts[1].APIKeys)
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-a 1001")
@@ -431,7 +436,7 @@ func TestNewAPICheckinSub2LoginCredentialsAndGroupManagement(t *testing.T) {
 			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":1067,"name":"codex","key":"90f918dd12345684cd","group_id":22,"group":{"id":22,"name":"尝鲜套餐"}}],"total":1}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups/available":
 			require.Equal(t, "Bearer jwt-token", r.Header.Get("Authorization"))
-			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":22,"name":"尝鲜套餐"},{"id":26,"name":"codex--pro"}]}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":22,"name":"尝鲜套餐","rate_multiplier":0.5},{"id":26,"name":"codex--pro","rate_multiplier":1.2}]}`))
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/keys/1067":
 			require.Equal(t, "Bearer jwt-token", r.Header.Get("Authorization"))
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&updated))
@@ -471,7 +476,13 @@ func TestNewAPICheckinSub2LoginCredentialsAndGroupManagement(t *testing.T) {
 	require.Equal(t, int64(22), payload.Accounts[0].APIKeys[0].GroupID)
 	require.Equal(t, "尝鲜套餐", payload.Accounts[0].APIKeys[0].Group)
 	require.Equal(t, "sk-90***84cd", payload.Accounts[0].APIKeys[0].MaskedKey)
-	require.Equal(t, []NewAPICheckinGroupOption{{ID: 22, Name: "尝鲜套餐"}, {ID: 26, Name: "codex--pro"}}, payload.Accounts[0].AvailableGroupOptions)
+	require.Len(t, payload.Accounts[0].AvailableGroupOptions, 2)
+	require.Equal(t, int64(22), payload.Accounts[0].AvailableGroupOptions[0].ID)
+	require.Equal(t, "尝鲜套餐", payload.Accounts[0].AvailableGroupOptions[0].Name)
+	require.Equal(t, 0.5, *payload.Accounts[0].AvailableGroupOptions[0].RateMultiplier)
+	require.Equal(t, int64(26), payload.Accounts[0].AvailableGroupOptions[1].ID)
+	require.Equal(t, "codex--pro", payload.Accounts[0].AvailableGroupOptions[1].Name)
+	require.Equal(t, 1.2, *payload.Accounts[0].AvailableGroupOptions[1].RateMultiplier)
 
 	revealed, err := svc.RevealAPIKey(context.Background(), "sub2-demo", "primary", 1067)
 	require.NoError(t, err)

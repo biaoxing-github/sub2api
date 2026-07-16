@@ -180,3 +180,11 @@
 - 创建一次性 detached worktree 组合验证低冲突候选；连续三次组合冲突后停止扩大范围并收敛到已成功组合项。
 - 移除存在测试依赖缺口的 Ops 投影组，剩余五项通过 repository、handler 编译、apicompat 和 service 测试。
 - 验证完成后清理一次性 worktree；未合并当前分支、未构建镜像、未部署。
+
+## 2026-07-16 Devil - 签到平台目录分组倍率
+
+- 读取 Obsidian 项目入口、Memory、项目流水和 CodeGraph 上下文，确认倍率沿既有 API Key 数据库缓存传递。
+- 核对 Sub2 `rate_multiplier` 与 NewAPI `group_ratio` 响应形态，扩展分组选项 DTO、解析与前端标签。
+- 同步源 HTML 和管理端生成副本，补充 NewAPI/Sub2 后端断言及前端交互断言。
+- 执行完整 service 测试、Vitest、类型检查、生产构建和 Browser 只读夹具验证；清理临时服务和夹具。
+- 保留无关工作树文件，未提交、未部署、未访问真实上游。

@@ -321,3 +321,11 @@
 - PASS：三入口主资源和签到页面 SHA-256 分别一致。
 - PASS：active green healthy/restart 0；rollback blue healthy/restart 7（发布前既有基线）；PostgreSQL、Redis healthy/restart 0。
 - LIMIT：无管理员登录态，未在线执行真实 Key 追加/替换或核对版本下拉。
+
+## 2026-07-16 签到平台目录分组倍率 - Devil
+
+- PASS：`go test ./internal/service -count=1`，完整 service 测试通过。
+- PASS：`pnpm exec vitest run src/views/admin/tools/newapiCheckinLegacy.generated.test.ts`，3/3 通过。
+- PASS：`pnpm run typecheck` 与 `pnpm run build` 通过。
+- PASS：Browser 只读夹具验证 NewAPI 与 Sub2 分组倍率标签、选择器切换、页面渲染和控制台健康。
+- PASS：源 HTML 与管理端生成副本包含相同倍率渲染逻辑，`git diff --check` 通过。

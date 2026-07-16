@@ -117,6 +117,10 @@ describe('mountNewapiCheckinLegacyTool', () => {
             {
               site: 'demo', provider: 'newapi', user_id: '1001', status: 'ready',
               group_status: 'ready', group_message: '已读取上游完整可用分组', available_groups: ['codex-team', 'default'],
+              available_group_options: [
+                { id: 0, name: 'codex-team', rate_multiplier: 0.8 },
+                { id: 0, name: 'default', rate_multiplier: 1 }
+              ],
               api_keys: [
                 {
                   id: 8, name: 'other', masked_key: 'sk-zz***yyyy', group: 'default',
@@ -196,6 +200,8 @@ describe('mountNewapiCheckinLegacyTool', () => {
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('已引用 · demo-main')
     expect(root.querySelector('.api-key-item.referenced')).toBeTruthy()
     expect(root.querySelector('.api-key-item')?.textContent).toContain('sk-ab***5678')
+    expect(root.querySelector('[data-group-select="7"]')?.textContent).toContain('codex-team · 0.8x')
+    expect(root.querySelector('[data-group-select="7"]')?.textContent).toContain('default · 1x')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/admin/newapi-checkin/api-keys',
       expect.any(Object)
@@ -250,7 +256,10 @@ describe('mountNewapiCheckinLegacyTool', () => {
           site: 'sub2-demo', provider: 'sub2api', user_id: 'primary', status: 'ready',
           group_status: 'ready', group_message: '登录成功，已读取 2 个可用分组',
           available_groups: ['尝鲜套餐', 'codex--pro'],
-          available_group_options: [{ id: 22, name: '尝鲜套餐' }, { id: 26, name: 'codex--pro' }],
+          available_group_options: [
+            { id: 22, name: '尝鲜套餐', rate_multiplier: 0.5 },
+            { id: 26, name: 'codex--pro', rate_multiplier: 1.2 }
+          ],
           api_keys: [{ id: 1067, name: 'codex', masked_key: 'sk-90***84cd', group: '尝鲜套餐', group_id: 22 }]
         }]
       })
@@ -376,6 +385,8 @@ describe('mountNewapiCheckinLegacyTool', () => {
     await vi.waitFor(() => expect(root.querySelector('#loginCredentialStatus')?.textContent).toContain('分组 2 个'))
 
     const sub2GroupSelect = root.querySelector('[data-group-select="1067"]') as HTMLSelectElement
+    expect(sub2GroupSelect.textContent).toContain('尝鲜套餐 · 0.5x')
+    expect(sub2GroupSelect.textContent).toContain('codex--pro · 1.2x')
     sub2GroupSelect.value = '26'
     ;(root.querySelector('[data-update-generated-group="1067"]') as HTMLButtonElement).click()
     await vi.waitFor(() => expect(updatedGroupPayload).toEqual({

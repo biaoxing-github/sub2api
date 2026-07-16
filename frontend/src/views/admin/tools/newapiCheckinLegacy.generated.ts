@@ -1028,9 +1028,14 @@ export function mountNewapiCheckinLegacyTool(scope: LegacyToolScope): LegacyTool
     function generatedAPIKeysHtml(site, account, apiKeySummary) {
       const provider = apiKeySummary?.provider || site.provider || "newapi";
       const sub2 = provider === "sub2api";
-      const baseOptions = sub2
-        ? (apiKeySummary?.available_group_options || []).map((option) => ({ id: Number(option.id), name: option.name }))
-        : Array.from(new Set((apiKeySummary?.available_groups || []).filter(Boolean))).map((name) => ({ id: 0, name }));
+      const structuredOptions = (apiKeySummary?.available_group_options || []).map((option) => ({
+        id: Number(option.id || 0),
+        name: option.name,
+        rateMultiplier: option.rate_multiplier
+      }));
+      const baseOptions = structuredOptions.length
+        ? structuredOptions
+        : Array.from(new Set((apiKeySummary?.available_groups || []).filter(Boolean))).map((name) => ({ id: 0, name, rateMultiplier: null }));
       const items = (apiKeySummary?.api_keys || []).slice().sort((left, right) => {
         const leftReferenced = (left.referenced_accounts || []).length > 0 ? 1 : 0;
         const rightReferenced = (right.referenced_accounts || []).length > 0 ? 1 : 0;
@@ -1040,7 +1045,7 @@ export function mountNewapiCheckinLegacyTool(scope: LegacyToolScope): LegacyTool
         const revealedKey = state.revealedGeneratedKeys.get(stateKey);
         const options = baseOptions.slice();
         if (item.group && !options.some((option) => sub2 ? option.id === Number(item.group_id) : option.name === item.group)) {
-          options.unshift({ id: Number(item.group_id || 0), name: item.group });
+          options.unshift({ id: Number(item.group_id || 0), name: item.group, rateMultiplier: null });
         }
         const references = item.referenced_accounts || [];
         const targets = item.target_accounts || [];
@@ -1093,7 +1098,10 @@ export function mountNewapiCheckinLegacyTool(scope: LegacyToolScope): LegacyTool
                 ${options.map((option) => {
                   const value = sub2 ? String(option.id) : option.name;
                   const selected = sub2 ? Number(option.id) === Number(item.group_id) : option.name === item.group;
-                  return `<option value="${escapeHtml(value)}" data-group-name="${escapeHtml(option.name)}" ${selected ? "selected" : ""}>${escapeHtml(option.name)}</option>`;
+                  const parsedRate = Number(option.rateMultiplier);
+                  const hasRate = option.rateMultiplier !== null && option.rateMultiplier !== undefined && Number.isFinite(parsedRate);
+                  const label = hasRate ? `${option.name} · ${parsedRate}x` : option.name;
+                  return `<option value="${escapeHtml(value)}" data-group-name="${escapeHtml(option.name)}" ${selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
                 }).join("")}
               </select>
               <button

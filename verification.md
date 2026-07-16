@@ -5178,6 +5178,15 @@ v0.1.149 拉取结果：
 - LIMIT：无可用管理员登录配置，未在线读取受保护版本接口；OCI 标签与线上资源已核验。
 - 边界：未执行真实 Key 追加/替换、签到、月度同步、Git push 或镜像 registry push。
 
+## 2026-07-16 - 签到平台目录展示分组倍率
+
+- 执行者：Devil。
+- PASS：Sub2 从 `rate_multiplier` 读取倍率，NewAPI 兼容 `group_ratio`、名称数组和分组对象数组。
+- PASS：倍率随既有 API Key/分组摘要写入 PostgreSQL JSON 缓存；旧缓存或上游未返回倍率时只显示分组名。
+- PASS：平台目录下拉展示 `default · 1x`、`vip · 0.8x`、`尝鲜套餐 · 0.5x`、`codex--pro · 1.2x`；切换分组值不受展示标签影响。
+- PASS：完整 service 测试、Vitest、类型检查、生产构建、Browser 页面身份/非空/无错误覆盖层/控制台/交互验证和 diff check 通过。
+- 边界：使用只读本地响应验证，没有请求真实上游、修改分组、提交或部署。
+
 ## 2026-07-16 - 签到 Key 追加/替换错误覆盖 base_url 修复
 
 - 执行者：Devil。

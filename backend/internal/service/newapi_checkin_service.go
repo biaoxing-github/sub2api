@@ -228,12 +228,14 @@ type NewAPICheckinConfigAccountSummary struct {
 	HasLoginPassword bool `json:"has_login_password"`
 }
 
-// NewAPICheckinGroupOption 是上游可用分组的稳定 ID 和名称。
+// NewAPICheckinGroupOption 是上游可用分组的稳定 ID、名称和倍率。
 type NewAPICheckinGroupOption struct {
 	// ID 是 sub2api 分组 ID；NewAPI 只有名称时为 0。
 	ID int64 `json:"id"`
 	// Name 是页面展示的分组名称。
 	Name string `json:"name"`
+	// RateMultiplier 是上游返回的分组倍率；站点未提供时保持为空。
+	RateMultiplier *float64 `json:"rate_multiplier,omitempty"`
 }
 
 // NewAPICheckinAPIKeySummary 是允许返回管理页面的上游 API Key 脱敏摘要。
@@ -305,7 +307,7 @@ type NewAPICheckinAccountAPIKeySummary struct {
 	GroupMessage string `json:"group_message,omitempty"`
 	// AvailableGroups 是当前账号能够读取到的分组名称。
 	AvailableGroups []string `json:"available_groups"`
-	// AvailableGroupOptions 是带稳定 ID 的分组选项，供 sub2api 更新使用。
+	// AvailableGroupOptions 是包含稳定 ID 和可选倍率的分组选项。
 	AvailableGroupOptions []NewAPICheckinGroupOption `json:"available_group_options,omitempty"`
 	// APIKeys 是该账号已生成的脱敏 API Key 列表。
 	APIKeys []NewAPICheckinAPIKeySummary `json:"api_keys"`
@@ -2635,7 +2637,7 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 		return summary
 	}
 
-	groupSet := map[string]struct{}{}
+	groupOptions := map[string]*float64{}
 	data := mapFromAny(result.payload["data"])
 	for _, raw := range sliceFromAny(data["items"]) {
 		item := mapFromAny(raw)
@@ -2644,7 +2646,7 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 			continue
 		}
 		groupName := cleanNewAPIText(item["group"])
-		addNewAPIGroup(groupSet, groupName)
+		addNewAPIGroupOption(groupOptions, groupName, nil)
 		summary.APIKeys = append(summary.APIKeys, NewAPICheckinAPIKeySummary{
 			ID:        int64FromAny(item["id"]),
 			Name:      firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
@@ -2659,20 +2661,23 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 		if selfData == nil {
 			selfData = self.payload
 		}
-		addNewAPIGroup(groupSet, cleanNewAPIText(selfData["group"]))
+		addNewAPIGroupOption(groupOptions, cleanNewAPIText(selfData["group"]), nil)
 	}
 	groups := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/user/available_groups"), site.BaseURL, headers)
 	if groups.ok {
-		collectNewAPIGroupNames(groups.payload["data"], groupSet)
+		collectNewAPIGroupOptions(groups.payload["data"], groupOptions)
 		summary.GroupStatus = "ready"
 		summary.GroupMessage = "已读取上游完整可用分组"
-	} else if len(groupSet) > 0 {
+	} else if len(groupOptions) > 0 {
 		summary.GroupStatus = "partial"
 		summary.GroupMessage = "上游完整分组接口未授权，当前仅展示账号和 token 已知分组"
 	} else {
 		summary.GroupMessage = firstNonEmpty(groups.message, "上游分组读取失败")
 	}
-	summary.AvailableGroups = sortedNewAPIGroups(groupSet)
+	summary.AvailableGroupOptions = sortedNewAPIGroupOptions(groupOptions)
+	for _, option := range summary.AvailableGroupOptions {
+		summary.AvailableGroups = append(summary.AvailableGroups, option.Name)
+	}
 	if len(summary.APIKeys) > 0 {
 		summary.Status = "ready"
 	}
@@ -2793,7 +2798,11 @@ func sub2GroupOptions(groups []any) []NewAPICheckinGroupOption {
 			continue
 		}
 		seen[id] = struct{}{}
-		options = append(options, NewAPICheckinGroupOption{ID: id, Name: name})
+		options = append(options, NewAPICheckinGroupOption{
+			ID:             id,
+			Name:           name,
+			RateMultiplier: newAPIGroupRateMultiplier(group),
+		})
 	}
 	return options
 }
@@ -2872,49 +2881,73 @@ func normalizeNewAPIFullKey(value string) string {
 	return "sk-" + value
 }
 
-func addNewAPIGroup(groups map[string]struct{}, value string) {
+func addNewAPIGroupOption(groups map[string]*float64, value string, rateMultiplier *float64) {
 	value = cleanNewAPIText(value)
-	if value != "" {
-		groups[value] = struct{}{}
+	if value == "" {
+		return
+	}
+	if current, exists := groups[value]; !exists || (current == nil && rateMultiplier != nil) {
+		groups[value] = rateMultiplier
 	}
 }
 
-func collectNewAPIGroupNames(value any, groups map[string]struct{}) {
+// collectNewAPIGroupOptions 兼容 NewAPI 的名称数组、分组对象数组和 group_ratio 映射。
+func collectNewAPIGroupOptions(value any, groups map[string]*float64) {
 	switch typed := value.(type) {
 	case string:
-		addNewAPIGroup(groups, typed)
+		addNewAPIGroupOption(groups, typed, nil)
 	case []any:
 		for _, item := range typed {
 			if row := mapFromAny(item); row != nil {
-				addNewAPIGroup(groups, firstNonEmpty(cleanNewAPIText(row["name"]), cleanNewAPIText(row["group"]), cleanNewAPIText(row["value"])))
+				addNewAPIGroupOption(
+					groups,
+					firstNonEmpty(cleanNewAPIText(row["name"]), cleanNewAPIText(row["group"]), cleanNewAPIText(row["value"])),
+					newAPIGroupRateMultiplier(row),
+				)
 				continue
 			}
-			collectNewAPIGroupNames(item, groups)
+			collectNewAPIGroupOptions(item, groups)
 		}
 	case map[string]any:
-		for _, wrapper := range []string{"groups", "items", "available_groups"} {
+		for _, wrapper := range []string{"groups", "items", "available_groups", "group_ratio"} {
 			if nested, ok := typed[wrapper]; ok {
-				collectNewAPIGroupNames(nested, groups)
+				collectNewAPIGroupOptions(nested, groups)
 				return
 			}
 		}
 		if name := firstNonEmpty(cleanNewAPIText(typed["name"]), cleanNewAPIText(typed["group"]), cleanNewAPIText(typed["value"])); name != "" {
-			addNewAPIGroup(groups, name)
+			addNewAPIGroupOption(groups, name, newAPIGroupRateMultiplier(typed))
 			return
 		}
-		for name := range typed {
-			addNewAPIGroup(groups, name)
+		for name, rawRate := range typed {
+			addNewAPIGroupOption(groups, name, newAPIGroupRateMultiplier(rawRate))
 		}
 	}
 }
 
-func sortedNewAPIGroups(groups map[string]struct{}) []string {
-	out := make([]string, 0, len(groups))
-	for group := range groups {
-		out = append(out, group)
+func sortedNewAPIGroupOptions(groups map[string]*float64) []NewAPICheckinGroupOption {
+	out := make([]NewAPICheckinGroupOption, 0, len(groups))
+	for name, rateMultiplier := range groups {
+		out = append(out, NewAPICheckinGroupOption{Name: name, RateMultiplier: rateMultiplier})
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func newAPIGroupRateMultiplier(value any) *float64 {
+	if row := mapFromAny(value); row != nil {
+		for _, field := range []string{"rate_multiplier", "ratio", "group_ratio"} {
+			if rateMultiplier := newAPIGroupRateMultiplier(row[field]); rateMultiplier != nil {
+				return rateMultiplier
+			}
+		}
+		return nil
+	}
+	rateMultiplier, ok := optionalFloat64FromAny(value)
+	if !ok || rateMultiplier < 0 {
+		return nil
+	}
+	return &rateMultiplier
 }
 
 func maskNewAPIKey(value string) string {
