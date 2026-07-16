@@ -329,3 +329,11 @@
 - PASS：`pnpm run typecheck` 与 `pnpm run build` 通过。
 - PASS：Browser 只读夹具验证 NewAPI 与 Sub2 分组倍率标签、选择器切换、页面渲染和控制台健康。
 - PASS：源 HTML 与管理端生成副本包含相同倍率渲染逻辑，`git diff --check` 通过。
+
+## 2026-07-16 v0.1.156.5 签到倍率修复发布 - Devil
+
+- FAIL→PASS：复现并修复独立签到页 CSP nonce 拦截。
+- FAIL→PASS：确认错误分组端点导致 NewAPI 全部缺倍率，改用标准兼容端点。
+- PASS：相关后端测试、Vitest 3/3、类型检查、生产构建、候选与切流后观察通过。
+- PASS：active green=`v0.1.156.5`，rollback blue=`v0.1.156.3`，数据库组件未重启。
+- NOTE：失败候选 `.4` 未创建镜像、未部署且不复用。

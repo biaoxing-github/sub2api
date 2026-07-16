@@ -188,3 +188,11 @@
 - 同步源 HTML 和管理端生成副本，补充 NewAPI/Sub2 后端断言及前端交互断言。
 - 执行完整 service 测试、Vitest、类型检查、生产构建和 Browser 只读夹具验证；清理临时服务和夹具。
 - 保留无关工作树文件，未提交、未部署、未访问真实上游。
+
+## 2026-07-16 Devil - v0.1.156.5 签到倍率修复发布
+
+- Browser 发现独立签到页被 CSP nonce 拦截，追踪到通用静态 HTML 分支未替换 nonce。
+- 对照 NewAPI 当前源码与项目既有实现，修复 NewAPI 倍率端点并补测试。
+- 完成验证并提交 `cd446b9d4b3f`；`.4` 构建前失败并跳过，从 committed HEAD 构建核验 `.5`。
+- 仅部署 idle green，完成候选观察、nginx 切流、切流后观察、401 契约和三入口哈希验证。
+- 最终 active green=`sub2api:v0.1.156.5`，rollback blue=`sub2api:v0.1.156.3`；未推送远程。

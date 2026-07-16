@@ -5178,6 +5178,15 @@ v0.1.149 拉取结果：
 - LIMIT：无可用管理员登录配置，未在线读取受保护版本接口；OCI 标签与线上资源已核验。
 - 边界：未执行真实 Key 追加/替换、签到、月度同步、Git push 或镜像 registry push。
 
+## 2026-07-16 v0.1.156.5 发布完成
+
+- 执行者：Devil。
+- PASS：提交 `cd446b9d4b3f`，从 committed HEAD 构建并核验 `sub2api:v0.1.156.5`。
+- PASS：NewAPI 倍率兼容端点与独立页 CSP nonce 由自动化测试及 Browser 候选冒烟验证。
+- PASS：候选、切流、三入口哈希、401 契约和关键日志检查通过。
+- PASS：green `.5`、blue `.3`、PostgreSQL、Redis 均 healthy/restart 0。
+- LIMIT：无管理员登录态，未在线点击真实 NewAPI 同步；未执行 Git push 或 registry push。
+
 ## 2026-07-16 - 签到平台目录展示分组倍率
 
 - 执行者：Devil。
