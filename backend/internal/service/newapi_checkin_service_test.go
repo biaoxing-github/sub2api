@@ -86,7 +86,11 @@ func TestNewAPICheckinRevealMaskedKeyUsesDatabaseFullKey(t *testing.T) {
 	}}})
 	accountRepo := &newAPICheckinAccountRepoStub{accounts: []Account{{
 		ID: 491, Name: "dawcode", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
-		Credentials: map[string]any{"base_url": upstream.URL, "api_key": storedKey},
+		Credentials: map[string]any{
+			"base_url":      upstream.URL,
+			"api_key":       storedKey,
+			"model_mapping": map[string]any{"gpt-4.1": "gpt-4.1-mini"},
+		},
 	}}}
 	svc := NewNewAPICheckinService(NewAPICheckinOptions{Repository: repo, AccountRepository: accountRepo, HTTPClient: upstream.Client()})
 
@@ -99,6 +103,18 @@ func TestNewAPICheckinRevealMaskedKeyUsesDatabaseFullKey(t *testing.T) {
 	require.Equal(t, int64(491), linked.TargetAccountID)
 	require.NotNil(t, accountRepo.updated)
 	require.Equal(t, []string{storedKey}, accountRepo.updated.GetAPIKeys())
+	require.Equal(t, upstream.URL, accountRepo.updated.GetCredential("base_url"))
+	require.Equal(t, upstream.URL, accountRepo.updated.GetOpenAIPrimaryRequestBaseURL())
+	require.Equal(t, map[string]any{"gpt-4.1": "gpt-4.1-mini"}, accountRepo.updated.Credentials["model_mapping"])
+
+	accountRepo.updated.Credentials[CredentialAPIKeysDisabled] = []string{FingerprintAPIKey(storedKey)}
+	replaced, err := svc.LinkAPIKeyToAccount(context.Background(), "dawclaudecode", "1001", 7, 491, "replace")
+	require.NoError(t, err)
+	require.Equal(t, "replace", replaced.Operation)
+	require.Equal(t, upstream.URL, accountRepo.updated.GetCredential("base_url"))
+	require.Equal(t, upstream.URL, accountRepo.updated.GetOpenAIPrimaryRequestBaseURL())
+	require.Equal(t, map[string]any{"gpt-4.1": "gpt-4.1-mini"}, accountRepo.updated.Credentials["model_mapping"])
+	require.NotContains(t, accountRepo.updated.Credentials, CredentialAPIKeysDisabled)
 }
 
 func fixedNewAPICheckinNow() time.Time {

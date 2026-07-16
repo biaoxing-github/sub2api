@@ -1152,10 +1152,15 @@ func (s *NewAPICheckinService) LinkAPIKeyToAccount(ctx context.Context, siteName
 	if target.Platform != PlatformOpenAI || target.Type != AccountTypeAPIKey || !newAPIAccountBaseURLsMatch(target.GetCredential("base_url"), site.BaseURL) {
 		return NewAPICheckinLinkAPIKeyResult{}, fmt.Errorf("目标账号与签到站点 URL 不匹配")
 	}
+	// Key 关联是局部更新；先复制完整凭据，避免全量表单合并语义删除 base_url 等未显式提交字段。
+	credentials := cloneCredentials(target.Credentials)
 	if operation == "append" {
-		target.Credentials = MergeAccountCredentialsForUpdate(target.Credentials, map[string]any{"api_keys_append": []string{revealed.Key}})
+		credentials["api_keys_append"] = []string{revealed.Key}
 	} else {
-		target.Credentials = MergeAccountCredentialsForUpdate(target.Credentials, map[string]any{"api_keys": []string{revealed.Key}})
+		credentials["api_keys"] = []string{revealed.Key}
+	}
+	target.Credentials = MergeAccountCredentialsForUpdate(target.Credentials, credentials)
+	if operation == "replace" {
 		delete(target.Credentials, CredentialAPIKeysDisabled)
 	}
 	if err := s.accountRepo.Update(ctx, target); err != nil {

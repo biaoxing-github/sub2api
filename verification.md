@@ -5178,6 +5178,16 @@ v0.1.149 拉取结果：
 - LIMIT：无可用管理员登录配置，未在线读取受保护版本接口；OCI 标签与线上资源已核验。
 - 边界：未执行真实 Key 追加/替换、签到、月度同步、Git push 或镜像 registry push。
 
+## 2026-07-16 - 签到 Key 追加/替换错误覆盖 base_url 修复
+
+- 执行者：Devil。
+- PASS：确认根因是签到 Key 局部更新误用了完整表单合并语义，导致未显式传入的 `base_url`、`model_mapping` 等非敏感字段被删除。
+- PASS：字段删除后 `GetOpenAIRequestBaseURLs()` 会回落到 `https://api.openai.com`，与用户观察一致。
+- PASS：修复后 append/replace 都从完整现有 credentials 副本修改 Key，仅改变 Key 相关字段，并保留对应站点请求地址。
+- PASS：service、repository、admin handler 回归测试及 diff check 通过。
+- PASS：只读检查生产库 92 个 OpenAI API Key 账号，当前没有 `base_url` 缺失或等于 OpenAI 官方地址的记录，无需数据修复。
+- 边界：未执行真实 Key 追加/替换，未提交、未构建、未部署。
+
 ## 2026-07-15 - 调度池优先级快速调整与并发容量调度
 
 - 执行者：Devil。

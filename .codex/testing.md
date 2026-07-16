@@ -302,3 +302,12 @@
 - LIMITED：应用内浏览器打开 `http://127.0.0.1:4180/admin/account-scheduling-pool` 后跳转登录页；确认应用非空且无框架错误覆盖层，因该端口无管理员登录态未做真实保存操作。
 - PASS：`sub2api:v0.1.156.1` OCI 标签和二进制版本信息与提交 `fbef11c9eefe` 一致。
 - PASS：blue 候选 61 秒 7 轮、切流后 63 秒三入口 7 轮验证通过；主资源 SHA-256 一致，独立窗口关键日志为 0。
+
+## 2026-07-16 签到 Key 关联保留站点地址 - Devil
+
+- FAIL→PASS：`TestNewAPICheckinRevealMaskedKeyUsesDatabaseFullKey` 先稳定复现 append 后 `base_url` 变为空字符串；修复后 append/replace 均保留站点 URL、模型映射和最终 OpenAI 请求地址。
+- PASS：replace 仍正确删除 `api_keys_disabled`，Key 更新语义未改变。
+- PASS：`go test ./internal/service -count=1`，耗时 29.807 秒。
+- PASS：`go test ./internal/repository ./internal/handler/admin -count=1`。
+- PASS：聚焦症状测试与 `git diff --check`。
+- 边界：生产 PostgreSQL 仅只读检查；未执行真实 Key 追加/替换，未提交、未构建、未部署。
