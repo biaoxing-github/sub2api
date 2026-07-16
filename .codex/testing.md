@@ -398,3 +398,10 @@
 - PASS：隔离 Vite 夹具已编译当前 `OpsRuntimeMetricsSummary.vue`，并确认转换模块使用 fixture API；独立 QA 曾验证四个摘要区、三类连接池、刷新和隐藏控件可渲染，未出现框架错误覆盖层。
 - LIMITED：应用内 Browser 的历史标签与当前会话不匹配，不能采集新的可操作 DOM 或截图；临时夹具已清理。当前源码真实视觉验收仍需携带管理员登录态的候选镜像。
 - LIMITED：`go env` 显示 `CGO_ENABLED=0`、`CC=gcc`，且系统没有可用 gcc/clang/zig，`-race` 仍未执行；`git diff --check` 通过。
+
+## 2026-07-16 发布 v0.1.157.2
+
+- PASS：`17d554024` 的 `git archive HEAD` 构建 `sub2api:v0.1.157.2`；OCI version/revision、镜像 ID 与二进制启动日志一致。
+- PASS：仅重建 idle blue；候选 `18083` health、根页、主资源为 200，runtime metrics、admin system、Responses 未认证均为 401；容器实际 DB `32/16`、Redis `1024/128`。
+- PASS：排除经 green 历史日志佐证的既有启动快照清理超时后，blue 85 秒独立窗口 healthy/restart 0，关键日志 0。
+- PASS：切流后 `8080`、`18081`、`18083` 均 health 200、受保护契约 401，主资源 SHA-256 一致；blue 91 秒独立窗口 healthy/restart 0，关键日志 0。

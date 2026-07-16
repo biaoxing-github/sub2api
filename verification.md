@@ -5379,3 +5379,11 @@ v0.1.149 拉取结果：
 - LIMITED：Browser 连接可枚举标签但返回的标签不属于当前会话，无法生成新截图；不把这项限制表述为通过。临时文件、Vite 缓存和服务均已移除。
 - LIMITED：本机没有 CGo 所需 C 编译器，`-race` 未执行。
 - PASS：`git diff --check` 通过。
+
+## 2026-07-16 发布验证 v0.1.157.2
+
+- PASS：从功能提交 `17d554024` 的不可变归档构建镜像 `sub2api:v0.1.157.2`，镜像标签、OCI 标签和二进制版本完全一致。
+- PASS：部署前备份 `.env` 和 upstream；只重建 blue，green、PostgreSQL、Redis 保持运行。blue 有效 DB 连接池为 `32/16`、Redis 池为 `1024/128`。
+- PASS：Nginx 配置检查及 reload 成功，流量切至 blue。切流前候选 85 秒、切流后 91 秒均 healthy/restart 0，精确关键日志过滤均为 0。
+- PASS：`8080`、`18081`、`18083` 的 health 为 200，runtime metrics 及 Responses 未认证均为 401，主资源 SHA-256 一致。
+- RISK：`openai_request_snapshots` 表约 3.5 GB，1,673 条记录已过期；green 已有周期性 10 秒清理超时。本次未授权数据库写入，作为独立维护项保留。

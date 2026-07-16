@@ -248,3 +248,12 @@
 - Browser：读取恢复说明、枚举标签、尝试新建与认领标签；历史标签与当前会话不匹配，停止重试并记录视觉截图限制。
 - `go env`、`Get-Command`：确认 `CGO_ENABLED=0`，未发现 gcc/clang/zig，保留 `-race` 环境阻塞结论。
 - `git diff --check`：通过。临时 Vite 服务和 `%LOCALAPPDATA%\\Temp\\sub2api-ops-qa` 已清理。
+
+## 2026-07-16 发布 v0.1.157.2
+
+- `git status`、`git show`、`docker image inspect`：确认功能提交 `17d554024`、不可变镜像 ID 与 OCI 标签；无关脏文件未暂存。
+- `git archive HEAD` Docker 构建：完成 `sub2api:v0.1.157.2`，二进制启动日志确认主版本、镜像版本与 commit。
+- `Copy-Item`、`apply_patch`：备份部署 `.env` 与 upstream；仅将候选连接池声明收敛为 PostgreSQL 100、DB 32/16、Redis 10000、池 1024/128。
+- `docker compose -f docker-compose.blue.yml up -d --no-deps --force-recreate sub2api-blue`：只重建 idle blue；候选健康、资源、认证边界和有效环境变量通过。
+- `docker logs`、只读 `psql`：确认快照清理超时是 green 既有问题，记录表容量和过期数据，不写数据库。
+- `nginx -t`、`nginx -s reload`：上游切至 blue；三入口重复健康、认证边界、主资源哈希和 91 秒观察通过，green 保留回滚。
