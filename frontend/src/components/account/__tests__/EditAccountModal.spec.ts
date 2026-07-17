@@ -300,6 +300,54 @@ describe('EditAccountModal', () => {
     expect(wrapper.get('[data-testid="account-api-key-credentials-fields"]').attributes('style')).toContain('display: none')
   })
 
+  it('replaces the request Base URL list when the primary Base URL changes', async () => {
+    const account = buildAccount()
+    account.credentials = {
+      ...account.credentials,
+      base_url: 'https://old.example.com',
+      request_base_urls: ['https://old.example.com', 'https://fallback.example.com']
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const credentials = wrapper.get('[data-testid="account-api-key-credentials-fields"]')
+    await credentials.get('input[type="text"]').setValue('https://new.example.com')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe(
+      'https://new.example.com'
+    )
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.request_base_urls).toEqual([
+      'https://new.example.com'
+    ])
+  })
+
+  it('preserves the request Base URL list when the primary Base URL is unchanged', async () => {
+    const account = buildAccount()
+    account.credentials = {
+      ...account.credentials,
+      base_url: 'https://primary.example.com',
+      request_base_urls: ['https://primary.example.com', 'https://fallback.example.com']
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.request_base_urls).toEqual([
+      'https://primary.example.com',
+      'https://fallback.example.com'
+    ])
+  })
+
   it('loads unified account error handling rules and saves legacy compatibility fields', async () => {
     const account = buildAccount()
     account.credentials = {
