@@ -2085,6 +2085,8 @@ const (
 	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
 	// OpenAIEndpointCapabilityEmbeddings 表示账号可承接 /v1/embeddings 类请求。
 	OpenAIEndpointCapabilityEmbeddings OpenAIEndpointCapability = "embeddings"
+	// OpenAIEndpointCapabilityAlphaSearch 表示账号可承接 Codex 独立 alpha/search 请求。
+	OpenAIEndpointCapabilityAlphaSearch OpenAIEndpointCapability = "alpha_search"
 )
 
 const openAIEndpointCapabilitiesCredentialKey = "openai_capabilities"
@@ -2308,6 +2310,11 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	}
 	switch capability {
 	case OpenAIEndpointCapabilityResponses, OpenAIEndpointCapabilityChatCompletions:
+	case OpenAIEndpointCapabilityAlphaSearch:
+		// OAuth 走 ChatGPT/Codex 端点，API Key 走账号 base_url 的 /v1/alpha/search。
+		if a.Type != AccountTypeOAuth && a.Type != AccountTypeAPIKey {
+			return false
+		}
 	case OpenAIEndpointCapabilityEmbeddings:
 		if a.Type != AccountTypeAPIKey {
 			return false
@@ -2317,6 +2324,9 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	}
 	configured, strict, found := a.openAIEndpointCapabilitySet()
 	if !found {
+		return true
+	}
+	if capability == OpenAIEndpointCapabilityAlphaSearch && configured[string(OpenAIEndpointCapabilityChatCompletions)] {
 		return true
 	}
 	if strict {

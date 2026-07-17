@@ -65,9 +65,12 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) {
+		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) ||
+			isOpenAIAlphaSearchEndpointUnsupported(account, resp.StatusCode) {
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
-			s.handleFailoverSideEffects(ctx, resp, account, upstreamModel)
+			if shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(resp.StatusCode) {
+				s.handleFailoverSideEffects(ctx, resp, account, upstreamModel)
+			}
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
@@ -133,6 +136,27 @@ func (s *OpenAIGatewayService) buildOpenAIAlphaSearchRequest(ctx context.Context
 		req.Header.Set("Version", codexCLIVersion())
 	}
 	return req, nil
+}
+
+// isOpenAIAlphaSearchEndpointUnsupported 判断 API Key 上游是否未实现独立搜索端点。
+// 404/405 在普通模型请求中可能是用户输入问题，但对 alpha/search 只表示当前上游
+// 没有该工具端点，应交给调度器换到可用账号。
+func isOpenAIAlphaSearchEndpointUnsupported(account *Account, statusCode int) bool {
+	if account == nil || account.Type != AccountTypeAPIKey {
+		return false
+	}
+	return statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed
+}
+
+// shouldApplyOpenAIAlphaSearchAccountErrorSideEffects 仅让明确的凭据/服务错误
+// 更新账号状态；工具端点的 401、404、405 只触发本次换号，避免误伤健康账号。
+func shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(statusCode int) bool {
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusNotFound, http.StatusMethodNotAllowed:
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *OpenAIGatewayService) openAIAlphaSearchURL(account *Account) (string, error) {
