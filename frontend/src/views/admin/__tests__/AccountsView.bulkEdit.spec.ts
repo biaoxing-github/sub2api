@@ -375,6 +375,46 @@ describe('admin AccountsView bulk edit scope', () => {
     expect((expandedBannerDetails.element as HTMLElement).style.display).toBe('')
   })
 
+  it('links API Key account names to the upstream origin only', async () => {
+    listAccounts.mockResolvedValueOnce({
+      items: [
+        {
+          id: 101,
+          name: 'upstream-key',
+          platform: 'openai',
+          type: 'apikey',
+          status: 'active',
+          schedulable: true,
+          credentials: { base_url: 'https://upstream.example.com/v1/chat/completions?token=hidden' },
+          extra: {}
+        },
+        {
+          id: 102,
+          name: 'oauth-account',
+          platform: 'openai',
+          type: 'oauth',
+          status: 'active',
+          schedulable: true,
+          credentials: { base_url: 'https://oauth.example.com/private/path' },
+          extra: {}
+        }
+      ],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountAccountsView()
+    await flushPromises()
+
+    const apiKeyRow = wrapper.get('[data-test="row-101"]')
+    const homepageLink = apiKeyRow.get('a')
+    expect(homepageLink.attributes('href')).toBe('https://upstream.example.com')
+    expect(homepageLink.attributes('rel')).toBe('noopener noreferrer')
+    expect(wrapper.get('[data-test="row-102"]').find('a').exists()).toBe(false)
+  })
+
   it('shows account-level token refresh errors in a dialog', async () => {
     window.confirm = vi.fn(() => true)
     listAccounts.mockResolvedValueOnce({
