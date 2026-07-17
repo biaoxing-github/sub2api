@@ -1178,6 +1178,8 @@ interface ModelMapping {
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editRequestBaseUrlsText = ref('')
+// 记录本次编辑会话是否改动过主请求地址，用于提交时显式清空数据库中的旧地址列表。
+const editBaseUrlChanged = ref(false)
 const editBalanceBaseUrl = ref('')
 const editApiKey = ref('')
 const editApiKeysText = ref('')
@@ -1187,6 +1189,7 @@ const editOpenAICodexCliUserAgent = ref('')
 // 用户更换主请求地址后，旧故障转移列表不再属于新上游，必须同步清空。
 const handleAPIKeyBaseURLUpdate = (value: string) => {
   if (value === editBaseUrl.value) return
+  editBaseUrlChanged.value = true
   editBaseUrl.value = value
   editRequestBaseUrlsText.value = ''
 }
@@ -1561,6 +1564,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   if (!newAccount) {
     return
   }
+  editBaseUrlChanged.value = false
   antigravityMixedChannelConfirmed.value = false
   showMixedChannelWarning.value = false
   mixedChannelWarningDetails.value = null
@@ -2309,7 +2313,11 @@ const handleSubmit = async () => {
         base_url: newBaseUrl
       }
       if (props.account.platform === 'openai' || props.account.platform === 'anthropic') {
-        newCredentials.request_base_urls = requestBaseUrls.length > 0 ? requestBaseUrls : [newBaseUrl]
+        newCredentials.request_base_urls = editBaseUrlChanged.value
+          ? []
+          : requestBaseUrls.length > 0
+            ? requestBaseUrls
+            : [newBaseUrl]
       }
       if (props.account.platform === 'anthropic' || props.account.platform === 'antigravity') {
         const normalizedClaudeCliVersion = editClaudeCliVersion.value.trim()
