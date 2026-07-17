@@ -4604,7 +4604,7 @@ export default {
       remainingDays: '{days}d left',
       expiresAt: 'Expires at',
       expiryWarnDays: 'Warn days',
-      fallbackMode: 'Fallback mode',
+      fallbackMode: 'Expiry fallback',
       fallbackNone: 'No fallback',
       fallbackProxy: 'Backup proxy',
       fallbackDirect: 'Direct',

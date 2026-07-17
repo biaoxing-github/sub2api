@@ -4719,7 +4719,7 @@ export default {
       remainingDays: '剩余 {days} 天',
       expiresAt: '过期时间',
       expiryWarnDays: '提醒天数',
-      fallbackMode: '回退模式',
+      fallbackMode: '到期回退',
       fallbackNone: '不回退',
       fallbackProxy: '备用代理',
       fallbackDirect: '直连',
