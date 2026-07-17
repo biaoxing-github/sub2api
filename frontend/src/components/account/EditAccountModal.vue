@@ -26,7 +26,7 @@
       <div v-if="account.type === 'apikey'" class="space-y-4">
         <AccountAPIKeyCredentialsFields
           v-show="activeFormTab !== 'models'"
-          v-model:base-url="editBaseUrl"
+          :base-url="editBaseUrl"
           v-model:request-base-urls-text="editRequestBaseUrlsText"
           v-model:balance-base-url="editBalanceBaseUrl"
           v-model:api-key="editApiKey"
@@ -44,6 +44,7 @@
           :restoring-api-key-fingerprint="restoringApiKeyFingerprint"
           :section="activeFormTab === 'basic' ? 'core' : 'advanced'"
           mode="edit"
+          @update:base-url="handleAPIKeyBaseURLUpdate"
           @delete-api-key="handleDeleteAPIKey"
           @restore-api-key="handleRestoreAPIKeyState"
         />
@@ -1182,6 +1183,14 @@ const editApiKey = ref('')
 const editApiKeysText = ref('')
 const editClaudeCliVersion = ref('')
 const editOpenAICodexCliUserAgent = ref('')
+
+// 用户更换主请求地址后，旧故障转移列表不再属于新上游，必须同步清空。
+const handleAPIKeyBaseURLUpdate = (value: string) => {
+  if (value === editBaseUrl.value) return
+  editBaseUrl.value = value
+  editRequestBaseUrlsText.value = ''
+}
+
 const apiKeysEditMode = ref<'append' | 'replace'>('append')
 const deletingApiKeyFingerprint = ref<string | null>(null)
 const restoringApiKeyFingerprint = ref<string | null>(null)
