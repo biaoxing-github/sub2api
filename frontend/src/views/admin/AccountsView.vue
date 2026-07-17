@@ -266,7 +266,24 @@
               <div class="account-overview-head">
                 <div class="min-w-0">
                   <div class="flex min-w-0 flex-wrap items-center gap-1.5">
-                    <span class="truncate text-sm font-semibold text-gray-950 dark:text-white">{{ value }}</span>
+                    <HelpTooltip
+                      v-if="accountHomepageUrl(row)"
+                      :content="accountHomepageUrl(row)"
+                      width-class="w-max max-w-sm break-all"
+                      class="self-start"
+                    >
+                      <template #trigger>
+                        <a
+                          :href="accountHomepageUrl(row)"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="truncate border-b border-dotted border-gray-300 text-sm font-semibold text-gray-950 dark:border-gray-600 dark:text-white"
+                        >
+                          {{ value }}
+                        </a>
+                      </template>
+                    </HelpTooltip>
+                    <span v-else class="truncate text-sm font-semibold text-gray-950 dark:text-white">{{ value }}</span>
                     <AccountAvailabilityRadarBadge :advice="row.load_factor_advice" />
                     <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
                   </div>
@@ -1010,11 +1027,13 @@ import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import AccountAvailabilityRadarBadge from '@/components/account/AccountAvailabilityRadarBadge.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
+import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
+import { sanitizeUrl } from '@/utils/url'
 import type {
   Account,
   AccountActionItem,
@@ -1032,6 +1051,13 @@ import type {
 const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+
+// 仅为 API Key 账号提供安全的上游主页链接，避免 OAuth 账号或危险协议被误导出。
+const accountHomepageUrl = (row: Account): string => {
+  if (row.type !== 'apikey' || typeof row.credentials?.base_url !== 'string') return ''
+  const baseUrl = sanitizeUrl(row.credentials.base_url)
+  return baseUrl ? new URL(baseUrl).origin : ''
+}
 
 const formatNumber = (value: number | string) => {
   const numeric = typeof value === 'number' ? value : Number(value)
