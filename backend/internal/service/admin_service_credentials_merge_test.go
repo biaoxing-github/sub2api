@@ -62,6 +62,40 @@ func TestUpdateAccount_PreservesSensitiveCredsWhenIncomingOmits(t *testing.T) {
 	require.Equal(t, "https://new.example.com", repo.account.Credentials["base_url"])
 }
 
+func TestUpdateAccount_ClearsRequestBaseURLsWhenIncomingEmpty(t *testing.T) {
+	accountID := int64(209)
+	repo := &updateAccountCredsRepoStub{
+		account: &Account{
+			ID:       accountID,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Status:   StatusActive,
+			Credentials: map[string]any{
+				"api_key":           "sk-existing",
+				"base_url":          "https://old.example.com",
+				"request_base_urls": []any{"https://old.example.com", "https://fallback.example.com"},
+			},
+		},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	updated, err := svc.UpdateAccount(context.Background(), accountID, &UpdateAccountInput{
+		Credentials: map[string]any{
+			"base_url":          "https://new.example.com",
+			"request_base_urls": []any{},
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	require.Equal(t, 1, repo.updateCalls)
+	require.Equal(t, "https://new.example.com", repo.account.Credentials["base_url"])
+	storedURLs, ok := repo.account.Credentials["request_base_urls"].([]any)
+	require.True(t, ok, "空请求地址列表必须作为显式字段持久化")
+	require.Empty(t, storedURLs)
+	require.Equal(t, "sk-existing", repo.account.Credentials["api_key"])
+}
+
 func TestUpdateAccount_ExplicitNewTokenOverwrites(t *testing.T) {
 	accountID := int64(203)
 	repo := &updateAccountCredsRepoStub{

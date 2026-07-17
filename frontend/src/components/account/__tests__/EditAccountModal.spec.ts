@@ -300,7 +300,7 @@ describe('EditAccountModal', () => {
     expect(wrapper.get('[data-testid="account-api-key-credentials-fields"]').attributes('style')).toContain('display: none')
   })
 
-  it('replaces the request Base URL list when the primary Base URL changes', async () => {
+  it('clears the request Base URL list when the primary Base URL changes', async () => {
     const account = buildAccount()
     account.credentials = {
       ...account.credentials,
@@ -321,9 +321,7 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe(
       'https://new.example.com'
     )
-    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.request_base_urls).toEqual([
-      'https://new.example.com'
-    ])
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.request_base_urls).toEqual([])
   })
 
   it('preserves the request Base URL list when the primary Base URL is unchanged', async () => {
