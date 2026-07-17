@@ -55,6 +55,25 @@ func IsImageGenerationIntent(endpoint string, requestedModel string, body []byte
 	return openAIJSONToolChoiceSelectsImageGeneration(gjson.GetBytes(body, "tool_choice"))
 }
 
+// IsExplicitImageGenerationIntent 仅将实际调用图片能力的信号视为生图意图。
+// Codex 会在普通请求中被动声明 image_gen namespace；该声明只能作为工具目录，
+// 不应触发生图权限、并发或 Responses-only 账号筛选。
+func IsExplicitImageGenerationIntent(endpoint string, requestedModel string, body []byte) bool {
+	if IsImageGenerationEndpoint(endpoint) || isOpenAIImageGenerationModel(requestedModel) {
+		return true
+	}
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return false
+	}
+	if model := strings.TrimSpace(gjson.GetBytes(body, "model").String()); isOpenAIImageGenerationModel(model) {
+		return true
+	}
+	if openAIJSONToolsContainNativeImageGeneration(gjson.GetBytes(body, "tools")) {
+		return true
+	}
+	return openAIJSONToolChoiceSelectsExplicitImageGeneration(gjson.GetBytes(body, "tool_choice"))
+}
+
 // IsImageGenerationIntentMap is the map-backed variant used after service-side request mutation.
 func IsImageGenerationIntentMap(endpoint string, requestedModel string, reqBody map[string]any) bool {
 	if IsImageGenerationEndpoint(endpoint) {
@@ -112,6 +131,19 @@ func openAIJSONToolsContainImageGeneration(tools gjson.Result) bool {
 			return false
 		}
 		return true
+	})
+	return found
+}
+
+// openAIJSONToolsContainNativeImageGeneration 只识别上游实际执行的原生生图工具。
+func openAIJSONToolsContainNativeImageGeneration(tools gjson.Result) bool {
+	if !tools.IsArray() {
+		return false
+	}
+	found := false
+	tools.ForEach(func(_, item gjson.Result) bool {
+		found = isOpenAIImageGenerationType(strings.TrimSpace(item.Get("type").String()))
+		return !found
 	})
 	return found
 }
@@ -201,6 +233,42 @@ func openAIJSONToolChoiceSelectsImageGeneration(choice gjson.Result) bool {
 		return true
 	}
 	return false
+}
+
+// openAIJSONToolChoiceSelectsExplicitImageGeneration 识别客户端对图片工具的显式选择。
+// 除标准 image_generation 外，也兼容 Codex 对 image_gen.imagegen 的函数引用形式。
+func openAIJSONToolChoiceSelectsExplicitImageGeneration(choice gjson.Result) bool {
+	if openAIJSONToolChoiceSelectsImageGeneration(choice) {
+		return true
+	}
+	if !choice.IsObject() {
+		return false
+	}
+	if tool := choice.Get("tool"); tool.IsObject() && openAIJSONToolChoiceSelectsExplicitImageGeneration(tool) {
+		return true
+	}
+	if isOpenAIImageGenFunctionReference(choice.Get("namespace").String(), choice.Get("name").String()) {
+		return true
+	}
+	if function := choice.Get("function"); function.IsObject() {
+		return isOpenAIImageGenFunctionReference(function.Get("namespace").String(), function.Get("name").String())
+	}
+	return false
+}
+
+// isOpenAIImageGenFunctionReference 判断函数式 tool_choice 是否指定 Codex 图片工具。
+func isOpenAIImageGenFunctionReference(namespace string, name string) bool {
+	namespace = strings.TrimSpace(namespace)
+	name = strings.TrimSpace(name)
+	if namespace == "image_gen" && name == "imagegen" {
+		return true
+	}
+	switch name {
+	case "image_gen.imagegen", "image_gen__imagegen":
+		return true
+	default:
+		return false
+	}
 }
 
 func openAIAnyToolChoiceSelectsImageGeneration(choice any) bool {
