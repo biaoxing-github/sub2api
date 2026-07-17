@@ -1709,30 +1709,19 @@ func (a *Account) GetGrokBaseURL() string {
 	if !a.IsGrok() {
 		return ""
 	}
-	baseURL := a.GetCredential("base_url")
-	if a.IsGrokOAuth() && (strings.TrimSpace(baseURL) == "" || isOfficialGrokAPIBaseURL(baseURL)) {
+	baseURL := strings.TrimSpace(a.GetCredential("base_url"))
+	if a.IsGrokOAuth() && !isParseableGrokBaseURL(baseURL) {
 		return xai.DefaultCLIBaseURL
 	}
 	return xai.EffectiveBaseURL(baseURL)
 }
 
-func isOfficialGrokAPIBaseURL(raw string) bool {
+// isParseableGrokBaseURL 判定已保存地址是否包含可用的协议和主机。
+// OAuth 账号允许手工切换官方、区域或第三方端点，只有空值和脏数据回落 CLI 网关。
+func isParseableGrokBaseURL(raw string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed == nil || parsed.Opaque != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return false
-	}
-	defaultURL, err := url.Parse(xai.DefaultBaseURL)
-	if err != nil || !strings.EqualFold(parsed.Scheme, defaultURL.Scheme) || !strings.EqualFold(parsed.Hostname(), defaultURL.Hostname()) {
-		return false
-	}
-	if port := parsed.Port(); port != "" {
-		portNumber, err := strconv.Atoi(port)
-		if err != nil || portNumber != 443 {
-			return false
-		}
-	}
-	path := strings.TrimRight(parsed.Path, "/")
-	return path == "" || path == strings.TrimRight(defaultURL.Path, "/")
+	return err == nil && parsed != nil && parsed.Host != "" &&
+		(strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https"))
 }
 
 func (a *Account) GetExtraString(key string) string {

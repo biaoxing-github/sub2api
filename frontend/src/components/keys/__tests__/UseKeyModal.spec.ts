@@ -78,6 +78,80 @@ describe('UseKeyModal', () => {
     expect(parsed.provider.grok.models['gpt-5.6']).toBeUndefined()
   })
 
+  it('renders Claude Code setup through the Grok Messages gateway', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-grok-claude-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'grok'
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: { template: '<span />' }
+        }
+      }
+    })
+
+    const claudeTab = wrapper.findAll('button').find(button =>
+      button.text().includes('keys.useKeyModal.cliTabs.claudeCode')
+    )
+    expect(claudeTab).toBeDefined()
+    await claudeTab!.trigger('click')
+    await nextTick()
+
+    const codeBlocks = wrapper.findAll('pre code').map(code => code.text())
+    expect(codeBlocks.join('\n')).toContain('ANTHROPIC_BASE_URL="https://example.com"')
+    expect(codeBlocks.join('\n')).toContain('ANTHROPIC_AUTH_TOKEN="sk-grok-claude-test"')
+    expect(codeBlocks.join('\n')).toContain('ANTHROPIC_DEFAULT_HAIKU_MODEL="grok-4.5"')
+    const settings = codeBlocks.find(content => content.includes('"$schema"'))
+    expect(settings).toBeDefined()
+    expect(JSON.parse(settings!).env.ANTHROPIC_MODEL).toBe('grok-4.5')
+  })
+
+  it('renders WebSocket v2 Codex provider setup through the Grok Responses gateway', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-grok-codex-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'grok'
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: { template: '<span />' }
+        }
+      }
+    })
+
+    const codexTab = wrapper.findAll('button').find(button =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
+    await nextTick()
+
+    let codeBlocks = wrapper.findAll('pre code').map(code => code.text())
+    const configToml = codeBlocks.find(content => content.includes('[model_providers.sub2api_grok]'))
+    expect(configToml).toContain('model_provider = "sub2api_grok"')
+    expect(configToml).toContain('base_url = "https://example.com/v1"')
+    expect(configToml).toContain('env_key = "SUB2API_API_KEY"')
+    expect(configToml).toContain('wire_api = "responses"')
+    expect(configToml).toContain('supports_websockets = true')
+    expect(configToml).toContain('[features]\nresponses_websockets_v2 = true')
+    expect(codeBlocks).toContain('export SUB2API_API_KEY="sk-grok-codex-test"')
+
+    const windowsTab = wrapper.findAll('button').find(button => button.text().trim() === 'Windows')
+    expect(windowsTab).toBeDefined()
+    await windowsTab!.trigger('click')
+    await nextTick()
+    codeBlocks = wrapper.findAll('pre code').map(code => code.text())
+    expect(wrapper.text()).toContain('%USERPROFILE%\\.codex\\config.toml')
+    expect(codeBlocks).toContain('$env:SUB2API_API_KEY="sk-grok-codex-test"')
+  })
+
   it('renders GPT-5.5 and goals feature in OpenAI Codex config', () => {
     const wrapper = mount(UseKeyModal, {
       props: {

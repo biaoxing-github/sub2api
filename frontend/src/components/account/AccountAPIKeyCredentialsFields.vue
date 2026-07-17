@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import Select, { type SelectOption } from '@/components/common/Select.vue'
+import GrokBaseUrlPresets from '@/components/account/GrokBaseUrlPresets.vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { AccountPlatform } from '@/types'
 
@@ -132,6 +133,11 @@ const keyStateTestId = (item: AccountAPIKeyItem) =>
         class="input"
         :placeholder="baseUrlPlaceholder"
         @input="emit('update:baseUrl', ($event.target as HTMLInputElement).value)"
+      />
+      <GrokBaseUrlPresets
+        v-if="props.platform === 'grok'"
+        class="mt-2"
+        @select="emit('update:baseUrl', $event)"
       />
       <p class="input-hint">{{ props.baseUrlHint }}</p>
     </div>
