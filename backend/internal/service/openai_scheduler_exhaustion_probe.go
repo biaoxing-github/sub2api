@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 const (
@@ -26,6 +29,7 @@ type OpenAISchedulerExhaustionProbeOptions struct {
 	Platform       string
 	RequestedModel string
 	RequireCompact bool
+	Stream         bool // Stream 表示原始 Responses 请求是否要求 SSE 流式响应。
 	Infinite       bool
 }
 
@@ -67,7 +71,7 @@ func (s *OpenAIGatewayService) RecoverOpenAISchedulerExhaustion(ctx context.Cont
 					return false, err
 				}
 				attempts++
-				if err := s.probeOpenAISchedulerExhaustionAccount(ctx, account, opts.RequestedModel, opts.RequireCompact); err != nil {
+				if err := s.probeOpenAISchedulerExhaustionAccount(ctx, account, opts.RequestedModel, opts.RequireCompact, opts.Stream); err != nil {
 					lastErr = err
 					if opts.Infinite && notifyEnabled {
 						now := s.nowOpenAISchedulerExhaustionProbe()
@@ -182,17 +186,17 @@ func isOpenAISchedulerExhaustionProbeCandidate(ctx context.Context, account *Acc
 	return true
 }
 
-func (s *OpenAIGatewayService) probeOpenAISchedulerExhaustionAccount(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+func (s *OpenAIGatewayService) probeOpenAISchedulerExhaustionAccount(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error {
 	if s.openAISchedulerExhaustionProbeFunc != nil {
-		return s.openAISchedulerExhaustionProbeFunc(ctx, account, requestedModel, requireCompact)
+		return s.openAISchedulerExhaustionProbeFunc(ctx, account, requestedModel, requireCompact, stream)
 	}
 	if account != nil && account.IsGrok() {
-		return s.sendGrokSchedulerExhaustionProbe(ctx, account, requestedModel)
+		return s.sendGrokSchedulerExhaustionProbe(ctx, account, requestedModel, stream)
 	}
-	return s.sendOpenAISchedulerExhaustionProbe(ctx, account, requestedModel, requireCompact)
+	return s.sendOpenAISchedulerExhaustionProbe(ctx, account, requestedModel, requireCompact, stream)
 }
 
-func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error {
 	if s == nil || s.httpUpstream == nil {
 		return errors.New("openai scheduler exhaustion probe upstream is nil")
 	}
@@ -217,14 +221,22 @@ func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Co
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, targetURL, bytes.NewReader(openaiResponsesProbePayload(probeModel)))
+	probePayload, err := sjson.SetBytes(openaiResponsesProbePayload(probeModel), "stream", stream)
+	if err != nil {
+		return fmt.Errorf("build openai scheduler exhaustion probe payload: %w", err)
+	}
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, targetURL, bytes.NewReader(probePayload))
 	if err != nil {
 		return fmt.Errorf("build openai scheduler exhaustion probe request: %w", err)
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 	req.Header.Set("authorization", "Bearer "+token)
 	req.Header.Set("content-type", "application/json")
-	req.Header.Set("accept", "application/json")
+	if stream {
+		req.Header.Set("accept", "text/event-stream")
+	} else {
+		req.Header.Set("accept", "application/json")
+	}
 	if account.Type == AccountTypeOAuth {
 		req.Host = "chatgpt.com"
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
@@ -260,6 +272,11 @@ func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Co
 		return fmt.Errorf("read openai scheduler exhaustion probe response for account %d: %w", account.ID, readErr)
 	}
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		if stream {
+			if err := validateOpenAISchedulerExhaustionProbeStream(responseBody); err != nil {
+				return fmt.Errorf("validate openai scheduler exhaustion probe response for account %d: %w", account.ID, err)
+			}
+		}
 		return nil
 	}
 
@@ -269,6 +286,51 @@ func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Co
 		return fmt.Errorf("openai scheduler exhaustion probe failed for account %d: status %d", account.ID, resp.StatusCode)
 	}
 	return fmt.Errorf("openai scheduler exhaustion probe failed for account %d: status %d body %s", account.ID, resp.StatusCode, bodyText)
+}
+
+// validateOpenAISchedulerExhaustionProbeStream 要求流式探测完整到达成功终态，
+// 防止上游仅返回 200 或半段 SSE 时错误解除账号的调度屏蔽。
+func validateOpenAISchedulerExhaustionProbeStream(responseBody []byte) error {
+	baseScanner := bufio.NewScanner(bytes.NewReader(responseBody))
+	baseScanner.Buffer(make([]byte, 64*1024), openAISchedulerExhaustionProbeBodyReadLimit)
+	scanner := newOpenAISSEJSONDocumentScanner(baseScanner)
+	seenData := false
+	for scanner.Scan() {
+		data, ok := extractOpenAISSEDataLine(scanner.Text())
+		if !ok {
+			continue
+		}
+		data = strings.TrimSpace(data)
+		if data == "" {
+			continue
+		}
+		seenData = true
+		if data == "[DONE]" {
+			return errors.New("stream ended before response.completed")
+		}
+		payload := []byte(data)
+		if !gjson.ValidBytes(payload) {
+			return errors.New("stream returned invalid SSE JSON data")
+		}
+		eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+		switch eventType {
+		case "response.completed", "response.done":
+			return nil
+		case "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":
+			message := strings.TrimSpace(extractOpenAISSEErrorMessage(payload))
+			if message == "" {
+				message = eventType
+			}
+			return fmt.Errorf("stream terminal failure: %s", message)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("stream read failed: %w", err)
+	}
+	if !seenData {
+		return errors.New("stream returned no SSE data")
+	}
+	return errors.New("stream ended before response.completed")
 }
 
 func (s *OpenAIGatewayService) openAISchedulerExhaustionProbeURL(account *Account, requireCompact bool) (string, error) {
@@ -295,7 +357,7 @@ func (s *OpenAIGatewayService) openAISchedulerExhaustionProbeURL(account *Accoun
 	return targetURL, nil
 }
 
-func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Context, account *Account, requestedModel string) error {
+func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Context, account *Account, requestedModel string, stream bool) error {
 	if s == nil || s.httpUpstream == nil {
 		return errors.New("grok scheduler exhaustion probe upstream is nil")
 	}
@@ -323,12 +385,20 @@ func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Cont
 	if err != nil {
 		return fmt.Errorf("build grok scheduler exhaustion probe body: %w", err)
 	}
+	patchedBody, err = sjson.SetBytes(patchedBody, "stream", stream)
+	if err != nil {
+		return fmt.Errorf("build grok scheduler exhaustion probe stream mode: %w", err)
+	}
 	req, err := buildGrokResponsesRequest(probeCtx, nil, account, patchedBody, token)
 	if err != nil {
 		return fmt.Errorf("build grok scheduler exhaustion probe request: %w", err)
 	}
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-	req.Header.Set("accept", "application/json")
+	if stream {
+		req.Header.Set("accept", "text/event-stream")
+	} else {
+		req.Header.Set("accept", "application/json")
+	}
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -346,6 +416,11 @@ func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Cont
 		return fmt.Errorf("read grok scheduler exhaustion probe response for account %d: %w", account.ID, readErr)
 	}
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		if stream {
+			if err := validateOpenAISchedulerExhaustionProbeStream(responseBody); err != nil {
+				return fmt.Errorf("validate grok scheduler exhaustion probe response for account %d: %w", account.ID, err)
+			}
+		}
 		s.updateGrokUsageSnapshot(probeCtx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
 		return nil
 	}

@@ -466,7 +466,7 @@ type OpenAIGatewayService struct {
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
 
-	openAISchedulerExhaustionProbeFunc  func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error
+	openAISchedulerExhaustionProbeFunc  func(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error
 	openAISchedulerExhaustionProbeSleep func(ctx context.Context, d time.Duration) error
 	openAISchedulerExhaustionProbeNow   func() time.Time
 	openAISchedulerExhaustionNotifyFunc func(ctx context.Context, event openAISchedulerExhaustionProbeNotifyEvent) error

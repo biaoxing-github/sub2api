@@ -5,14 +5,31 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
+
+type schedulerExhaustionHTTPUpstream struct {
+	request  *http.Request
+	response *http.Response
+}
+
+func (u *schedulerExhaustionHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	u.request = req
+	return u.response, nil
+}
+
+func (u *schedulerExhaustionHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, concurrency)
+}
 
 type schedulerExhaustionProbeRepo struct {
 	stubOpenAIAccountRepo
@@ -49,7 +66,7 @@ func TestOpenAISchedulerExhaustionProbeFiniteTriesEachCandidateTwice(t *testing.
 	attempts := map[int64]int{}
 	svc := &OpenAIGatewayService{
 		accountRepo: repo,
-		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error {
 			attempts[account.ID]++
 			return fmt.Errorf("probe %d failed", account.ID)
 		},
@@ -67,6 +84,216 @@ func TestOpenAISchedulerExhaustionProbeFiniteTriesEachCandidateTwice(t *testing.
 	require.Equal(t, 2, attempts[12])
 }
 
+func TestRecoverOpenAISchedulerExhaustionPropagatesStreamMode(t *testing.T) {
+	groupID := int64(9)
+	repo := &schedulerExhaustionProbeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{
+			{ID: 13, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1},
+		}},
+	}
+	observedStream := false
+	svc := &OpenAIGatewayService{
+		accountRepo: repo,
+		openAISchedulerExhaustionProbeFunc: func(_ context.Context, _ *Account, _ string, _ bool, stream bool) error {
+			observedStream = stream
+			return nil
+		},
+	}
+
+	recovered, err := svc.RecoverOpenAISchedulerExhaustion(context.Background(), OpenAISchedulerExhaustionProbeOptions{
+		GroupID:        &groupID,
+		RequestedModel: "gpt-5.6-sol",
+		Stream:         true,
+	})
+
+	require.NoError(t, err)
+	require.True(t, recovered)
+	require.True(t, observedStream)
+}
+
+func TestSendOpenAISchedulerExhaustionProbeMatchesRequestedStreamMode(t *testing.T) {
+	tests := []struct {
+		name           string
+		stream         bool
+		responseBody   string
+		responseType   string
+		wantAccept     string
+		wantBodyStream bool
+	}{
+		{
+			name:           "non-stream request keeps JSON probe",
+			responseBody:   `{"id":"resp_probe","status":"completed"}`,
+			responseType:   "application/json",
+			wantAccept:     "application/json",
+			wantBodyStream: false,
+		},
+		{
+			name:           "stream request uses SSE probe with completed terminal event",
+			stream:         true,
+			responseBody:   "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_probe\"}}\n\n",
+			responseType:   "text/event-stream",
+			wantAccept:     "text/event-stream",
+			wantBodyStream: true,
+		},
+		{
+			name:           "stream request accepts repaired concatenated terminal event",
+			stream:         true,
+			responseBody:   "event: response.in_progress\ndata: {\"type\":\"response.in_progress\"}{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_probe\"}}\n\n",
+			responseType:   "text/event-stream",
+			wantAccept:     "text/event-stream",
+			wantBodyStream: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &schedulerExhaustionHTTPUpstream{response: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{tt.responseType}},
+				Body:       io.NopCloser(strings.NewReader(tt.responseBody)),
+			}}
+			svc := &OpenAIGatewayService{
+				httpUpstream: upstream,
+				cfg: &config.Config{Security: config.SecurityConfig{
+					URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+				}},
+			}
+			account := &Account{
+				ID:          480,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "sk-test",
+					"base_url": "https://compat-upstream.example/v1",
+				},
+			}
+
+			err := svc.sendOpenAISchedulerExhaustionProbe(context.Background(), account, "gpt-5.6-sol", false, tt.stream)
+
+			require.NoError(t, err)
+			require.NotNil(t, upstream.request)
+			require.Equal(t, tt.wantAccept, upstream.request.Header.Get("accept"))
+			requestBody, readErr := io.ReadAll(upstream.request.Body)
+			require.NoError(t, readErr)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(requestBody, &payload))
+			require.Equal(t, tt.wantBodyStream, payload["stream"])
+		})
+	}
+}
+
+func TestSendOpenAISchedulerExhaustionProbeRejectsStreamWithoutTerminalEvent(t *testing.T) {
+	upstream := &schedulerExhaustionHTTPUpstream{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("event: response.in_progress\ndata: {\"type\":\"response.in_progress\"}\n\n")),
+	}}
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		cfg: &config.Config{Security: config.SecurityConfig{
+			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+		}},
+	}
+	account := &Account{
+		ID:          480,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
+		},
+	}
+
+	err := svc.sendOpenAISchedulerExhaustionProbe(context.Background(), account, "gpt-5.6-sol", false, true)
+
+	require.ErrorContains(t, err, "ended before response.completed")
+}
+
+// TestValidateOpenAISchedulerExhaustionProbeStreamRejectsInvalidTerminalStreams 验证异常流不会解除账号调度屏蔽。
+func TestValidateOpenAISchedulerExhaustionProbeStreamRejectsInvalidTerminalStreams(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name:    "failed terminal",
+			body:    "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"upstream failed\"}}}\n\n",
+			wantErr: "upstream failed",
+		},
+		{
+			name:    "incomplete terminal",
+			body:    "data: {\"type\":\"response.incomplete\"}\n\n",
+			wantErr: "response.incomplete",
+		},
+		{
+			name:    "cancelled terminal",
+			body:    "data: {\"type\":\"response.cancelled\"}\n\n",
+			wantErr: "response.cancelled",
+		},
+		{
+			name:    "error terminal",
+			body:    "data: {\"type\":\"error\",\"error\":{\"message\":\"stream error\"}}\n\n",
+			wantErr: "stream error",
+		},
+		{
+			name:    "malformed JSON",
+			body:    "data: not-json\n\n",
+			wantErr: "invalid SSE JSON data",
+		},
+		{
+			name:    "empty stream",
+			body:    "event: ping\n\n",
+			wantErr: "no SSE data",
+		},
+		{
+			name:    "done without terminal",
+			body:    "data: [DONE]\n\n",
+			wantErr: "ended before response.completed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateOpenAISchedulerExhaustionProbeStream([]byte(tt.body))
+
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestSendGrokSchedulerExhaustionProbeMatchesRequestedStreamMode(t *testing.T) {
+	upstream := &schedulerExhaustionHTTPUpstream{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n")),
+	}}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+	account := &Account{
+		ID:          481,
+		Platform:    PlatformGrok,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "xai-test",
+			"base_url": "https://api.x.ai/v1",
+		},
+	}
+
+	err := svc.sendGrokSchedulerExhaustionProbe(context.Background(), account, "grok-4.3", true)
+
+	require.NoError(t, err)
+	require.NotNil(t, upstream.request)
+	require.Equal(t, "text/event-stream", upstream.request.Header.Get("accept"))
+	requestBody, readErr := io.ReadAll(upstream.request.Body)
+	require.NoError(t, readErr)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(requestBody, &payload))
+	require.Equal(t, true, payload["stream"])
+}
+
 func TestOpenAISchedulerExhaustionProbeStopsOnSuccessAndClearsRuntimeBlock(t *testing.T) {
 	groupID := int64(9)
 	repo := &schedulerExhaustionProbeRepo{
@@ -78,7 +305,7 @@ func TestOpenAISchedulerExhaustionProbeStopsOnSuccessAndClearsRuntimeBlock(t *te
 	attempts := map[int64]int{}
 	svc := &OpenAIGatewayService{
 		accountRepo: repo,
-		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error {
 			attempts[account.ID]++
 			if account.ID == 22 && attempts[account.ID] == 2 {
 				return nil
@@ -112,7 +339,7 @@ func TestOpenAISchedulerExhaustionProbeUsesRequestedGrokPlatform(t *testing.T) {
 	attempted := make([]int64, 0, 1)
 	svc := &OpenAIGatewayService{
 		accountRepo: repo,
-		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error {
 			attempted = append(attempted, account.ID)
 			return nil
 		},
@@ -148,7 +375,7 @@ func TestOpenAISchedulerExhaustionProbeSkipsTempCoolingAccount(t *testing.T) {
 	attempts := 0
 	svc := &OpenAIGatewayService{
 		accountRepo: repo,
-		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error {
 			attempts++
 			return nil
 		},
@@ -175,7 +402,7 @@ func TestOpenAISchedulerExhaustionProbeInfiniteIgnoresFiniteAttemptCapUntilSucce
 	attempts := 0
 	svc := &OpenAIGatewayService{
 		accountRepo: repo,
-		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error {
 			attempts++
 			if attempts == 8 {
 				return nil
@@ -219,7 +446,7 @@ func TestOpenAISchedulerExhaustionProbeInfiniteNotifiesAfterThresholdAndRepeatIn
 		openAISchedulerExhaustionProbeNow: func() time.Time {
 			return now
 		},
-		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error {
 			attempts++
 			return errors.New("still no schedulable account")
 		},
@@ -278,7 +505,7 @@ func TestOpenAISchedulerExhaustionProbeInfiniteSendsRecoveredNotificationAfterWa
 		openAISchedulerExhaustionProbeNow: func() time.Time {
 			return now
 		},
-		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool) error {
+		openAISchedulerExhaustionProbeFunc: func(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error {
 			attempts++
 			if attempts == 4 {
 				return nil

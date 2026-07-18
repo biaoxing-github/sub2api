@@ -554,6 +554,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						Platform:       requestPlatform,
 						RequestedModel: reqModel,
 						RequireCompact: requireCompact,
+						Stream:         reqStream,
 						Infinite:       infiniteProbe,
 					},
 				)
