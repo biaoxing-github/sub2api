@@ -72,20 +72,25 @@ type codexImportEntry struct {
 }
 
 type codexImportAccount struct {
-	Name           string
-	AccessToken    string
-	RefreshToken   string
-	IDToken        string
-	Email          string
-	AccountID      string
-	UserID         string
-	PlanType       string
-	Organization   string
-	Credentials    map[string]any
-	Extra          map[string]any
-	TokenExpiresAt *time.Time
-	IdentityKeys   []string
-	WarningTexts   []string
+	Name            string
+	AccessToken     string
+	RefreshToken    string
+	IDToken         string
+	Email           string
+	AccountID       string
+	UserID          string
+	PlanType        string
+	Organization    string
+	AgentRuntimeID  string
+	AgentPrivateKey string
+	AgentTaskID     string
+	AgentFedRAMP    bool
+	IsAgentIdentity bool
+	Credentials     map[string]any
+	Extra           map[string]any
+	TokenExpiresAt  *time.Time
+	IdentityKeys    []string
+	WarningTexts    []string
 }
 
 type codexJWTClaims struct {
@@ -481,6 +486,41 @@ func normalizeCodexImportEntry(entry codexImportEntry) (*codexImportAccount, err
 	case string:
 		item.AccessToken = strings.TrimSpace(raw)
 	case map[string]any:
+		if agentIdentity, ok := firstCodexMap(raw, []string{"agent_identity"}, []string{"agentIdentity"}); ok || strings.EqualFold(firstCodexString(raw, []string{"auth_mode"}, []string{"authMode"}), service.OpenAIAuthModeAgentIdentity) {
+			if !ok {
+				agentIdentity = raw
+			}
+			item.IsAgentIdentity = true
+			item.AgentRuntimeID = firstCodexString(agentIdentity, []string{"agent_runtime_id"}, []string{"agentRuntimeId"})
+			item.AgentPrivateKey = firstCodexString(agentIdentity, []string{"agent_private_key"}, []string{"agentPrivateKey"})
+			item.AgentTaskID = firstCodexString(agentIdentity, []string{"task_id"}, []string{"taskId"})
+			item.AccountID = firstCodexString(agentIdentity, []string{"account_id"}, []string{"accountId"})
+			item.UserID = firstCodexString(agentIdentity, []string{"chatgpt_user_id"}, []string{"chatgptUserId"})
+			item.Email = firstCodexString(agentIdentity, []string{"email"})
+			item.PlanType = firstCodexString(agentIdentity, []string{"plan_type"}, []string{"planType"})
+			item.AgentFedRAMP = firstCodexBool(agentIdentity, []string{"chatgpt_account_is_fedramp"}, []string{"chatgptAccountIsFedramp"})
+			if item.AgentRuntimeID == "" || item.AgentPrivateKey == "" || item.AccountID == "" || item.UserID == "" {
+				return nil, errors.New("agent identity 缺少必要字段")
+			}
+			if err := service.ValidateOpenAIAgentIdentityPrivateKey(item.AgentPrivateKey); err != nil {
+				return nil, errors.New("agent identity private key 格式无效")
+			}
+			item.Credentials["auth_mode"] = service.OpenAIAuthModeAgentIdentity
+			item.Credentials["agent_runtime_id"] = item.AgentRuntimeID
+			item.Credentials["agent_private_key"] = item.AgentPrivateKey
+			item.Credentials["chatgpt_account_id"] = item.AccountID
+			item.Credentials["chatgpt_user_id"] = item.UserID
+			item.Credentials["chatgpt_account_is_fedramp"] = item.AgentFedRAMP
+			setCodexCredentialIfNotEmpty(item.Credentials, "task_id", item.AgentTaskID)
+			setCodexCredentialIfNotEmpty(item.Credentials, "email", item.Email)
+			setCodexCredentialIfNotEmpty(item.Credentials, "plan_type", item.PlanType)
+			if item.AgentTaskID == "" {
+				item.WarningTexts = append(item.WarningTexts, "未包含 task_id，首次请求会使用现有 runtime 注册新 task")
+			}
+			item.IdentityKeys = buildCodexAgentIdentityKeys(item.AccountID)
+			item.Name = buildCodexImportAccountName(item, entry.Index)
+			return item, nil
+		}
 		item.AccessToken = firstCodexString(raw,
 			[]string{"tokens", "access_token"},
 			[]string{"tokens", "accessToken"},
@@ -817,6 +857,16 @@ func sanitizeCodexImportCredentialExtras(input map[string]any) map[string]any {
 	return out
 }
 
+// buildCodexAgentIdentityKeys 仅按 ChatGPT Team account_id 匹配。
+// user_id 可跨 Team 重复，runtime_id 会随注册变化，不能作为 Agent Identity 的匹配键。
+func buildCodexAgentIdentityKeys(accountID string) []string {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil
+	}
+	return []string{"account:" + accountID}
+}
+
 // buildCodexIdentityKeys 按身份强度排序生成匹配键。ChatGPT 团队账号会共享
 // chatgpt_account_id，所以 account: 键必须放在最后并在命中时做用户冲突校验。
 func buildCodexIdentityKeys(accountID, userID, email, accessToken string) []string {
@@ -985,6 +1035,38 @@ func firstCodexString(obj map[string]any, paths ...[]string) string {
 		}
 	}
 	return ""
+}
+
+func firstCodexMap(obj map[string]any, paths ...[]string) (map[string]any, bool) {
+	for _, path := range paths {
+		value, ok := codexPathValue(obj, path)
+		if !ok || value == nil {
+			continue
+		}
+		if mapped, ok := value.(map[string]any); ok {
+			return mapped, true
+		}
+	}
+	return nil, false
+}
+
+func firstCodexBool(obj map[string]any, paths ...[]string) bool {
+	for _, path := range paths {
+		value, ok := codexPathValue(obj, path)
+		if !ok {
+			continue
+		}
+		switch value := value.(type) {
+		case bool:
+			return value
+		case string:
+			parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+			if err == nil {
+				return parsed
+			}
+		}
+	}
+	return false
 }
 
 func copyCodexExtraString(obj map[string]any, extra map[string]any, key string, path []string) {
