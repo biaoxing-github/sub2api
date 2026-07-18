@@ -715,6 +715,44 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationForceWS(
 	require.Equal(t, "header_conversation_id", sessionResolution.ConversationSource)
 }
 
+func TestOpenAIGatewayService_BuildOpenAIWSHeadersAPIKeyIdentityFollowsCurrentToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("Session-Id", "shared-session")
+	c.Request.Header.Set("Thread-Id", "shared-thread")
+	c.Request.Header.Set("X-Codex-Window-Id", "shared-window")
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	account := &Account{
+		ID:       470,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "sk-team-a",
+			"base_url": "https://example.com/codex",
+		},
+		Extra: map[string]any{OpenAICodexCLISimulationEnabledExtraKey: true},
+	}
+	decision := OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportResponsesWebsocketV2}
+
+	headersA1, _ := svc.buildOpenAIWSHeaders(c, account, "sk-team-a", decision, false, "", "", "")
+	headersB, _ := svc.buildOpenAIWSHeaders(c, account, "sk-team-b", decision, false, "", "", "")
+	headersA2, _ := svc.buildOpenAIWSHeaders(c, account, "sk-team-a", decision, false, "", "", "")
+
+	require.Equal(t, headersA1.Get("session_id"), headersA2.Get("session_id"))
+	require.Equal(t, headersA1.Get("conversation_id"), headersA2.Get("conversation_id"))
+	require.Equal(t, headersA1.Get("x-codex-window-id"), headersA2.Get("x-codex-window-id"))
+	require.Equal(t, headersA1.Get("x-codex-installation-id"), headersA2.Get("x-codex-installation-id"))
+	require.NotEqual(t, headersA1.Get("session_id"), headersB.Get("session_id"))
+	require.NotEqual(t, headersA1.Get("conversation_id"), headersB.Get("conversation_id"))
+	require.NotEqual(t, headersA1.Get("x-codex-window-id"), headersB.Get("x-codex-window-id"))
+	require.NotEqual(t, headersA1.Get("x-codex-installation-id"), headersB.Get("x-codex-installation-id"))
+	require.NotContains(t, headersA1.Get("session_id"), "sk-team-a")
+	require.NotContains(t, headersB.Get("session_id"), "sk-team-b")
+}
+
 func TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationPreservesRealCodexClientHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

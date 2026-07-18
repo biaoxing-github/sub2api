@@ -276,6 +276,9 @@ func TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape(t *testin
 	}
 
 	applyOpenAICodexLatestClientHeaders(req, body, account)
+	keyFingerprint := codexSimulationInstallationFingerprint(account)
+	expectedSessionID := namespaceCodexSimulationIdentifier(keyFingerprint, "session", "prompt-cache-from-body")
+	expectedThreadID := namespaceCodexSimulationIdentifier(keyFingerprint, "thread", "thread-from-client")
 
 	require.Equal(t, codexCLIUserAgent(), req.Header.Get("User-Agent"))
 	require.Equal(t, codexCLIOriginator, req.Header.Get("originator"))
@@ -283,17 +286,18 @@ func TestApplyOpenAICodexLatestClientHeadersMatchesCapturedClientShape(t *testin
 	require.Equal(t, codexCLIVersion(), req.Header.Get("version"))
 	require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
 	require.Equal(t, codexCLIBetaFeatures, req.Header.Get("X-Codex-Beta-Features"))
-	require.Equal(t, "prompt-cache-from-body", req.Header.Get("Session-Id"))
-	require.Equal(t, "thread-from-client", req.Header.Get("Thread-Id"))
-	require.Equal(t, "prompt-cache-from-body", req.Header.Get("X-Client-Request-Id"))
-	require.Equal(t, "prompt-cache-from-body:0", req.Header.Get("X-Codex-Window-Id"))
+	require.Equal(t, expectedSessionID, req.Header.Get("Session-Id"))
+	require.Equal(t, expectedThreadID, req.Header.Get("Thread-Id"))
+	require.NotEmpty(t, req.Header.Get("X-Client-Request-Id"))
+	require.NotEqual(t, expectedSessionID, req.Header.Get("X-Client-Request-Id"))
+	require.Equal(t, expectedSessionID+":0", req.Header.Get("X-Codex-Window-Id"))
 	require.Equal(t, resolveCodexSimulationInstallationID(account), req.Header.Get("X-Codex-Installation-Id"))
 
 	var turnMetadata map[string]any
 	require.NoError(t, json.Unmarshal([]byte(req.Header.Get("X-Codex-Turn-Metadata")), &turnMetadata))
-	require.Equal(t, "prompt-cache-from-body", turnMetadata["session_id"])
-	require.Equal(t, "thread-from-client", turnMetadata["thread_id"])
-	require.Equal(t, "prompt-cache-from-body:0", turnMetadata["window_id"])
+	require.Equal(t, expectedSessionID, turnMetadata["session_id"])
+	require.Equal(t, expectedThreadID, turnMetadata["thread_id"])
+	require.Equal(t, expectedSessionID+":0", turnMetadata["window_id"])
 	require.Equal(t, resolveCodexSimulationInstallationID(account), turnMetadata["installation_id"])
 	require.Equal(t, "turn", turnMetadata["request_kind"])
 	require.NotEmpty(t, turnMetadata["turn_id"])

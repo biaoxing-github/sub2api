@@ -935,27 +935,50 @@ func applyCodexCLISimulationClientMetadata(reqBody map[string]any, account *Acco
 	turnMetadata, hadTurnMetadata := parseCodexTurnMetadata(metadata[codexClientMetadataTurnMetadataKey])
 
 	promptCacheKey := strings.TrimSpace(firstNonEmptyString(reqBody["prompt_cache_key"]))
-	sessionID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataSessionIDKey], promptCacheKey, turnMetadata[codexClientMetadataSessionIDKey]))
+	keyFingerprint := codexSimulationInstallationFingerprint(account)
+	rawSessionID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataSessionIDKey], promptCacheKey, turnMetadata[codexClientMetadataSessionIDKey]))
+	if rawSessionID == "" {
+		rawSessionID = uuid.NewString()
+	}
+	sessionID := namespaceCodexSimulationIdentifier(keyFingerprint, "session", rawSessionID)
 	if sessionID == "" {
 		sessionID = uuid.NewString()
 	}
-	threadID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataThreadIDKey], turnMetadata[codexClientMetadataThreadIDKey], sessionID))
-	turnID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataTurnIDKey], turnMetadata[codexClientMetadataTurnIDKey]))
+	rawThreadID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataThreadIDKey], turnMetadata[codexClientMetadataThreadIDKey]))
+	threadID := sessionID
+	if rawThreadID != "" {
+		threadID = namespaceCodexSimulationIdentifier(keyFingerprint, "thread", rawThreadID)
+	}
+	turnID := ""
+	if keyFingerprint == "" {
+		turnID = strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataTurnIDKey], turnMetadata[codexClientMetadataTurnIDKey]))
+	}
 	if turnID == "" {
 		turnID = uuid.NewString()
 	}
-	windowID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataWindowIDKey], turnMetadata["window_id"]))
+	rawWindowID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientMetadataWindowIDKey], turnMetadata["window_id"]))
+	windowID := ""
+	if rawWindowID != "" {
+		windowID = namespaceCodexSimulationIdentifier(keyFingerprint, "window", rawWindowID)
+	}
 	if windowID == "" {
 		windowID = sessionID + ":0"
 	}
 
-	installationID := strings.TrimSpace(firstNonEmptyString(metadata[codexClientInstallationIDKey], turnMetadata["installation_id"]))
+	installationID := ""
+	if keyFingerprint == "" {
+		installationID = strings.TrimSpace(firstNonEmptyString(metadata[codexClientInstallationIDKey], turnMetadata["installation_id"]))
+	}
 	if installationID == "" && account != nil {
 		installationID = resolveCodexSimulationInstallationID(account)
 	}
 
-	if strings.TrimSpace(firstNonEmptyString(reqBody["prompt_cache_key"])) == "" {
-		reqBody["prompt_cache_key"] = sessionID
+	namespacedPromptCacheKey := sessionID
+	if promptCacheKey != "" {
+		namespacedPromptCacheKey = namespaceCodexSimulationIdentifier(keyFingerprint, "prompt-cache", promptCacheKey)
+	}
+	if strings.TrimSpace(firstNonEmptyString(reqBody["prompt_cache_key"])) != namespacedPromptCacheKey {
+		reqBody["prompt_cache_key"] = namespacedPromptCacheKey
 		modified = true
 	}
 	if setCodexMetadataString(metadata, codexClientMetadataOriginatorKey, codexCLIOriginator, true) {
@@ -964,19 +987,19 @@ func applyCodexCLISimulationClientMetadata(reqBody map[string]any, account *Acco
 	if setCodexMetadataString(metadata, codexClientMetadataSourceKey, "codex", true) {
 		modified = true
 	}
-	if setCodexMetadataString(metadata, codexClientMetadataSessionIDKey, sessionID, false) {
+	if setCodexMetadataString(metadata, codexClientMetadataSessionIDKey, sessionID, true) {
 		modified = true
 	}
-	if setCodexMetadataString(metadata, codexClientMetadataThreadIDKey, threadID, false) {
+	if setCodexMetadataString(metadata, codexClientMetadataThreadIDKey, threadID, true) {
 		modified = true
 	}
-	if setCodexMetadataString(metadata, codexClientMetadataTurnIDKey, turnID, false) {
+	if setCodexMetadataString(metadata, codexClientMetadataTurnIDKey, turnID, true) {
 		modified = true
 	}
-	if setCodexMetadataString(metadata, codexClientMetadataWindowIDKey, windowID, false) {
+	if setCodexMetadataString(metadata, codexClientMetadataWindowIDKey, windowID, true) {
 		modified = true
 	}
-	if installationID != "" && setCodexMetadataString(metadata, codexClientInstallationIDKey, installationID, false) {
+	if installationID != "" && setCodexMetadataString(metadata, codexClientInstallationIDKey, installationID, true) {
 		modified = true
 	}
 
@@ -1037,8 +1060,23 @@ func resolveCodexSimulationInstallationID(account *Account) string {
 	return generateSessionUUID(seed)
 }
 
+// resolveCodexSimulationInstallationIDWithFingerprint 使用实际请求 Key 的非敏感摘要派生安装标识。
+// WebSocket 握手以本次 Authorization 为准，避免账号配置切换期间沿用旧 Key 身份。
+func resolveCodexSimulationInstallationIDWithFingerprint(account *Account, keyFingerprint string) string {
+	seed := buildCodexSimulationInstallationSeedWithFingerprint(account, keyFingerprint)
+	if seed == "" {
+		return ""
+	}
+	return generateSessionUUID(seed)
+}
+
 // buildCodexSimulationInstallationSeed 为 API Key Codex 模拟账号构造稳定安装标识种子。
 func buildCodexSimulationInstallationSeed(account *Account) string {
+	return buildCodexSimulationInstallationSeedWithFingerprint(account, codexSimulationInstallationFingerprint(account))
+}
+
+// buildCodexSimulationInstallationSeedWithFingerprint 将账号、上游地址和当前 Key 摘要共同纳入稳定种子。
+func buildCodexSimulationInstallationSeedWithFingerprint(account *Account, keyFingerprint string) string {
 	if account == nil {
 		return ""
 	}
@@ -1050,10 +1088,8 @@ func buildCodexSimulationInstallationSeed(account *Account) string {
 	if baseURL := strings.ToLower(strings.TrimSpace(account.GetOpenAIBaseURL())); baseURL != "" {
 		parts = append(parts, baseURL)
 	}
-	if len(parts) == 1 {
-		if fallback := codexSimulationInstallationFingerprint(account); fallback != "" {
-			parts = append(parts, fallback)
-		}
+	if keyFingerprint = strings.TrimSpace(keyFingerprint); keyFingerprint != "" {
+		parts = append(parts, keyFingerprint)
 	}
 	if len(parts) == 1 {
 		return ""
@@ -1061,9 +1097,67 @@ func buildCodexSimulationInstallationSeed(account *Account) string {
 	return strings.Join(parts, "::")
 }
 
-// codexSimulationInstallationFingerprint 仅在账号缺少稳定主键时使用非敏感 Key 指纹兜底。
+// namespaceCodexSimulationIdentifier 将会话类标识放入当前 Key 的稳定命名空间。
+// 返回值只包含确定性 UUID，不包含原始 Key、Key 摘要或客户端原始标识。
+func namespaceCodexSimulationIdentifier(keyFingerprint, kind, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	keyFingerprint = strings.TrimSpace(keyFingerprint)
+	if keyFingerprint == "" {
+		return raw
+	}
+	return generateSessionUUID(strings.Join([]string{
+		"sub2api-openai-codex-identity",
+		keyFingerprint,
+		strings.TrimSpace(kind),
+		raw,
+	}, "::"))
+}
+
+// namespaceCodexSimulationTurnMetadata 统一改写握手头中的 turn 元数据。
+// 已带当前 installation_id 的请求体元数据视为已经完成隔离，避免 HTTP 转 WS 时重复派生。
+func namespaceCodexSimulationTurnMetadata(raw, keyFingerprint, installationID string) string {
+	metadata, ok := parseCodexTurnMetadata(raw)
+	if !ok {
+		return strings.TrimSpace(raw)
+	}
+	installationID = strings.TrimSpace(installationID)
+	if installationID != "" && strings.TrimSpace(firstNonEmptyString(metadata["installation_id"])) == installationID {
+		return strings.TrimSpace(raw)
+	}
+	if strings.TrimSpace(firstNonEmptyString(metadata["installation_id"])) != installationID {
+		if sessionID := namespaceCodexSimulationIdentifier(keyFingerprint, "session", firstNonEmptyString(metadata[codexClientMetadataSessionIDKey])); sessionID != "" {
+			metadata[codexClientMetadataSessionIDKey] = sessionID
+		}
+		if threadID := namespaceCodexSimulationIdentifier(keyFingerprint, "thread", firstNonEmptyString(metadata[codexClientMetadataThreadIDKey])); threadID != "" {
+			metadata[codexClientMetadataThreadIDKey] = threadID
+		}
+		if windowID := namespaceCodexSimulationIdentifier(keyFingerprint, "window", firstNonEmptyString(metadata["window_id"])); windowID != "" {
+			metadata["window_id"] = windowID
+		}
+	}
+	metadata[codexClientMetadataTurnIDKey] = uuid.NewString()
+	if installationID != "" {
+		metadata["installation_id"] = installationID
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return strings.TrimSpace(raw)
+	}
+	return string(encoded)
+}
+
+// codexSimulationInstallationFingerprint 返回当前单 Key 的稳定非敏感摘要。
 func codexSimulationInstallationFingerprint(account *Account) string {
-	if account == nil || account.Credentials == nil {
+	if account == nil {
+		return ""
+	}
+	if selected := strings.TrimSpace(account.LastSelectedAPIKey()); selected != "" {
+		return FingerprintAPIKey(selected)
+	}
+	if account.Credentials == nil {
 		return ""
 	}
 	if keys := normalizeAPIKeys(account.Credentials["api_keys"]); len(keys) > 0 {

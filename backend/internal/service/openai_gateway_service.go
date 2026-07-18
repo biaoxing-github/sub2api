@@ -2266,8 +2266,8 @@ func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Re
 	if isRealOpenAICodexClientRequest(c) {
 		observeRealOpenAICodexDesktopUserAgent(c)
 		// API Key 模拟必须使用已验证的最新 Codex 指纹，避免旧客户端版本被上游拒绝。
-		applyOpenAICodexSyntheticClientHeaders(req, body, account)
 		copyOpenAIInboundHeaderIfPresent(req.Header, c, "X-Codex-Window-Id")
+		applyOpenAICodexSyntheticClientHeaders(req, body, account)
 		return
 	}
 	applyOpenAICodexLatestClientHeaders(req, body, account)
@@ -2290,18 +2290,66 @@ func applyOpenAICodexSyntheticClientHeaders(req *http.Request, body []byte, acco
 	req.Header.Set("user-agent", openAICodexCLIUserAgentForAccount(account))
 	req.Header.Set("originator", codexCLIOriginator)
 	if account != nil && account.Type == AccountTypeAPIKey {
+		keyFingerprint := codexSimulationInstallationFingerprint(account)
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
 		req.Header.Set("version", codexCLIVersion())
-		if req.Header.Get("x-codex-installation-id") == "" {
-			if installationID := resolveCodexSimulationInstallationID(account); installationID != "" {
-				req.Header.Set("x-codex-installation-id", installationID)
+		installationID := resolveCodexSimulationInstallationID(account)
+		if installationID != "" {
+			req.Header.Set("x-codex-installation-id", installationID)
+		}
+		namespaceCodexSimulationRequestHeader(req.Header, "session-id", keyFingerprint, "session")
+		namespaceCodexSimulationRequestHeader(req.Header, "session_id", keyFingerprint, "session")
+		namespaceCodexSimulationRequestHeader(req.Header, "thread-id", keyFingerprint, "thread")
+		namespaceCodexSimulationRequestHeader(req.Header, "x-codex-window-id", keyFingerprint, "window")
+		if req.Header.Get("session-id") == "" && req.Header.Get("session_id") == "" {
+			rawSessionID := strings.TrimSpace(firstNonEmptyString(
+				gjson.GetBytes(body, codexClientMetadataKey+"."+codexClientMetadataSessionIDKey).String(),
+				gjson.GetBytes(body, "prompt_cache_key").String(),
+			))
+			if rawSessionID != "" {
+				if bodyInstallationID := strings.TrimSpace(gjson.GetBytes(body, codexClientMetadataKey+"."+codexClientInstallationIDKey).String()); bodyInstallationID == installationID {
+					req.Header.Set("session-id", rawSessionID)
+				} else {
+					req.Header.Set("session-id", namespaceCodexSimulationIdentifier(keyFingerprint, "session", rawSessionID))
+				}
 			}
 		}
+		if req.Header.Get("thread-id") == "" {
+			if rawThreadID := strings.TrimSpace(gjson.GetBytes(body, codexClientMetadataKey+"."+codexClientMetadataThreadIDKey).String()); rawThreadID != "" {
+				if bodyInstallationID := strings.TrimSpace(gjson.GetBytes(body, codexClientMetadataKey+"."+codexClientInstallationIDKey).String()); bodyInstallationID == installationID {
+					req.Header.Set("thread-id", rawThreadID)
+				} else {
+					req.Header.Set("thread-id", namespaceCodexSimulationIdentifier(keyFingerprint, "thread", rawThreadID))
+				}
+			}
+		}
+		req.Header.Set("x-client-request-id", uuid.NewString())
+		req.Header.Del("x-codex-turn-metadata")
 	} else {
 		req.Header.Del("OpenAI-Beta")
 		req.Header.Del("version")
 	}
 	ensureOpenAICodexClientMetadataHeaders(req, body, true)
+	if account != nil && account.Type == AccountTypeAPIKey {
+		if metadata := namespaceCodexSimulationTurnMetadata(
+			req.Header.Get("x-codex-turn-metadata"),
+			codexSimulationInstallationFingerprint(account),
+			resolveCodexSimulationInstallationID(account),
+		); metadata != "" {
+			req.Header.Set("x-codex-turn-metadata", metadata)
+		}
+	}
+}
+
+// namespaceCodexSimulationRequestHeader 将已有的客户端标识改写到当前 Key 命名空间。
+func namespaceCodexSimulationRequestHeader(headers http.Header, name, keyFingerprint, kind string) {
+	if headers == nil {
+		return
+	}
+	value := namespaceCodexSimulationIdentifier(keyFingerprint, kind, headers.Get(name))
+	if value != "" {
+		headers.Set(name, value)
+	}
 }
 
 // ensureOpenAICodexClientMetadataHeaders 补齐 Codex 上游需要的会话和 turn 元数据，已有客户端值保持不变。

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -229,6 +230,7 @@ type openAIWSConn struct {
 
 	handshakeHeaders http.Header
 	betaFeatures     string
+	requestIdentity  string
 
 	leaseCh   chan struct{}
 	closedCh  chan struct{}
@@ -504,6 +506,11 @@ func (c *openAIWSConn) handshakeHeader(name string) string {
 
 func (c *openAIWSConn) matchesBetaFeatures(betaFeatures string) bool {
 	return c != nil && c.betaFeatures == betaFeatures
+}
+
+// matchesRequestIdentity 同时校验握手身份与协议特性，避免复用旧 Authorization 建立的连接。
+func (c *openAIWSConn) matchesRequestIdentity(requestIdentity, betaFeatures string) bool {
+	return c != nil && c.requestIdentity == requestIdentity && c.matchesBetaFeatures(betaFeatures)
 }
 
 func (c *openAIWSConn) isPrewarmed() bool {
@@ -815,6 +822,7 @@ func (p *openAIWSConnPool) acquire(ctx context.Context, req openAIWSAcquireReque
 retryAcquire:
 	accountID := req.Account.ID
 	betaFeatures := normalizeOpenAIWSBetaFeatures(req.Headers)
+	requestIdentity := openAIWSRequestIdentity(req)
 	effectiveMaxConns := p.effectiveMaxConnsByAccount(req.Account)
 	if effectiveMaxConns <= 0 {
 		return nil, errOpenAIWSConnQueueFull
@@ -827,6 +835,11 @@ retryAcquire:
 	if ap.lastCleanupAt.IsZero() || now.Sub(ap.lastCleanupAt) >= openAIWSAcquireCleanupInterval {
 		evicted = p.cleanupAccountLocked(ap, now, effectiveMaxConns)
 		ap.lastCleanupAt = now
+	}
+	identityEvicted := p.evictIdleConnsWithDifferentRequestIdentityLocked(ap, requestIdentity)
+	if len(identityEvicted) > 0 {
+		evicted = append(evicted, identityEvicted...)
+		p.metrics.scaleDownTotal.Add(int64(len(identityEvicted)))
 	}
 	pickStartedAt := time.Now()
 	allowReuse := !req.ForceNewConn
@@ -842,7 +855,7 @@ retryAcquire:
 				return nil, errOpenAIWSPreferredConnUnavailable
 			}
 			preferredConn, ok := ap.conns[preferredConnID]
-			if !ok || !preferredConn.matchesBetaFeatures(betaFeatures) {
+			if !ok || !preferredConn.matchesRequestIdentity(requestIdentity, betaFeatures) {
 				p.recordConnPickDuration(time.Since(pickStartedAt))
 				ap.mu.Unlock()
 				closeOpenAIWSConns(evicted)
@@ -923,7 +936,7 @@ retryAcquire:
 		}
 
 		if preferredConnID != "" {
-			if conn, ok := ap.conns[preferredConnID]; ok && conn.matchesBetaFeatures(betaFeatures) && conn.tryAcquire() {
+			if conn, ok := ap.conns[preferredConnID]; ok && conn.matchesRequestIdentity(requestIdentity, betaFeatures) && conn.tryAcquire() {
 				connPick := time.Since(pickStartedAt)
 				p.recordConnPickDuration(connPick)
 				ap.mu.Unlock()
@@ -945,7 +958,7 @@ retryAcquire:
 			}
 		}
 
-		best := p.pickLeastBusyConnLocked(ap, "", betaFeatures)
+		best := p.pickLeastBusyConnLocked(ap, "", requestIdentity, betaFeatures)
 		if best != nil && best.tryAcquire() {
 			connPick := time.Since(pickStartedAt)
 			p.recordConnPickDuration(connPick)
@@ -967,7 +980,7 @@ retryAcquire:
 			return lease, nil
 		}
 		for _, conn := range ap.conns {
-			if conn == nil || conn == best || !conn.matchesBetaFeatures(betaFeatures) {
+			if conn == nil || conn == best || !conn.matchesRequestIdentity(requestIdentity, betaFeatures) {
 				continue
 			}
 			if conn.tryAcquire() {
@@ -994,8 +1007,8 @@ retryAcquire:
 	}
 
 	if !req.ForceNewConn && len(ap.conns)+ap.creating >= effectiveMaxConns {
-		compatible := p.pickLeastBusyConnLocked(ap, "", betaFeatures)
-		if idle := p.pickOldestIdleConnWithDifferentBetaFeaturesLocked(ap, betaFeatures); idle != nil {
+		compatible := p.pickLeastBusyConnLocked(ap, "", requestIdentity, betaFeatures)
+		if idle := p.pickOldestIdleConnWithDifferentRequestIdentityLocked(ap, requestIdentity, betaFeatures); idle != nil {
 			delete(ap.conns, idle.id)
 			evicted = append(evicted, idle)
 			p.metrics.scaleDownTotal.Add(1)
@@ -1076,7 +1089,7 @@ retryAcquire:
 		return nil, errOpenAIWSConnQueueFull
 	}
 
-	target := p.pickLeastBusyConnLocked(ap, req.PreferredConnID, betaFeatures)
+	target := p.pickLeastBusyConnLocked(ap, req.PreferredConnID, requestIdentity, betaFeatures)
 	connPick := time.Since(pickStartedAt)
 	p.recordConnPickDuration(connPick)
 	if target == nil {
@@ -1149,13 +1162,13 @@ func (p *openAIWSConnPool) pickOldestIdleConnLocked(ap *openAIWSAccountPool) *op
 	return oldest
 }
 
-func (p *openAIWSConnPool) pickOldestIdleConnWithDifferentBetaFeaturesLocked(ap *openAIWSAccountPool, betaFeatures string) *openAIWSConn {
+func (p *openAIWSConnPool) pickOldestIdleConnWithDifferentRequestIdentityLocked(ap *openAIWSAccountPool, requestIdentity, betaFeatures string) *openAIWSConn {
 	if ap == nil || len(ap.conns) == 0 {
 		return nil
 	}
 	var oldest *openAIWSConn
 	for _, conn := range ap.conns {
-		if conn == nil || conn.matchesBetaFeatures(betaFeatures) || conn.isLeased() || conn.waiters.Load() > 0 || p.isConnPinnedLocked(ap, conn.id) {
+		if conn == nil || conn.matchesRequestIdentity(requestIdentity, betaFeatures) || conn.isLeased() || conn.waiters.Load() > 0 || p.isConnPinnedLocked(ap, conn.id) {
 			continue
 		}
 		if oldest == nil || conn.lastUsedAt().Before(oldest.lastUsedAt()) {
@@ -1163,6 +1176,23 @@ func (p *openAIWSConnPool) pickOldestIdleConnWithDifferentBetaFeaturesLocked(ap 
 		}
 	}
 	return oldest
+}
+
+// evictIdleConnsWithDifferentRequestIdentityLocked 移除已空闲的旧握手身份连接。
+// 正在使用、排队或被续链固定的连接保留到后续自然释放，避免中断在途请求。
+func (p *openAIWSConnPool) evictIdleConnsWithDifferentRequestIdentityLocked(ap *openAIWSAccountPool, requestIdentity string) []*openAIWSConn {
+	if ap == nil || len(ap.conns) == 0 {
+		return nil
+	}
+	evicted := make([]*openAIWSConn, 0)
+	for id, conn := range ap.conns {
+		if conn == nil || conn.requestIdentity == requestIdentity || conn.isLeased() || conn.waiters.Load() > 0 || p.isConnPinnedLocked(ap, id) {
+			continue
+		}
+		delete(ap.conns, id)
+		evicted = append(evicted, conn)
+	}
+	return evicted
 }
 
 func (p *openAIWSConnPool) getOrCreateAccountPool(accountID int64) *openAIWSAccountPool {
@@ -1306,13 +1336,13 @@ func (p *openAIWSConnPool) cleanupAccountLocked(ap *openAIWSAccountPool, now tim
 	return evicted
 }
 
-func (p *openAIWSConnPool) pickLeastBusyConnLocked(ap *openAIWSAccountPool, preferredConnID, betaFeatures string) *openAIWSConn {
+func (p *openAIWSConnPool) pickLeastBusyConnLocked(ap *openAIWSAccountPool, preferredConnID, requestIdentity, betaFeatures string) *openAIWSConn {
 	if ap == nil || len(ap.conns) == 0 {
 		return nil
 	}
 	preferredConnID = stringsTrim(preferredConnID)
 	if preferredConnID != "" {
-		if conn, ok := ap.conns[preferredConnID]; ok && conn.matchesBetaFeatures(betaFeatures) {
+		if conn, ok := ap.conns[preferredConnID]; ok && conn.matchesRequestIdentity(requestIdentity, betaFeatures) {
 			return conn
 		}
 	}
@@ -1320,7 +1350,7 @@ func (p *openAIWSConnPool) pickLeastBusyConnLocked(ap *openAIWSAccountPool, pref
 	var bestWaiters int32
 	var bestLastUsed time.Time
 	for _, conn := range ap.conns {
-		if conn == nil || !conn.matchesBetaFeatures(betaFeatures) {
+		if conn == nil || !conn.matchesRequestIdentity(requestIdentity, betaFeatures) {
 			continue
 		}
 		waiters := conn.waiters.Load()
@@ -1599,7 +1629,22 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 	id := p.nextConnID(req.Account.ID)
 	pooledConn := newOpenAIWSConn(id, req.Account.ID, conn, handshakeHeaders)
 	pooledConn.betaFeatures = normalizeOpenAIWSBetaFeatures(req.Headers)
+	pooledConn.requestIdentity = openAIWSRequestIdentity(req)
 	return pooledConn, nil
+}
+
+// openAIWSRequestIdentity 仅保存握手关键字段的 SHA-256 摘要，不保留 Authorization 明文。
+func openAIWSRequestIdentity(req openAIWSAcquireRequest) string {
+	authorization := ""
+	if req.Headers != nil {
+		authorization = strings.TrimSpace(req.Headers.Get("authorization"))
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		strings.TrimSpace(req.WSURL),
+		strings.TrimSpace(req.ProxyURL),
+		authorization,
+	}, "\x00")))
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func (p *openAIWSConnPool) nextConnID(accountID int64) string {

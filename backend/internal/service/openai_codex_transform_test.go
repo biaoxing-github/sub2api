@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -68,40 +69,75 @@ func TestStripOpenAIImageGenerationTools_StripsAllDeclarationForms(t *testing.T)
 }
 
 func TestApplyCodexCLISimulationClientMetadata_APIKeyAccountAddsStableInstallationID(t *testing.T) {
-	account := &Account{
-		ID:          470,
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
-		Credentials: map[string]any{"api_key": "sk-sharedchat", "base_url": "https://new.sharedchat.cc/codex"},
+	accountForKey := func(apiKey string) *Account {
+		return &Account{
+			ID:          470,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": apiKey, "base_url": "https://new.sharedchat.cc/codex"},
+		}
 	}
-	reqBody := map[string]any{
-		"model": "gpt-5.5",
-		"input": []any{
-			map[string]any{"type": "message", "role": "user", "content": "hi"},
-		},
+	newBody := func() map[string]any {
+		return map[string]any{
+			"model":            "gpt-5.5",
+			"prompt_cache_key": "shared-cache",
+			"client_metadata": map[string]any{
+				"session_id":        "shared-session",
+				"thread_id":         "shared-thread",
+				"x-codex-window-id": "shared-window",
+			},
+			"input": []any{
+				map[string]any{"type": "message", "role": "user", "content": "hi"},
+			},
+		}
+	}
+	type identity struct {
+		InstallationID string
+		SessionID      string
+		ThreadID       string
+		WindowID       string
+		PromptCacheKey string
+		TurnID         string
+	}
+	apply := func(account *Account) (identity, []byte) {
+		body := newBody()
+		require.True(t, applyCodexCLISimulationClientMetadata(body, account))
+		metadata := body[codexClientMetadataKey].(map[string]any)
+		turnMetadata, ok := parseCodexTurnMetadata(metadata[codexClientMetadataTurnMetadataKey])
+		require.True(t, ok)
+		encoded, err := json.Marshal(body)
+		require.NoError(t, err)
+		return identity{
+			InstallationID: firstNonEmptyString(metadata[codexClientInstallationIDKey]),
+			SessionID:      firstNonEmptyString(metadata[codexClientMetadataSessionIDKey]),
+			ThreadID:       firstNonEmptyString(metadata[codexClientMetadataThreadIDKey]),
+			WindowID:       firstNonEmptyString(metadata[codexClientMetadataWindowIDKey]),
+			PromptCacheKey: firstNonEmptyString(body["prompt_cache_key"]),
+			TurnID:         firstNonEmptyString(turnMetadata[codexClientMetadataTurnIDKey]),
+		}, encoded
 	}
 
-	modified := applyCodexCLISimulationClientMetadata(reqBody, account)
-	require.True(t, modified)
+	identityA1, encodedA := apply(accountForKey("sk-team-a"))
+	identityA2, _ := apply(accountForKey("sk-team-a"))
+	identityB, encodedB := apply(accountForKey("sk-team-b"))
+	identityA3, _ := apply(accountForKey("sk-team-a"))
 
-	installationID := firstNonEmptyString(
-		reqBody[codexClientMetadataKey].(map[string]any)[codexClientInstallationIDKey],
-	)
-	require.NotEmpty(t, installationID)
-	require.Equal(t, resolveCodexSimulationInstallationID(account), installationID)
-	turnMetadataRaw := reqBody[codexClientMetadataKey].(map[string]any)[codexClientMetadataTurnMetadataKey]
-	turnMetadata, ok := parseCodexTurnMetadata(turnMetadataRaw)
-	require.True(t, ok)
-	require.Equal(t, installationID, firstNonEmptyString(turnMetadata["installation_id"]))
+	require.NotEmpty(t, identityA1.InstallationID)
+	require.Equal(t, identityA1.InstallationID, identityA2.InstallationID)
+	require.Equal(t, identityA1.InstallationID, identityA3.InstallationID)
+	require.Equal(t, identityA1.SessionID, identityA2.SessionID)
+	require.Equal(t, identityA1.ThreadID, identityA2.ThreadID)
+	require.Equal(t, identityA1.WindowID, identityA2.WindowID)
+	require.Equal(t, identityA1.PromptCacheKey, identityA2.PromptCacheKey)
+	require.NotEqual(t, identityA1.TurnID, identityA2.TurnID)
 
-	secondBody := map[string]any{
-		"model": "gpt-5.5",
-		"input": []any{
-			map[string]any{"type": "message", "role": "user", "content": "hi again"},
-		},
-	}
-	require.True(t, applyCodexCLISimulationClientMetadata(secondBody, account))
-	require.Equal(t, installationID, firstNonEmptyString(secondBody[codexClientMetadataKey].(map[string]any)[codexClientInstallationIDKey]))
+	require.NotEqual(t, identityA1.InstallationID, identityB.InstallationID)
+	require.NotEqual(t, identityA1.SessionID, identityB.SessionID)
+	require.NotEqual(t, identityA1.ThreadID, identityB.ThreadID)
+	require.NotEqual(t, identityA1.WindowID, identityB.WindowID)
+	require.NotEqual(t, identityA1.PromptCacheKey, identityB.PromptCacheKey)
+	require.NotContains(t, string(encodedA), "sk-team-a")
+	require.NotContains(t, string(encodedB), "sk-team-b")
 }
 
 func TestApplyCodexOAuthTransform_MessagesBridgePromptCacheKeyIsHeaderOnly(t *testing.T) {

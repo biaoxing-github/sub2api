@@ -1177,6 +1177,10 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 ) (http.Header, openAIWSSessionHeaderResolution) {
 	headers := make(http.Header)
 	headers.Set("authorization", "Bearer "+token)
+	keyFingerprint := ""
+	if account != nil && account.Type == AccountTypeAPIKey && s.shouldSimulateOpenAICodexCLI(account) {
+		keyFingerprint = FingerprintAPIKey(token)
+	}
 
 	sessionResolution := resolveOpenAIWSSessionHeaders(c, promptCacheKey)
 	if c != nil && c.Request != nil {
@@ -1200,16 +1204,31 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		}
 	} else {
 		if sessionResolution.SessionID != "" {
-			headers.Set("session_id", sessionResolution.SessionID)
+			sessionID := sessionResolution.SessionID
+			if keyFingerprint != "" {
+				sessionID = namespaceCodexSimulationIdentifier(keyFingerprint, "session", sessionID)
+			}
+			headers.Set("session_id", sessionID)
 		}
 		if sessionResolution.ConversationID != "" {
-			headers.Set("conversation_id", sessionResolution.ConversationID)
+			conversationID := sessionResolution.ConversationID
+			if keyFingerprint != "" {
+				conversationID = namespaceCodexSimulationIdentifier(keyFingerprint, "thread", conversationID)
+			}
+			headers.Set("conversation_id", conversationID)
 		}
 	}
 	if state := strings.TrimSpace(turnState); state != "" {
 		headers.Set(openAIWSTurnStateHeader, state)
 	}
 	if metadata := strings.TrimSpace(turnMetadata); metadata != "" {
+		if keyFingerprint != "" {
+			metadata = namespaceCodexSimulationTurnMetadata(
+				metadata,
+				keyFingerprint,
+				resolveCodexSimulationInstallationIDWithFingerprint(account, keyFingerprint),
+			)
+		}
 		headers.Set(openAIWSTurnMetadataHeader, metadata)
 	}
 
@@ -1247,6 +1266,21 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			headers.Set("user-agent", openAICodexCLIUserAgentForAccount(account))
 			headers.Set("originator", codexCLIOriginator)
 			headers.Del("version")
+		}
+		if keyFingerprint != "" {
+			headers.Set("version", codexCLIVersion())
+			if installationID := resolveCodexSimulationInstallationIDWithFingerprint(account, keyFingerprint); installationID != "" {
+				headers.Set("x-codex-installation-id", installationID)
+			}
+			rawWindowID := ""
+			if c != nil {
+				rawWindowID = strings.TrimSpace(c.GetHeader("x-codex-window-id"))
+			}
+			if rawWindowID != "" {
+				headers.Set("x-codex-window-id", namespaceCodexSimulationIdentifier(keyFingerprint, "window", rawWindowID))
+			} else if sessionID := strings.TrimSpace(headers.Get("session_id")); sessionID != "" {
+				headers.Set("x-codex-window-id", sessionID+":0")
+			}
 		}
 	}
 	if account != nil && account.Type == AccountTypeOAuth {
