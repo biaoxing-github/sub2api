@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -65,6 +66,7 @@ type openAIWSAcquireRequest struct {
 	WSURL           string
 	Headers         http.Header
 	ProxyURL        string
+	TLSProfile      *tlsfingerprint.Profile // 当前账号上游握手使用的稳定 TLS 指纹
 	PreferredConnID string
 	// ForceNewConn: 强制本次获取新连接（避免复用导致连接内续链状态互相污染）。
 	ForceNewConn bool
@@ -1611,7 +1613,17 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 	if p == nil || p.clientDialer == nil {
 		return nil, errors.New("openai ws client dialer is nil")
 	}
-	conn, status, handshakeHeaders, err := p.clientDialer.Dial(ctx, req.WSURL, req.Headers, req.ProxyURL)
+	var (
+		conn             openAIWSClientConn
+		status           int
+		handshakeHeaders http.Header
+		err              error
+	)
+	if tlsDialer, ok := p.clientDialer.(openAIWSTLSClientDialer); ok && req.TLSProfile != nil {
+		conn, status, handshakeHeaders, err = tlsDialer.DialWithTLS(ctx, req.WSURL, req.Headers, req.ProxyURL, req.TLSProfile)
+	} else {
+		conn, status, handshakeHeaders, err = p.clientDialer.Dial(ctx, req.WSURL, req.Headers, req.ProxyURL)
+	}
 	if err != nil {
 		return nil, &openAIWSDialError{
 			StatusCode:      status,
@@ -1642,6 +1654,7 @@ func openAIWSRequestIdentity(req openAIWSAcquireRequest) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		strings.TrimSpace(req.WSURL),
 		strings.TrimSpace(req.ProxyURL),
+		tlsfingerprint.ProfileCacheKey(req.TLSProfile),
 		authorization,
 	}, "\x00")))
 	return fmt.Sprintf("%x", sum[:])

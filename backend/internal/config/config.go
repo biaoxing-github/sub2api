@@ -815,8 +815,8 @@ type GatewayConfig struct {
 	// OpenAICodexDirectForceWS: 账号级 Codex CLI 模拟开启时，允许 HTTP/SSE 入站请求强制转为上游 WSv2。
 	// 默认关闭，开启后仍受 gateway.openai_ws.enabled/oauth_enabled/force_http 和账号级模拟开关约束。
 	OpenAICodexDirectForceWS bool `mapstructure:"openai_codex_direct_force_ws"`
-	// OpenAICodexDirectTLSFingerprintProfileID: 账号级 Codex CLI 模拟上游 HTTP 请求的 TLS 指纹模板 ID。
-	// 0=内置默认 Node.js 24.x，-1=随机已有模板，>0=指定模板。
+	// OpenAICodexDirectTLSFingerprintProfileID: 账号级 Codex CLI 模拟上游 HTTP/WS 请求的 TLS 指纹模板 ID。
+	// 0=按账号稳定选择十套内置模板，-1=随机已有模板，>0=指定模板。
 	OpenAICodexDirectTLSFingerprintProfileID int64 `mapstructure:"openai_codex_direct_tls_fingerprint_profile_id"`
 	// OpenAISchedulerProbeInfiniteWaitEnabled: OpenAI 调度耗尽时是否无限小请求探测等待。
 	// 关闭时每个候选账号探测 6 次后返回真实调度错误；开启后持续探测直到请求上下文取消或账号恢复。

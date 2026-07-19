@@ -229,7 +229,9 @@ func TestForwardAsChatCompletions_APIKeyCodexSimulationUsesTLSProfile(t *testing
 	require.Equal(t, "https://new.sharedchat.cc/codex/v1/responses", upstream.lastReq.URL.String())
 	require.Equal(t, codexCLIUserAgent(), upstream.lastReq.Header.Get("User-Agent"))
 	require.NotNil(t, upstream.lastTLSProfile)
-	require.Equal(t, builtInDefaultTLSFingerprintProfileName, upstream.lastTLSProfile.Name)
+	expectedTLSProfile := builtInOpenAICodexTLSFingerprintProfile(account.ID)
+	require.Equal(t, expectedTLSProfile.Name, upstream.lastTLSProfile.Name)
+	require.Equal(t, expectedTLSProfile.Preset, upstream.lastTLSProfile.Preset)
 }
 
 func TestForwardAsChatCompletions_OAuthDoesNotInjectDefaultInstructions(t *testing.T) {

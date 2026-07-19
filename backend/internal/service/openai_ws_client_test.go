@@ -6,8 +6,51 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
+
+// TestCoderOpenAIWSClientDialer_TLSProfileClientIsolation 验证直连 WS 客户端按 TLS Profile 隔离并关闭 HTTP/2。
+func TestCoderOpenAIWSClientDialer_TLSProfileClientIsolation(t *testing.T) {
+	dialer := newDefaultOpenAIWSClientDialer()
+	impl, ok := dialer.(*coderOpenAIWSClientDialer)
+	require.True(t, ok)
+
+	profileA := &tlsfingerprint.Profile{Name: "Chrome 100", Preset: tlsfingerprint.ClientHelloPresetChrome100}
+	profileACopy := &tlsfingerprint.Profile{Name: "Chrome 100", Preset: tlsfingerprint.ClientHelloPresetChrome100}
+	profileB := &tlsfingerprint.Profile{Name: "Firefox 105", Preset: tlsfingerprint.ClientHelloPresetFirefox105}
+
+	clientA1, err := impl.upstreamHTTPClient("", profileA)
+	require.NoError(t, err)
+	clientA2, err := impl.upstreamHTTPClient("", profileACopy)
+	require.NoError(t, err)
+	clientB, err := impl.upstreamHTTPClient("", profileB)
+	require.NoError(t, err)
+	require.Same(t, clientA1, clientA2)
+	require.NotSame(t, clientA1, clientB)
+
+	transport, ok := clientA1.Transport.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, transport.DialTLSContext)
+	require.False(t, transport.ForceAttemptHTTP2)
+	require.Nil(t, transport.Proxy)
+}
+
+// TestBuildOpenAIWSHTTPTransportWithTLSProxy 验证 HTTP 与 SOCKS5 代理都使用自定义 uTLS 建连器。
+func TestBuildOpenAIWSHTTPTransportWithTLSProxy(t *testing.T) {
+	profile := &tlsfingerprint.Profile{Name: "Safari 16.0", Preset: tlsfingerprint.ClientHelloPresetSafari160}
+	for _, rawProxy := range []string{"http://127.0.0.1:8080", "socks5://127.0.0.1:1080"} {
+		t.Run(rawProxy, func(t *testing.T) {
+			client, err := (&coderOpenAIWSClientDialer{proxyClients: make(map[string]*openAIWSProxyClientEntry)}).upstreamHTTPClient(rawProxy, profile)
+			require.NoError(t, err)
+			transport, ok := client.Transport.(*http.Transport)
+			require.True(t, ok)
+			require.NotNil(t, transport.DialTLSContext)
+			require.False(t, transport.ForceAttemptHTTP2)
+			require.Nil(t, transport.Proxy)
+		})
+	}
+}
 
 func TestCoderOpenAIWSClientDialer_ProxyHTTPClientReuse(t *testing.T) {
 	dialer := newDefaultOpenAIWSClientDialer()

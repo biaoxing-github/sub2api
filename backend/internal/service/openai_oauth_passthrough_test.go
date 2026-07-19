@@ -1451,7 +1451,9 @@ func TestOpenAIGatewayService_APIKeyCodexCLISimulation_ForcesHeadersAndPreserves
 	require.NotNil(t, result)
 	require.NotNil(t, upstream.lastReq)
 	require.NotNil(t, upstream.lastTLSProfile)
-	require.Equal(t, builtInDefaultTLSFingerprintProfileName, upstream.lastTLSProfile.Name)
+	expectedTLSProfile := builtInOpenAICodexTLSFingerprintProfile(account.ID)
+	require.Equal(t, expectedTLSProfile.Name, upstream.lastTLSProfile.Name)
+	require.Equal(t, expectedTLSProfile.Preset, upstream.lastTLSProfile.Preset)
 	require.Equal(t, "https://new.sharedchat.cc/codex/responses", upstream.lastReq.URL.String())
 	require.Equal(t, codexCLIUserAgent(), upstream.lastReq.Header.Get("User-Agent"))
 	require.Equal(t, codexCLIOriginator, upstream.lastReq.Header.Get("originator"))
@@ -1580,7 +1582,9 @@ func TestOpenAIGatewayService_APIKeyPassthroughCodexCLISimulation_ForcesHeaders(
 	require.Equal(t, codexCLIVersion(), upstream.lastReq.Header.Get("Version"))
 	require.Equal(t, resolveCodexSimulationInstallationID(account), upstream.lastReq.Header.Get("X-Codex-Installation-Id"))
 	require.NotNil(t, upstream.lastTLSProfile)
-	require.Equal(t, builtInDefaultTLSFingerprintProfileName, upstream.lastTLSProfile.Name)
+	expectedTLSProfile := builtInOpenAICodexTLSFingerprintProfile(account.ID)
+	require.Equal(t, expectedTLSProfile.Name, upstream.lastTLSProfile.Name)
+	require.Equal(t, expectedTLSProfile.Preset, upstream.lastTLSProfile.Preset)
 }
 
 func TestOpenAIGatewayService_OAuthPassthrough_WarnOnTimeoutHeadersForStream(t *testing.T) {

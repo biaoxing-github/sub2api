@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/flate"
 	"compress/gzip"
+	"crypto/sha256"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -415,6 +416,7 @@ func (s *httpUpstreamService) doOpenAIProfile(req *http.Request, proxyURL string
 	fallbackKey := buildOpenAIHTTP2FallbackKey(accountID, proxyKey, requestBaseURL)
 	protocolMode := s.resolveOpenAIProtocolMode(parsedProxy, fallbackKey, tlsProfile)
 	cacheKey := buildOpenAICacheKey(buildCacheKey(s.getIsolationMode(), proxyKey, accountID), requestBaseURL, protocolMode)
+	cacheKey = buildOpenAITransportCacheKey(cacheKey, accountID, tlsProfile, req.Header.Get("Authorization"))
 	poolKey := s.buildOpenAIPoolKey(accountConcurrency, protocolMode, settings)
 
 	entry, err := s.getOrCreateOpenAIClient(cacheKey, poolKey, proxyKey, fallbackKey, accountConcurrency, parsedProxy, tlsProfile, protocolMode, settings)
@@ -555,6 +557,18 @@ func buildOpenAICacheKey(baseCacheKey, requestBaseURL, protocolMode string) stri
 		proto = upstreamProtocolModeDefault
 	}
 	return fmt.Sprintf("%s|openai_base:%s|openai_proto:%s", base, baseURL, proto)
+}
+
+// buildOpenAITransportCacheKey 按账号、TLS 指纹和授权摘要隔离底层 HTTP 连接。
+func buildOpenAITransportCacheKey(baseCacheKey string, accountID int64, profile *tlsfingerprint.Profile, authorization string) string {
+	authorizationSum := sha256.Sum256([]byte(strings.TrimSpace(authorization)))
+	return fmt.Sprintf(
+		"%s|openai_account:%d|openai_tls:%s|openai_auth:%x",
+		baseCacheKey,
+		accountID,
+		tlsfingerprint.ProfileCacheKey(profile),
+		authorizationSum[:],
+	)
 }
 
 func buildOpenAIHTTP2FallbackKey(accountID int64, proxyKey, requestBaseURL string) string {

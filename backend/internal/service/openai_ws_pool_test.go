@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -433,6 +434,48 @@ func TestOpenAIWSConnPool_AcquireReusesOnlyMatchingRequestIdentity(t *testing.T)
 	leaseB.Release()
 
 	require.Equal(t, 2, dialer.DialCount())
+}
+
+// TestOpenAIWSRequestIdentityIncludesTLSProfile 验证 WS 复用身份会随 TLS Profile 变化且只保存摘要。
+func TestOpenAIWSRequestIdentityIncludesTLSProfile(t *testing.T) {
+	baseReq := openAIWSAcquireRequest{
+		Account: &Account{ID: 131, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+		WSURL:   "wss://example.com/v1/responses",
+		Headers: http.Header{"Authorization": {"Bearer sk-team-a"}},
+	}
+	profileA := &tlsfingerprint.Profile{Name: "Chrome 100", Preset: tlsfingerprint.ClientHelloPresetChrome100}
+	profileB := &tlsfingerprint.Profile{Name: "Firefox 105", Preset: tlsfingerprint.ClientHelloPresetFirefox105}
+
+	reqA := baseReq
+	reqA.TLSProfile = profileA
+	reqB := baseReq
+	reqB.TLSProfile = profileB
+	identityA := openAIWSRequestIdentity(reqA)
+	identityB := openAIWSRequestIdentity(reqB)
+
+	require.Len(t, identityA, 64)
+	require.NotEqual(t, identityA, identityB)
+	require.NotContains(t, identityA, "sk-team-a")
+	require.NotContains(t, identityA, profileA.Name)
+}
+
+// TestOpenAIWSConnPoolPassesTLSProfileToAwareDialer 验证连接池把账号 Profile 传到实际 TLS 建连边界。
+func TestOpenAIWSConnPoolPassesTLSProfileToAwareDialer(t *testing.T) {
+	pool := newOpenAIWSConnPool(&config.Config{})
+	dialer := &openAIWSTLSCaptureDialer{}
+	pool.setClientDialerForTest(dialer)
+	profile := &tlsfingerprint.Profile{Name: "iOS 12.1", Preset: tlsfingerprint.ClientHelloPresetIOS121}
+
+	conn, err := pool.dialConn(context.Background(), openAIWSAcquireRequest{
+		Account:    &Account{ID: 132, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+		WSURL:      "wss://example.com/v1/responses",
+		TLSProfile: profile,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	require.False(t, dialer.plainDialCalled)
+	require.NotNil(t, dialer.tlsProfile)
+	require.Equal(t, tlsfingerprint.ProfileCacheKey(profile), tlsfingerprint.ProfileCacheKey(dialer.tlsProfile))
 }
 
 func TestOpenAIWSConnPool_AcquireReplacesIdleConnWithDifferentBetaFeatures(t *testing.T) {
@@ -1611,6 +1654,35 @@ func TestOpenAIWSConnPool_Acquire_ErrorBranches(t *testing.T) {
 }
 
 type openAIWSFakeDialer struct{}
+
+// openAIWSTLSCaptureDialer 记录连接池选择的 TLS Profile，并区分普通拨号分支。
+type openAIWSTLSCaptureDialer struct {
+	plainDialCalled bool                    // 是否错误调用了不带 Profile 的兼容接口
+	tlsProfile      *tlsfingerprint.Profile // TLS 感知接口收到的 Profile
+}
+
+// Dial 实现旧拨号接口，用于发现 Profile 被遗漏的回归。
+func (d *openAIWSTLSCaptureDialer) Dial(
+	ctx context.Context,
+	wsURL string,
+	headers http.Header,
+	proxyURL string,
+) (openAIWSClientConn, int, http.Header, error) {
+	d.plainDialCalled = true
+	return &openAIWSFakeConn{}, 0, nil, nil
+}
+
+// DialWithTLS 记录连接池传入的账号级 TLS Profile。
+func (d *openAIWSTLSCaptureDialer) DialWithTLS(
+	ctx context.Context,
+	wsURL string,
+	headers http.Header,
+	proxyURL string,
+	profile *tlsfingerprint.Profile,
+) (openAIWSClientConn, int, http.Header, error) {
+	d.tlsProfile = profile
+	return &openAIWSFakeConn{}, 0, nil, nil
+}
 
 func (d *openAIWSFakeDialer) Dial(
 	ctx context.Context,

@@ -19,7 +19,8 @@ import (
 // Profile contains TLS fingerprint configuration.
 // All slice fields use built-in defaults when empty.
 type Profile struct {
-	Name                string // Profile name for identification
+	Name                string            // Profile name for identification
+	Preset              ClientHelloPreset // 非空时使用对应的固定 uTLS ClientHello 模板
 	CipherSuites        []uint16
 	Curves              []uint16
 	PointFormats        []uint16
@@ -275,7 +276,11 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 		host = addr
 	}
 
-	spec := buildClientHelloSpecFromProfile(profile)
+	spec, err := buildClientHelloSpec(profile)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	tlsConn := utls.UClient(conn, &utls.Config{ServerName: host}, utls.HelloCustom)
 
 	if err := tlsConn.ApplyPreset(spec); err != nil {

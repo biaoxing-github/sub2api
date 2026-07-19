@@ -4214,14 +4214,15 @@ func TestOpenAIUpstreamTLSProfileUsesAccountLevelCodexSimulationOnly(t *testing.
 	}}
 	require.Nil(t, offSvc.openAIUpstreamTLSProfile(oauthAccount))
 	require.Nil(t, offSvc.openAIUpstreamTLSProfile(apiKeyAccount))
-	require.Equal(t, builtInDefaultTLSFingerprintProfileName, offSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount).Name)
+	expectedTLSProfile := builtInOpenAICodexTLSFingerprintProfile(apiKeyCodexSimulationAccount.ID)
+	require.Equal(t, expectedTLSProfile, offSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount))
 
 	codexSvc := &OpenAIGatewayService{cfg: &config.Config{
 		Gateway: config.GatewayConfig{OpenAIOAuthCompatMode: config.GatewayOpenAIOAuthCompatModeCodexDirect},
 	}}
 	require.Nil(t, codexSvc.openAIUpstreamTLSProfile(oauthAccount))
 	require.Nil(t, codexSvc.openAIUpstreamTLSProfile(apiKeyAccount))
-	require.Equal(t, builtInDefaultTLSFingerprintProfileName, codexSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount).Name)
+	require.Equal(t, expectedTLSProfile, codexSvc.openAIUpstreamTLSProfile(apiKeyCodexSimulationAccount))
 
 	profileSvc := &TLSFingerprintProfileService{
 		localCache: map[int64]*model.TLSFingerprintProfile{

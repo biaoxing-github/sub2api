@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -44,6 +45,11 @@ type openAIWSClientDialer interface {
 	Dial(ctx context.Context, wsURL string, headers http.Header, proxyURL string) (openAIWSClientConn, int, http.Header, error)
 }
 
+// openAIWSTLSClientDialer 允许连接池在不破坏旧测试桩的前提下传入账号级 TLS 指纹。
+type openAIWSTLSClientDialer interface {
+	DialWithTLS(ctx context.Context, wsURL string, headers http.Header, proxyURL string, profile *tlsfingerprint.Profile) (openAIWSClientConn, int, http.Header, error)
+}
+
 type openAIWSTransportMetricsDialer interface {
 	SnapshotTransportMetrics() OpenAIWSTransportMetricsSnapshot
 }
@@ -72,6 +78,28 @@ func (d *coderOpenAIWSClientDialer) Dial(
 	headers http.Header,
 	proxyURL string,
 ) (openAIWSClientConn, int, http.Header, error) {
+	return d.dial(ctx, wsURL, headers, proxyURL, nil)
+}
+
+// DialWithTLS 使用指定账号的 TLS Profile 完成 WebSocket HTTP/1.1 Upgrade 握手。
+func (d *coderOpenAIWSClientDialer) DialWithTLS(
+	ctx context.Context,
+	wsURL string,
+	headers http.Header,
+	proxyURL string,
+	profile *tlsfingerprint.Profile,
+) (openAIWSClientConn, int, http.Header, error) {
+	return d.dial(ctx, wsURL, headers, proxyURL, profile)
+}
+
+// dial 统一执行普通或带账号 TLS Profile 的 coder/websocket 握手。
+func (d *coderOpenAIWSClientDialer) dial(
+	ctx context.Context,
+	wsURL string,
+	headers http.Header,
+	proxyURL string,
+	profile *tlsfingerprint.Profile,
+) (openAIWSClientConn, int, http.Header, error) {
 	targetURL := strings.TrimSpace(wsURL)
 	if targetURL == "" {
 		return nil, 0, nil, errors.New("ws url is empty")
@@ -81,8 +109,9 @@ func (d *coderOpenAIWSClientDialer) Dial(
 		HTTPHeader:      cloneHeader(headers),
 		CompressionMode: coderws.CompressionContextTakeover,
 	}
-	if proxy := strings.TrimSpace(proxyURL); proxy != "" {
-		proxyClient, err := d.proxyHTTPClient(proxy)
+	proxy := strings.TrimSpace(proxyURL)
+	if proxy != "" || profile != nil {
+		proxyClient, err := d.upstreamHTTPClient(proxy, profile)
 		if err != nil {
 			return nil, 0, nil, err
 		}
@@ -110,43 +139,90 @@ func (d *coderOpenAIWSClientDialer) Dial(
 }
 
 func (d *coderOpenAIWSClientDialer) proxyHTTPClient(proxy string) (*http.Client, error) {
-	if d == nil {
-		return nil, errors.New("openai ws dialer is nil")
-	}
 	normalizedProxy := strings.TrimSpace(proxy)
 	if normalizedProxy == "" {
 		return nil, errors.New("proxy url is empty")
 	}
-	parsedProxyURL, err := url.Parse(normalizedProxy)
-	if err != nil {
-		return nil, fmt.Errorf("invalid proxy url: %w", err)
+	return d.upstreamHTTPClient(normalizedProxy, nil)
+}
+
+// upstreamHTTPClient 按代理和 TLS Profile 摘要缓存 WebSocket 握手客户端。
+func (d *coderOpenAIWSClientDialer) upstreamHTTPClient(proxy string, profile *tlsfingerprint.Profile) (*http.Client, error) {
+	if d == nil {
+		return nil, errors.New("openai ws dialer is nil")
+	}
+	normalizedProxy := strings.TrimSpace(proxy)
+	var parsedProxyURL *url.URL
+	if normalizedProxy != "" {
+		var err error
+		parsedProxyURL, err = url.Parse(normalizedProxy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy url: %w", err)
+		}
+	}
+	cacheKey := normalizedProxy
+	if profile != nil {
+		if cacheKey == "" {
+			cacheKey = "direct"
+		}
+		cacheKey += "|tls:" + tlsfingerprint.ProfileCacheKey(profile)
 	}
 	now := time.Now().UnixNano()
 
 	d.proxyMu.Lock()
 	defer d.proxyMu.Unlock()
-	if entry, ok := d.proxyClients[normalizedProxy]; ok && entry != nil && entry.client != nil {
+	if entry, ok := d.proxyClients[cacheKey]; ok && entry != nil && entry.client != nil {
 		entry.lastUsedUnixNano = now
 		d.proxyHits.Add(1)
 		return entry.client, nil
 	}
 	d.cleanupProxyClientsLocked(now)
-	transport := &http.Transport{
-		Proxy:               http.ProxyURL(parsedProxyURL),
-		MaxIdleConns:        openAIWSProxyTransportMaxIdleConns,
-		MaxIdleConnsPerHost: openAIWSProxyTransportMaxIdleConnsPerHost,
-		IdleConnTimeout:     openAIWSProxyTransportIdleConnTimeout,
-		TLSHandshakeTimeout: 10 * time.Second,
-		ForceAttemptHTTP2:   true,
+	transport, err := buildOpenAIWSHTTPTransport(parsedProxyURL, profile)
+	if err != nil {
+		return nil, err
 	}
 	client := &http.Client{Transport: transport}
-	d.proxyClients[normalizedProxy] = &openAIWSProxyClientEntry{
+	d.proxyClients[cacheKey] = &openAIWSProxyClientEntry{
 		client:           client,
 		lastUsedUnixNano: now,
 	}
 	d.ensureProxyClientCapacityLocked()
 	d.proxyMisses.Add(1)
 	return client, nil
+}
+
+// buildOpenAIWSHTTPTransport 构造普通代理或 uTLS 指纹 WebSocket 握手传输。
+func buildOpenAIWSHTTPTransport(proxyURL *url.URL, profile *tlsfingerprint.Profile) (*http.Transport, error) {
+	transport := &http.Transport{
+		MaxIdleConns:        openAIWSProxyTransportMaxIdleConns,
+		MaxIdleConnsPerHost: openAIWSProxyTransportMaxIdleConnsPerHost,
+		IdleConnTimeout:     openAIWSProxyTransportIdleConnTimeout,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+	if profile == nil {
+		if proxyURL == nil {
+			return nil, errors.New("proxy url is empty")
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
+		transport.ForceAttemptHTTP2 = true
+		return transport, nil
+	}
+
+	transport.ForceAttemptHTTP2 = false
+	if proxyURL == nil {
+		transport.DialTLSContext = tlsfingerprint.NewDialer(profile, nil).DialTLSContext
+		return transport, nil
+	}
+
+	switch strings.ToLower(strings.TrimSpace(proxyURL.Scheme)) {
+	case "http", "https":
+		transport.DialTLSContext = tlsfingerprint.NewHTTPProxyDialer(profile, proxyURL).DialTLSContext
+	case "socks5", "socks5h":
+		transport.DialTLSContext = tlsfingerprint.NewSOCKS5ProxyDialer(profile, proxyURL).DialTLSContext
+	default:
+		return nil, fmt.Errorf("unsupported TLS fingerprint proxy scheme: %s", proxyURL.Scheme)
+	}
+	return transport, nil
 }
 
 func (d *coderOpenAIWSClientDialer) cleanupProxyClientsLocked(nowUnixNano int64) {
