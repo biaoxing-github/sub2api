@@ -139,6 +139,8 @@ func TestForwardAlphaSearchReturnsFailoverBeforeWriting(t *testing.T) {
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+	require.Equal(t, UpstreamErrorCategoryRateLimited, failoverErr.ActionMetadata["error_category"])
+	require.Equal(t, OpenAIStreamActionAvoidAccountTTL, failoverErr.ActionLabel)
 	require.Equal(t, openAIPlatformAlphaSearchURL, upstream.lastReq.URL.String())
 	require.False(t, c.Writer.Written())
 	require.Empty(t, recorder.Body.String())

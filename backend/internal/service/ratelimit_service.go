@@ -183,6 +183,11 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	if account == nil {
 		return false
 	}
+	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(responseBody))
+	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+	if upstreamMsg != "" {
+		upstreamMsg = truncateForLog([]byte(upstreamMsg), 512)
+	}
 	if result, handled := s.applyUnifiedErrorHandlingRules(ctx, account, statusCode, headers, responseBody); handled {
 		switch result {
 		case ErrorPolicyTempUnscheduled, ErrorPolicyDisabled:
@@ -192,6 +197,18 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		default:
 			return false
 		}
+	}
+	// 显式临时不可调度规则继续优先于内置基础设施熔断；未命中时再使用统一默认策略。
+	if account.Platform == PlatformOpenAI && statusCode != http.StatusUnauthorized {
+		if _, matched := classifyOpenAIUpstreamInfrastructureFailure(statusCode, upstreamMsg, responseBody); matched {
+			if s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
+				return true
+			}
+		}
+	}
+	// 共享基础设施故障必须先于池模式和单 Key 冷却处理，避免同一故障轮询所有 Key 或持续命中上游。
+	if s.tryOpenAIUpstreamInfrastructureCooldown(ctx, account, statusCode, upstreamMsg, responseBody) {
+		return true
 	}
 
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
@@ -209,11 +226,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		return false
 	}
 
-	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(responseBody))
-	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-	if upstreamMsg != "" {
-		upstreamMsg = truncateForLog([]byte(upstreamMsg), 512)
-	}
 	if shouldSkipOpenAIAccountStateMutation(account, statusCode, upstreamMsg, responseBody, customErrorCodesEnabled) {
 		slog.Info("openai_account_state_mutation_skipped",
 			"account_id", account.ID,

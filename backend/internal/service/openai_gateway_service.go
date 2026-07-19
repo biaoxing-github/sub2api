@@ -3633,6 +3633,9 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
 		return false
 	}
+	if _, matched := classifyOpenAIUpstreamInfrastructureFailure(statusCode, upstreamMsg, upstreamBody); matched {
+		return true
+	}
 	if s.shouldFailoverUpstreamError(statusCode) {
 		return true
 	}
@@ -4542,7 +4545,7 @@ httpRetryLoop:
 					return nil, &UpstreamFailoverError{
 						StatusCode:             resp.StatusCode,
 						ResponseBody:           respBody,
-						RetryableOnSameAccount: account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
+						RetryableOnSameAccount: isOpenAIPoolModeRetryableOnSameAccount(account, resp.StatusCode, upstreamMsg, respBody),
 						ActionLabel:            policy.ActionLabel,
 						ActionMetadata:         actionMetadata,
 					}
@@ -4830,13 +4833,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 
 		if resp.StatusCode >= 400 {
-			// 透传模式默认保持原样代理；但 429/529 属于网关必须兜底的上游容量类错误，
-			// 直接返回 failover，让 handler 按账号级冷却和切号节奏处理。
-			if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode) {
-				respBody := s.readUpstreamErrorBody(resp)
-				_ = resp.Body.Close()
-				resp.Body = io.NopCloser(bytes.NewReader(respBody))
-				upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+			respBody := s.readUpstreamErrorBody(resp)
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+			// 透传模式保留普通业务错误原样代理；容量错误和基础设施故障仍由网关切号并熔断。
+			if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode, upstreamMsg, respBody) {
 				s.recordOpenAIPathHealthFailure(account, requestBaseURL, firstNonEmptyString(upstreamMsg, strconv.Itoa(resp.StatusCode)))
 				return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body)
 			}
@@ -5088,7 +5090,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 	return req, nil
 }
 
-func shouldFailoverOpenAIPassthroughResponse(statusCode int) bool {
+func shouldFailoverOpenAIPassthroughResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	if _, matched := classifyOpenAIUpstreamInfrastructureFailure(statusCode, upstreamMsg, upstreamBody); matched {
+		return true
+	}
 	switch statusCode {
 	case http.StatusTooManyRequests, 529:
 		return true
@@ -5611,6 +5616,10 @@ func (s *OpenAIGatewayService) applyOpenAIStreamFailoverAccountState(ctx context
 // 避免其他并发请求继续命中同一个异常账号。
 func (s *OpenAIGatewayService) TempUnscheduleRetryableError(ctx context.Context, accountID int64, failoverErr *UpstreamFailoverError) {
 	if s == nil || s.accountRepo == nil || failoverErr == nil {
+		return
+	}
+	if _, matched := classifyOpenAIUpstreamInfrastructureFailure(failoverErr.StatusCode, "", failoverErr.ResponseBody); matched &&
+		s.isOpenAIAccountRuntimeBlockedByID(accountID, time.Now()) {
 		return
 	}
 	if failoverErr.StatusCode >= 500 && failoverErr.StatusCode < 600 {
@@ -6711,38 +6720,48 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			truncateForLog(body, s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes),
 		)
 	}
+	var reqModel string
+	if len(requestedModel) > 0 {
+		reqModel = strings.TrimSpace(requestedModel[0])
+	}
+	if reqModel == "" {
+		reqModel, _, _ = extractOpenAIRequestMetaFromBody(requestBody)
+	}
+	infrastructureFailover := s.handleOpenAIUpstreamInfrastructureFailure(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
 
 	if resp.StatusCode == http.StatusRequestEntityTooLarge {
 		writeOpenAIRequestTooLargeError(c)
 		return nil, fmt.Errorf("upstream error: %d request body too large", resp.StatusCode)
 	}
 
-	if status, errType, errMsg, matched := applyErrorPassthroughRule(
-		c,
-		PlatformOpenAI,
-		resp.StatusCode,
-		body,
-		http.StatusBadGateway,
-		"upstream_error",
-		"Upstream request failed",
-	); matched {
-		c.JSON(status, gin.H{
-			"error": gin.H{
-				"type":    errType,
-				"message": errMsg,
-			},
-		})
-		if upstreamMsg == "" {
-			upstreamMsg = errMsg
+	if !infrastructureFailover {
+		if status, errType, errMsg, matched := applyErrorPassthroughRule(
+			c,
+			PlatformOpenAI,
+			resp.StatusCode,
+			body,
+			http.StatusBadGateway,
+			"upstream_error",
+			"Upstream request failed",
+		); matched {
+			c.JSON(status, gin.H{
+				"error": gin.H{
+					"type":    errType,
+					"message": errMsg,
+				},
+			})
+			if upstreamMsg == "" {
+				upstreamMsg = errMsg
+			}
+			if upstreamMsg == "" {
+				return nil, fmt.Errorf("upstream error: %d (passthrough rule matched)", resp.StatusCode)
+			}
+			return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 		}
-		if upstreamMsg == "" {
-			return nil, fmt.Errorf("upstream error: %d (passthrough rule matched)", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
 	// Check custom error codes
-	if !account.ShouldHandleErrorCode(resp.StatusCode) {
+	if !infrastructureFailover && !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
 			AccountID:          account.ID,
@@ -6766,14 +6785,10 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 
 	// Handle upstream error (mark account status)
-	var reqModel string
-	if len(requestedModel) > 0 {
-		reqModel = strings.TrimSpace(requestedModel[0])
+	shouldFailover := infrastructureFailover
+	if !shouldFailover {
+		shouldFailover = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
 	}
-	if reqModel == "" {
-		reqModel, _, _ = extractOpenAIRequestMetaFromBody(requestBody)
-	}
-	shouldFailover := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
 	kind := "http_error"
 	if shouldFailover {
 		kind = "failover"
@@ -6889,6 +6904,13 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		upstreamDetail = truncateString(string(body), maxBytes)
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
+	modelForCooldown := ""
+	if len(requestedModel) > 0 {
+		modelForCooldown = strings.TrimSpace(requestedModel[0])
+	}
+	infrastructureFailover := s.handleOpenAIUpstreamInfrastructureFailure(
+		c.Request.Context(), account, resp.StatusCode, resp.Header, body, modelForCooldown,
+	)
 
 	if resp.StatusCode == http.StatusRequestEntityTooLarge {
 		writeError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", "Request body is too large for upstream OpenAI API")
@@ -6896,23 +6918,25 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	}
 
 	// Apply error passthrough rules
-	if status, errType, errMsg, matched := applyErrorPassthroughRule(
-		c, account.Platform, resp.StatusCode, body,
-		http.StatusBadGateway, "api_error", "Upstream request failed",
-	); matched {
-		writeError(c, status, errType, errMsg)
-		if upstreamMsg == "" {
-			upstreamMsg = errMsg
+	if !infrastructureFailover {
+		if status, errType, errMsg, matched := applyErrorPassthroughRule(
+			c, account.Platform, resp.StatusCode, body,
+			http.StatusBadGateway, "api_error", "Upstream request failed",
+		); matched {
+			writeError(c, status, errType, errMsg)
+			if upstreamMsg == "" {
+				upstreamMsg = errMsg
+			}
+			if upstreamMsg == "" {
+				return nil, fmt.Errorf("upstream error: %d (passthrough rule matched)", resp.StatusCode)
+			}
+			return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 		}
-		if upstreamMsg == "" {
-			return nil, fmt.Errorf("upstream error: %d (passthrough rule matched)", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
 	// Check custom error codes — if the account does not handle this status,
 	// return a generic error without exposing upstream details.
-	if !account.ShouldHandleErrorCode(resp.StatusCode) {
+	if !infrastructureFailover && !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
 			AccountID:          account.ID,
@@ -6931,13 +6955,12 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	}
 
 	// Track rate limits and decide whether to trigger secondary failover.
-	var modelForCooldown string
-	if len(requestedModel) > 0 {
-		modelForCooldown = requestedModel[0]
+	shouldFailover := infrastructureFailover
+	if !shouldFailover {
+		shouldFailover = s.handleOpenAIAccountUpstreamError(
+			c.Request.Context(), account, resp.StatusCode, resp.Header, body, modelForCooldown,
+		)
 	}
-	shouldFailover := s.handleOpenAIAccountUpstreamError(
-		c.Request.Context(), account, resp.StatusCode, resp.Header, body, modelForCooldown,
-	)
 	kind := "http_error"
 	if shouldFailover {
 		kind = "failover"

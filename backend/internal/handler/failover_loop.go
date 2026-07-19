@@ -112,10 +112,19 @@ func (s *FailoverState) HandleFailoverError(
 		s.ForceCacheBilling = true
 	}
 
-	// 智能重试策略：根据状态码差异化处理
+	// 智能重试策略：根据状态码和统一错误分类差异化处理。
 	statusCode := failoverErr.StatusCode
-	switch statusCode {
-	case http.StatusTooManyRequests: // 429 限流
+	switch {
+	case platform == service.PlatformOpenAI && isOpenAIAccountInfrastructureFailover(failoverErr):
+		// 账号级基础设施故障已经由 service 写入冷却；handler 只负责立即切号，不能再落入 502/504 同账号重试。
+		tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
+		logger.FromContext(ctx).Warn("gateway.failover_openai_infrastructure_immediate_switch",
+			zap.Int64("account_id", accountID),
+			zap.Int("upstream_status", statusCode),
+			zap.String("error_category", failoverErr.ActionMetadata["error_category"]),
+		)
+
+	case statusCode == http.StatusTooManyRequests: // 429 限流
 		// 429 限流：同账号重试，等待 RetryAfter 或固定延时
 		if s.SameAccountRetryCount[accountID] < maxSameAccountRetries {
 			s.SameAccountRetryCount[accountID]++
@@ -133,7 +142,7 @@ func (s *FailoverState) HandleFailoverError(
 		// 同账号重试用尽，执行临时封禁后切换
 		tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 
-	case http.StatusServiceUnavailable: // 503 容量不足
+	case statusCode == http.StatusServiceUnavailable: // 503 容量不足
 		// 503 容量不足：立即切换下一账号，短暂冷却避免循环选中
 		logger.FromContext(ctx).Warn("gateway.failover_503_immediate_switch",
 			zap.Int64("account_id", accountID),
@@ -141,7 +150,7 @@ func (s *FailoverState) HandleFailoverError(
 		// 执行短时临时封禁，避免 HandleSelectionExhausted 清空失败列表后再次选中
 		tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 
-	case 529: // 529 过载
+	case statusCode == 529: // 529 过载
 		// 529 过载：立即切换下一账号，30s 冷却
 		logger.FromContext(ctx).Warn("gateway.failover_529_immediate_switch",
 			zap.Int64("account_id", accountID),
@@ -149,7 +158,7 @@ func (s *FailoverState) HandleFailoverError(
 		// 执行 30s 临时封禁
 		tempUnscheduleFailoverAccount(ctx, gatewayService, accountID, failoverErr)
 
-	case http.StatusBadGateway, http.StatusGatewayTimeout: // 502/504 网关错误
+	case statusCode == http.StatusBadGateway || statusCode == http.StatusGatewayTimeout: // 502/504 网关错误
 		// 502/504 网关错误：同账号重试 1 次，等待 30s，避免异常账号快速探测。
 		if s.SameAccountRetryCount[accountID] < 1 {
 			s.SameAccountRetryCount[accountID]++
@@ -216,6 +225,22 @@ func (s *FailoverState) HandleFailoverError(
 	}
 
 	return FailoverContinue
+}
+
+// isOpenAIAccountInfrastructureFailover 使用统一分类元数据识别必须立即避让整个账号的上游故障。
+func isOpenAIAccountInfrastructureFailover(failoverErr *service.UpstreamFailoverError) bool {
+	if failoverErr == nil {
+		return false
+	}
+	if service.IsOpenAIUpstreamInfrastructureFailure(failoverErr.StatusCode, "", failoverErr.ResponseBody) {
+		return true
+	}
+	if failoverErr.StatusCode == 529 {
+		return false
+	}
+	// 流内错误可能没有独立 HTTP 状态或完整响应体，保留统一策略元数据作为同一分类器的结果载体。
+	category := failoverErr.ActionMetadata["error_category"]
+	return category == service.UpstreamErrorCategoryInfrastructureFailure || category == service.UpstreamErrorCategoryUpstream5xx
 }
 
 func tempUnscheduleFailoverAccount(ctx context.Context, gatewayService TempUnscheduler, accountID int64, failoverErr *service.UpstreamFailoverError) {

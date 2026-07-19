@@ -468,11 +468,6 @@ func TestRateLimitService_HandleUpstreamError_OpenAILineAndLocalErrorsDoNotMutat
 			body:       []byte(`<html><title>Just a moment...</title><center>cloudflare</center>`),
 		},
 		{
-			name:       "upstream 5xx",
-			statusCode: http.StatusBadGateway,
-			body:       []byte(`{"error":{"message":"upstream failed"}}`),
-		},
-		{
 			name:       "previous response not found",
 			statusCode: http.StatusBadRequest,
 			body:       []byte(`{"error":{"code":"previous_response_not_found","message":"previous response not found"}}`),

@@ -16,6 +16,7 @@ const (
 	UpstreamErrorCategoryUnexpectedEOF            = "unexpected_eof"
 	UpstreamErrorCategoryHeaderTimeout            = "header_timeout"
 	UpstreamErrorCategoryPreviousResponseNotFound = "previous_response_not_found"
+	UpstreamErrorCategoryInfrastructureFailure    = "upstream_infrastructure_failure"
 	UpstreamErrorCategoryUpstream5xx              = "upstream_5xx"
 	UpstreamErrorCategoryRequestTooLarge          = "request_too_large"
 	UpstreamErrorCategoryTimeout                  = "timeout"
@@ -52,12 +53,16 @@ func ClassifyUpstreamError(input UpstreamErrorInput) UpstreamErrorClass {
 		raw = strings.TrimSpace(raw + " " + input.Err.Error())
 	}
 	lower := strings.ToLower(raw)
+	_, resourceLabel, resourceExhausted := classifyUpstreamResourceExhaustion(input.StatusCode, lower)
 
 	switch {
 	case input.Err == nil && input.StatusCode >= 200 && input.StatusCode < 400 && strings.TrimSpace(raw) == "":
 		return upstreamErrorClass(UpstreamErrorCategoryOK, "正常", "", false, false, false, false)
 	case input.StatusCode == http.StatusRequestEntityTooLarge || strings.Contains(lower, "413 request entity too large"):
 		return upstreamErrorClass(UpstreamErrorCategoryRequestTooLarge, "请求体过大/413", "", false, false, false, false)
+	case resourceExhausted:
+		// 资源错误文案常携带数字型 request id；应先于全文 401/429 启发式，状态码排除由资源分类器负责。
+		return upstreamErrorClass(UpstreamErrorCategoryInfrastructureFailure, resourceLabel, OpenAIPathFailureOther, true, false, false, true)
 	case input.StatusCode == http.StatusUnauthorized ||
 		strings.Contains(lower, "401") ||
 		strings.Contains(lower, "unauthorized") ||

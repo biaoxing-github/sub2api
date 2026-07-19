@@ -461,7 +461,7 @@ func classifyAccountProbeError(message string) (string, string, int) {
 		return "auth", classification.Label, 15
 	case UpstreamErrorCategoryQuota:
 		return classification.Category, classification.Label, 15
-	case UpstreamErrorCategoryUpstream5xx:
+	case UpstreamErrorCategoryInfrastructureFailure, UpstreamErrorCategoryUpstream5xx:
 		return classification.Category, classification.Label, 12
 	default:
 		return "upstream_error", "上游错误", 6

@@ -68,17 +68,11 @@ func classifyOpenAIUpstreamErrorPolicy(phase openAIUpstreamErrorPolicyPhase, inp
 		action = OpenAIStreamActionAvoidAccountTTL
 	case UpstreamErrorCategoryCloudflareWAF, UpstreamErrorCategoryUnexpectedEOF, UpstreamErrorCategoryHeaderTimeout, UpstreamErrorCategoryTimeout:
 		action = OpenAIStreamActionAvoidUpstreamBucketTTL
+	case UpstreamErrorCategoryInfrastructureFailure:
+		action = OpenAIStreamActionAvoidAccountTTL
 	case UpstreamErrorCategoryUpstream5xx:
-		// 502/503/504 精细化冷却策略：
-		// 503 = 容量不足（瞬时），重试下一个不冷却
-		// 502/504/其他 5xx = 账号级冷却
-		if strings.Contains(classification.Label, "503") {
-			action = OpenAIStreamActionRetryNextAccount
-		} else if classification.LineDegraded {
-			action = OpenAIStreamActionAvoidAccountTTL
-		} else {
-			action = OpenAIStreamActionAvoidAccountTTL
-		}
+		// HTTP 5xx 会触发账号级短熔断，避免并发请求持续命中同一异常上游。
+		action = OpenAIStreamActionAvoidAccountTTL
 	case UpstreamErrorCategoryBusinessLimited, UpstreamErrorCategoryPreviousResponseNotFound, UpstreamErrorCategoryRequestTooLarge:
 		action = OpenAIStreamActionRetryNextAccount
 	case UpstreamErrorCategoryUpstreamError:
@@ -87,6 +81,10 @@ func classifyOpenAIUpstreamErrorPolicy(phase openAIUpstreamErrorPolicyPhase, inp
 		action = OpenAIStreamActionRetryNoAvoidance
 	default:
 		action = OpenAIStreamActionRetryNextAccount
+	}
+	// HTTP 504 在通用诊断中属于 timeout，但账号状态策略仍需与其他基础设施 5xx 一致。
+	if phase == openAIUpstreamErrorPolicyPhaseHTTPResponse && IsOpenAIUpstreamInfrastructureFailure(input.StatusCode, input.Message, input.Body) {
+		action = OpenAIStreamActionAvoidAccountTTL
 	}
 
 	if phase == openAIUpstreamErrorPolicyPhaseRequest && action != OpenAIStreamActionRetryNoAvoidance {

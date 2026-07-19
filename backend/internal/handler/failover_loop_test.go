@@ -242,7 +242,8 @@ func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 		require.Contains(t, fs.FailedAccountIDs, int64(100))
 		require.Equal(t, err, fs.LastFailoverErr)
 		require.False(t, fs.ForceCacheBilling)
-		require.Empty(t, mock.calls, "不应调用 TempUnschedule")
+		require.Len(t, mock.calls, 1, "OpenAI 500 应在切号前写入账号级冷却")
+		require.Equal(t, int64(100), mock.calls[0].accountID)
 	})
 
 	t.Run("非重试错误_Antigravity_第一次切换无延迟", func(t *testing.T) {
@@ -491,6 +492,43 @@ func TestHandleFailoverError_SameAccountRetry(t *testing.T) {
 	})
 }
 
+// TestHandleFailoverError_OpenAIInfrastructureFailureSkipsSameAccountRetry 验证账号级基础设施故障不会被 502/504 特例重新送回同一上游。
+func TestHandleFailoverError_OpenAIInfrastructureFailureSkipsSameAccountRetry(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       []byte
+	}{
+		{name: "disk resource failure", statusCode: http.StatusBadRequest, body: []byte(`{"error":{"message":"failed to write to temp file: no space left on device"}}`)},
+		{name: "bad gateway", statusCode: http.StatusBadGateway},
+		{name: "gateway timeout", statusCode: http.StatusGatewayTimeout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockTempUnscheduler{}
+			fs := NewFailoverState(3, false)
+			err := newTestFailoverErr(tt.statusCode, false, false)
+			err.ResponseBody = tt.body
+			var slept []time.Duration
+			restore := stubFailoverSleep(t, func(_ context.Context, d time.Duration) bool {
+				slept = append(slept, d)
+				return true
+			})
+			defer restore()
+
+			action := fs.HandleFailoverError(context.Background(), mock, 100, service.PlatformOpenAI, err)
+
+			require.Equal(t, FailoverContinue, action)
+			require.Zero(t, fs.SameAccountRetryCount[100])
+			require.Equal(t, 1, fs.SwitchCount)
+			require.Contains(t, fs.FailedAccountIDs, int64(100))
+			require.Empty(t, slept)
+			require.Len(t, mock.calls, 1)
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // HandleFailoverError — TempUnschedule 调用验证
 // ---------------------------------------------------------------------------
@@ -689,13 +727,13 @@ func TestHandleFailoverError_IntegrationScenario(t *testing.T) {
 		require.Equal(t, 1, fs.SwitchCount)
 		require.Len(t, mock.calls, maxSameAccountRetries+1)
 
-		// 3. 账号 200 遇到不可重试错误 → 直接切换
+		// 3. 账号 200 遇到基础设施 500 → 冷却账号并直接切换
 		switchErr := newTestFailoverErr(500, false, false)
 		action = fs.HandleFailoverError(context.Background(), mock, 200, "openai", switchErr)
 		require.Equal(t, FailoverContinue, action)
 		require.Equal(t, 2, fs.SwitchCount)
 
-		// 4. 账号 300 遇到不可重试错误 → 再切换
+		// 4. 账号 300 遇到基础设施 500 → 冷却账号并再切换
 		action = fs.HandleFailoverError(context.Background(), mock, 300, "openai", switchErr)
 		require.Equal(t, FailoverContinue, action)
 		require.Equal(t, 3, fs.SwitchCount)
@@ -708,7 +746,7 @@ func TestHandleFailoverError_IntegrationScenario(t *testing.T) {
 		require.Equal(t, 3, fs.SwitchCount, "耗尽时不再递增")
 		require.Len(t, fs.FailedAccountIDs, 4, "4个不同账号都在失败列表中")
 		require.True(t, fs.ForceCacheBilling)
-		require.Len(t, mock.calls, maxSameAccountRetries+1, "只有账号 100 触发了 TempUnschedule")
+		require.Len(t, mock.calls, maxSameAccountRetries+4, "400 重试账号和三个 500 故障账号都应写入冷却")
 	})
 
 	t.Run("模拟Antigravity平台完整流程", func(t *testing.T) {
@@ -774,24 +812,28 @@ func TestHandleFailoverError_EdgeCases(t *testing.T) {
 		require.Equal(t, FailoverContinue, action)
 	})
 
-	t.Run("AccountID为0也能正常跟踪", func(t *testing.T) {
+	t.Run("AccountID为0的基础设施错误直接切换", func(t *testing.T) {
 		mock := &mockTempUnscheduler{}
 		fs := NewFailoverState(3, false)
 		err := newTestFailoverErr(500, true, false)
 
 		action := fs.HandleFailoverError(context.Background(), mock, 0, "openai", err)
 		require.Equal(t, FailoverContinue, action)
-		require.Equal(t, 1, fs.SameAccountRetryCount[0])
+		require.Zero(t, fs.SameAccountRetryCount[0])
+		require.Equal(t, 1, fs.SwitchCount)
+		require.Contains(t, fs.FailedAccountIDs, int64(0))
 	})
 
-	t.Run("负AccountID也能正常跟踪", func(t *testing.T) {
+	t.Run("负AccountID的基础设施错误直接切换", func(t *testing.T) {
 		mock := &mockTempUnscheduler{}
 		fs := NewFailoverState(3, false)
 		err := newTestFailoverErr(500, true, false)
 
 		action := fs.HandleFailoverError(context.Background(), mock, -1, "openai", err)
 		require.Equal(t, FailoverContinue, action)
-		require.Equal(t, 1, fs.SameAccountRetryCount[-1])
+		require.Zero(t, fs.SameAccountRetryCount[-1])
+		require.Equal(t, 1, fs.SwitchCount)
+		require.Contains(t, fs.FailedAccountIDs, int64(-1))
 	})
 
 	t.Run("空平台名称不触发Antigravity延迟", func(t *testing.T) {

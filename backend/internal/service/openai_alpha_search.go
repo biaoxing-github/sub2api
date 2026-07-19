@@ -67,6 +67,8 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMessage, respBody) ||
 			isOpenAIAlphaSearchEndpointUnsupported(account, resp.StatusCode) {
+			policy := openAIHTTPResponseErrorPolicy(resp.StatusCode, upstreamMessage, respBody)
+			actionMetadata := s.openAIHTTPResponseActionMetadata(policy, false, account, resp.Header.Get("x-request-id"), resp.StatusCode)
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			if shouldApplyOpenAIAlphaSearchAccountErrorSideEffects(resp.StatusCode) {
 				s.handleFailoverSideEffects(ctx, resp, account, upstreamModel)
@@ -74,7 +76,9 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
-				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+				RetryableOnSameAccount: isOpenAIPoolModeRetryableOnSameAccount(account, resp.StatusCode, upstreamMessage, respBody),
+				ActionLabel:            policy.ActionLabel,
+				ActionMetadata:         actionMetadata,
 			}
 		}
 	}

@@ -230,6 +230,26 @@ func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) b
 	return ok
 }
 
+// isOpenAIAccountRuntimeBlockedByID 供 handler 冷却入口判断账号状态是否已在请求链路内写入。
+func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlockedByID(accountID int64, now time.Time) bool {
+	if s == nil || accountID <= 0 {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	value, ok := s.openaiAccountRuntimeBlockUntil.Load(accountID)
+	if !ok {
+		return false
+	}
+	until, ok := value.(time.Time)
+	if !ok || until.IsZero() || !now.Before(until) {
+		s.ClearAccountSchedulingBlock(accountID)
+		return false
+	}
+	return true
+}
+
 func (s *OpenAIGatewayService) recordOpenAIOAuth429() {
 	if s == nil {
 		return

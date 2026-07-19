@@ -84,6 +84,9 @@ func isOpenAIPoolModeRetryableOnSameAccount(account *Account, statusCode int, up
 	if account == nil || !account.IsPoolMode() {
 		return false
 	}
+	if _, matched := classifyOpenAIUpstreamInfrastructureFailure(statusCode, upstreamMsg, body); matched {
+		return false
+	}
 	if isOpenAIModelNotFoundError(statusCode, body) {
 		return false
 	}

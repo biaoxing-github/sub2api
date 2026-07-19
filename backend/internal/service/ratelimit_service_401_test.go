@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -134,7 +135,7 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey429DisablesLastActiveK
 	require.Equal(t, 0, repo.updateExtraCalls)
 }
 
-func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey503RecordsSelectedKeyError(t *testing.T) {
+func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey503UsesAccountCircuit(t *testing.T) {
 	account := &Account{
 		ID:          62010,
 		Platform:    PlatformOpenAI,
@@ -153,18 +154,15 @@ func TestRateLimitService_HandleUpstreamError_OpenAIAPIKey503RecordsSelectedKeyE
 	shouldDisable := service.HandleUpstreamError(context.Background(), account, http.StatusServiceUnavailable, http.Header{}, []byte(`{"error":{"message":"upstream temporarily unavailable"}}`))
 
 	require.True(t, shouldDisable)
-	require.Empty(t, account.GetAPIKeys())
-	require.Equal(t, 1, repo.updateCredentialsCalls)
-	disabled, _ := repo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
-	record, _ := disabled[FingerprintAPIKey("sk-single")].(map[string]any)
-	require.NotNil(t, record)
-	require.Equal(t, "service_unavailable", record["reason"])
-	require.Contains(t, record["last_error"], "API returned 503")
-	require.Contains(t, record["last_error"], "upstream temporarily unavailable")
-	disabledUntil, err := time.Parse(time.RFC3339, record["disabled_until"].(string))
-	require.NoError(t, err)
-	require.WithinDuration(t, startedAt.Add(5*time.Second), disabledUntil, time.Second)
-	require.Equal(t, 0, repo.tempCalls)
+	require.Equal(t, []string{"sk-single"}, account.GetAPIKeys())
+	require.Equal(t, 0, repo.updateCredentialsCalls)
+	require.Equal(t, 1, repo.tempCalls)
+	require.NotNil(t, account.TempUnschedulableUntil)
+	require.WithinDuration(t, startedAt.Add(30*time.Second), *account.TempUnschedulableUntil, 2*time.Second)
+	var state TempUnschedState
+	require.NoError(t, json.Unmarshal([]byte(account.TempUnschedulableReason), &state))
+	require.Equal(t, "upstream_server_error", state.MatchedKeyword)
+	require.Equal(t, 1, state.ErrorCount)
 	require.Equal(t, 0, repo.setErrorCalls)
 }
 

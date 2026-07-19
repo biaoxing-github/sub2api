@@ -656,11 +656,16 @@ func newOpenAIImagesFailoverError(statusCode int, responseBody []byte, responseH
 	if statusCode <= 0 {
 		statusCode = http.StatusBadGateway
 	}
+	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(responseBody)))
+	policy := openAIHTTPResponseErrorPolicy(statusCode, upstreamMsg, responseBody)
+	retryableOnSameAccount := policy.Category != UpstreamErrorCategoryInfrastructureFailure && policy.Category != UpstreamErrorCategoryUpstream5xx
 	return &UpstreamFailoverError{
 		StatusCode:             statusCode,
 		ResponseBody:           append([]byte(nil), responseBody...),
 		ResponseHeaders:        cloneHeader(responseHeaders),
-		RetryableOnSameAccount: true,
+		RetryableOnSameAccount: retryableOnSameAccount,
+		ActionLabel:            policy.ActionLabel,
+		ActionMetadata:         policy.Metadata(),
 	}
 }
 
@@ -733,27 +738,36 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 			truncateForLog(body, s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes),
 		)
 	}
+	modelForCooldown := ""
+	if len(requestedModel) > 0 {
+		modelForCooldown = strings.TrimSpace(requestedModel[0])
+	}
+	infrastructureFailover := s.handleOpenAIUpstreamInfrastructureFailure(
+		ctx, account, resp.StatusCode, resp.Header, body, modelForCooldown,
+	)
 
-	if status, errType, errMsg, matched := applyErrorPassthroughRule(
-		c,
-		account.Platform,
-		resp.StatusCode,
-		body,
-		http.StatusBadGateway,
-		"upstream_error",
-		"Upstream request failed",
-	); matched {
-		upErr := &OpenAIImagesUpstreamError{
-			StatusCode:        status,
-			ErrorType:         errType,
-			Message:           errMsg,
-			UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id")),
+	if !infrastructureFailover {
+		if status, errType, errMsg, matched := applyErrorPassthroughRule(
+			c,
+			account.Platform,
+			resp.StatusCode,
+			body,
+			http.StatusBadGateway,
+			"upstream_error",
+			"Upstream request failed",
+		); matched {
+			upErr := &OpenAIImagesUpstreamError{
+				StatusCode:        status,
+				ErrorType:         errType,
+				Message:           errMsg,
+				UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id")),
+			}
+			writeOpenAIImagesUpstreamErrorResponse(c, upErr)
+			return nil, upErr
 		}
-		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
-		return nil, upErr
 	}
 
-	if !account.ShouldHandleErrorCode(resp.StatusCode) {
+	if !infrastructureFailover && !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
 			AccountID:          account.ID,
@@ -774,15 +788,16 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 		return nil, upErr
 	}
 
-	modelForCooldown := ""
-	if len(requestedModel) > 0 {
-		modelForCooldown = strings.TrimSpace(requestedModel[0])
+	shouldFailover := infrastructureFailover
+	if !shouldFailover {
+		shouldFailover = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, modelForCooldown)
 	}
-	shouldFailover := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, modelForCooldown)
 	kind := "http_error"
 	if shouldFailover {
 		kind = "failover"
 	}
+	policy := openAIHTTPResponseErrorPolicy(resp.StatusCode, upstreamMsg, body)
+	actionMetadata := s.openAIHTTPResponseActionMetadata(policy, false, account, resp.Header.Get("x-request-id"), resp.StatusCode)
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform:           account.Platform,
 		AccountID:          account.ID,
@@ -792,12 +807,16 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 		Kind:               kind,
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
+		ActionLabel:        string(policy.ActionLabel),
+		ActionMetadata:     actionMetadata,
 	})
 	if shouldFailover {
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
 			RetryableOnSameAccount: isOpenAIPoolModeRetryableOnSameAccount(account, resp.StatusCode, upstreamMsg, body),
+			ActionLabel:            policy.ActionLabel,
+			ActionMetadata:         actionMetadata,
 		}
 	}
 
@@ -1421,6 +1440,8 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+			policy := openAIHTTPResponseErrorPolicy(resp.StatusCode, upstreamMsg, respBody)
+			actionMetadata := s.openAIHTTPResponseActionMetadata(policy, false, account, resp.Header.Get("x-request-id"), resp.StatusCode)
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
 				AccountID:          account.ID,
@@ -1430,12 +1451,16 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 				Kind:               "failover",
 				Message:            upstreamMsg,
+				ActionLabel:        string(policy.ActionLabel),
+				ActionMetadata:     actionMetadata,
 			})
 			s.handleFailoverSideEffects(upstreamCtx, resp, account, openAIRequestModelFromBody(responsesBody))
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: isOpenAIPoolModeRetryableOnSameAccount(account, resp.StatusCode, upstreamMsg, respBody),
+				ActionLabel:            policy.ActionLabel,
+				ActionMetadata:         actionMetadata,
 			}
 		}
 		return s.handleErrorResponse(upstreamCtx, resp, c, account, responsesBody)

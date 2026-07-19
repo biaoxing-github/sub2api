@@ -392,10 +392,14 @@ func (s *OpsService) GetCodexDiagnosis(ctx context.Context, requestID string) (*
 		diagnosis.Status = "previous_response_not_found"
 		diagnosis.Headline = "续链 previous_response_id 已失效"
 		diagnosis.SuggestedAction = "丢弃失效续链锚点后用完整上下文重放，或新开会话。"
+	case UpstreamErrorCategoryInfrastructureFailure:
+		diagnosis.Status = "upstream_infrastructure_failure"
+		diagnosis.Headline = "上游基础设施资源耗尽"
+		diagnosis.SuggestedAction = "等待账号级熔断窗口结束并检查上游磁盘、内存、文件句柄或数据库连接池。"
 	case UpstreamErrorCategoryUpstream5xx:
 		diagnosis.Status = "upstream_5xx"
 		diagnosis.Headline = "上游 5xx/网关错误"
-		diagnosis.SuggestedAction = "优先切换 BaseURL 或等待上游恢复，不应直接误伤账号。"
+		diagnosis.SuggestedAction = "账号已进入短时熔断并切换候选；请检查 BaseURL 或等待上游恢复。"
 	default:
 		reason := strings.ToLower(lastReason)
 		if strings.Contains(reason, "context") || strings.Contains(reason, "replay") || strings.Contains(reason, "function_call_output") || strings.Contains(reason, "encrypted") {

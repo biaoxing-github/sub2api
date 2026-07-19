@@ -1705,3 +1705,13 @@ func TestClassifyAccountProbeErrorDetectsCloudflareWAF(t *testing.T) {
 	require.Equal(t, "Cloudflare/WAF 拦截", label)
 	require.Equal(t, 15, penalty)
 }
+
+func TestClassifyAccountProbeErrorDetectsInfrastructureFailure(t *testing.T) {
+	t.Parallel()
+
+	key, label, penalty := classifyAccountProbeError("database connection pool exhausted")
+
+	require.Equal(t, UpstreamErrorCategoryInfrastructureFailure, key)
+	require.Equal(t, "上游数据库连接耗尽", label)
+	require.Equal(t, 12, penalty)
+}

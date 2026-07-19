@@ -27,6 +27,8 @@ func TestClassifyUpstreamErrorCoversSharedCategories(t *testing.T) {
 		{name: "unexpected eof", err: errors.New("unexpected EOF"), want: UpstreamErrorCategoryUnexpectedEOF, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureEOF},
 		{name: "header timeout", err: errors.New("timed out waiting for OpenAI upstream response headers after 20s"), want: UpstreamErrorCategoryHeaderTimeout, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureHeaderTimeout},
 		{name: "previous response", statusCode: http.StatusBadRequest, message: "previous response not found", want: UpstreamErrorCategoryPreviousResponseNotFound},
+		{name: "infrastructure exhaustion", statusCode: http.StatusBadRequest, message: "database connection pool exhausted", want: UpstreamErrorCategoryInfrastructureFailure, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureOther},
+		{name: "infrastructure exhaustion with incidental status digits", statusCode: http.StatusBadRequest, message: "failed to write to temp file: no space left on device (request id: req-401429)", want: UpstreamErrorCategoryInfrastructureFailure, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureOther},
 		{name: "5xx", statusCode: http.StatusBadGateway, message: "upstream failed", want: UpstreamErrorCategoryUpstream5xx, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureOther},
 	}
 

@@ -816,6 +816,9 @@ func TestOpenAIGatewayServiceForwardImages_OAuthNonStreamNoImageOutputTriggersFa
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "upstream did not return image output")
 	require.Contains(t, string(failoverErr.ResponseBody), "resp_empty")
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.Equal(t, UpstreamErrorCategoryUpstream5xx, failoverErr.ActionMetadata["error_category"])
+	require.Equal(t, OpenAIStreamActionAvoidAccountTTL, failoverErr.ActionLabel)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Empty(t, rec.Body.String())
 }
@@ -862,6 +865,8 @@ func TestOpenAIGatewayServiceForwardImages_OAuthServerErrorReturnsFailoverBody(t
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusInternalServerError, failoverErr.StatusCode)
 	require.JSONEq(t, upstreamBody, string(failoverErr.ResponseBody))
+	require.Equal(t, UpstreamErrorCategoryUpstream5xx, failoverErr.ActionMetadata["error_category"])
+	require.Equal(t, OpenAIStreamActionAvoidAccountTTL, failoverErr.ActionLabel)
 	require.Empty(t, rec.Body.String())
 }
 
