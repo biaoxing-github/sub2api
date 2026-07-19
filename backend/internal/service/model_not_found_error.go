@@ -10,11 +10,14 @@ import (
 
 const openAIModelNotFoundCooldown = 30 * time.Minute
 
-// isOpenAIModelNotFoundError 识别上游“模型不存在”错误。
-// OpenAI 兼容上游有时用 400，有时用 404；只有消息或错误码明确指向模型不存在时才精细冷却。
+// isOpenAIModelNotFoundError 识别上游“模型不存在或当前账号不支持”错误。
+// OpenAI 兼容上游有时用 400，有时用 404；只有消息或错误码明确指向模型不可用时才精细冷却。
 func isOpenAIModelNotFoundError(statusCode int, body []byte) bool {
 	if statusCode != http.StatusBadRequest && statusCode != http.StatusNotFound {
 		return false
+	}
+	if isOpenAIModelUnsupportedForChatGPTAccountError(statusCode, body) {
+		return true
 	}
 	code := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
 		gjson.GetBytes(body, "error.code").String(),
@@ -41,6 +44,21 @@ func isOpenAIModelNotFoundError(statusCode int, body []byte) bool {
 		return true
 	}
 	return false
+}
+
+// isOpenAIModelUnsupportedForChatGPTAccountError 识别 Codex 使用 ChatGPT 账号时的账号级模型不兼容。
+// 该错误表示其他上游账号可能仍支持同一模型，因此当前请求应切换账号继续尝试。
+func isOpenAIModelUnsupportedForChatGPTAccountError(statusCode int, body []byte) bool {
+	if statusCode != http.StatusBadRequest && statusCode != http.StatusNotFound {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(body)))
+	if message == "" {
+		message = strings.ToLower(string(body))
+	}
+	return strings.Contains(message, "model is not supported") &&
+		strings.Contains(message, "codex") &&
+		strings.Contains(message, "chatgpt account")
 }
 
 // openAIRequestModelFromBody 从 OpenAI/Anthropic 兼容请求体中提取调度模型。

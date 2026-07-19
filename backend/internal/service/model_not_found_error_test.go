@@ -1,12 +1,17 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -218,6 +223,18 @@ func TestIsOpenAIModelNotFoundError(t *testing.T) {
 			want:       true,
 		},
 		{
+			name:       "400 ChatGPT account does not support Codex model",
+			statusCode: http.StatusBadRequest,
+			body:       []byte(`{"error":{"code":"bad_response_status_code","message":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}}`),
+			want:       true,
+		},
+		{
+			name:       "400 unsupported parameter is not a model error",
+			statusCode: http.StatusBadRequest,
+			body:       []byte(`{"error":{"message":"Unsupported parameter: temperature","type":"invalid_request_error"}}`),
+			want:       false,
+		},
+		{
 			name:       "404 model not found message",
 			statusCode: http.StatusNotFound,
 			body:       []byte(`{"error":{"message":"model not found: gpt-ghost","type":"not_found_error"}}`),
@@ -250,7 +267,86 @@ func TestIsOpenAIModelNotFoundError(t *testing.T) {
 	}
 }
 
-func TestHandleOpenAIAccountUpstreamErrorForModel_ModelNotFoundSetsModelCooldown(t *testing.T) {
+func TestOpenAIHandleErrorResponse_ChatGPTAccountUnsupportedModelTriggersFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const (
+		requestedModel = "gpt-5.5"
+		upstreamModel  = "gpt-5.6-sol"
+	)
+	repo := &modelNotFoundAccountRepoStub{}
+	service := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{
+		ID:       480,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"model_mapping":                map[string]any{requestedModel: upstreamModel},
+			"pool_mode":                    true,
+			"pool_mode_retry_status_codes": []any{float64(http.StatusBadRequest)},
+		},
+		Extra: map[string]any{},
+	}
+	responseBody := []byte(`{"error":{"code":"bad_response_status_code","message":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(responseBody)),
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	requestBody := []byte(`{"model":"gpt-5.5","input":"hello"}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewReader(requestBody))
+
+	result, err := service.handleErrorResponse(context.Background(), resp, c, account, requestBody, requestedModel)
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
+	require.JSONEq(t, string(responseBody), string(failoverErr.ResponseBody))
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.Equal(t, OpenAIStreamActionRetryNextAccount, failoverErr.ActionLabel)
+	require.False(t, c.Writer.Written(), "failover must not commit a direct 502 response")
+	require.False(t, service.isOpenAIAccountRuntimeBlocked(account))
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, int64(480), repo.modelRateLimitCalls[0].accountID)
+	require.Equal(t, upstreamModel, repo.modelRateLimitCalls[0].scope)
+}
+
+func TestOpenAIHandleErrorResponse_UnsupportedParameterDoesNotTriggerFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := &modelNotFoundAccountRepoStub{}
+	service := &OpenAIGatewayService{accountRepo: repo}
+	account := &Account{
+		ID:       481,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra:    map[string]any{},
+	}
+	responseBody := []byte(`{"error":{"message":"Unsupported parameter: temperature","type":"invalid_request_error"}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(responseBody)),
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	requestBody := []byte(`{"model":"gpt-5.6-sol","input":"hello","temperature":0.5}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewReader(requestBody))
+
+	result, err := service.handleErrorResponse(context.Background(), resp, c, account, requestBody, "gpt-5.6-sol")
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusBadGateway, recorder.Code)
+	require.Empty(t, repo.modelRateLimitCalls)
+}
+
+func TestHandleOpenAIAccountUpstreamErrorForModel_ModelNotFoundSetsModelCooldownWithoutFailover(t *testing.T) {
 	repo := &modelNotFoundAccountRepoStub{}
 	service := &OpenAIGatewayService{accountRepo: repo}
 	account := &Account{
@@ -262,10 +358,10 @@ func TestHandleOpenAIAccountUpstreamErrorForModel_ModelNotFoundSetsModelCooldown
 	body := []byte(`{"error":{"message":"The model gpt-missing does not exist or you do not have access to it.","code":"model_not_found"}}`)
 
 	before := time.Now().Add(openAIModelNotFoundCooldown - time.Minute)
-	shouldDisable := service.handleOpenAIAccountUpstreamErrorForModel(context.Background(), account, http.StatusNotFound, http.Header{}, body, "gpt-missing")
+	shouldFailover := service.handleOpenAIAccountUpstreamErrorForModel(context.Background(), account, http.StatusNotFound, http.Header{}, body, "gpt-missing")
 	after := time.Now().Add(openAIModelNotFoundCooldown + time.Minute)
 
-	require.False(t, shouldDisable)
+	require.False(t, shouldFailover)
 	require.Len(t, repo.modelRateLimitCalls, 1)
 	require.Equal(t, int64(42), repo.modelRateLimitCalls[0].accountID)
 	require.Equal(t, "gpt-missing", repo.modelRateLimitCalls[0].scope)

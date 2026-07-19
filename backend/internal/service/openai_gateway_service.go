@@ -6768,9 +6768,9 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	if reqModel == "" {
 		reqModel, _, _ = extractOpenAIRequestMetaFromBody(requestBody)
 	}
-	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
+	shouldFailover := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
 	kind := "http_error"
-	if shouldDisable {
+	if shouldFailover {
 		kind = "failover"
 	}
 	policy := openAIHTTPResponseErrorPolicy(resp.StatusCode, upstreamMsg, body)
@@ -6787,11 +6787,11 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		ActionLabel:        string(policy.ActionLabel),
 		ActionMetadata:     actionMetadata,
 	})
-	if shouldDisable {
+	if shouldFailover {
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
-			RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+			RetryableOnSameAccount: isOpenAIPoolModeRetryableOnSameAccount(account, resp.StatusCode, upstreamMsg, body),
 			ActionLabel:            policy.ActionLabel,
 			ActionMetadata:         actionMetadata,
 		}
@@ -6930,11 +6930,11 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	if len(requestedModel) > 0 {
 		modelForCooldown = requestedModel[0]
 	}
-	shouldDisable := s.handleOpenAIAccountUpstreamError(
+	shouldFailover := s.handleOpenAIAccountUpstreamError(
 		c.Request.Context(), account, resp.StatusCode, resp.Header, body, modelForCooldown,
 	)
 	kind := "http_error"
-	if shouldDisable {
+	if shouldFailover {
 		kind = "failover"
 	}
 	policy := openAIHTTPResponseErrorPolicy(resp.StatusCode, upstreamMsg, body)
@@ -6951,11 +6951,11 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		ActionLabel:        string(policy.ActionLabel),
 		ActionMetadata:     actionMetadata,
 	})
-	if shouldDisable {
+	if shouldFailover {
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
-			RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+			RetryableOnSameAccount: isOpenAIPoolModeRetryableOnSameAccount(account, resp.StatusCode, upstreamMsg, body),
 			ActionLabel:            policy.ActionLabel,
 			ActionMetadata:         actionMetadata,
 		}
