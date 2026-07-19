@@ -40,9 +40,10 @@ func TestNewAPICheckinHandlerConfigEnvelopeKeepsDisabledSiteVisible(t *testing.T
 // TestNewAPICheckinHandlerAPIKeysOnlyReturnsMaskedValues 验证接口响应不会泄露上游完整 API Key。
 func TestNewAPICheckinHandlerAPIKeysOnlyReturnsMaskedValues(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	requestCount := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"name":"codex","key":"sk-abcdef12345678"}]}}`))
+		requestCount++
+		http.Error(w, "unexpected upstream request", http.StatusInternalServerError)
 	}))
 	defer upstream.Close()
 
@@ -57,6 +58,15 @@ func TestNewAPICheckinHandlerAPIKeysOnlyReturnsMaskedValues(t *testing.T) {
 				}},
 			}},
 		},
+		apiKeyCache: []service.NewAPICheckinAPIKeyCacheEntry{{
+			Site: "demo", UserID: "1001", RefreshedAt: "2026-07-19 10:00:00",
+			Summary: service.NewAPICheckinAccountAPIKeySummary{
+				Site: "demo", Provider: "newapi", UserID: "1001", Status: "ready", GroupStatus: "ready",
+				APIKeys: []service.NewAPICheckinAPIKeySummary{{
+					ID: 7, Name: "codex", MaskedKey: "sk-ab***5678", MatchKey: "sk-abcdef12345678",
+				}},
+			},
+		}},
 	}
 	svc := service.NewNewAPICheckinService(service.NewAPICheckinOptions{
 		Repository: repo,
@@ -72,6 +82,7 @@ func TestNewAPICheckinHandlerAPIKeysOnlyReturnsMaskedValues(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), `"masked_key":"sk-ab***5678"`)
 	require.NotContains(t, recorder.Body.String(), "abcdef12345678")
+	require.Zero(t, requestCount)
 }
 
 func TestNewAPICheckinHandlerSetSiteEnabledUsesSQLStorageLabel(t *testing.T) {

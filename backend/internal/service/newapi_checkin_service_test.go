@@ -71,12 +71,13 @@ func TestNewAPICheckinAttachMainAccountReferencesMatchesMaskedKeyAndAPISubdomain
 	require.Len(t, summary.APIKeys[1].TargetAccounts, 1)
 }
 
-// TestNewAPICheckinRevealMaskedKeyUsesDatabaseFullKey 验证上游只返回脱敏 Key 时从主账号数据库读取唯一完整值。
-func TestNewAPICheckinRevealMaskedKeyUsesDatabaseFullKey(t *testing.T) {
+// TestNewAPICheckinRevealUsesCachedFullKeyWithoutUpstream 验证查看和关联 Key 只读取数据库完整 Key 缓存。
+func TestNewAPICheckinRevealUsesCachedFullKeyWithoutUpstream(t *testing.T) {
 	storedKey := "sk-4eAb123456789012345678901234567890123456789LIrz"
+	requestCount := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"codex","key":"4eAb**********LIrz","group":"default"}]}}`))
+		requestCount++
+		http.Error(w, "unexpected upstream request", http.StatusInternalServerError)
 	}))
 	defer upstream.Close()
 
@@ -84,6 +85,15 @@ func TestNewAPICheckinRevealMaskedKeyUsesDatabaseFullKey(t *testing.T) {
 		"name": "dawclaudecode", "enabled": true, "base_url": upstream.URL,
 		"accounts": []map[string]any{{"name": "alpha", "user_id": "1001", "access_key": "access-a"}},
 	}}})
+	repo.apiKeyCache = []NewAPICheckinAPIKeyCacheEntry{{
+		Site: "dawclaudecode", UserID: "1001", RefreshedAt: "2026-07-14 12:00:00",
+		Summary: NewAPICheckinAccountAPIKeySummary{
+			Site: "dawclaudecode", UserID: "1001", Status: "ready", GroupStatus: "ready",
+			APIKeys: []NewAPICheckinAPIKeySummary{{
+				ID: 7, Name: "codex", MaskedKey: "sk-4e***LIrz", MatchKey: storedKey, Group: "default",
+			}},
+		},
+	}}
 	accountRepo := &newAPICheckinAccountRepoStub{accounts: []Account{{
 		ID: 491, Name: "dawcode", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{
@@ -97,6 +107,7 @@ func TestNewAPICheckinRevealMaskedKeyUsesDatabaseFullKey(t *testing.T) {
 	revealed, err := svc.RevealAPIKey(context.Background(), "dawclaudecode", "1001", 7)
 	require.NoError(t, err)
 	require.Equal(t, storedKey, revealed.Key)
+	require.Zero(t, requestCount)
 
 	linked, err := svc.LinkAPIKeyToAccount(context.Background(), "dawclaudecode", "1001", 7, 491, "append")
 	require.NoError(t, err)
@@ -115,6 +126,7 @@ func TestNewAPICheckinRevealMaskedKeyUsesDatabaseFullKey(t *testing.T) {
 	require.Equal(t, upstream.URL, accountRepo.updated.GetOpenAIPrimaryRequestBaseURL())
 	require.Equal(t, map[string]any{"gpt-4.1": "gpt-4.1-mini"}, accountRepo.updated.Credentials["model_mapping"])
 	require.NotContains(t, accountRepo.updated.Credentials, CredentialAPIKeysDisabled)
+	require.Zero(t, requestCount)
 }
 
 func fixedNewAPICheckinNow() time.Time {
@@ -196,10 +208,13 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/token/":
 			if r.Header.Get("New-Api-User") == "1001" {
-				_, _ = w.Write([]byte(`{"success":true,"data":{"total":1,"items":[{"id":7,"name":"codex","key":"abcdef12345678","status":1,"group":"codex-team"}]}}`))
+				_, _ = w.Write([]byte(`{"success":true,"data":{"total":1,"items":[{"id":7,"name":"codex","key":"abcd**********5678","status":1,"group":"codex-team"}]}}`))
 				return
 			}
 			_, _ = w.Write([]byte(`{"success":true,"data":{"total":0,"items":[]}}`))
+		case "/api/token/7/key":
+			require.Equal(t, http.MethodPost, r.Method)
+			_, _ = w.Write([]byte(`{"success":true,"data":{"key":"abcdef12345678"}}`))
 		case "/api/user/self":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"group":"default"}}`))
 		case "/api/user/self/groups":
@@ -227,8 +242,13 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	})
 
 	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
-	payload, err := svc.APIKeys(context.Background())
+	payload, err := svc.SyncAPIKeys(context.Background())
 	require.NoError(t, err)
+	requestCountAfterSync := len(seen)
+	cached, err := svc.APIKeys(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, requestCountAfterSync, len(seen))
+	require.Equal(t, payload.Accounts[0].APIKeys[0].MaskedKey, cached.Accounts[0].APIKeys[0].MaskedKey)
 	close(seen)
 	requests := make([]string, 0, 2)
 	for request := range seen {
@@ -254,8 +274,34 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	require.Equal(t, "missing", payload.Accounts[1].Status)
 	require.Empty(t, payload.Accounts[1].APIKeys)
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-a 1001")
+	require.Contains(t, requests, "POST /api/token/7/key Bearer access-a 1001")
 	require.Contains(t, requests, "GET /api/user/self/groups Bearer access-a 1001")
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-b 1002")
+	require.Equal(t, "sk-abcdef12345678", repo.apiKeyCache[0].Summary.APIKeys[0].MatchKey)
+}
+
+// TestNewAPICheckinAPIKeysWithoutCacheDoesNotCallNewAPI 验证普通打开页面只读数据库，不自动访问未缓存的 NewAPI 账号。
+func TestNewAPICheckinAPIKeysWithoutCacheDoesNotCallNewAPI(t *testing.T) {
+	requestCount := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		http.Error(w, "unexpected upstream request", http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{"sites": []map[string]any{{
+		"name": "demo", "enabled": true, "base_url": upstream.URL,
+		"accounts": []map[string]any{{"name": "alpha", "user_id": "1001", "access_key": "access-a"}},
+	}}})
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+
+	payload, err := svc.APIKeys(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, requestCount)
+	require.Zero(t, payload.CachedCount)
+	require.Zero(t, payload.RefreshedCount)
+	require.Equal(t, "missing", payload.Accounts[0].Status)
+	require.Contains(t, payload.Accounts[0].Message, "手动同步")
 }
 
 // TestNewAPICheckinAPIKeysUsesCacheUntilManualSync 验证未引用账号普通读取不访问上游，手动同步才刷新数据库缓存。
@@ -266,7 +312,10 @@ func TestNewAPICheckinAPIKeysUsesCacheUntilManualSync(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/token/":
-			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"latest","key":"abcdef12345678","group":"latest-group"}]}}`))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"latest","key":"abcd**********5678","group":"latest-group"}]}}`))
+		case "/api/token/7/key":
+			require.Equal(t, http.MethodPost, r.Method)
+			_, _ = w.Write([]byte(`{"success":true,"data":{"key":"abcdef12345678"}}`))
 		case "/api/user/self":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"group":"default"}}`))
 		case "/api/user/available_groups":
@@ -305,10 +354,50 @@ func TestNewAPICheckinAPIKeysUsesCacheUntilManualSync(t *testing.T) {
 	require.Equal(t, 1, synced.RefreshedCount)
 	require.Equal(t, "latest-group", synced.Accounts[0].APIKeys[0].Group)
 	require.Equal(t, "latest-group", repo.apiKeyCache[0].Summary.APIKeys[0].Group)
+	require.Equal(t, "sk-abcdef12345678", repo.apiKeyCache[0].Summary.APIKeys[0].MatchKey)
 }
 
-// TestNewAPICheckinAPIKeysRefreshesReferencedCache 验证数据库已引用 Key 的账号在普通读取时实时访问上游。
-func TestNewAPICheckinAPIKeysRefreshesReferencedCache(t *testing.T) {
+// TestNewAPICheckinSyncPreservesCacheWhenFullKeyLookupFails 验证完整 Key 接口失败时不会用脱敏值覆盖旧数据库缓存。
+func TestNewAPICheckinSyncPreservesCacheWhenFullKeyLookupFails(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/token/":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"latest","key":"abcd**********5678","group":"default"}]}}`))
+		case "/api/token/7/key":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"success":false,"message":"forbidden"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{"sites": []map[string]any{{
+		"name": "demo", "enabled": true, "base_url": upstream.URL,
+		"accounts": []map[string]any{{"name": "alpha", "user_id": "1001", "access_key": "access-a"}},
+	}}})
+	repo.apiKeyCache = []NewAPICheckinAPIKeyCacheEntry{{
+		Site: "demo", UserID: "1001", RefreshedAt: "2026-07-14 12:00:00",
+		Summary: NewAPICheckinAccountAPIKeySummary{
+			Site: "demo", UserID: "1001", Status: "ready", GroupStatus: "ready",
+			APIKeys: []NewAPICheckinAPIKeySummary{{
+				ID: 7, Name: "cached", MaskedKey: "sk-ol***-key", MatchKey: "sk-old-full-key", Group: "default",
+			}},
+		},
+	}}
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+
+	synced, err := svc.SyncAPIKeys(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, synced.ErrorCount)
+	require.Contains(t, synced.Accounts[0].Message, "完整 API Key")
+	require.Len(t, repo.apiKeyCache, 1)
+	require.Equal(t, "sk-old-full-key", repo.apiKeyCache[0].Summary.APIKeys[0].MatchKey)
+}
+
+// TestNewAPICheckinAPIKeysUsesReferencedCacheUntilManualSync 验证已引用 NewAPI Key 普通读取仍只使用数据库缓存。
+func TestNewAPICheckinAPIKeysUsesReferencedCacheUntilManualSync(t *testing.T) {
 	requestCount := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
@@ -337,8 +426,9 @@ func TestNewAPICheckinAPIKeysRefreshesReferencedCache(t *testing.T) {
 
 	payload, err := svc.APIKeys(context.Background())
 	require.NoError(t, err)
-	require.Greater(t, requestCount, 0)
-	require.Equal(t, 1, payload.RefreshedCount)
+	require.Zero(t, requestCount)
+	require.Equal(t, 1, payload.CachedCount)
+	require.Zero(t, payload.RefreshedCount)
 	require.Len(t, payload.Accounts[0].APIKeys[0].ReferencedAccounts, 1)
 }
 
@@ -391,14 +481,23 @@ func TestNewAPICheckinAPIKeysRefreshesReferencedAccountWithStaleUnsupportedCache
 // TestNewAPICheckinRevealAndUpdateAPIKeyGroup 验证完整 Key 按需返回，分组更新保留原 token 字段。
 func TestNewAPICheckinRevealAndUpdateAPIKeyGroup(t *testing.T) {
 	var updated map[string]any
+	requestCount := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPut {
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/api/token/":
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&updated))
 			_, _ = w.Write([]byte(`{"success":true,"message":"updated"}`))
-			return
+		case r.Method == http.MethodGet && r.URL.Path == "/api/token/":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"codex","key":"abcd**********5678","status":1,"group":"default","remain_quota":12345,"unlimited_quota":false,"model_limits_enabled":true,"model_limits":"gpt-5"}]}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/token/7/key":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"key":"abcdef12345678"}}`))
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"success":false,"message":"not enabled"}`))
+		default:
+			http.NotFound(w, r)
 		}
-		_, _ = w.Write([]byte(`{"success":true,"data":{"items":[{"id":7,"name":"codex","key":"abcdef12345678","status":1,"group":"default","remain_quota":12345,"unlimited_quota":false,"model_limits_enabled":true,"model_limits":"gpt-5"}]}}`))
 	}))
 	defer upstream.Close()
 
@@ -406,12 +505,22 @@ func TestNewAPICheckinRevealAndUpdateAPIKeyGroup(t *testing.T) {
 		"name": "demo", "enabled": true, "base_url": upstream.URL,
 		"accounts": []map[string]any{{"name": "alpha", "user_id": "1001", "access_key": "access-a"}},
 	}}})
+	repo.apiKeyCache = []NewAPICheckinAPIKeyCacheEntry{{
+		Site: "demo", UserID: "1001", RefreshedAt: "2026-07-14 12:00:00",
+		Summary: NewAPICheckinAccountAPIKeySummary{
+			Site: "demo", UserID: "1001", Status: "ready", GroupStatus: "ready",
+			APIKeys: []NewAPICheckinAPIKeySummary{{
+				ID: 7, Name: "codex", MaskedKey: "sk-ab***5678", MatchKey: "sk-abcdef12345678", Group: "default",
+			}},
+		},
+	}}
 	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
 
 	revealed, err := svc.RevealAPIKey(context.Background(), "demo", "1001", 7)
 	require.NoError(t, err)
 	require.Equal(t, "sk-abcdef12345678", revealed.Key)
 	require.Equal(t, "sk-ab***5678", revealed.MaskedKey)
+	require.Zero(t, requestCount)
 
 	result, err := svc.UpdateAPIKeyGroup(context.Background(), "demo", "1001", 7, "codex-team", 0)
 	require.NoError(t, err)
@@ -420,6 +529,7 @@ func TestNewAPICheckinRevealAndUpdateAPIKeyGroup(t *testing.T) {
 	require.Equal(t, float64(12345), updated["remain_quota"])
 	require.Equal(t, true, updated["model_limits_enabled"])
 	require.Equal(t, "gpt-5", updated["model_limits"])
+	require.Equal(t, "sk-abcdef12345678", repo.apiKeyCache[0].Summary.APIKeys[0].MatchKey)
 }
 
 // TestNewAPICheckinSub2LoginCredentialsAndGroupManagement 验证 sub2api 登录凭据保存后可读取和修改 Key 分组。

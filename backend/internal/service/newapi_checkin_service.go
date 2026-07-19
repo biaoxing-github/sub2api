@@ -1036,27 +1036,40 @@ func (s *NewAPICheckinService) loadAPIKeys(ctx context.Context, forceRefresh boo
 	accounts := make([]NewAPICheckinAccountAPIKeySummary, len(targets))
 	refresh := make([]bool, len(targets))
 	cachedCount := 0
+	refreshedCount := 0
 	for index, item := range targets {
 		entry, ok := cacheByAccount[newAPICheckinCacheKey(item.site.Name, item.account.UserID)]
 		if !ok {
-			refresh[index] = true
+			accounts[index] = newAPICheckinAPIKeyCacheMissSummary(item.site, item.account)
+			refresh[index] = forceRefresh || isSub2APISite(item.site)
+			if refresh[index] {
+				refreshedCount++
+			}
 			continue
 		}
 		accounts[index] = entry.Summary
 		if forceRefresh {
 			refresh[index] = true
+			refreshedCount++
+			continue
+		}
+		if !isSub2APISite(item.site) {
+			cachedCount++
 			continue
 		}
 		if newAPICheckinAccountHasMainReference(item.account, mainAccounts) {
 			refresh[index] = true
+			refreshedCount++
 			continue
 		}
 		probe := cloneNewAPICheckinAPIKeySummary(entry.Summary)
 		s.attachMainAccountReferences(&probe, item.site, mainAccounts)
 		refresh[index] = newAPICheckinSummaryHasReferences(probe)
-		if !refresh[index] {
-			cachedCount++
+		if refresh[index] {
+			refreshedCount++
+			continue
 		}
+		cachedCount++
 	}
 
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -1093,7 +1106,7 @@ func (s *NewAPICheckinService) loadAPIKeys(ctx context.Context, forceRefresh boo
 
 	payload := NewAPICheckinAPIKeyPayload{
 		GeneratedAt: s.nowText(), AccountCount: len(accounts), Accounts: accounts,
-		CachedCount: cachedCount, RefreshedCount: len(targets) - cachedCount,
+		CachedCount: cachedCount, RefreshedCount: refreshedCount,
 	}
 	for _, account := range accounts {
 		switch account.Status {
@@ -1108,6 +1121,16 @@ func (s *NewAPICheckinService) loadAPIKeys(ctx context.Context, forceRefresh boo
 		}
 	}
 	return payload, nil
+}
+
+// newAPICheckinAPIKeyCacheMissSummary 构造尚未同步到数据库的账号摘要，避免普通页面读取触发 NewAPI 上游请求。
+func newAPICheckinAPIKeyCacheMissSummary(site NewAPICheckinSite, account NewAPICheckinAccount) NewAPICheckinAccountAPIKeySummary {
+	return NewAPICheckinAccountAPIKeySummary{
+		Site: site.Name, Provider: normalizeNewAPIProvider(site.Provider), UserID: account.UserID,
+		Status: "missing", Message: "数据库中尚无 API Key 缓存，请手动同步",
+		GroupStatus: "missing", GroupMessage: "数据库中尚无分组缓存，请手动同步",
+		AvailableGroups: []string{}, AvailableGroupOptions: []NewAPICheckinGroupOption{}, APIKeys: []NewAPICheckinAPIKeySummary{},
+	}
 }
 
 // newAPICheckinCacheKey 返回站点与账号组成的稳定缓存索引。
@@ -1268,46 +1291,6 @@ func newAPIAccountBaseURLsMatch(left, right string) bool {
 	return leftURL.Scheme == rightURL.Scheme && leftHost == rightHost && leftURL.Port() == rightURL.Port() && leftURL.Path == rightURL.Path
 }
 
-// resolveStoredFullAPIKey 将上游脱敏 Key 映射为数据库中唯一的完整 Key。
-func (s *NewAPICheckinService) resolveStoredFullAPIKey(ctx context.Context, generated string) (string, error) {
-	generated = normalizeNewAPIFullKey(generated)
-	if generated == "" {
-		return "", fmt.Errorf("上游未返回 API Key")
-	}
-	if !strings.Contains(generated, "*") {
-		return generated, nil
-	}
-	if s.accountRepo == nil {
-		return "", fmt.Errorf("上游仅返回脱敏 Key，主平台账号数据库不可用")
-	}
-	accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
-	if err != nil {
-		return "", fmt.Errorf("读取主平台账号失败: %w", err)
-	}
-	matches := map[string]struct{}{}
-	for index := range accounts {
-		if accounts[index].Type != AccountTypeAPIKey {
-			continue
-		}
-		for _, stored := range storedAccountAPIKeys(accounts[index].Credentials) {
-			stored = normalizeNewAPIFullKey(stored)
-			if newAPIGeneratedKeyMatchesStored(generated, stored) {
-				matches[stored] = struct{}{}
-			}
-		}
-	}
-	if len(matches) == 0 {
-		return "", fmt.Errorf("上游仅返回脱敏 Key，主平台数据库未找到对应完整 Key")
-	}
-	if len(matches) > 1 {
-		return "", fmt.Errorf("脱敏 Key 匹配到多个不同完整 Key，无法安全关联")
-	}
-	for key := range matches {
-		return key, nil
-	}
-	return "", fmt.Errorf("主平台数据库未找到对应完整 Key")
-}
-
 // storedAccountAPIKeys 返回账号保存的全部 Key，包括暂时禁用的 Key，用于准确标记引用关系。
 func storedAccountAPIKeys(credentials map[string]any) []string {
 	keys := normalizeAPIKeys(credentials["api_keys"])
@@ -1337,7 +1320,7 @@ func normalizeNewAPIAccountBaseURL(value string) string {
 	return strings.TrimRight(parsed.String(), "/")
 }
 
-// RevealAPIKey 实时读取账号最新 Key 与分组、更新缓存，再按 token ID 返回完整 Key。
+// RevealAPIKey 对 NewAPI 只读取数据库中的完整 Key 缓存，对 sub2api 保留实时登录读取行为。
 func (s *NewAPICheckinService) RevealAPIKey(ctx context.Context, siteName, userID string, apiKeyID int64) (NewAPICheckinAPIKeyRevealResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1345,12 +1328,20 @@ func (s *NewAPICheckinService) RevealAPIKey(ctx context.Context, siteName, userI
 	if err != nil {
 		return NewAPICheckinAPIKeyRevealResult{}, err
 	}
-	summary := s.queryAPIKeysLocked(ctx, site, account)
-	if summary.Status == "error" || summary.Status == "unsupported" {
-		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("实时读取 API Key 失败: %s", firstNonEmpty(summary.Message, summary.GroupMessage))
-	}
-	if err := s.saveAPIKeySummaryCacheLocked(ctx, site, account, summary); err != nil {
-		return NewAPICheckinAPIKeyRevealResult{}, err
+	var summary NewAPICheckinAccountAPIKeySummary
+	if isSub2APISite(site) {
+		summary = s.queryAPIKeysLocked(ctx, site, account)
+		if summary.Status == "error" || summary.Status == "unsupported" {
+			return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("实时读取 API Key 失败: %s", firstNonEmpty(summary.Message, summary.GroupMessage))
+		}
+		if err := s.saveAPIKeySummaryCacheLocked(ctx, site, account, summary); err != nil {
+			return NewAPICheckinAPIKeyRevealResult{}, err
+		}
+	} else {
+		summary, err = s.loadCachedAPIKeySummary(ctx, site, account)
+		if err != nil {
+			return NewAPICheckinAPIKeyRevealResult{}, err
+		}
 	}
 	var selected *NewAPICheckinAPIKeySummary
 	for index := range summary.APIKeys {
@@ -1362,20 +1353,29 @@ func (s *NewAPICheckinService) RevealAPIKey(ctx context.Context, siteName, userI
 	if selected == nil {
 		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("未找到 API Key %d", apiKeyID)
 	}
-	key := selected.MatchKey
-	if !isSub2APISite(site) {
-		key, err = s.resolveStoredFullAPIKey(ctx, key)
-	}
-	if err != nil {
-		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("读取 token %d 完整 API Key 失败: %w", apiKeyID, err)
-	}
+	key := normalizeNewAPIFullKey(selected.MatchKey)
 	if key == "" || strings.Contains(key, "*") {
-		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("上游 Key %d 未返回完整 API Key", apiKeyID)
+		return NewAPICheckinAPIKeyRevealResult{}, fmt.Errorf("数据库缓存中没有 token %d 的完整 API Key，请手动同步", apiKeyID)
 	}
 	return NewAPICheckinAPIKeyRevealResult{
 		Site: site.Name, UserID: account.UserID, APIKeyID: apiKeyID,
 		Name: selected.Name, Key: key, MaskedKey: maskNewAPIKey(key), Group: selected.Group,
 	}, nil
+}
+
+// loadCachedAPIKeySummary 从数据库读取指定 NewAPI 账号的 Key 摘要，普通查看和关联操作不访问上游。
+func (s *NewAPICheckinService) loadCachedAPIKeySummary(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount) (NewAPICheckinAccountAPIKeySummary, error) {
+	entries, err := s.repo.LoadAPIKeyCache(ctx)
+	if err != nil {
+		return NewAPICheckinAccountAPIKeySummary{}, fmt.Errorf("读取 API Key 数据库缓存失败: %w", err)
+	}
+	wanted := newAPICheckinCacheKey(site.Name, account.UserID)
+	for _, entry := range entries {
+		if newAPICheckinCacheKey(entry.Site, entry.UserID) == wanted {
+			return cloneNewAPICheckinAPIKeySummary(entry.Summary), nil
+		}
+	}
+	return NewAPICheckinAccountAPIKeySummary{}, fmt.Errorf("数据库中尚无 %s/%s 的 API Key 缓存，请手动同步", site.Name, account.UserID)
 }
 
 // saveAPIKeySummaryCacheLocked 保存单个账号刚从上游读取的 Key 与分组摘要。
@@ -2641,18 +2641,26 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 	data := mapFromAny(result.payload["data"])
 	for _, raw := range sliceFromAny(data["items"]) {
 		item := mapFromAny(raw)
-		masked := maskNewAPIKey(cleanNewAPIText(item["key"]))
-		if masked == "" {
-			continue
+		apiKeyID := int64FromAny(item["id"])
+		if apiKeyID <= 0 {
+			summary.Status = "error"
+			summary.Message = "API Key 列表包含无效 token ID，已保留原数据库缓存"
+			return summary
+		}
+		fullKey, err := s.queryNewAPIFullKeyLocked(ctx, site, account, apiKeyID)
+		if err != nil {
+			summary.Status = "error"
+			summary.Message = fmt.Sprintf("读取 token %d 完整 API Key 失败: %v", apiKeyID, err)
+			return summary
 		}
 		groupName := cleanNewAPIText(item["group"])
 		addNewAPIGroupOption(groupOptions, groupName, nil)
 		summary.APIKeys = append(summary.APIKeys, NewAPICheckinAPIKeySummary{
-			ID:        int64FromAny(item["id"]),
+			ID:        apiKeyID,
 			Name:      firstNonEmpty(cleanNewAPIText(item["name"]), "未命名"),
-			MaskedKey: masked,
+			MaskedKey: maskNewAPIKey(fullKey),
 			Group:     groupName,
-			MatchKey:  normalizeNewAPIFullKey(cleanNewAPIText(item["key"])),
+			MatchKey:  fullKey,
 		})
 	}
 	self := s.requestJSONLocked(ctx, http.MethodGet, joinNewAPIURL(site.BaseURL, "/api/user/self"), site.BaseURL, headers)
@@ -2693,6 +2701,29 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 		summary.Status = "ready"
 	}
 	return summary
+}
+
+// queryNewAPIFullKeyLocked 调用 NewAPI 单个 token 的完整 Key 接口，返回统一带 sk- 前缀的可持久化值。
+func (s *NewAPICheckinService) queryNewAPIFullKeyLocked(ctx context.Context, site NewAPICheckinSite, account NewAPICheckinAccount, apiKeyID int64) (string, error) {
+	result := s.requestJSONLocked(
+		ctx,
+		http.MethodPost,
+		joinNewAPIURL(site.BaseURL, fmt.Sprintf("/api/token/%d/key", apiKeyID)),
+		site.BaseURL,
+		newAPICheckinAccountHeaders(account),
+	)
+	if !result.ok {
+		return "", fmt.Errorf("%s", firstNonEmpty(result.message, "上游拒绝返回完整 Key"))
+	}
+	data := mapFromAny(result.payload["data"])
+	fullKey := normalizeNewAPIFullKey(cleanNewAPIText(data["key"]))
+	if fullKey == "" {
+		return "", fmt.Errorf("上游响应中缺少完整 Key")
+	}
+	if strings.Contains(fullKey, "*") {
+		return "", fmt.Errorf("上游仍返回脱敏 Key")
+	}
+	return fullKey, nil
 }
 
 // probeSub2LoginLocked 验证登录后同时返回数量和可持久化的最新 Key/分组摘要，响应中不包含 JWT 或密码。
