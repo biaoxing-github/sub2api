@@ -38,6 +38,8 @@ func TestAccountHandlerListSchedulingPoolMapsFilterAndRedactsAccount(t *testing.
 					PathHealthAvailable: true,
 					DerivedHealth:       service.AccountDerivedHealthState{State: service.AccountDerivedHealthLineDegraded, Label: "线路降级"},
 					EffectiveLoadFactor: 3,
+					NextScheduledAt:     &generatedAt,
+					NextScheduledReason: "runtime_block",
 				},
 			},
 			Total:           1,
@@ -73,6 +75,8 @@ func TestAccountHandlerListSchedulingPoolMapsFilterAndRedactsAccount(t *testing.
 	require.Contains(t, rec.Body.String(), `"platform":"anthropic"`)
 	require.Contains(t, rec.Body.String(), `"pool_reasons":["path_health:degraded:unexpected_eof"]`)
 	require.Contains(t, rec.Body.String(), `"derived_health":{"state":"line_degraded"`)
+	require.Contains(t, rec.Body.String(), `"next_scheduled_at":"2026-06-09T12:00:00Z"`)
+	require.Contains(t, rec.Body.String(), `"next_scheduled_reason":"runtime_block"`)
 	require.NotContains(t, rec.Body.String(), "sk-should-not-leak")
 }
 

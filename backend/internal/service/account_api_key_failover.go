@@ -43,6 +43,9 @@ func apiKeyAccountSchedulingReason(statusCode int, responseBody []byte) string {
 	if statusCode == http.StatusPaymentRequired {
 		return "payment_required"
 	}
+	if statusCode == http.StatusServiceUnavailable {
+		return "service_unavailable"
+	}
 	if statusCode == http.StatusTooManyRequests {
 		return "rate_limited"
 	}

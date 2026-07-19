@@ -667,10 +667,12 @@ func TestAccountProbeService_RunRecordsSelectedAPIKeyError(t *testing.T) {
 	disabled, _ := rateRepo.lastCredentials[CredentialAPIKeysDisabled].(map[string]any)
 	record, _ := disabled[FingerprintAPIKey("sk-probe-503")].(map[string]any)
 	require.NotNil(t, record)
-	require.Equal(t, "upstream_error", record["reason"])
+	require.Equal(t, "service_unavailable", record["reason"])
 	require.Contains(t, record["last_error"], "API returned 503")
 	require.Contains(t, record["last_error"], "upstream temporarily unavailable")
-	require.NotEmpty(t, record["disabled_until"])
+	disabledUntil, err := time.Parse(time.RFC3339, record["disabled_until"].(string))
+	require.NoError(t, err)
+	require.WithinDuration(t, time.Now().Add(5*time.Second), disabledUntil, 2*time.Second)
 }
 
 func TestAccountProbeService_RunRecordsAnyUpstreamHTTPErrorOnSelectedKey(t *testing.T) {

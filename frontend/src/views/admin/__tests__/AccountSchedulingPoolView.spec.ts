@@ -3,12 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountSchedulingPoolView from '../AccountSchedulingPoolView.vue'
 
-const { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels, updateAccount } = vi.hoisted(() => ({
+const { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels, updateAccount, restoreAccountAPIKeyState } = vi.hoisted(() => ({
   listSchedulingPool: vi.fn(),
   setSchedulable: vi.fn(),
   manualProbeAccount: vi.fn(),
   getAvailableModels: vi.fn(),
   updateAccount: vi.fn(),
+  restoreAccountAPIKeyState: vi.fn(),
 }))
 
 const { getAllGroups } = vi.hoisted(() => ({
@@ -22,12 +23,14 @@ vi.mock('@/api/admin/accounts', () => ({
     manualProbeAccount,
     getAvailableModels,
     update: updateAccount,
+    restoreAccountAPIKeyState,
   },
   listSchedulingPool,
   setSchedulable,
   manualProbeAccount,
   getAvailableModels,
   update: updateAccount,
+  restoreAccountAPIKeyState,
 }))
 
 vi.mock('@/api/admin/groups', () => ({
@@ -90,6 +93,7 @@ describe('AccountSchedulingPoolView', () => {
     manualProbeAccount.mockReset()
     getAvailableModels.mockReset()
     updateAccount.mockReset()
+    restoreAccountAPIKeyState.mockReset()
     getAllGroups.mockReset()
     getAvailableModels.mockResolvedValue([
       { id: 'gpt-5.4', display_name: 'GPT-5.4' },
@@ -113,6 +117,16 @@ describe('AccountSchedulingPoolView', () => {
             priority: 20,
             concurrency: 5,
             load_factor: 3,
+            api_key_items: [
+              {
+                fingerprint: 'sha256:cooling-key',
+                masked: 'sk-...ling',
+                status: 'cooling',
+                disabled: true,
+                reason: 'service_unavailable',
+                disabled_until: '2026-06-09T10:02:00Z',
+              },
+            ],
             error_message: null,
             rate_limited_at: null,
             rate_limit_reset_at: null,
@@ -136,6 +150,8 @@ describe('AccountSchedulingPoolView', () => {
           path_health_available: true,
           derived_health: { state: 'line_degraded', label: '线路降级', last_failure_reason: 'unexpected_eof' },
           effective_load_factor: 3,
+          next_scheduled_at: '2026-06-09T10:02:00Z',
+          next_scheduled_reason: 'api_key_cooldown',
         },
         {
           account: {
@@ -192,6 +208,7 @@ describe('AccountSchedulingPoolView', () => {
     })
     setSchedulable.mockResolvedValue({})
     updateAccount.mockResolvedValue({})
+    restoreAccountAPIKeyState.mockResolvedValue({})
     vi.spyOn(window, 'confirm').mockReturnValue(true)
   })
 
@@ -276,6 +293,30 @@ describe('AccountSchedulingPoolView', () => {
     await flushPromises()
 
     expect(updateAccount).toHaveBeenCalledWith(101, { priority: 3 })
+    expect(listSchedulingPool).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the next scheduling time and restores a cooling API key from the pool', async () => {
+    const wrapper = mount(AccountSchedulingPoolView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          TablePageLayout: TablePageLayoutStub,
+          Select: SelectStub,
+          DataTable: DataTableStub,
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.accountSchedulingPool.nextScheduledAt')
+    expect(wrapper.text()).toContain('sk-...ling')
+
+    await wrapper.find('[data-test="restore-api-key"]').trigger('click')
+    await flushPromises()
+
+    expect(restoreAccountAPIKeyState).toHaveBeenCalledWith(101, 'sha256:cooling-key')
     expect(listSchedulingPool).toHaveBeenCalledTimes(2)
   })
 

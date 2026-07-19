@@ -4955,7 +4955,7 @@ export default {
 
     accountSchedulingPool: {
       title: 'Scheduling Pool',
-      description: 'Review schedulable accounts, health status, and degradation reasons for the selected group',
+      description: 'Review every scheduling-enabled account, recovery time, and health status for the selected group',
       searchPlaceholder: 'Search account, ID, or group',
       group: 'Group',
       ungrouped: 'Ungrouped pool',
@@ -4966,6 +4966,7 @@ export default {
       capacity: 'Scheduling',
       reasons: 'Reasons',
       runtimeBlock: 'Runtime block',
+      nextScheduledAt: 'Expected recovery',
       pathHealth: 'Path',
       priority: 'Priority',
       priorityFor: 'Scheduling priority for {name}',
@@ -4979,6 +4980,9 @@ export default {
       disableConfirm: 'Disable scheduling for {name}?',
       disabledSuccess: 'Disabled scheduling for {name}',
       disabledFailed: 'Failed to disable scheduling',
+      restoreApiKey: 'Restore this key',
+      apiKeyRestored: 'Restored a key for {name}',
+      apiKeyRestoreFailed: 'Failed to restore key',
       manualProbe: 'Manual Probe',
       probeSuccess: '{name} probe succeeded, latency {latency}ms',
       probeFailed: 'Probe failed',
@@ -5001,6 +5005,14 @@ export default {
         degraded: 'Degraded',
         blocked: 'Blocked',
         filtered: 'Filtered'
+      },
+      nextReasons: {
+        overloaded: 'Overload cooldown ends',
+        rate_limited: 'Rate-limit window ends',
+        temp_unschedulable: 'Temporary avoidance ends',
+        api_key_cooldown: 'Earliest key cooldown ends',
+        runtime_block: 'Runtime block ends',
+        path_cooldown: 'Path circuit cooldown ends'
       },
       pathHealthStates: {
         healthy: 'Healthy',

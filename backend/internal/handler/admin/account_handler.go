@@ -267,6 +267,8 @@ type AccountSchedulingPoolItem struct {
 	Account             *dto.Account                               `json:"account"`
 	PoolStatus          string                                     `json:"pool_status"`
 	PoolReasons         []string                                   `json:"pool_reasons,omitempty"`
+	NextScheduledAt     *time.Time                                 `json:"next_scheduled_at,omitempty"`
+	NextScheduledReason string                                     `json:"next_scheduled_reason,omitempty"`
 	RuntimeBlock        *service.OpenAIAccountRuntimeBlockSnapshot `json:"runtime_block,omitempty"`
 	PathHealth          service.OpenAIPathHealthRecord             `json:"path_health"`
 	PathHealthAvailable bool                                       `json:"path_health_available"`
@@ -655,6 +657,8 @@ func accountSchedulingPoolItemFromService(item service.OpenAIAccountSchedulingPo
 		Account:             account,
 		PoolStatus:          item.PoolStatus,
 		PoolReasons:         item.PoolReasons,
+		NextScheduledAt:     item.NextScheduledAt,
+		NextScheduledReason: item.NextScheduledReason,
 		RuntimeBlock:        item.RuntimeBlock,
 		PathHealth:          item.PathHealth,
 		PathHealthAvailable: item.PathHealthAvailable,

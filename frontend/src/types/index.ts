@@ -1317,6 +1317,8 @@ export interface OpenAIAccountSchedulingPoolItem {
   account: Account
   pool_status: OpenAIAccountSchedulingPoolStatus
   pool_reasons?: string[]
+  next_scheduled_at?: string | null
+  next_scheduled_reason?: string
   runtime_block?: OpenAIAccountRuntimeBlock | null
   path_health: OpenAIPathHealthSnapshot
   path_health_available: boolean

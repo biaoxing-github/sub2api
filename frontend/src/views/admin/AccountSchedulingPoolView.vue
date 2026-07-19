@@ -79,6 +79,12 @@
             <div v-if="item.runtime_block?.reason" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accountSchedulingPool.runtimeBlock') }}: {{ item.runtime_block.reason }}
             </div>
+            <div v-if="item.next_scheduled_at" class="mt-1 text-xs text-gray-600 dark:text-gray-300">
+              <div>{{ t('admin.accountSchedulingPool.nextScheduledAt') }}: {{ formatDateTime(item.next_scheduled_at) }}</div>
+              <div v-if="item.next_scheduled_reason" class="mt-0.5 text-gray-500 dark:text-gray-400">
+                {{ formatNextScheduledReason(item.next_scheduled_reason) }}
+              </div>
+            </div>
           </template>
 
           <template #cell-health="{ row: item }">
@@ -150,30 +156,54 @@
           </template>
 
           <template #cell-actions="{ row: item }">
-            <div class="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                data-test="disable-scheduling"
-                class="btn btn-danger px-2 py-1 text-sm"
-                :disabled="isDisabling(item.account.id)"
-                :title="t('admin.accountSchedulingPool.disableScheduling')"
-                @click="disableScheduling(item)"
-              >
-                <Icon name="ban" size="sm" :class="isDisabling(item.account.id) ? 'animate-pulse' : ''" />
-                <span class="ml-1">{{ t('admin.accountSchedulingPool.disableScheduling') }}</span>
-              </button>
-              <button
-                v-if="shouldShowManualProbe(item.account)"
-                type="button"
-                data-test="manual-probe"
-                class="btn btn-primary px-2 py-1 text-sm"
-                :disabled="isProbing(item.account.id)"
-                :title="t('admin.accountSchedulingPool.manualProbe')"
-                @click="manualProbe(item)"
-              >
-                <Icon name="refresh" size="sm" :class="isProbing(item.account.id) ? 'animate-spin' : ''" />
-                <span class="ml-1">{{ t('admin.accountSchedulingPool.manualProbe') }}</span>
-              </button>
+            <div class="space-y-2">
+              <div v-if="disabledAPIKeyItems(item).length" class="space-y-1">
+                <div
+                  v-for="apiKey in disabledAPIKeyItems(item)"
+                  :key="apiKey.fingerprint"
+                  class="flex min-w-0 items-center gap-2 text-xs text-rose-700 dark:text-rose-200"
+                >
+                  <span class="min-w-0 flex-1 truncate font-mono" :title="apiKey.last_error || apiKey.reason || apiKey.masked">
+                    {{ apiKey.masked }}
+                  </span>
+                  <button
+                    type="button"
+                    data-test="restore-api-key"
+                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-rose-600 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                    :disabled="isRestoringAPIKey(item.account.id, apiKey.fingerprint)"
+                    :title="t('admin.accountSchedulingPool.restoreApiKey')"
+                    :aria-label="t('admin.accountSchedulingPool.restoreApiKey')"
+                    @click="restoreAPIKey(item, apiKey.fingerprint)"
+                  >
+                    <Icon name="refresh" size="sm" :class="isRestoringAPIKey(item.account.id, apiKey.fingerprint) ? 'animate-spin' : ''" />
+                  </button>
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  data-test="disable-scheduling"
+                  class="btn btn-danger px-2 py-1 text-sm"
+                  :disabled="isDisabling(item.account.id)"
+                  :title="t('admin.accountSchedulingPool.disableScheduling')"
+                  @click="disableScheduling(item)"
+                >
+                  <Icon name="ban" size="sm" :class="isDisabling(item.account.id) ? 'animate-pulse' : ''" />
+                  <span class="ml-1">{{ t('admin.accountSchedulingPool.disableScheduling') }}</span>
+                </button>
+                <button
+                  v-if="shouldShowManualProbe(item.account)"
+                  type="button"
+                  data-test="manual-probe"
+                  class="btn btn-primary px-2 py-1 text-sm"
+                  :disabled="isProbing(item.account.id)"
+                  :title="t('admin.accountSchedulingPool.manualProbe')"
+                  @click="manualProbe(item)"
+                >
+                  <Icon name="refresh" size="sm" :class="isProbing(item.account.id) ? 'animate-spin' : ''" />
+                  <span class="ml-1">{{ t('admin.accountSchedulingPool.manualProbe') }}</span>
+                </button>
+              </div>
             </div>
           </template>
         </DataTable>
@@ -191,8 +221,9 @@ import DataTable from '@/components/common/DataTable.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AccountAvailabilityRadarBadge from '@/components/account/AccountAvailabilityRadarBadge.vue'
-import { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels, update as updateAccount } from '@/api/admin/accounts'
+import { listSchedulingPool, setSchedulable, manualProbeAccount, getAvailableModels, restoreAccountAPIKeyState, update as updateAccount } from '@/api/admin/accounts'
 import groupsAPI from '@/api/admin/groups'
+import { formatDateTime } from '@/utils/format'
 import type { Column } from '@/components/common/types'
 import type {
   Account,
@@ -221,6 +252,7 @@ const message = ref('')
 const disablingIds = ref<Set<number>>(new Set())
 const probingIds = ref<Set<number>>(new Set())
 const savingPriorityIds = ref<Set<number>>(new Set())
+const restoringAPIKeyIds = ref<Set<string>>(new Set())
 const priorityDrafts = reactive<Record<number, number | null>>({})
 
 let listAbortController: AbortController | null = null
@@ -234,7 +266,7 @@ const schedulingPoolColumns = computed<Column[]>(() => [
   { key: 'health', label: t('admin.accountSchedulingPool.health'), class: 'w-[16rem] align-top !whitespace-normal' },
   { key: 'capacity', label: t('admin.accountSchedulingPool.capacity'), class: 'w-[10rem] align-top !whitespace-normal' },
   { key: 'reasons', label: t('admin.accountSchedulingPool.reasons'), class: 'min-w-[16rem] align-top !whitespace-normal' },
-  { key: 'actions', label: t('common.actions'), class: 'w-[16rem] align-top !whitespace-normal' },
+  { key: 'actions', label: t('common.actions'), class: 'w-[18rem] align-top !whitespace-normal' },
 ])
 const metrics = computed(() => [
   { key: 'total', label: t('admin.accountSchedulingPool.metrics.total'), value: snapshot.value?.total ?? 0 },
@@ -419,6 +451,41 @@ function setDisabling(accountId: number, value: boolean) {
   disablingIds.value = next
 }
 
+function disabledAPIKeyItems(item: OpenAIAccountSchedulingPoolItem): NonNullable<Account['api_key_items']> {
+  return (item.account.api_key_items || []).filter(apiKey => apiKey.disabled && !!apiKey.fingerprint)
+}
+
+function restoringAPIKeyID(accountId: number, fingerprint: string): string {
+  return `${accountId}:${fingerprint}`
+}
+
+function isRestoringAPIKey(accountId: number, fingerprint: string): boolean {
+  return restoringAPIKeyIds.value.has(restoringAPIKeyID(accountId, fingerprint))
+}
+
+async function restoreAPIKey(item: OpenAIAccountSchedulingPoolItem, fingerprint: string) {
+  const accountId = item.account.id
+  const restoringId = restoringAPIKeyID(accountId, fingerprint)
+  if (restoringAPIKeyIds.value.has(restoringId)) return
+
+  const nextRestoringIds = new Set(restoringAPIKeyIds.value)
+  nextRestoringIds.add(restoringId)
+  restoringAPIKeyIds.value = nextRestoringIds
+  message.value = ''
+  error.value = ''
+  try {
+    await restoreAccountAPIKeyState(accountId, fingerprint)
+    message.value = t('admin.accountSchedulingPool.apiKeyRestored', { name: item.account.name })
+    await loadPool()
+  } catch (err: any) {
+    error.value = err?.response?.data?.error || err?.message || t('admin.accountSchedulingPool.apiKeyRestoreFailed')
+  } finally {
+    const remainingRestoringIds = new Set(restoringAPIKeyIds.value)
+    remainingRestoringIds.delete(restoringId)
+    restoringAPIKeyIds.value = remainingRestoringIds
+  }
+}
+
 function isProbing(accountId: number): boolean {
   return probingIds.value.has(accountId)
 }
@@ -514,6 +581,12 @@ function formatPathHealth(state?: string): string {
   const key = `admin.accountSchedulingPool.pathHealthStates.${state}`
   const translated = t(key)
   return translated === key ? state : translated
+}
+
+function formatNextScheduledReason(reason: string): string {
+  const key = `admin.accountSchedulingPool.nextReasons.${reason}`
+  const translated = t(key)
+  return translated === key ? reason : translated
 }
 
 function formatAccountType(type: string): string {

@@ -828,6 +828,8 @@ func disabledAPIKeyRecoveryInterval(reason string, count int) time.Duration {
 	switch reason {
 	case "rate_limited":
 		return disabledAPIKeyRateLimitRecoveryInterval(count)
+	case "service_unavailable":
+		return disabledAPIKeyServiceUnavailableRecoveryInterval(count)
 	case "invalid_api_key", "payment_required", "insufficient_balance":
 		if count <= 1 {
 			return 30 * time.Minute
@@ -835,6 +837,21 @@ func disabledAPIKeyRecoveryInterval(reason string, count int) time.Duration {
 		return 60 * time.Minute
 	default:
 		return probeIntervalFromErrorCount(count)
+	}
+}
+
+// disabledAPIKeyServiceUnavailableRecoveryInterval 为上游 503 使用短退避。
+// 503 通常是服务级瞬时故障，不应像凭证失效一样长时间停用单 Key。
+func disabledAPIKeyServiceUnavailableRecoveryInterval(count int) time.Duration {
+	switch {
+	case count <= 1:
+		return 5 * time.Second
+	case count <= 3:
+		return 15 * time.Second
+	case count <= 5:
+		return 30 * time.Second
+	default:
+		return time.Minute
 	}
 }
 

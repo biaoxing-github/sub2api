@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
+
+const openAIAccountSchedulingPoolPageSize = 1000
 
 const (
 	// OpenAIAccountSchedulingPoolStatusSchedulable 表示账号当前可被调度器正常选择。
@@ -55,6 +58,8 @@ type OpenAIAccountSchedulingPoolItem struct {
 	Account             Account                            `json:"account"`
 	PoolStatus          string                             `json:"pool_status"`
 	PoolReasons         []string                           `json:"pool_reasons"`
+	NextScheduledAt     *time.Time                         `json:"next_scheduled_at,omitempty"`
+	NextScheduledReason string                             `json:"next_scheduled_reason,omitempty"`
 	RuntimeBlock        *OpenAIAccountRuntimeBlockSnapshot `json:"runtime_block,omitempty"`
 	PathHealth          OpenAIPathHealthRecord             `json:"path_health"`
 	PathHealthAvailable bool                               `json:"path_health_available"`
@@ -76,17 +81,13 @@ func (s *OpenAIGatewayService) ListOpenAIAccountSchedulingPool(ctx context.Conte
 	items := make([]OpenAIAccountSchedulingPoolItem, 0, len(accounts))
 	for i := range accounts {
 		account := accounts[i]
-		if !account.IsSchedulableAt(now) {
-			continue
-		}
 		if !openAIAccountSchedulingPoolPlatformAllowed(&account, filter.Platform, useMixed) {
 			continue
 		}
 		if !openAIAccountSchedulingPoolMatchesSearch(&account, filter.Search) {
 			continue
 		}
-		healthAccount := s.resolveOpenAIAccountForSchedulingPoolPathHealth(ctx, account)
-		items = append(items, s.buildOpenAIAccountSchedulingPoolItem(account, healthAccount, filter, now))
+		items = append(items, s.buildOpenAIAccountSchedulingPoolItem(account, filter, now))
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		leftRank := openAIAccountSchedulingPoolStatusRank(items[i].PoolStatus)
@@ -95,7 +96,7 @@ func (s *OpenAIGatewayService) ListOpenAIAccountSchedulingPool(ctx context.Conte
 			return leftRank < rightRank
 		}
 		if items[i].Account.Priority != items[j].Account.Priority {
-			return items[i].Account.Priority > items[j].Account.Priority
+			return items[i].Account.Priority < items[j].Account.Priority
 		}
 		return items[i].Account.ID < items[j].Account.ID
 	})
@@ -140,64 +141,68 @@ func normalizeOpenAIAccountSchedulingPoolFilter(filter OpenAIAccountSchedulingPo
 }
 
 func (s *OpenAIGatewayService) listSchedulingPoolAccounts(ctx context.Context, groupID *int64, platform string) ([]Account, bool, error) {
-	if s.schedulerSnapshot != nil {
-		accounts, useMixed, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, false)
-		return accounts, useMixed, err
+	if s == nil || s.accountRepo == nil {
+		return nil, false, fmt.Errorf("account repository is not configured")
 	}
+
 	useMixed := platform == PlatformAnthropic
-	if useMixed {
-		platforms := []string{platform, PlatformAntigravity}
-		var accounts []Account
-		var err error
-		if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-			accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
-		} else if groupID != nil {
-			accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, platforms)
-		} else {
-			accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, platforms)
-		}
-		if err != nil {
-			return nil, useMixed, fmt.Errorf("query accounts failed: %w", err)
-		}
-		filtered := make([]Account, 0, len(accounts))
-		for _, account := range accounts {
-			if account.Platform == PlatformAntigravity && !account.IsMixedSchedulingEnabled() {
-				continue
-			}
-			filtered = append(filtered, account)
-		}
-		return filtered, useMixed, nil
+	platforms := []string{platform}
+	switch platform {
+	case PlatformOpenAI:
+		platforms = openAICompatibleAccountPlatforms(platform)
+	case PlatformAnthropic:
+		platforms = []string{platform, PlatformAntigravity}
 	}
 
-	if platform == PlatformOpenAI {
-		accounts, err := s.listSchedulableAccounts(ctx, groupID, platform)
-		return accounts, false, err
-	}
-
-	var accounts []Account
-	var err error
+	groupFilter := AccountListGroupUngrouped
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
-		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
+		groupFilter = 0
 	} else if groupID != nil {
-		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, platform)
-	} else {
-		accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, platform)
+		groupFilter = *groupID
 	}
-	if err != nil {
-		return nil, false, fmt.Errorf("query accounts failed: %w", err)
-	}
-	return accounts, false, nil
-}
 
-func (s *OpenAIGatewayService) resolveOpenAIAccountForSchedulingPoolPathHealth(ctx context.Context, account Account) Account {
-	if s == nil || s.accountRepo == nil || !account.IsOpenAIApiKey() || account.ID <= 0 {
-		return account
+	accounts := make([]Account, 0)
+	for _, accountPlatform := range platforms {
+		for page := 1; ; page++ {
+			params := pagination.PaginationParams{
+				Page:      page,
+				PageSize:  openAIAccountSchedulingPoolPageSize,
+				SortBy:    "priority",
+				SortOrder: pagination.SortOrderAsc,
+			}
+			pageAccounts, pageResult, err := s.accountRepo.ListWithFilters(
+				ctx,
+				params,
+				accountPlatform,
+				"",
+				"",
+				"",
+				groupFilter,
+				"",
+				"",
+			)
+			if err != nil {
+				return nil, useMixed, fmt.Errorf("query accounts failed: %w", err)
+			}
+			accounts = append(accounts, pageAccounts...)
+			if pageResult == nil || page >= pageResult.Pages || len(pageAccounts) == 0 {
+				break
+			}
+		}
 	}
-	fullAccount, err := s.accountRepo.GetByID(ctx, account.ID)
-	if err != nil || fullAccount == nil || !fullAccount.IsOpenAI() {
-		return account
+
+	enabled := make([]Account, 0, len(accounts))
+	for i := range accounts {
+		account := accounts[i]
+		if !account.IsActive() || !account.Schedulable {
+			continue
+		}
+		if !openAIAccountSchedulingPoolPlatformAllowed(&account, platform, useMixed) {
+			continue
+		}
+		enabled = append(enabled, account)
 	}
-	return *fullAccount
+	return enabled, useMixed, nil
 }
 
 func openAIAccountSchedulingPoolPlatformAllowed(account *Account, platform string, useMixed bool) bool {
@@ -216,26 +221,128 @@ func openAIAccountSchedulingPoolPlatformAllowed(account *Account, platform strin
 	return account.Platform == platform
 }
 
-func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Account, healthAccount Account, filter OpenAIAccountSchedulingPoolFilter, now time.Time) OpenAIAccountSchedulingPoolItem {
+type accountSchedulingRecovery struct {
+	blocked bool
+	unknown bool
+	at      *time.Time
+	reason  string
+}
+
+func (r *accountSchedulingRecovery) addTimedBlock(until *time.Time, reason string, now time.Time) {
+	r.blocked = true
+	if until == nil || !now.Before(*until) {
+		r.unknown = true
+		return
+	}
+	if r.at == nil || until.After(*r.at) {
+		copied := *until
+		r.at = &copied
+		r.reason = reason
+	}
+}
+
+func (r *accountSchedulingRecovery) addUnknownBlock() {
+	r.blocked = true
+	r.unknown = true
+}
+
+func (r accountSchedulingRecovery) nextScheduled() (*time.Time, string) {
+	if !r.blocked || r.unknown || r.at == nil {
+		return nil, ""
+	}
+	copied := *r.at
+	return &copied, r.reason
+}
+
+func accountSchedulingAvailability(account Account, now time.Time) ([]string, accountSchedulingRecovery) {
+	reasons := make([]string, 0, 6)
+	recovery := accountSchedulingRecovery{}
+
+	if account.AutoPauseOnExpired && account.ExpiresAt != nil && !now.Before(*account.ExpiresAt) {
+		reasons = append(reasons, "expired")
+		recovery.addUnknownBlock()
+	}
+	if account.OverloadUntil != nil && now.Before(*account.OverloadUntil) {
+		reasons = append(reasons, "overloaded")
+		recovery.addTimedBlock(account.OverloadUntil, "overloaded", now)
+	}
+	if resetAt := account.effectiveRateLimitResetAt(now); resetAt != nil {
+		reasons = append(reasons, "rate_limited")
+		recovery.addTimedBlock(resetAt, "rate_limited", now)
+	}
+	if account.TempUnschedulableUntil != nil && now.Before(*account.TempUnschedulableUntil) {
+		reasons = append(reasons, "temp_unschedulable")
+		recovery.addTimedBlock(account.TempUnschedulableUntil, "temp_unschedulable", now)
+	}
+	if account.IsAPIKeyOrBedrock() && account.IsQuotaExceeded() {
+		reasons = append(reasons, "quota_exhausted")
+		recovery.addUnknownBlock()
+	}
+	if !account.IsAvailabilityScheduleAllowedAt(now) {
+		reasons = append(reasons, "availability_schedule")
+		recovery.addUnknownBlock()
+	}
+
+	if account.Type == AccountTypeAPIKey {
+		accountAt := account
+		accountAt.nowForTest = &now
+		savedKeyCount := accountAt.SavedAPIKeyCount()
+		switch {
+		case savedKeyCount == 0:
+			reasons = append(reasons, "api_key_missing")
+			recovery.addUnknownBlock()
+		case len(accountAt.GetAPIKeys()) == 0:
+			reasons = append(reasons, "api_keys_cooling_down")
+			if nextKeyAt := earliestDisabledAPIKeyRecoveryAt(&accountAt, now); nextKeyAt != nil {
+				recovery.addTimedBlock(nextKeyAt, "api_key_cooldown", now)
+			} else {
+				recovery.addUnknownBlock()
+			}
+		}
+	}
+
+	return uniqueNonEmptyStrings(reasons), recovery
+}
+
+func earliestDisabledAPIKeyRecoveryAt(account *Account, now time.Time) *time.Time {
+	if account == nil {
+		return nil
+	}
+	details := DisabledAPIKeyDetails(account.Credentials, now)
+	var earliest *time.Time
+	for _, detail := range details {
+		if !detail.Disabled || strings.TrimSpace(detail.DisabledUntil) == "" {
+			continue
+		}
+		until, err := time.Parse(time.RFC3339, detail.DisabledUntil)
+		if err != nil || !now.Before(until) {
+			continue
+		}
+		if earliest == nil || until.Before(*earliest) {
+			copied := until
+			earliest = &copied
+		}
+	}
+	return earliest
+}
+
+func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Account, filter OpenAIAccountSchedulingPoolFilter, now time.Time) OpenAIAccountSchedulingPoolItem {
 	if filter.Platform != PlatformOpenAI || !account.IsOpenAI() {
 		return buildGenericAccountSchedulingPoolItem(account, filter, now)
 	}
 	evalAccount := account
-	if healthAccount.ID == account.ID && healthAccount.IsOpenAI() {
-		evalAccount = healthAccount
-	}
 
-	reasons := make([]string, 0, 4)
+	reasons, recovery := accountSchedulingAvailability(account, now)
 	status := OpenAIAccountSchedulingPoolStatusSchedulable
+	if recovery.blocked {
+		status = OpenAIAccountSchedulingPoolStatusBlocked
+	}
 
 	runtimeBlock, runtimeBlocked := s.SnapshotOpenAIAccountRuntimeBlock(&account, now)
 	if runtimeBlocked {
 		status = OpenAIAccountSchedulingPoolStatusBlocked
 		reasons = append(reasons, "runtime_block:"+firstNonEmptyString(runtimeBlock.Reason, "active"))
-	}
-	if account.IsOpenAIApiKey() && len(account.GetAPIKeys()) == 0 {
-		status = OpenAIAccountSchedulingPoolStatusBlocked
-		reasons = append(reasons, "api_key_missing")
+		recovery.addTimedBlock(runtimeBlock.Until, "runtime_block", now)
 	}
 
 	filtered := false
@@ -271,6 +378,7 @@ func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Acco
 		(pathHealth.State == OpenAIPathHealthStateOpenCircuit || pathHealth.State == OpenAIPathHealthStateHalfOpen) {
 		status = OpenAIAccountSchedulingPoolStatusBlocked
 		reasons = append(reasons, pathReason)
+		recovery.addTimedBlock(pathHealth.CooldownUntil, "path_cooldown", now)
 	}
 
 	var blockPtr *OpenAIAccountRuntimeBlockSnapshot
@@ -278,10 +386,13 @@ func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Acco
 		snapshot := runtimeBlock
 		blockPtr = &snapshot
 	}
+	nextScheduledAt, nextScheduledReason := recovery.nextScheduled()
 	return OpenAIAccountSchedulingPoolItem{
 		Account:             account,
 		PoolStatus:          status,
 		PoolReasons:         uniqueNonEmptyStrings(reasons),
+		NextScheduledAt:     nextScheduledAt,
+		NextScheduledReason: nextScheduledReason,
 		RuntimeBlock:        blockPtr,
 		PathHealth:          pathHealth,
 		PathHealthAvailable: pathHealthAvailable,
@@ -291,17 +402,25 @@ func (s *OpenAIGatewayService) buildOpenAIAccountSchedulingPoolItem(account Acco
 }
 
 func buildGenericAccountSchedulingPoolItem(account Account, filter OpenAIAccountSchedulingPoolFilter, now time.Time) OpenAIAccountSchedulingPoolItem {
-	reasons := make([]string, 0, 2)
+	reasons, recovery := accountSchedulingAvailability(account, now)
 	status := OpenAIAccountSchedulingPoolStatusSchedulable
+	if recovery.blocked {
+		status = OpenAIAccountSchedulingPoolStatusBlocked
+	}
 	if filter.Model != "" && !account.IsModelSupported(filter.Model) {
-		status = OpenAIAccountSchedulingPoolStatusFiltered
+		if status != OpenAIAccountSchedulingPoolStatusBlocked {
+			status = OpenAIAccountSchedulingPoolStatusFiltered
+		}
 		reasons = append(reasons, "model_unsupported:"+filter.Model)
 	}
 	health := OpenAIPathHealthRecord{Key: OpenAIPathHealthKeyForAccount(&account, ""), State: OpenAIPathHealthStateHealthy}
+	nextScheduledAt, nextScheduledReason := recovery.nextScheduled()
 	return OpenAIAccountSchedulingPoolItem{
 		Account:             account,
 		PoolStatus:          status,
 		PoolReasons:         uniqueNonEmptyStrings(reasons),
+		NextScheduledAt:     nextScheduledAt,
+		NextScheduledReason: nextScheduledReason,
 		PathHealth:          health,
 		PathHealthAvailable: false,
 		DerivedHealth:       DeriveAccountHealthState(&account, health, now),

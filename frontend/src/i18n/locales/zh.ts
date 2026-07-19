@@ -5102,7 +5102,7 @@ export default {
 
     accountSchedulingPool: {
       title: '调度池',
-      description: '查看当前分组调度池中的可调度账号、健康状态与降级原因',
+      description: '查看当前分组中所有已开启调度的账号、恢复时间与健康状态',
       searchPlaceholder: '搜索账号、ID 或分组',
       group: '分组',
       ungrouped: '未分组池',
@@ -5113,6 +5113,7 @@ export default {
       capacity: '调度参数',
       reasons: '原因',
       runtimeBlock: '运行时阻断',
+      nextScheduledAt: '预计恢复调度',
       pathHealth: '线路',
       priority: '优先级',
       priorityFor: '{name} 的调度优先级',
@@ -5126,6 +5127,9 @@ export default {
       disableConfirm: '确定将账号 {name} 改为非调度状态？',
       disabledSuccess: '已停止账号 {name} 的调度',
       disabledFailed: '停止调度失败',
+      restoreApiKey: '恢复此 Key',
+      apiKeyRestored: '已恢复账号 {name} 的 Key',
+      apiKeyRestoreFailed: '恢复 Key 失败',
       manualProbe: '人工探测',
       probeSuccess: '{name} 探测成功，延迟 {latency}ms',
       probeFailed: '探测失败',
@@ -5148,6 +5152,14 @@ export default {
         degraded: '降级',
         blocked: '阻断',
         filtered: '不匹配'
+      },
+      nextReasons: {
+        overloaded: '过载冷却结束',
+        rate_limited: '限流窗口结束',
+        temp_unschedulable: '临时避让结束',
+        api_key_cooldown: '最早 Key 冷却结束',
+        runtime_block: '运行时阻断结束',
+        path_cooldown: '线路熔断冷却结束'
       },
       pathHealthStates: {
         healthy: '健康',

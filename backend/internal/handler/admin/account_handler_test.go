@@ -377,10 +377,12 @@ func TestAccountHandler_ManualProbeReturnsAPIKeyItemsWithUpstream503Error(t *tes
 		assert.Equal(t, service.FingerprintAPIKey("sk-upstream-503"), payload.Account.APIKeyItems[0].Fingerprint)
 		assert.Equal(t, "cooling", payload.Account.APIKeyItems[0].Status)
 		assert.True(t, payload.Account.APIKeyItems[0].Disabled)
-		assert.Equal(t, "upstream_error", payload.Account.APIKeyItems[0].Reason)
+		assert.Equal(t, "service_unavailable", payload.Account.APIKeyItems[0].Reason)
 		assert.Contains(t, payload.Account.APIKeyItems[0].LastError, "API returned 503")
 		assert.Contains(t, payload.Account.APIKeyItems[0].LastError, "upstream temporarily unavailable")
-		assert.NotEmpty(t, payload.Account.APIKeyItems[0].DisabledUntil)
+		disabledUntil, err := time.Parse(time.RFC3339, payload.Account.APIKeyItems[0].DisabledUntil)
+		assert.NoError(t, err)
+		assert.WithinDuration(t, time.Now().Add(5*time.Second), disabledUntil, 2*time.Second)
 	}
 	assert.NotContains(t, payload.Account.Credentials, "api_keys")
 }

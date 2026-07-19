@@ -3205,6 +3205,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			if a.account.Priority != b.account.Priority {
 				return a.account.Priority < b.account.Priority
 			}
+			aCapacity := availableAccountCapacity(a.account, a.loadInfo)
+			bCapacity := availableAccountCapacity(b.account, b.loadInfo)
+			if aCapacity != bCapacity {
+				return aCapacity > bCapacity
+			}
 			if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
 				return a.loadInfo.LoadRate < b.loadInfo.LoadRate
 			}

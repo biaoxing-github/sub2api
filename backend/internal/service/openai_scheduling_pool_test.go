@@ -2,14 +2,17 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/stretchr/testify/require"
 )
 
 func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolShowsHealthAndReasons(t *testing.T) {
-	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	loadFactor := 3
 	accounts := []Account{
 		{
@@ -26,22 +29,24 @@ func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolShowsHealthAndReaso
 			AccountGroups: []AccountGroup{{GroupID: 7}},
 		},
 		{
-			ID:          102,
-			Name:        "line-degraded",
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeOAuth,
-			Status:      StatusActive,
-			Schedulable: true,
-			Concurrency: 2,
+			ID:            102,
+			Name:          "line-degraded",
+			Platform:      PlatformOpenAI,
+			Type:          AccountTypeOAuth,
+			Status:        StatusActive,
+			Schedulable:   true,
+			Concurrency:   2,
+			AccountGroups: []AccountGroup{{GroupID: 7}},
 		},
 		{
-			ID:          103,
-			Name:        "runtime-blocked",
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeOAuth,
-			Status:      StatusActive,
-			Schedulable: true,
-			Concurrency: 1,
+			ID:            103,
+			Name:          "runtime-blocked",
+			Platform:      PlatformOpenAI,
+			Type:          AccountTypeOAuth,
+			Status:        StatusActive,
+			Schedulable:   true,
+			Concurrency:   1,
+			AccountGroups: []AccountGroup{{GroupID: 7}},
 		},
 		{
 			ID:          104,
@@ -54,14 +59,16 @@ func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolShowsHealthAndReaso
 				"api_key":       "sk-filtered",
 				"model_mapping": map[string]any{"gpt-4.1": "gpt-4.1"},
 			},
+			AccountGroups: []AccountGroup{{GroupID: 7}},
 		},
 		{
-			ID:          105,
-			Name:        "manual-disabled",
-			Platform:    PlatformOpenAI,
-			Type:        AccountTypeOAuth,
-			Status:      StatusActive,
-			Schedulable: false,
+			ID:            105,
+			Name:          "manual-disabled",
+			Platform:      PlatformOpenAI,
+			Type:          AccountTypeOAuth,
+			Status:        StatusActive,
+			Schedulable:   false,
+			AccountGroups: []AccountGroup{{GroupID: 7}},
 		},
 	}
 	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{
@@ -73,7 +80,7 @@ func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolShowsHealthAndReaso
 	})
 	pathHealth.RecordFailure(OpenAIPathHealthKeyForAccount(&accounts[1], string(OpenAIUpstreamTransportHTTPSSE)), OpenAIPathFailureEOF, nil)
 	svc := &OpenAIGatewayService{
-		accountRepo:      schedulerTestOpenAIAccountRepo{accounts: accounts},
+		accountRepo:      schedulingPoolCompleteAccountRepo{accounts: accounts},
 		openaiPathHealth: pathHealth,
 	}
 	svc.BlockAccountScheduling(&accounts[2], now.Add(10*time.Minute), "429")
@@ -108,9 +115,136 @@ func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolShowsHealthAndReaso
 	require.NotNil(t, items[103].RuntimeBlock)
 	require.Equal(t, "429", items[103].RuntimeBlock.Reason)
 	require.Contains(t, items[103].PoolReasons, "runtime_block:429")
+	require.NotNil(t, items[103].NextScheduledAt)
+	require.WithinDuration(t, now.Add(10*time.Minute), *items[103].NextScheduledAt, time.Second)
+	require.Equal(t, "runtime_block", items[103].NextScheduledReason)
 
 	require.Equal(t, OpenAIAccountSchedulingPoolStatusFiltered, items[104].PoolStatus)
 	require.Contains(t, items[104].PoolReasons, "model_unsupported:gpt-5.5")
+}
+
+func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolKeepsEnabledBlockedAccountsAndReportsRecovery(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	keyCooldownUntil := now.Add(2 * time.Minute)
+	rateLimitUntil := now.Add(7 * time.Minute)
+	overloadUntil := now.Add(5 * time.Minute)
+	tempUnschedulableUntil := now.Add(10 * time.Minute)
+
+	coolingKey := "sk-cooling"
+	accounts := []Account{
+		{
+			ID:          701,
+			Name:        "ready",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Priority:    20,
+			Credentials: map[string]any{"api_key": "sk-ready"},
+		},
+		{
+			ID:          702,
+			Name:        "single-key-cooling",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Priority:    10,
+			Credentials: map[string]any{
+				"api_keys": []any{coolingKey},
+				CredentialAPIKeysDisabled: map[string]any{
+					FingerprintAPIKey(coolingKey): map[string]any{
+						"reason":         "service_unavailable",
+						"disabled_at":    now.UTC().Format(time.RFC3339),
+						"disabled_until": keyCooldownUntil.UTC().Format(time.RFC3339),
+						"disabled_count": 1,
+					},
+				},
+			},
+		},
+		{
+			ID:                      703,
+			Name:                    "multiple-windows",
+			Platform:                PlatformOpenAI,
+			Type:                    AccountTypeOAuth,
+			Status:                  StatusActive,
+			Schedulable:             true,
+			Priority:                2,
+			RateLimitResetAt:        &rateLimitUntil,
+			OverloadUntil:           &overloadUntil,
+			TempUnschedulableUntil:  &tempUnschedulableUntil,
+			TempUnschedulableReason: "temporary upstream failure",
+		},
+		{
+			ID:          704,
+			Name:        "manual-disabled",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: false,
+		},
+		{
+			ID:          705,
+			Name:        "inactive",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusDisabled,
+			Schedulable: true,
+		},
+	}
+	repo := schedulingPoolCompleteAccountRepo{accounts: accounts}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+
+	snapshot, err := svc.ListOpenAIAccountSchedulingPool(context.Background(), OpenAIAccountSchedulingPoolFilter{
+		Platform: PlatformOpenAI,
+	}, now)
+
+	require.NoError(t, err)
+	require.Equal(t, 3, snapshot.Total)
+	require.Equal(t, 1, snapshot.SchedulableCount)
+	require.Equal(t, 2, snapshot.BlockedCount)
+	require.Equal(t, []int64{703, 702, 701}, openAISchedulingPoolItemIDs(snapshot.Items))
+
+	items := openAISchedulingPoolItemsByID(snapshot.Items)
+	require.Equal(t, OpenAIAccountSchedulingPoolStatusBlocked, items[702].PoolStatus)
+	require.Contains(t, items[702].PoolReasons, "api_keys_cooling_down")
+	require.NotContains(t, items[702].PoolReasons, "api_key_missing")
+	require.NotNil(t, items[702].NextScheduledAt)
+	require.WithinDuration(t, keyCooldownUntil, *items[702].NextScheduledAt, time.Second)
+	require.Equal(t, "api_key_cooldown", items[702].NextScheduledReason)
+
+	require.Equal(t, OpenAIAccountSchedulingPoolStatusBlocked, items[703].PoolStatus)
+	require.Contains(t, items[703].PoolReasons, "rate_limited")
+	require.Contains(t, items[703].PoolReasons, "overloaded")
+	require.Contains(t, items[703].PoolReasons, "temp_unschedulable")
+	require.NotNil(t, items[703].NextScheduledAt)
+	require.WithinDuration(t, tempUnschedulableUntil, *items[703].NextScheduledAt, time.Second)
+	require.Equal(t, "temp_unschedulable", items[703].NextScheduledReason)
+}
+
+func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolReadsAllPages(t *testing.T) {
+	accountCount := openAIAccountSchedulingPoolPageSize + 1
+	accounts := make([]Account, 0, accountCount)
+	for i := 0; i < accountCount; i++ {
+		accounts = append(accounts, Account{
+			ID:          int64(i + 1),
+			Name:        fmt.Sprintf("paged-account-%04d", i+1),
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeOAuth,
+			Status:      StatusActive,
+			Schedulable: true,
+		})
+	}
+
+	svc := &OpenAIGatewayService{accountRepo: schedulingPoolCompleteAccountRepo{accounts: accounts}}
+	snapshot, err := svc.ListOpenAIAccountSchedulingPool(context.Background(), OpenAIAccountSchedulingPoolFilter{
+		Platform: PlatformOpenAI,
+	}, time.Now())
+
+	require.NoError(t, err)
+	require.Equal(t, accountCount, snapshot.Total)
+	require.Equal(t, accountCount, snapshot.SchedulableCount)
+	require.Len(t, snapshot.Items, accountCount)
 }
 
 func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolSupportsAnthropicGroup(t *testing.T) {
@@ -149,7 +283,7 @@ func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolSupportsAnthropicGr
 	}
 	svc := &OpenAIGatewayService{
 		accountRepo: schedulingPoolGroupAwareAccountRepo{
-			schedulerTestOpenAIAccountRepo: schedulerTestOpenAIAccountRepo{accounts: accounts},
+			schedulingPoolCompleteAccountRepo: schedulingPoolCompleteAccountRepo{accounts: accounts},
 		},
 	}
 
@@ -166,32 +300,31 @@ func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolSupportsAnthropicGr
 	require.False(t, snapshot.Items[0].PathHealthAvailable)
 }
 
-func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolReadsPathHealthWithFullAPIKeyBaseURL(t *testing.T) {
+func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolUsesListedAPIKeyBaseURLWithoutRefetch(t *testing.T) {
 	now := time.Date(2026, 6, 9, 22, 10, 0, 0, time.UTC)
 	listedAccount := Account{
-		ID:            301,
-		Name:          "listed-without-base-url",
-		Platform:      PlatformOpenAI,
-		Type:          AccountTypeAPIKey,
-		Status:        StatusActive,
-		Schedulable:   true,
-		Credentials:   map[string]any{"api_key": "sk-listed"},
+		ID:          301,
+		Name:        "listed-with-base-url",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"api_key":           "sk-listed",
+			"base_url":          "https://custom-upstream.example/v1",
+			"request_base_urls": []any{"https://custom-upstream.example/v1"},
+		},
 		AccountGroups: []AccountGroup{{GroupID: 2}},
-	}
-	fullAccount := listedAccount
-	fullAccount.Credentials = map[string]any{
-		"api_key":           "sk-listed",
-		"base_url":          "https://custom-upstream.example/v1",
-		"request_base_urls": []any{"https://custom-upstream.example/v1"},
 	}
 	firstTokenMs := 3456
 	pathHealth := NewOpenAIPathHealthTracker(OpenAIPathHealthOptions{Enabled: true})
-	pathHealth.RecordSuccess(OpenAIPathHealthKeyForAccount(&fullAccount, string(OpenAIUpstreamTransportHTTPSSE)), &firstTokenMs, nil)
+	pathHealth.RecordSuccess(OpenAIPathHealthKeyForAccount(&listedAccount, string(OpenAIUpstreamTransportHTTPSSE)), &firstTokenMs, nil)
+	getByIDCalls := 0
 
 	svc := &OpenAIGatewayService{
-		accountRepo: schedulingPoolPathHealthAccountRepo{
-			listed: []Account{listedAccount},
-			full:   map[int64]Account{fullAccount.ID: fullAccount},
+		accountRepo: schedulingPoolNoRefetchAccountRepo{
+			schedulingPoolCompleteAccountRepo: schedulingPoolCompleteAccountRepo{accounts: []Account{listedAccount}},
+			getByIDCalls:                      &getByIDCalls,
 		},
 		openaiPathHealth: pathHealth,
 	}
@@ -208,6 +341,7 @@ func TestOpenAIGatewayService_ListOpenAIAccountSchedulingPoolReadsPathHealthWith
 	require.Equal(t, int64(1), snapshot.Items[0].PathHealth.SuccessCount)
 	require.Equal(t, "https://custom-upstream.example/v1", snapshot.Items[0].PathHealth.Key.Upstream)
 	require.InDelta(t, firstTokenMs, snapshot.Items[0].PathHealth.TTFTEWMAMs, 0.01)
+	require.Zero(t, getByIDCalls)
 }
 
 func TestOpenAIGatewayService_ManualProbeSuccessRestoresSchedulingPoolHealth(t *testing.T) {
@@ -280,6 +414,21 @@ func TestOpenAIGatewayService_ManualProbeSuccessRestoresSchedulingPoolHealth(t *
 type manualProbeSchedulingPoolRepo struct {
 	mockAccountRepoForGemini
 	account *Account
+}
+
+func (r *manualProbeSchedulingPoolRepo) ListWithFilters(
+	ctx context.Context,
+	params pagination.PaginationParams,
+	platform, accountType, status, search string,
+	groupID int64,
+	privacyMode, planType string,
+) ([]Account, *pagination.PaginationResult, error) {
+	if r.account == nil {
+		return []Account{}, &pagination.PaginationResult{Page: params.Page, PageSize: params.Limit()}, nil
+	}
+	return schedulingPoolCompleteAccountRepo{accounts: []Account{*r.account}}.ListWithFilters(
+		ctx, params, platform, accountType, status, search, groupID, privacyMode, planType,
+	)
 }
 
 func (r *manualProbeSchedulingPoolRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
@@ -381,8 +530,70 @@ func schedulingPoolInt64Ptr(v int64) *int64 {
 	return &v
 }
 
+type schedulingPoolCompleteAccountRepo struct {
+	AccountRepository
+	accounts []Account
+}
+
+func (r schedulingPoolCompleteAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
+	for i := range r.accounts {
+		if r.accounts[i].ID == id {
+			account := r.accounts[i]
+			return &account, nil
+		}
+	}
+	return nil, ErrAccountNotFound
+}
+
+func (r schedulingPoolCompleteAccountRepo) ListWithFilters(
+	ctx context.Context,
+	params pagination.PaginationParams,
+	platform, accountType, status, search string,
+	groupID int64,
+	privacyMode, planType string,
+) ([]Account, *pagination.PaginationResult, error) {
+	filtered := make([]Account, 0, len(r.accounts))
+	for i := range r.accounts {
+		account := r.accounts[i]
+		if platform != "" && account.Platform != platform {
+			continue
+		}
+		if accountType != "" && account.Type != accountType {
+			continue
+		}
+		if status != "" && account.Status != status {
+			continue
+		}
+		if search != "" && !strings.Contains(strings.ToLower(account.Name), strings.ToLower(search)) {
+			continue
+		}
+		if groupID == AccountListGroupUngrouped && hasAccountGroupMetadata(&account) {
+			continue
+		}
+		if groupID > 0 && !isAccountInRequestedGroup(&account, &groupID) {
+			continue
+		}
+		filtered = append(filtered, account)
+	}
+	total := int64(len(filtered))
+	pageSize := params.Limit()
+	pages := 0
+	if pageSize > 0 && total > 0 {
+		pages = int((total + int64(pageSize) - 1) / int64(pageSize))
+	}
+	start := params.Offset()
+	if start >= len(filtered) {
+		return []Account{}, &pagination.PaginationResult{Total: total, Page: params.Page, PageSize: pageSize, Pages: pages}, nil
+	}
+	end := start + pageSize
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	return filtered[start:end], &pagination.PaginationResult{Total: total, Page: params.Page, PageSize: pageSize, Pages: pages}, nil
+}
+
 type schedulingPoolGroupAwareAccountRepo struct {
-	schedulerTestOpenAIAccountRepo
+	schedulingPoolCompleteAccountRepo
 }
 
 func (r schedulingPoolGroupAwareAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
@@ -446,57 +657,14 @@ func schedulingPoolPlatformIn(platform string, platforms []string) bool {
 	return false
 }
 
-type schedulingPoolPathHealthAccountRepo struct {
-	AccountRepository
-	listed []Account
-	full   map[int64]Account
+type schedulingPoolNoRefetchAccountRepo struct {
+	schedulingPoolCompleteAccountRepo
+	getByIDCalls *int
 }
 
-func (r schedulingPoolPathHealthAccountRepo) GetByID(ctx context.Context, id int64) (*Account, error) {
-	if account, ok := r.full[id]; ok {
-		return &account, nil
+func (r schedulingPoolNoRefetchAccountRepo) GetByID(context.Context, int64) (*Account, error) {
+	if r.getByIDCalls != nil {
+		*r.getByIDCalls = *r.getByIDCalls + 1
 	}
 	return nil, ErrAccountNotFound
-}
-
-func (r schedulingPoolPathHealthAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
-	return r.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
-}
-
-func (r schedulingPoolPathHealthAccountRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]Account, error) {
-	result := make([]Account, 0, len(r.listed))
-	for _, account := range r.listed {
-		if schedulingPoolPlatformIn(account.Platform, platforms) && isAccountInRequestedGroup(&account, &groupID) {
-			result = append(result, account)
-		}
-	}
-	return result, nil
-}
-
-func (r schedulingPoolPathHealthAccountRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
-	return r.ListSchedulableByPlatforms(ctx, []string{platform})
-}
-
-func (r schedulingPoolPathHealthAccountRepo) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
-	result := make([]Account, 0, len(r.listed))
-	for _, account := range r.listed {
-		if schedulingPoolPlatformIn(account.Platform, platforms) {
-			result = append(result, account)
-		}
-	}
-	return result, nil
-}
-
-func (r schedulingPoolPathHealthAccountRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
-	return r.ListSchedulableUngroupedByPlatforms(ctx, []string{platform})
-}
-
-func (r schedulingPoolPathHealthAccountRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
-	result := make([]Account, 0, len(r.listed))
-	for _, account := range r.listed {
-		if schedulingPoolPlatformIn(account.Platform, platforms) && isAccountInRequestedGroup(&account, nil) {
-			result = append(result, account)
-		}
-	}
-	return result, nil
 }
