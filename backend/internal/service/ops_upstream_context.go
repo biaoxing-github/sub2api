@@ -96,25 +96,47 @@ func HasOpsClientBusinessLimited(c *gin.Context) bool {
 type OpsStreamError struct {
 	// ErrType 是对客错误类型，例如 rate_limit_error、upstream_error。
 	ErrType string
+	// Code 是可编程判断的稳定错误细分类。
+	Code string
 	// Message 是对客错误消息。
 	Message string
-	// IntendedStatus 是未固化时本应返回的 HTTP 状态码，仅用于 ops 分级。
+	// IntendedStatus 是未固化时本应返回的 HTTP 状态码。
 	IntendedStatus int
+	// CountTowardsSLA 表示 Ops 应按 IntendedStatus 计入错误率，而不是保留 wire 200。
+	CountTowardsSLA bool
 }
 
 // MarkOpsStreamError 记录一次流内错误，首个标记保留为根因，后续兜底错误不覆盖。
 func MarkOpsStreamError(c *gin.Context, errType, message string, intendedStatus int) {
+	markOpsStreamError(c, OpsStreamError{
+		ErrType:        errType,
+		Message:        message,
+		IntendedStatus: intendedStatus,
+	})
+}
+
+// MarkOpsStreamFailure 记录应计入错误率的流内上游失败。
+func MarkOpsStreamFailure(c *gin.Context, errType, code, message string, intendedStatus int) {
+	markOpsStreamError(c, OpsStreamError{
+		ErrType:         errType,
+		Code:            code,
+		Message:         message,
+		IntendedStatus:  intendedStatus,
+		CountTowardsSLA: true,
+	})
+}
+
+func markOpsStreamError(c *gin.Context, streamErr OpsStreamError) {
 	if c == nil {
 		return
 	}
 	if _, exists := c.Get(OpsStreamErrorKey); exists {
 		return
 	}
-	c.Set(OpsStreamErrorKey, OpsStreamError{
-		ErrType:        strings.TrimSpace(errType),
-		Message:        strings.TrimSpace(message),
-		IntendedStatus: intendedStatus,
-	})
+	streamErr.ErrType = strings.TrimSpace(streamErr.ErrType)
+	streamErr.Code = strings.TrimSpace(streamErr.Code)
+	streamErr.Message = strings.TrimSpace(streamErr.Message)
+	c.Set(OpsStreamErrorKey, streamErr)
 }
 
 // GetOpsStreamError 返回本请求已标记的流内错误。

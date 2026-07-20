@@ -1042,8 +1042,20 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 	if classifyStatus <= 0 {
 		classifyStatus = wireStatus
 	}
-	normalizedType := normalizeOpsErrorType(streamErr.ErrType, "")
-	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, normalizedType, streamErr.Message, "", classifyStatus)
+	normalizedType := normalizeOpsErrorType(streamErr.ErrType, streamErr.Code)
+	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(c, normalizedType, streamErr.Message, streamErr.Code, classifyStatus)
+	recordedStatus := wireStatus
+	if streamErr.CountTowardsSLA && streamErr.IntendedStatus >= 400 {
+		recordedStatus = streamErr.IntendedStatus
+	}
+	errorBody := ""
+	if streamErr.Code != "" {
+		if payload, err := json.Marshal(gin.H{"error": gin.H{
+			"type": normalizedType, "code": streamErr.Code, "message": streamErr.Message,
+		}}); err == nil {
+			errorBody = string(payload)
+		}
+	}
 	if normalizedType == "rate_limit_error" && phase == "request" {
 		msgLower := strings.ToLower(streamErr.Message)
 		if strings.Contains(msgLower, "concurrency") || strings.Contains(msgLower, "pending") || strings.Contains(msgLower, "queue") {
@@ -1078,9 +1090,9 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 		RequestID:       requestID,
 		ClientRequestID: clientRequestID,
 
-		AccountID: accountID,
-		Platform:  platform,
-		Model:     modelName,
+		AccountID:   accountID,
+		Platform:    platform,
+		Model:       modelName,
 		RequestPath: requestPath,
 		Stream:      true,
 
@@ -1112,12 +1124,12 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 		ErrorPhase:        phase,
 		ErrorType:         normalizedType,
 		Severity:          classifyOpsSeverity(normalizedType, classifyStatus),
-		StatusCode:        wireStatus,
+		StatusCode:        recordedStatus,
 		IsBusinessLimited: isBusinessLimited,
 		IsCountTokens:     isCountTokensRequest(c),
 
 		ErrorMessage: streamErr.Message,
-		ErrorBody:    "",
+		ErrorBody:    errorBody,
 		ErrorSource:  errorSource,
 		ErrorOwner:   errorOwner,
 

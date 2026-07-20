@@ -235,12 +235,13 @@ services:
         hard: 100000
     volumes:
       - redis_data:/data
+    # sh -c 接收一个完整脚本；每行必须续接，否则 redis-server 不会收到后续持久化参数。
     command: >
       sh -c '
-        redis-server
-        --save 60 1
-        --appendonly yes
-        --appendfsync everysec
+        redis-server \
+        --save 60 1 \
+        --appendonly yes \
+        --appendfsync everysec \
         ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}'
     environment:
       - TZ=${TZ:-Asia/Shanghai}

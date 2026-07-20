@@ -154,10 +154,11 @@ const (
 
 // CheckErrorPolicy 检查统一错误处理规则、自定义错误码和临时不可调度规则。
 // 新的 error_handling_rules 有启用规则时优先接管旧字段；旧字段保留兼容历史账号。
-func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte) ErrorPolicyResult {
+func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel ...string) ErrorPolicyResult {
 	if account == nil {
 		return ErrorPolicyNone
 	}
+	ctx = withTempUnschedulableModel(ctx, requestedModel)
 	if result, handled := s.applyUnifiedErrorHandlingRules(ctx, account, statusCode, nil, responseBody); handled {
 		return result
 	}
@@ -169,9 +170,13 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 		return ErrorPolicySkipped
 	}
 	if account.IsPoolMode() {
+		// 池模式只跳过默认账号状态处理；管理员显式配置的非 401 临时规则仍应生效。
+		if statusCode != http.StatusUnauthorized && s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
+			return ErrorPolicyTempUnscheduled
+		}
 		return ErrorPolicySkipped
 	}
-	if s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
+	if s.tryTempUnschedulable(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel...)) {
 		return ErrorPolicyTempUnscheduled
 	}
 	return ErrorPolicyNone
@@ -183,6 +188,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	if account == nil {
 		return false
 	}
+	ctx = withTempUnschedulableModel(ctx, requestedModel)
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(responseBody))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 	if upstreamMsg != "" {
@@ -201,7 +207,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// 显式临时不可调度规则继续优先于内置基础设施熔断；未命中时再使用统一默认策略。
 	if account.Platform == PlatformOpenAI && statusCode != http.StatusUnauthorized {
 		if _, matched := classifyOpenAIUpstreamInfrastructureFailure(statusCode, upstreamMsg, responseBody); matched {
-			if s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
+			if s.tryTempUnschedulable(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel...)) {
 				return true
 			}
 		}
@@ -213,8 +219,11 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
-	// 池模式默认不标记本地账号状态；仅当用户显式配置自定义错误码时按本地策略处理。
+	// 池模式默认不标记本地账号状态；管理员显式配置的非 401 临时规则仍优先。
 	if account.IsPoolMode() && !customErrorCodesEnabled {
+		if statusCode != http.StatusUnauthorized && s.tryTempUnschedulable(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel...)) {
+			return true
+		}
 		slog.Info("pool_mode_error_skipped", "account_id", account.ID, "status_code", statusCode)
 		return false
 	}
@@ -254,7 +263,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	// 先尝试临时不可调度规则（401除外）
 	// 如果匹配成功，直接返回，不执行后续禁用逻辑
 	if statusCode != 401 {
-		if s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
+		if s.tryTempUnschedulable(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel...)) {
 			return true
 		}
 	}
@@ -1856,14 +1865,18 @@ func (s *RateLimitService) GetTempUnschedStatus(ctx context.Context, accountID i
 	return state, nil
 }
 
-func (s *RateLimitService) HandleTempUnschedulable(ctx context.Context, account *Account, statusCode int, responseBody []byte) bool {
+func (s *RateLimitService) HandleTempUnschedulable(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel ...string) bool {
 	if account == nil {
+		return false
+	}
+	if account.IsPoolMode() && !account.IsCustomErrorCodesEnabled() {
 		return false
 	}
 	if !account.ShouldHandleErrorCode(statusCode) {
 		return false
 	}
-	return s.tryTempUnschedulable(ctx, account, statusCode, responseBody)
+	ctx = withTempUnschedulableModel(ctx, requestedModel)
+	return s.tryTempUnschedulable(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel...))
 }
 
 func (s *RateLimitService) applyUnifiedErrorHandlingRules(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) (ErrorPolicyResult, bool) {
@@ -1978,6 +1991,15 @@ func (s *RateLimitService) applyUnifiedTempUnschedulable(ctx context.Context, ac
 	reason := state.ErrorMessage
 	if raw, err := json.Marshal(state); err == nil {
 		reason = string(raw)
+	}
+	modelKey := tempUnschedulableModel(ctx, nil)
+	if modelKey != "" && statusCode != http.StatusUnauthorized {
+		if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, modelKey, until); err != nil {
+			slog.Warn("unified_temp_unsched_model_rate_limit_set_failed", "account_id", account.ID, "model", modelKey, "status_code", statusCode, "rule", rule.Name, "error", err)
+			return true
+		}
+		slog.Info("account_error_handling_model_temp_unschedulable", "account_id", account.ID, "model", modelKey, "status_code", statusCode, "rule", rule.Name, "until", until)
+		return true
 	}
 
 	s.notifyAccountSchedulingBlocked(account, until, "error_handling_rules.temp_unschedulable")
@@ -2226,7 +2248,65 @@ func nextAPIKeyAccountSchedulingErrorCount(previousReason string, statusCode int
 	return state.ErrorCount + 1
 }
 
-func (s *RateLimitService) tryTempUnschedulable(ctx context.Context, account *Account, statusCode int, responseBody []byte) bool {
+type tempUnschedulableModelContextKey struct{}
+
+// withTempUnschedulableModel 将当前调度模型带入嵌套错误策略，避免调用链丢失模型范围。
+func withTempUnschedulableModel(ctx context.Context, requestedModel []string) context.Context {
+	model := firstRequestedModel(requestedModel...)
+	if model == "" {
+		return ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, tempUnschedulableModelContextKey{}, model)
+}
+
+func tempUnschedulableModel(ctx context.Context, requestedModel []string) string {
+	if model := firstRequestedModel(requestedModel...); model != "" {
+		return model
+	}
+	if ctx == nil {
+		return ""
+	}
+	model, _ := ctx.Value(tempUnschedulableModelContextKey{}).(string)
+	return strings.TrimSpace(model)
+}
+
+type tempUnschedulableRuleMatch struct {
+	rule           TempUnschedulableRule
+	ruleIndex      int
+	matchedKeyword string
+}
+
+func matchTempUnschedulableRules(account *Account, statusCode int, responseBody []byte) []tempUnschedulableRuleMatch {
+	if account == nil || !account.IsTempUnschedulableEnabled() || statusCode <= 0 || len(responseBody) == 0 {
+		return nil
+	}
+	rules := account.GetTempUnschedulableRules()
+	if len(rules) == 0 {
+		return nil
+	}
+	body := responseBody
+	if len(body) > tempUnschedBodyMaxBytes {
+		body = body[:tempUnschedBodyMaxBytes]
+	}
+	bodyLower := strings.ToLower(string(body))
+	matches := make([]tempUnschedulableRuleMatch, 0, 1)
+	for idx, rule := range rules {
+		if rule.ErrorCode != statusCode || len(rule.Keywords) == 0 {
+			continue
+		}
+		matchedKeyword := matchTempUnschedKeyword(bodyLower, rule.Keywords)
+		if matchedKeyword == "" {
+			continue
+		}
+		matches = append(matches, tempUnschedulableRuleMatch{rule: rule, ruleIndex: idx, matchedKeyword: matchedKeyword})
+	}
+	return matches
+}
+
+func (s *RateLimitService) tryTempUnschedulable(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel ...string) bool {
 	if account == nil {
 		return false
 	}
@@ -2250,30 +2330,8 @@ func (s *RateLimitService) tryTempUnschedulable(ctx context.Context, account *Ac
 			return false
 		}
 	}
-	rules := account.GetTempUnschedulableRules()
-	if len(rules) == 0 {
-		return false
-	}
-	if statusCode <= 0 || len(responseBody) == 0 {
-		return false
-	}
-
-	body := responseBody
-	if len(body) > tempUnschedBodyMaxBytes {
-		body = body[:tempUnschedBodyMaxBytes]
-	}
-	bodyLower := strings.ToLower(string(body))
-
-	for idx, rule := range rules {
-		if rule.ErrorCode != statusCode || len(rule.Keywords) == 0 {
-			continue
-		}
-		matchedKeyword := matchTempUnschedKeyword(bodyLower, rule.Keywords)
-		if matchedKeyword == "" {
-			continue
-		}
-
-		if s.triggerTempUnschedulable(ctx, account, rule, idx, statusCode, matchedKeyword, responseBody) {
+	for _, match := range matchTempUnschedulableRules(account, statusCode, responseBody) {
+		if s.triggerTempUnschedulable(ctx, account, match.rule, match.ruleIndex, statusCode, match.matchedKeyword, responseBody, tempUnschedulableModel(ctx, requestedModel)) {
 			return true
 		}
 	}
@@ -2313,7 +2371,7 @@ func matchTempUnschedKeyword(bodyLower string, keywords []string) string {
 	return ""
 }
 
-func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account *Account, rule TempUnschedulableRule, ruleIndex int, statusCode int, matchedKeyword string, responseBody []byte) bool {
+func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account *Account, rule TempUnschedulableRule, ruleIndex int, statusCode int, matchedKeyword string, responseBody []byte, requestedModel ...string) bool {
 	if account == nil {
 		return false
 	}
@@ -2339,6 +2397,17 @@ func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account
 	}
 	if reason == "" {
 		reason = strings.TrimSpace(state.ErrorMessage)
+	}
+
+	// 已知模型的非认证错误只冷却当前账号与模型组合；写入失败也不扩大为整账号封锁。
+	modelKey := firstRequestedModel(requestedModel...)
+	if modelKey != "" && statusCode != http.StatusUnauthorized {
+		if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, modelKey, until); err != nil {
+			slog.Warn("temp_unsched_model_rate_limit_set_failed", "account_id", account.ID, "model", modelKey, "error", err)
+			return true
+		}
+		slog.Info("account_model_temp_unschedulable", "account_id", account.ID, "model", modelKey, "until", until, "rule_index", ruleIndex, "status_code", statusCode)
+		return true
 	}
 
 	s.notifyAccountSchedulingBlocked(account, until, "temp_unschedulable")

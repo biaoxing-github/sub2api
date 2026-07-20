@@ -58,6 +58,12 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorForModel(ctx cont
 	if s.handleOpenAIModelNotFoundCooldown(stateCtx, account, statusCode, responseBody, requestedModel) {
 		return isOpenAIModelUnsupportedForChatGPTAccountError(statusCode, responseBody)
 	}
+	stateCtx = withTempUnschedulableModel(stateCtx, []string{requestedModel})
+	// 非池模式可在通用账号错误处理前完成模型级冷却，避免扩大为整账号运行时封锁。
+	if s != nil && s.rateLimitService != nil && statusCode != http.StatusUnauthorized && strings.TrimSpace(requestedModel) != "" &&
+		s.rateLimitService.HandleTempUnschedulable(stateCtx, account, statusCode, responseBody, requestedModel) {
+		return true
+	}
 	if statusCode == http.StatusTooManyRequests {
 		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
 	}
@@ -65,7 +71,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorForModel(ctx cont
 		return false
 	}
 	shouldDisable := s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody)
-	if shouldDisable {
+	modelTempMatched := statusCode != http.StatusUnauthorized && tempUnschedulableModel(stateCtx, nil) != "" &&
+		len(matchTempUnschedulableRules(account, statusCode, responseBody)) > 0
+	if shouldDisable && !modelTempMatched {
 		s.BlockAccountScheduling(account, time.Time{}, "upstream_disable")
 	}
 	return shouldDisable
