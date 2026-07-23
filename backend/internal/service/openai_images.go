@@ -642,16 +642,32 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 	}
-	if account.IsGrok() {
-		s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
-	}
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+		if account.IsGrok() && isGrokContentPolicyRejection(resp.StatusCode, respBody) {
+			clientMsg := s.recordGrokContentPolicyRejection(c, account, resp, respBody)
+			upstreamErr := &OpenAIImagesUpstreamError{
+				StatusCode:        http.StatusForbidden,
+				ErrorType:         "invalid_request_error",
+				Message:           clientMsg,
+				UpstreamRequestID: firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
+			}
+			writeOpenAIImagesUpstreamErrorResponse(c, upstreamErr)
+			return nil, upstreamErr
+		}
+		if account.IsGrok() {
+			s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
+			s.handleGrokAccountUpstreamError(upstreamCtx, account, resp.StatusCode, resp.Header, respBody)
+		}
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+		if account.IsGrok() {
+			shouldFailover = s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody)
+		}
+		if shouldFailover {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
 				AccountID:          account.ID,
@@ -662,7 +678,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 				Kind:               "failover",
 				Message:            upstreamMsg,
 			})
-			s.handleFailoverSideEffects(upstreamCtx, resp, account, openAIRequestModelFromBody(forwardBody))
+			if !account.IsGrok() {
+				s.handleFailoverSideEffects(upstreamCtx, resp, account, openAIRequestModelFromBody(forwardBody))
+			}
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
@@ -670,6 +688,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			}
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
+	}
+	if account.IsGrok() {
+		s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
 	}
 	defer func() { _ = resp.Body.Close() }()
 

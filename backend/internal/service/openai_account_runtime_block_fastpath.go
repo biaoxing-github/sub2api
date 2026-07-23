@@ -49,6 +49,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 // handleOpenAIAccountUpstreamErrorForModel 返回当前请求是否需要切换账号。
 // 模型不可用只冷却账号的对应上游模型；仅账号级模型不兼容触发切换，普通未知模型保留直接响应。
 func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorForModel(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel string) bool {
+	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(statusCode, responseBody) {
+		return false
+	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
 

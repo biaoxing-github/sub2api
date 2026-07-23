@@ -425,6 +425,9 @@ func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Cont
 		return nil
 	}
 
+	if isGrokContentPolicyRejection(resp.StatusCode, responseBody) {
+		return fmt.Errorf("grok scheduler exhaustion probe rejected by content policy for account %d", account.ID)
+	}
 	s.updateGrokUsageSnapshot(probeCtx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
 	s.handleGrokAccountUpstreamError(probeCtx, account, resp.StatusCode, resp.Header, responseBody)
 	bodyText := strings.TrimSpace(truncateForLog(responseBody, 512))

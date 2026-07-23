@@ -716,6 +716,17 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
 	body := s.readUpstreamErrorBody(resp)
+	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(resp.StatusCode, body) {
+		clientMsg := s.recordGrokContentPolicyRejection(c, account, resp, body)
+		upstreamErr := &OpenAIImagesUpstreamError{
+			StatusCode:        http.StatusForbidden,
+			ErrorType:         "invalid_request_error",
+			Message:           clientMsg,
+			UpstreamRequestID: firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
+		}
+		writeOpenAIImagesUpstreamErrorResponse(c, upstreamErr)
+		return nil, upstreamErr
+	}
 
 	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
 	upstreamDetail := ""
