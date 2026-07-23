@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -17,7 +18,11 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const grokQuotaSnapshotExtraKey = "grok_quota_snapshot"
+const (
+	grokQuotaSnapshotExtraKey = "grok_quota_snapshot"
+	grokUpstreamUserAgent     = "sub2api-grok/1.0"
+	grokCLIVersion            = "0.2.93"
+)
 
 func (s *OpenAIGatewayService) forwardGrokResponses(
 	ctx context.Context,
@@ -318,8 +323,7 @@ func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Acc
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("User-Agent", "sub2api-grok/1.0")
-	req.Header.Set("X-Grok-Client-Version", "0.2.93")
+	applyGrokCLIHeaders(req.Header)
 	if len(cacheIdentities) > 0 {
 		applyGrokCacheHeaders(req.Header, cacheIdentities[0])
 	}
@@ -329,6 +333,22 @@ func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Acc
 		}
 	}
 	return req, nil
+}
+
+// applyGrokCLIHeaders 标识受支持的 Grok CLI 交互流量。
+func applyGrokCLIHeaders(headers http.Header) {
+	if headers == nil {
+		return
+	}
+	headers.Set("User-Agent", grokUpstreamUserAgent)
+	headers.Set("X-Grok-Client-Version", grokCLIVersion)
+	headers.Set("X-Grok-Client-Mode", "interactive")
+}
+
+// isGrokCLIProxyTarget 仅识别官方 CLI 代理主机，防止账号身份头发送到自定义中继。
+func isGrokCLIProxyTarget(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	return err == nil && strings.EqualFold(parsed.Hostname(), "cli-chat-proxy.grok.com")
 }
 
 func (s *OpenAIGatewayService) updateGrokUsageSnapshot(ctx context.Context, accountID int64, snapshot *xai.QuotaSnapshot) {

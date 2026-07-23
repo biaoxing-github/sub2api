@@ -129,6 +129,32 @@ func TestExtractUpstreamModelIDs(t *testing.T) {
 	}
 }
 
+func grokOAuthModelSyncTestAccount(baseURL string) *Account {
+	credentials := map[string]any{
+		"access_token":  "oauth-access-token",
+		"refresh_token": "oauth-refresh-token",
+		"sub":           "grok-user-id",
+		"email":         "grok-user@example.com",
+	}
+	if strings.TrimSpace(baseURL) != "" {
+		credentials["base_url"] = baseURL
+	}
+	return &Account{
+		ID:          10,
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Credentials: credentials,
+	}
+}
+
+func TestExtractGrokUpstreamModelIDs(t *testing.T) {
+	t.Parallel()
+
+	models, err := extractGrokUpstreamModelIDs([]byte(`{"data":[{"id":"display-id","model":"grok-4.5"},{"modelId":"grok-build-0.1"},{"model_id":"grok-composer-2.5-fast"},{"name":"Grok Meta Display Name","_meta":{"model":"grok-meta"}},{"name":"grok-name"},{"id":"grok-safe","_meta":"not-an-object"}]}`))
+	require.NoError(t, err)
+	require.Equal(t, []string{"grok-4.5", "grok-build-0.1", "grok-composer-2.5-fast", "grok-meta", "grok-name", "grok-safe"}, models)
+}
+
 func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 	t.Parallel()
 
@@ -161,6 +187,18 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 	require.Equal(t, "https://openai.example.com/v1/models", openAIReq.URL.String())
 	require.Equal(t, "Bearer openai-key", openAIReq.Header.Get("Authorization"))
 
+	grokReq, err := svc.buildUpstreamModelsRequest(ctx, &Account{
+		Platform: PlatformGrok,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "xai-key",
+			"base_url": "https://xai.example.com/v1",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "https://xai.example.com/v1/models", grokReq.URL.String())
+	require.Equal(t, "Bearer xai-key", grokReq.Header.Get("Authorization"))
+
 	geminiReq, err := svc.buildGeminiUpstreamModelsRequest(ctx, &Account{
 		Platform: PlatformGemini,
 		Type:     AccountTypeAPIKey,
@@ -184,6 +222,33 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://gateway.example.com/antigravity/v1/models", antigravityReq.URL.String())
 	require.Equal(t, "antigravity-key", antigravityReq.Header.Get("x-api-key"))
+}
+
+func TestBuildUpstreamModelsRequestSupportsGrokOAuth(t *testing.T) {
+	t.Parallel()
+
+	svc := &AccountTestService{cfg: upstreamModelSyncTestConfig()}
+	req, err := svc.buildUpstreamModelsRequest(context.Background(), grokOAuthModelSyncTestAccount(""))
+	require.NoError(t, err)
+	require.Equal(t, "https://cli-chat-proxy.grok.com/v1/models", req.URL.String())
+	require.Equal(t, "Bearer oauth-access-token", req.Header.Get("Authorization"))
+	require.Equal(t, "sub2api-grok/1.0", req.Header.Get("User-Agent"))
+	require.Equal(t, "0.2.93", req.Header.Get("X-Grok-Client-Version"))
+	require.Equal(t, "interactive", req.Header.Get("X-Grok-Client-Mode"))
+	require.Equal(t, "grok-user-id", req.Header.Get("X-UserID"))
+	require.Equal(t, "grok-user@example.com", req.Header.Get("X-Email"))
+	require.NotContains(t, req.Header.Get("Authorization"), "oauth-refresh-token")
+}
+
+func TestBuildUpstreamModelsRequestGrokOAuthDoesNotSendIdentityToCustomBase(t *testing.T) {
+	t.Parallel()
+
+	svc := &AccountTestService{cfg: upstreamModelSyncTestConfig()}
+	req, err := svc.buildUpstreamModelsRequest(context.Background(), grokOAuthModelSyncTestAccount("https://relay.example/v1"))
+	require.NoError(t, err)
+	require.Equal(t, "https://relay.example/v1/models", req.URL.String())
+	require.Empty(t, req.Header.Get("X-UserID"))
+	require.Empty(t, req.Header.Get("X-Email"))
 }
 
 func TestBuildAnthropicUpstreamModelsRequestUsesAccountClaudeCLIVersionOverride(t *testing.T) {
@@ -264,6 +329,28 @@ func TestFetchUpstreamSupportedModelsParsesOpenAIResponse(t *testing.T) {
 	require.Equal(t, []string{"gpt-5", "o3"}, models)
 	require.Equal(t, "https://openai.example.com/v1/models", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer openai-key", upstream.lastReq.Header.Get("Authorization"))
+}
+
+func TestFetchUpstreamSupportedModelsParsesGrokOAuthResponse(t *testing.T) {
+	t.Parallel()
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"data":[{"model":"grok-4.5"},{"model":"grok-4.5"},{"modelId":"grok-build-0.1"}]}`)),
+	}}
+	svc := &AccountTestService{
+		httpUpstream: upstream,
+		cfg:          upstreamModelSyncTestConfig(),
+	}
+
+	models, err := svc.FetchUpstreamSupportedModels(context.Background(), grokOAuthModelSyncTestAccount(""))
+	require.NoError(t, err)
+	require.Equal(t, []string{"grok-4.5", "grok-build-0.1"}, models)
+	require.Equal(t, "https://cli-chat-proxy.grok.com/v1/models", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer oauth-access-token", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, "grok-user-id", upstream.lastReq.Header.Get("X-UserID"))
+	require.Equal(t, "grok-user@example.com", upstream.lastReq.Header.Get("X-Email"))
 }
 
 func TestFetchUpstreamSupportedModelsDoesNotExposeUpstreamBody(t *testing.T) {
