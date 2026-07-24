@@ -307,3 +307,18 @@ func TestGrokEntitlement403HonorsConfiguredCooldown(t *testing.T) {
 	require.Greater(t, repo.lastTempUntil, before.Add(6*time.Minute))
 	require.Less(t, repo.lastTempUntil, before.Add(8*time.Minute))
 }
+
+// TestGrokPaymentRequiredCooldown 验证余额或订阅不足时只隔离当前账号，避免后续请求继续命中 402 账号。
+func TestGrokPaymentRequiredCooldown(t *testing.T) {
+	repo := &grokContentPolicyRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	account := grokContentPolicyAccount(6108)
+	before := time.Now()
+
+	svc.handleGrokAccountUpstreamError(context.Background(), account, http.StatusPaymentRequired, nil, nil)
+
+	require.Equal(t, 1, repo.tempUnschedulableCalls)
+	require.Greater(t, repo.lastTempUntil, before.Add(29*time.Minute))
+	require.Less(t, repo.lastTempUntil, before.Add(31*time.Minute))
+	require.Equal(t, "grok payment required", repo.lastTempReason)
+}
