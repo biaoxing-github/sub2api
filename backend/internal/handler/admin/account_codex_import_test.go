@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseCodexSessionImportEntriesSupportsRawTokenJSONAndArray(t *testing.T) {
@@ -460,6 +461,40 @@ func TestCodexAccountIndexUpsertReplacesSameAccount(t *testing.T) {
 	}
 	if uid := codexCredentialString(got.Credentials, "chatgpt_user_id"); uid != "user-1" {
 		t.Fatalf("upsert did not replace credentials, chatgpt_user_id = %q", uid)
+	}
+}
+
+func TestCodexAccountIndexUpdateRemovesPreviousIdentityKeys(t *testing.T) {
+	legacy := service.Account{
+		ID: 50,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "team-old",
+			"chatgpt_user_id":    "user-old",
+			"email":              "old@example.com",
+			"access_token":       "access-old",
+		},
+	}
+	index := buildCodexAccountIndex([]service.Account{legacy})
+
+	updated := service.Account{
+		ID: 50,
+		Credentials: map[string]any{
+			"chatgpt_account_id": "team-new",
+			"chatgpt_user_id":    "user-new",
+			"email":              "new@example.com",
+			"access_token":       "access-new",
+		},
+	}
+	index.Add(updated)
+
+	for _, key := range buildCodexIdentityKeys("team-old", "user-old", "old@example.com", "access-old") {
+		got, matchedKey := index.Find([]string{key}, "user-old")
+		require.Nilf(t, got, "stale account matched by %q", matchedKey)
+	}
+	for _, key := range buildCodexIdentityKeys("team-new", "user-new", "new@example.com", "access-new") {
+		got, matchedKey := index.Find([]string{key}, "user-new")
+		require.NotNilf(t, got, "updated account missing by %q", matchedKey)
+		require.Equal(t, updated.ID, got.ID)
 	}
 }
 

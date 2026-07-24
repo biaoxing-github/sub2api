@@ -111,7 +111,8 @@ type codexJWTOpenAIClaims struct {
 }
 
 type codexAccountIndex struct {
-	accountsByKey map[string][]service.Account
+	accountsByKey   map[string][]service.Account
+	keysByAccountID map[int64]map[string]struct{}
 }
 
 func (h *AccountHandler) ImportCodexSession(c *gin.Context) {
@@ -891,7 +892,10 @@ func buildCodexIdentityKeys(accountID, userID, email, accessToken string) []stri
 }
 
 func buildCodexAccountIndex(accounts []service.Account) *codexAccountIndex {
-	index := &codexAccountIndex{accountsByKey: map[string][]service.Account{}}
+	index := &codexAccountIndex{
+		accountsByKey:   map[string][]service.Account{},
+		keysByAccountID: map[int64]map[string]struct{}{},
+	}
 	for _, account := range accounts {
 		index.Add(account)
 	}
@@ -905,15 +909,61 @@ func (i *codexAccountIndex) Add(account service.Account) {
 	if i.accountsByKey == nil {
 		i.accountsByKey = map[string][]service.Account{}
 	}
+	if i.keysByAccountID == nil {
+		i.keysByAccountID = map[int64]map[string]struct{}{}
+	}
 	keys := buildCodexIdentityKeys(
 		codexCredentialString(account.Credentials, "chatgpt_account_id"),
 		codexCredentialString(account.Credentials, "chatgpt_user_id"),
 		codexCredentialString(account.Credentials, "email"),
 		codexCredentialString(account.Credentials, "access_token"),
 	)
+	currentKeys := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
-		i.accountsByKey[key] = upsertCodexAccount(i.accountsByKey[key], account)
+		if key != "" {
+			currentKeys[key] = struct{}{}
+		}
 	}
+
+	previousKeys := i.keysByAccountID[account.ID]
+	for key := range previousKeys {
+		if _, retained := currentKeys[key]; retained {
+			i.accountsByKey[key] = upsertCodexAccount(i.accountsByKey[key], account)
+			continue
+		}
+		i.removeFromKey(key, account.ID)
+	}
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if _, retained := previousKeys[key]; retained {
+			continue
+		}
+		i.accountsByKey[key] = append(i.accountsByKey[key], account)
+	}
+
+	if len(currentKeys) == 0 {
+		delete(i.keysByAccountID, account.ID)
+		return
+	}
+	i.keysByAccountID[account.ID] = currentKeys
+}
+
+// removeFromKey 删除账号的旧索引键，防止导入更新后旧身份继续命中该账号。
+func (i *codexAccountIndex) removeFromKey(key string, accountID int64) {
+	accounts := i.accountsByKey[key]
+	kept := accounts[:0]
+	for _, account := range accounts {
+		if account.ID != accountID {
+			kept = append(kept, account)
+		}
+	}
+	if len(kept) == 0 {
+		delete(i.accountsByKey, key)
+		return
+	}
+	i.accountsByKey[key] = kept
 }
 
 func upsertCodexAccount(accounts []service.Account, account service.Account) []service.Account {
