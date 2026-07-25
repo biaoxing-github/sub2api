@@ -101,6 +101,9 @@ func RegisterAdminRoutes(
 		// NewApi 多站点签到
 		registerNewAPICheckinRoutes(admin, h)
 
+		// NewAPI 兑换工具
+		registerNewAPIRedeemRoutes(admin, h)
+
 		// Token 成本计算器
 		registerTokenCostRoutes(admin, h)
 
@@ -141,6 +144,25 @@ func registerNewAPICheckinRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		checkin.POST("/sync-monthly", h.Admin.NewAPICheckin.SyncMonthly)
 		checkin.POST("/run-full-checkin", h.Admin.NewAPICheckin.RunFullCheckin)
 		checkin.POST("/checkin-single", h.Admin.NewAPICheckin.CheckinSingle)
+	}
+}
+
+func registerNewAPIRedeemRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	redeem := admin.Group("/newapi-redeem")
+	{
+		redeem.GET("/overview", h.Admin.NewAPIRedeem.Overview)
+		redeem.POST("/accounts/import", h.Admin.NewAPIRedeem.ImportAccounts)
+		redeem.DELETE("/accounts/:account_id", h.Admin.NewAPIRedeem.DeleteAccount)
+		redeem.POST("/accounts/:account_id/refresh", h.Admin.NewAPIRedeem.RefreshAccount)
+		redeem.POST("/accounts/:account_id/api-keys", h.Admin.NewAPIRedeem.CreateAPIKey)
+		redeem.PUT("/accounts/:account_id/api-keys/:api_key_id/group", h.Admin.NewAPIRedeem.UpdateAPIKeyGroup)
+		redeem.POST("/accounts/:account_id/api-keys/:api_key_id/reveal", h.Admin.NewAPIRedeem.RevealAPIKey)
+		redeem.POST("/accounts/:account_id/api-keys/:api_key_id/link", h.Admin.NewAPIRedeem.LinkAPIKey)
+		redeem.POST("/files", h.Admin.NewAPIRedeem.UploadFiles)
+		redeem.DELETE("/files/:file_id", h.Admin.NewAPIRedeem.DeleteFile)
+		redeem.POST("/runs", h.Admin.NewAPIRedeem.StartRun)
+		redeem.GET("/runs/:run_id", h.Admin.NewAPIRedeem.GetRun)
+		redeem.POST("/runs/:run_id/cancel", h.Admin.NewAPIRedeem.CancelRun)
 	}
 }
 

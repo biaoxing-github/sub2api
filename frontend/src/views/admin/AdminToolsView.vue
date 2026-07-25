@@ -37,9 +37,10 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import NewApiCheckinTool from './tools/NewApiCheckinTool.vue'
+import NewApiRedeemTool from './tools/NewApiRedeemTool.vue'
 import TokenCostTool from './tools/TokenCostTool.vue'
 
-type AdminToolTabKey = 'newapi' | 'token-cost'
+type AdminToolTabKey = 'newapi' | 'newapi-redeem' | 'token-cost'
 
 interface AdminToolTab {
   key: AdminToolTabKey
@@ -56,6 +57,12 @@ const toolTabs: AdminToolTab[] = [
     component: NewApiCheckinTool
   },
   {
+    key: 'newapi-redeem',
+    labelKey: 'admin.tools.tabs.newapiRedeem',
+    titleKey: 'admin.tools.frames.newapiRedeem',
+    component: NewApiRedeemTool
+  },
+  {
     key: 'token-cost',
     labelKey: 'admin.tools.tabs.tokenCost',
     titleKey: 'admin.tools.frames.tokenCost',
@@ -68,6 +75,7 @@ const route = useRoute()
 const router = useRouter()
 
 function normalizeTabKey(value: unknown): AdminToolTabKey {
+  if (value === 'newapi-redeem') return 'newapi-redeem'
   return value === 'token-cost' ? 'token-cost' : 'newapi'
 }
 
@@ -90,9 +98,13 @@ function selectTab(key: AdminToolTabKey) {
 <style scoped>
 .admin-tools {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   min-height: calc(100vh - 96px);
+  contain: paint;
   flex-direction: column;
   gap: 0.75rem;
+  overflow-x: hidden;
 }
 
 .admin-tools__tabs {

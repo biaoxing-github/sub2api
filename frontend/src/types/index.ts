@@ -105,6 +105,141 @@ export interface TokenCostSaveStateResponse {
   storage: string
 }
 
+// ==================== NewAPI 兑换工具类型 ====================
+
+/** 单个 NewAPI 上游 API Key 的脱敏展示信息。 */
+export interface NewAPIRedeemAPIKey {
+  id: number
+  name: string
+  group: string
+  masked_key: string
+  referenced_accounts: NewAPIRedeemAccountReference[]
+  target_accounts: NewAPIRedeemAccountReference[]
+}
+
+/** NewAPI 兑换 Key 对应的 Sub2API 账号引用。 */
+export interface NewAPIRedeemAccountReference {
+  id: number
+  name: string
+  referenced: boolean
+}
+
+/** NewAPI 账号的管理端展示信息，不包含登录访问凭据。 */
+export interface NewAPIRedeemAccount {
+  id: string
+  user_id: string
+  access_key_masked: string
+  username?: string
+  email?: string
+  group?: string
+  quota?: string
+  used_quota?: string
+  api_keys: NewAPIRedeemAPIKey[]
+  available_groups: string[]
+  redeemed_codes: NewAPIRedeemAccountRedemption[]
+  status: string
+  message?: string
+  refreshed_at?: string
+  browser_fingerprint: string
+}
+
+/** NewAPI 账号在兑换码文件上的唯一成功标记。 */
+export interface NewAPIRedeemAccountRedemption {
+  file_id: string
+  file_name: string
+  result: 'redeemed' | 'already_redeemed' | string
+  redeemed_at: string
+}
+
+/** 管理员通过页面粘贴导入的单个 NewAPI Key 模式账号。 */
+export interface NewAPIRedeemAccountImportInput {
+  user_id: string
+  access_key: string
+}
+
+/** 本地持久化的兑换码文件展示信息。 */
+export interface NewAPIRedeemVoucherFile {
+  id: string
+  name: string
+  code_count: number
+  uploaded_at: string
+}
+
+/** 页面展示的单条 NewAPI 兑换请求及其上游结果。 */
+export interface NewAPIRedeemRequestLog {
+  at: string
+  file_id: string
+  file_name: string
+  account_id: string
+  user_id: string
+  browser_fingerprint: string
+  code: string
+  result: 'redeemed' | 'already_redeemed' | 'invalid_code' | 'rate_limited' | 'request_error' | 'rejected' | string
+  message?: string
+  status_code?: number
+  removed_from_file?: boolean
+  node?: string
+  exit_ip?: string
+  switched_node?: string
+  switched_exit_ip?: string
+  switch_message?: string
+}
+
+/** 保留旧名称，兼容兑换工具既有调用方。 */
+export type NewAPIRedeemSuccessLog = NewAPIRedeemRequestLog
+
+/** 异步兑换任务的轮询状态。 */
+export interface NewAPIRedeemRun {
+  id: string
+  status: 'running' | 'cancelling' | 'cancelled' | 'completed' | 'failed' | 'interrupted' | string
+  started_at: string
+  finished_at?: string
+  total_pairs: number
+  completed_pairs: number
+  attempts: number
+  successes: number
+  message?: string
+  current_file_id?: string
+  current_file_name?: string
+  current_node?: string
+  current_exit_ip?: string
+  switch_count: number
+  network_message?: string
+  logs: NewAPIRedeemRequestLog[]
+}
+
+/** NewAPI 兑换工具首屏聚合状态。 */
+export interface NewAPIRedeemOverview {
+  base_url: string
+  accounts: NewAPIRedeemAccount[]
+  files: NewAPIRedeemVoucherFile[]
+  runs: NewAPIRedeemRun[]
+}
+
+/** 启动兑换任务时选择的账号和文件集合。 */
+export interface NewAPIRedeemStartRunRequest {
+  file_ids: string[]
+  account_ids: string[]
+}
+
+/** 显式查看单个上游 API Key 时返回的临时明文值。 */
+export interface NewAPIRedeemAPIKeySecret {
+  account_id: string
+  api_key_id: number
+  key: string
+}
+
+/** 兑换 Key 写入 Sub2API 账号后的结果。 */
+export interface NewAPIRedeemLinkAPIKeyResult {
+  account_id: string
+  api_key_id: number
+  target_account_id: number
+  target_account_name: string
+  operation: 'append' | 'replace' | string
+  key_count: number
+  message: string
+}
+
 // ==================== Notification Types ====================
 
 /** Notification email entry with enable/disable and verification state.

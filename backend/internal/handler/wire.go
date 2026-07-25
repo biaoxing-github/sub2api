@@ -39,6 +39,7 @@ func ProvideAdminHandlers(
 	channelMonitorTemplateHandler *admin.ChannelMonitorRequestTemplateHandler,
 	contentModerationHandler *admin.ContentModerationHandler,
 	newAPICheckinHandler *admin.NewAPICheckinHandler,
+	accountRepo service.AccountRepository,
 	tokenCostHandler *admin.TokenCostHandler,
 	paymentHandler *admin.PaymentHandler,
 	affiliateHandler *admin.AffiliateHandler,
@@ -74,9 +75,11 @@ func ProvideAdminHandlers(
 		ChannelMonitorTemplate: channelMonitorTemplateHandler,
 		ContentModeration:      contentModerationHandler,
 		NewAPICheckin:          newAPICheckinHandler,
-		TokenCost:              tokenCostHandler,
-		Payment:                paymentHandler,
-		Affiliate:              affiliateHandler,
+		// 兑换工具仅依赖 DATA_DIR，本处构造一次并作为管理端单例复用。
+		NewAPIRedeem: admin.NewNewAPIRedeemHandler(service.ProvideNewAPIRedeemService(accountRepo)),
+		TokenCost:    tokenCostHandler,
+		Payment:      paymentHandler,
+		Affiliate:    affiliateHandler,
 	}
 }
 

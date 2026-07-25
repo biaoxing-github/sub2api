@@ -556,6 +556,13 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/newapi-redeem',
+    redirect: {
+      path: '/admin/tools',
+      query: { tab: 'newapi-redeem' }
+    }
+  },
+  {
     path: '/admin/token-cost',
     redirect: {
       path: '/admin/tools',
