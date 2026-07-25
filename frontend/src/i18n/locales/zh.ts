@@ -1505,6 +1505,7 @@ export default {
       databaseReferences: '数据库已引用',
       matchingAccounts: '同 base_url 账号',
       referencedAccount: '已引用',
+      referencedKey: '已被引用',
       availableAccount: '可关联',
       appendKey: '追加',
       replaceKey: '覆盖',

@@ -1500,6 +1500,7 @@ export default {
       databaseReferences: 'Referenced in database',
       matchingAccounts: 'Accounts with matching base URL',
       referencedAccount: 'Referenced',
+      referencedKey: 'Referenced',
       availableAccount: 'Available',
       appendKey: 'Append',
       replaceKey: 'Replace',

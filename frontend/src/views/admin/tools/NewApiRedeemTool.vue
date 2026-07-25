@@ -227,9 +227,26 @@
                     </summary>
                     <div class="mt-3 space-y-3">
                       <div v-if="account.api_keys.length === 0" class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.newapiRedeem.noApiKeys') }}</div>
-                      <div v-for="apiKey in account.api_keys" :key="apiKey.id" class="grid gap-2 border-t border-gray-200 pt-3 first:border-t-0 first:pt-0 lg:grid-cols-[minmax(8rem,0.7fr)_minmax(12rem,1fr)_minmax(10rem,0.8fr)_auto] lg:items-center dark:border-dark-700">
+                      <div
+                        v-for="apiKey in account.api_keys"
+                        :key="apiKey.id"
+                        class="grid gap-2 lg:grid-cols-[minmax(8rem,0.7fr)_minmax(12rem,1fr)_minmax(10rem,0.8fr)_auto] lg:items-center"
+                        :class="isAPIKeyReferenced(apiKey)
+                          ? 'rounded-md bg-emerald-50 px-3 py-3 ring-1 ring-emerald-300 dark:bg-emerald-950/30 dark:ring-emerald-700'
+                          : 'border-t border-gray-200 pt-3 first:border-t-0 first:pt-0 dark:border-dark-700'"
+                        :data-test="isAPIKeyReferenced(apiKey) ? 'referenced-api-key' : undefined"
+                      >
                         <div class="min-w-0 font-mono text-xs text-gray-700 dark:text-gray-300">
-                          <div class="truncate" :title="apiKey.name">{{ apiKey.name || `#${apiKey.id}` }}</div>
+                          <div class="flex min-w-0 items-center gap-2">
+                            <div class="truncate" :title="apiKey.name">{{ apiKey.name || `#${apiKey.id}` }}</div>
+                            <span
+                              v-if="isAPIKeyReferenced(apiKey)"
+                              class="inline-flex shrink-0 items-center rounded bg-emerald-100 px-1.5 py-0.5 font-sans text-[11px] font-semibold text-emerald-800 dark:bg-emerald-900/70 dark:text-emerald-200"
+                            >
+                              <Icon name="check" size="xs" />
+                              <span class="ml-1">{{ t('admin.newapiRedeem.referencedKey') }}</span>
+                            </span>
+                          </div>
                           <div class="mt-1 truncate text-gray-500 dark:text-gray-400" :title="apiKey.masked_key">{{ visibleKey(account.id, apiKey.id) || apiKey.masked_key }}</div>
                         </div>
                         <div class="flex min-w-0 items-center gap-2">
@@ -856,6 +873,11 @@ async function toggleAPIKeyVisibility(accountID: string, apiKeyID: number) {
 function databaseReferences(apiKey: NewAPIRedeemAccount['api_keys'][number]) {
   const targetIDs = new Set((apiKey.target_accounts || []).map(reference => reference.id))
   return (apiKey.referenced_accounts || []).filter(reference => !targetIDs.has(reference.id))
+}
+
+/** 判断 Key 是否已被任一 Sub2API 账号引用，用于在列表中高亮展示。 */
+function isAPIKeyReferenced(apiKey: NewAPIRedeemAccount['api_keys'][number]): boolean {
+  return Boolean(apiKey.referenced_accounts?.length || apiKey.target_accounts?.some(reference => reference.referenced))
 }
 
 /** 将兑换工具 Key 追加或覆盖到匹配 base_url 的 Sub2API 账号。 */
