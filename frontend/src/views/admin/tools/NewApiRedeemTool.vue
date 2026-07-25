@@ -163,8 +163,14 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
-            <template v-for="account in overview.accounts" :key="account.id">
-              <tr data-test="account-row">
+            <template v-for="account in sortedAccounts" :key="account.id">
+              <tr
+                data-test="account-row"
+                :data-account-id="account.id"
+                :class="referencedKeyCount(account) > 0
+                  ? 'bg-emerald-50/70 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-950/20 dark:ring-emerald-800'
+                  : ''"
+              >
                 <td class="px-3 py-3 align-top">
                   <input v-model="selectedAccountIDs" :value="account.id" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
                 </td>
@@ -173,14 +179,35 @@
                   <div class="mt-1 text-gray-500 dark:text-gray-400">{{ account.access_key_masked }}</div>
                   <div class="mt-1 font-sans text-gray-500 dark:text-gray-400">{{ account.browser_fingerprint }}</div>
                 </td>
-                <td class="px-3 py-3 align-top text-gray-900 dark:text-gray-100">{{ account.username || '-' }}</td>
+                <td class="px-3 py-3 align-top text-gray-900 dark:text-gray-100">
+                  <div>{{ account.username || '-' }}</div>
+                  <span
+                    v-if="referencedKeyCount(account) > 0"
+                    class="mt-1 inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-900/70 dark:text-emerald-200"
+                    data-test="account-reference-badge"
+                  >
+                    <Icon name="check" size="xs" />
+                    <span class="ml-1">{{ t('admin.newapiRedeem.referencedKeyCount', { count: referencedKeyCount(account) }) }}</span>
+                  </span>
+                </td>
                 <td class="px-3 py-3 align-top text-gray-700 dark:text-gray-300">{{ account.email || '-' }}</td>
                 <td class="px-3 py-3 align-top text-gray-700 dark:text-gray-300">{{ account.group || '-' }}</td>
                 <td class="px-3 py-3 align-top text-gray-700 dark:text-gray-300">
                   <div>{{ formatUSD(account.quota) }}</div>
                   <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.newapiRedeem.usedQuota') }} {{ formatUSD(account.used_quota) }}</div>
                 </td>
-                <td class="px-3 py-3 align-top text-gray-700 dark:text-gray-300">{{ account.api_keys.length }}</td>
+                <td class="px-3 py-3 align-top text-gray-700 dark:text-gray-300">
+                  <div>{{ account.api_keys.length }}</div>
+                  <button
+                    type="button"
+                    class="mt-1 inline-flex items-center text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+                    data-test="manage-account-keys"
+                    @click="openKeyDialog(account.id)"
+                  >
+                    <Icon name="key" size="xs" />
+                    <span class="ml-1">{{ t('admin.newapiRedeem.manageKeys') }}</span>
+                  </button>
+                </td>
                 <td class="px-3 py-3 align-top text-gray-700 dark:text-gray-300">
                   <div v-if="account.redeemed_codes.length > 0">
                     <div class="font-medium text-emerald-700 dark:text-emerald-300">
@@ -222,134 +249,6 @@
               <tr>
                 <td colspan="9" class="bg-gray-50/70 px-3 py-3 dark:bg-dark-900/35">
                   <details>
-                    <summary class="cursor-pointer select-none text-sm font-medium text-gray-700 marker:text-gray-400 dark:text-gray-200">
-                      {{ t('admin.newapiRedeem.apiKeys') }} ({{ account.api_keys.length }})
-                    </summary>
-                    <div class="mt-3 space-y-3">
-                      <div v-if="account.api_keys.length === 0" class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.newapiRedeem.noApiKeys') }}</div>
-                      <div
-                        v-for="apiKey in account.api_keys"
-                        :key="apiKey.id"
-                        class="grid gap-2 lg:grid-cols-[minmax(8rem,0.7fr)_minmax(12rem,1fr)_minmax(10rem,0.8fr)_auto] lg:items-center"
-                        :class="isAPIKeyReferenced(apiKey)
-                          ? 'rounded-md bg-emerald-50 px-3 py-3 ring-1 ring-emerald-300 dark:bg-emerald-950/30 dark:ring-emerald-700'
-                          : 'border-t border-gray-200 pt-3 first:border-t-0 first:pt-0 dark:border-dark-700'"
-                        :data-test="isAPIKeyReferenced(apiKey) ? 'referenced-api-key' : undefined"
-                      >
-                        <div class="min-w-0 font-mono text-xs text-gray-700 dark:text-gray-300">
-                          <div class="flex min-w-0 items-center gap-2">
-                            <div class="truncate" :title="apiKey.name">{{ apiKey.name || `#${apiKey.id}` }}</div>
-                            <span
-                              v-if="isAPIKeyReferenced(apiKey)"
-                              class="inline-flex shrink-0 items-center rounded bg-emerald-100 px-1.5 py-0.5 font-sans text-[11px] font-semibold text-emerald-800 dark:bg-emerald-900/70 dark:text-emerald-200"
-                            >
-                              <Icon name="check" size="xs" />
-                              <span class="ml-1">{{ t('admin.newapiRedeem.referencedKey') }}</span>
-                            </span>
-                          </div>
-                          <div class="mt-1 truncate text-gray-500 dark:text-gray-400" :title="apiKey.masked_key">{{ visibleKey(account.id, apiKey.id) || apiKey.masked_key }}</div>
-                        </div>
-                        <div class="flex min-w-0 items-center gap-2">
-                          <label :for="`newapi-redeem-group-${account.id}-${apiKey.id}`" class="sr-only">{{ t('admin.newapiRedeem.group') }}</label>
-                          <select
-                            :id="`newapi-redeem-group-${account.id}-${apiKey.id}`"
-                            :value="keyGroup(account.id, apiKey.id, apiKey.group)"
-                            class="input h-9 min-w-0 flex-1 px-2 py-1 text-xs"
-                            @change="setKeyGroup(account.id, apiKey.id, $event)"
-                          >
-                            <option v-for="group in availableGroups(account)" :key="group" :value="group">{{ group }}</option>
-                            <option v-if="!availableGroups(account).includes(keyGroup(account.id, apiKey.id, apiKey.group))" :value="keyGroup(account.id, apiKey.id, apiKey.group)">
-                              {{ keyGroup(account.id, apiKey.id, apiKey.group) || '-' }}
-                            </option>
-                          </select>
-                          <button
-                            type="button"
-                            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-white hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-primary-400"
-                            :disabled="actionID === `group-${account.id}-${apiKey.id}`"
-                            :title="t('admin.newapiRedeem.saveGroup')"
-                            :aria-label="t('admin.newapiRedeem.saveGroup')"
-                            @click="saveKeyGroup(account.id, apiKey.id, apiKey.group)"
-                          >
-                            <Icon name="check" size="sm" :class="actionID === `group-${account.id}-${apiKey.id}` ? 'animate-pulse' : ''" />
-                          </button>
-                        </div>
-                        <button
-                          type="button"
-                          class="btn btn-secondary h-9 justify-center px-3 text-xs"
-                          :disabled="actionID === `reveal-${account.id}-${apiKey.id}`"
-                          @click="toggleAPIKeyVisibility(account.id, apiKey.id)"
-                        >
-                          <Icon :name="visibleKey(account.id, apiKey.id) ? 'eyeOff' : 'eye'" size="sm" />
-                          <span class="ml-1.5">{{ visibleKey(account.id, apiKey.id) ? t('admin.newapiRedeem.hideKey') : t('admin.newapiRedeem.revealKey') }}</span>
-                        </button>
-                      </div>
-                      <template v-for="apiKey in account.api_keys" :key="`${apiKey.id}-references`">
-                        <div
-                          v-if="databaseReferences(apiKey).length > 0 || apiKey.target_accounts?.length"
-                          class="border-t border-gray-200 pt-3 text-xs dark:border-dark-700"
-                          data-test="api-key-references"
-                        >
-                        <div v-if="databaseReferences(apiKey).length > 0" class="text-gray-600 dark:text-gray-300">
-                          <span class="font-medium">{{ t('admin.newapiRedeem.databaseReferences') }}:</span>
-                          <span v-for="reference in databaseReferences(apiKey)" :key="`database-${reference.id}`" class="ml-2 text-emerald-700 dark:text-emerald-300">
-                            {{ reference.name || `#${reference.id}` }}
-                          </span>
-                        </div>
-                        <div v-if="apiKey.target_accounts?.length" class="mt-2 space-y-2">
-                          <div class="font-medium text-gray-600 dark:text-gray-300">{{ t('admin.newapiRedeem.matchingAccounts') }}</div>
-                          <div v-for="target in apiKey.target_accounts" :key="`target-${target.id}`" class="flex flex-wrap items-center gap-2">
-                            <span :class="target.referenced ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-300'">
-                              {{ target.referenced ? t('admin.newapiRedeem.referencedAccount') : t('admin.newapiRedeem.availableAccount') }}: {{ target.name || `#${target.id}` }}
-                            </span>
-                            <button
-                              type="button"
-                              class="btn btn-secondary h-8 px-2 text-xs"
-                              :disabled="Boolean(actionID)"
-                              data-test="append-key"
-                              @click="linkAPIKey(account.id, apiKey.id, target.id, 'append', target.name)"
-                            >
-                              <Icon name="plus" size="sm" />
-                              <span class="ml-1">{{ t('admin.newapiRedeem.appendKey') }}</span>
-                            </button>
-                            <button
-                              type="button"
-                              class="btn btn-secondary h-8 px-2 text-xs"
-                              :disabled="Boolean(actionID)"
-                              data-test="replace-key"
-                              @click="linkAPIKey(account.id, apiKey.id, target.id, 'replace', target.name)"
-                            >
-                              <Icon name="refresh" size="sm" />
-                              <span class="ml-1">{{ t('admin.newapiRedeem.replaceKey') }}</span>
-                            </button>
-                          </div>
-                        </div>
-                        </div>
-                      </template>
-                      <div class="grid gap-2 border-t border-gray-200 pt-3 sm:grid-cols-[minmax(12rem,1fr)_minmax(10rem,0.7fr)_auto] sm:items-center dark:border-dark-700">
-                        <label :for="`newapi-redeem-create-name-${account.id}`" class="sr-only">{{ t('admin.newapiRedeem.keyNamePlaceholder') }}</label>
-                        <input
-                          :id="`newapi-redeem-create-name-${account.id}`"
-                          v-model="newKeyNames[account.id]"
-                          class="input h-9 px-2 py-1 text-sm"
-                          :placeholder="t('admin.newapiRedeem.keyNamePlaceholder')"
-                        />
-                        <select v-model="newKeyGroups[account.id]" class="input h-9 px-2 py-1 text-sm">
-                          <option value="">{{ t('admin.newapiRedeem.group') }}</option>
-                          <option v-for="group in availableGroups(account)" :key="group" :value="group">{{ group }}</option>
-                        </select>
-                        <button
-                          type="button"
-                          class="btn btn-secondary h-9 justify-center px-3 text-sm"
-                          :disabled="!newKeyNames[account.id]?.trim() || actionID === `create-${account.id}`"
-                          @click="createAPIKey(account.id)"
-                        >
-                          <Icon name="plus" size="sm" :class="actionID === `create-${account.id}` ? 'animate-pulse' : ''" />
-                          <span class="ml-1.5">{{ t('admin.newapiRedeem.createKey') }}</span>
-                        </button>
-                      </div>
-                    </div>
-                  </details>
-                  <details class="mt-3 border-t border-gray-200 pt-3 dark:border-dark-700">
                     <summary class="cursor-pointer select-none text-sm font-medium text-gray-700 marker:text-gray-400 dark:text-gray-200">
                       {{ t('admin.newapiRedeem.redeemedCodes') }} ({{ account.redeemed_codes.length }})
                     </summary>
@@ -540,12 +439,173 @@
         </table>
       </div>
     </section>
+
+    <BaseDialog
+      :show="Boolean(keyDialogAccount)"
+      :title="keyDialogAccount ? t('admin.newapiRedeem.keyDialogTitle', { account: keyDialogAccount.username || keyDialogAccount.user_id }) : t('admin.newapiRedeem.manageKeys')"
+      width="wide"
+      @close="closeKeyDialog"
+    >
+      <div v-if="keyDialogAccount" data-test="key-management-dialog">
+        <div class="mb-5 flex flex-wrap items-center gap-2 border-b border-gray-200 pb-4 dark:border-dark-700" role="tablist">
+          <button
+            v-for="tab in keyDialogTabs"
+            :key="tab.id"
+            type="button"
+            class="h-9 border-b-2 px-3 text-sm font-medium transition-colors"
+            :class="keyDialogTab === tab.id
+              ? 'border-primary-600 text-primary-700 dark:border-primary-400 dark:text-primary-300'
+              : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+            :aria-selected="keyDialogTab === tab.id"
+            :data-test="`key-dialog-tab-${tab.id}`"
+            role="tab"
+            @click="keyDialogTab = tab.id"
+          >
+            {{ t(tab.label) }}
+          </button>
+        </div>
+
+        <div v-if="keyDialogTab === 'keys'" class="space-y-4" data-test="key-tab-panel">
+          <div v-if="keyDialogAccount.api_keys.length === 0" class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            {{ t('admin.newapiRedeem.noApiKeys') }}
+          </div>
+          <div v-else class="divide-y divide-gray-200 dark:divide-dark-700">
+            <div
+              v-for="apiKey in sortedAPIKeys(keyDialogAccount)"
+              :key="apiKey.id"
+              class="flex flex-col gap-3 py-4 first:pt-0 sm:flex-row sm:items-center sm:justify-between"
+              :data-test="isAPIKeyReferenced(apiKey) ? 'referenced-api-key' : undefined"
+            >
+              <div class="min-w-0">
+                <div class="flex min-w-0 flex-wrap items-center gap-2">
+                  <span class="font-medium text-gray-900 dark:text-gray-100">{{ apiKey.name || `#${apiKey.id}` }}</span>
+                  <span
+                    v-if="isAPIKeyReferenced(apiKey)"
+                    class="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-900/70 dark:text-emerald-200"
+                  >
+                    <Icon name="check" size="xs" />
+                    <span class="ml-1">{{ t('admin.newapiRedeem.referencedKey') }}</span>
+                  </span>
+                </div>
+                <div class="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">
+                  {{ visibleKey(keyDialogAccount.id, apiKey.id) || apiKey.masked_key }}
+                </div>
+              </div>
+              <button
+                type="button"
+                class="btn btn-secondary h-9 shrink-0 justify-center px-3 text-xs"
+                :disabled="actionID === `reveal-${keyDialogAccount.id}-${apiKey.id}`"
+                @click="toggleAPIKeyVisibility(keyDialogAccount.id, apiKey.id)"
+              >
+                <Icon :name="visibleKey(keyDialogAccount.id, apiKey.id) ? 'eyeOff' : 'eye'" size="sm" />
+                <span class="ml-1.5">{{ visibleKey(keyDialogAccount.id, apiKey.id) ? t('admin.newapiRedeem.hideKey') : t('admin.newapiRedeem.revealKey') }}</span>
+              </button>
+            </div>
+          </div>
+          <div class="grid gap-2 border-t border-gray-200 pt-4 sm:grid-cols-[minmax(12rem,1fr)_minmax(10rem,0.7fr)_auto] sm:items-center dark:border-dark-700">
+            <label :for="`newapi-redeem-create-name-${keyDialogAccount.id}`" class="sr-only">{{ t('admin.newapiRedeem.keyNamePlaceholder') }}</label>
+            <input
+              :id="`newapi-redeem-create-name-${keyDialogAccount.id}`"
+              v-model="newKeyNames[keyDialogAccount.id]"
+              class="input h-9 px-2 py-1 text-sm"
+              :placeholder="t('admin.newapiRedeem.keyNamePlaceholder')"
+            />
+            <select v-model="newKeyGroups[keyDialogAccount.id]" class="input h-9 px-2 py-1 text-sm">
+              <option value="">{{ t('admin.newapiRedeem.group') }}</option>
+              <option v-for="group in availableGroups(keyDialogAccount)" :key="group" :value="group">{{ group }}</option>
+            </select>
+            <button
+              type="button"
+              class="btn btn-secondary h-9 justify-center px-3 text-sm"
+              :disabled="!newKeyNames[keyDialogAccount.id]?.trim() || actionID === `create-${keyDialogAccount.id}`"
+              @click="createAPIKey(keyDialogAccount.id)"
+            >
+              <Icon name="plus" size="sm" :class="actionID === `create-${keyDialogAccount.id}` ? 'animate-pulse' : ''" />
+              <span class="ml-1.5">{{ t('admin.newapiRedeem.createKey') }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-else-if="keyDialogTab === 'groups'" class="divide-y divide-gray-200 dark:divide-dark-700" data-test="group-tab-panel">
+          <div v-if="keyDialogAccount.api_keys.length === 0" class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            {{ t('admin.newapiRedeem.noApiKeys') }}
+          </div>
+          <div v-for="apiKey in sortedAPIKeys(keyDialogAccount)" :key="apiKey.id" class="grid gap-3 py-4 first:pt-0 sm:grid-cols-[minmax(10rem,0.8fr)_minmax(14rem,1fr)_auto] sm:items-center">
+            <div class="min-w-0">
+              <div class="truncate font-medium text-gray-900 dark:text-gray-100" :title="apiKey.name">{{ apiKey.name || `#${apiKey.id}` }}</div>
+              <div class="mt-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400">{{ apiKey.masked_key }}</div>
+            </div>
+            <label :for="`newapi-redeem-group-${keyDialogAccount.id}-${apiKey.id}`" class="sr-only">{{ t('admin.newapiRedeem.group') }}</label>
+            <select
+              :id="`newapi-redeem-group-${keyDialogAccount.id}-${apiKey.id}`"
+              :value="keyGroup(keyDialogAccount.id, apiKey.id, apiKey.group)"
+              class="input h-9 min-w-0 px-2 py-1 text-sm"
+              @change="setKeyGroup(keyDialogAccount.id, apiKey.id, $event)"
+            >
+              <option v-for="group in availableGroups(keyDialogAccount)" :key="group" :value="group">{{ group }}</option>
+              <option v-if="!availableGroups(keyDialogAccount).includes(keyGroup(keyDialogAccount.id, apiKey.id, apiKey.group))" :value="keyGroup(keyDialogAccount.id, apiKey.id, apiKey.group)">
+                {{ keyGroup(keyDialogAccount.id, apiKey.id, apiKey.group) || '-' }}
+              </option>
+            </select>
+            <button
+              type="button"
+              class="btn btn-secondary h-9 justify-center px-3 text-sm"
+              :disabled="actionID === `group-${keyDialogAccount.id}-${apiKey.id}`"
+              @click="saveKeyGroup(keyDialogAccount.id, apiKey.id, apiKey.group)"
+            >
+              <Icon name="check" size="sm" :class="actionID === `group-${keyDialogAccount.id}-${apiKey.id}` ? 'animate-pulse' : ''" />
+              <span class="ml-1.5">{{ t('admin.newapiRedeem.saveGroup') }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-else class="divide-y divide-gray-200 dark:divide-dark-700" data-test="reference-tab-panel">
+          <div v-if="keyDialogAccount.api_keys.length === 0" class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            {{ t('admin.newapiRedeem.noApiKeys') }}
+          </div>
+          <div v-for="apiKey in sortedAPIKeys(keyDialogAccount)" :key="apiKey.id" class="py-4 first:pt-0" data-test="api-key-references">
+            <div class="mb-3 flex flex-wrap items-center gap-2">
+              <span class="font-medium text-gray-900 dark:text-gray-100">{{ apiKey.name || `#${apiKey.id}` }}</span>
+              <span v-if="isAPIKeyReferenced(apiKey)" class="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-900/70 dark:text-emerald-200">
+                {{ t('admin.newapiRedeem.referencedKey') }}
+              </span>
+            </div>
+            <div v-if="databaseReferences(apiKey).length > 0" class="text-sm text-gray-600 dark:text-gray-300">
+              <span class="font-medium">{{ t('admin.newapiRedeem.databaseReferences') }}:</span>
+              <span v-for="reference in databaseReferences(apiKey)" :key="`database-${reference.id}`" class="ml-2 text-emerald-700 dark:text-emerald-300">
+                {{ reference.name || `#${reference.id}` }}
+              </span>
+            </div>
+            <div v-if="apiKey.target_accounts?.length" class="mt-3 space-y-2">
+              <div class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.newapiRedeem.matchingAccounts') }}</div>
+              <div v-for="target in apiKey.target_accounts" :key="`target-${target.id}`" class="flex flex-wrap items-center gap-2 text-sm">
+                <span :class="target.referenced ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-600 dark:text-gray-300'">
+                  {{ target.referenced ? t('admin.newapiRedeem.referencedAccount') : t('admin.newapiRedeem.availableAccount') }}: {{ target.name || `#${target.id}` }}
+                </span>
+                <button type="button" class="btn btn-secondary h-8 px-2 text-xs" :disabled="Boolean(actionID)" data-test="append-key" @click="linkAPIKey(keyDialogAccount.id, apiKey.id, target.id, 'append', target.name)">
+                  <Icon name="plus" size="sm" />
+                  <span class="ml-1">{{ t('admin.newapiRedeem.appendKey') }}</span>
+                </button>
+                <button type="button" class="btn btn-secondary h-8 px-2 text-xs" :disabled="Boolean(actionID)" data-test="replace-key" @click="linkAPIKey(keyDialogAccount.id, apiKey.id, target.id, 'replace', target.name)">
+                  <Icon name="refresh" size="sm" />
+                  <span class="ml-1">{{ t('admin.newapiRedeem.replaceKey') }}</span>
+                </button>
+              </div>
+            </div>
+            <div v-else-if="databaseReferences(apiKey).length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.newapiRedeem.noReferences') }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </BaseDialog>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { newapiRedeemAPI } from '@/api/admin/newapiRedeem'
 import type {
@@ -559,6 +619,8 @@ interface ToolNotice {
   type: 'success' | 'error'
   text: string
 }
+
+type KeyDialogTab = 'keys' | 'groups' | 'references'
 
 const { t } = useI18n()
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -576,6 +638,13 @@ const keyGroups = reactive<Record<string, string>>({})
 const notice = ref<ToolNotice | null>(null)
 const requestLogs = ref<NewAPIRedeemRequestLog[]>([])
 const logsLoading = ref(false)
+const keyDialogAccountID = ref('')
+const keyDialogTab = ref<KeyDialogTab>('keys')
+const keyDialogTabs: Array<{ id: KeyDialogTab; label: string }> = [
+  { id: 'keys', label: 'admin.newapiRedeem.keyTab' },
+  { id: 'groups', label: 'admin.newapiRedeem.groupTab' },
+  { id: 'references', label: 'admin.newapiRedeem.referenceTab' }
+]
 // NewAPI 上游额度使用固定原始单位，500000 对应 US$1。
 const newAPIQuotaPerUSD = 500000
 
@@ -591,6 +660,10 @@ const totalQuota = computed(() => overview.value.accounts.reduce((total, account
   const quota = Number(account.quota)
   return Number.isFinite(quota) ? total + quota : total
 }, 0))
+const sortedAccounts = computed(() => overview.value.accounts.slice().sort((left, right) => (
+  Number(referencedKeyCount(right) > 0) - Number(referencedKeyCount(left) > 0)
+)))
+const keyDialogAccount = computed(() => overview.value.accounts.find(account => account.id === keyDialogAccountID.value) || null)
 
 function setNotice(type: ToolNotice['type'], text: string) {
   notice.value = { type, text }
@@ -878,6 +951,30 @@ function databaseReferences(apiKey: NewAPIRedeemAccount['api_keys'][number]) {
 /** 判断 Key 是否已被任一 Sub2API 账号引用，用于在列表中高亮展示。 */
 function isAPIKeyReferenced(apiKey: NewAPIRedeemAccount['api_keys'][number]): boolean {
   return Boolean(apiKey.referenced_accounts?.length || apiKey.target_accounts?.some(reference => reference.referenced))
+}
+
+/** 统计账号内已被 Sub2API 引用的 Key 数量，供账号排序和主行标识复用。 */
+function referencedKeyCount(account: NewAPIRedeemAccount): number {
+  return (account.api_keys || []).filter(isAPIKeyReferenced).length
+}
+
+/** 在弹窗内保持已引用 Key 置顶，同时保留同组 Key 的上游顺序。 */
+function sortedAPIKeys(account: NewAPIRedeemAccount): NewAPIRedeemAccount['api_keys'] {
+  return (account.api_keys || []).slice().sort((left, right) => (
+    Number(isAPIKeyReferenced(right)) - Number(isAPIKeyReferenced(left))
+  ))
+}
+
+/** 打开指定账号的 Key 管理弹窗，并从 Key 展示页开始。 */
+function openKeyDialog(accountID: string) {
+  keyDialogAccountID.value = accountID
+  keyDialogTab.value = 'keys'
+}
+
+/** 关闭 Key 管理弹窗并清空当前账号选择。 */
+function closeKeyDialog() {
+  keyDialogAccountID.value = ''
+  keyDialogTab.value = 'keys'
 }
 
 /** 将兑换工具 Key 追加或覆盖到匹配 base_url 的 Sub2API 账号。 */

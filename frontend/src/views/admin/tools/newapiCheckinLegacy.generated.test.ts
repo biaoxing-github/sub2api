@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   mountNewapiCheckinLegacyTool,
   newapiCheckinLegacyBodyHtml,
+  newapiCheckinReferencedAccountStyles,
   newapiCheckinLegacyStyles
 } from './newapiCheckinLegacy.generated'
 import type { LegacyDocumentFacade, LegacyToolScope, LegacyWindowFacade } from './legacyToolRuntime'
@@ -101,8 +102,8 @@ describe('mountNewapiCheckinLegacyTool', () => {
             disabled_reason: '',
             base_url: 'https://demo.example',
             accounts: [
-              { name: 'alpha', username: 'alpha', display_name: 'Alpha', label: 'Alpha', user_id: '1001', ip_profile: 'slot-a' },
-              { name: 'beta', username: 'beta', display_name: 'Beta', label: 'Beta', user_id: '1002', ip_profile: 'slot-b' }
+              { name: 'beta', username: 'beta', display_name: 'Beta', label: 'Beta', user_id: '1002', ip_profile: 'slot-b' },
+              { name: 'alpha', username: 'alpha', display_name: 'Alpha', label: 'Alpha', user_id: '1001', ip_profile: 'slot-a' }
             ]
           }]
         })
@@ -199,6 +200,12 @@ describe('mountNewapiCheckinLegacyTool', () => {
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('未生成')
     expect(root.querySelector('#configTableWrap')?.textContent).toContain('已引用 · demo-main')
     expect(root.querySelector('.api-key-item.referenced')).toBeTruthy()
+    const catalogRows = Array.from(root.querySelectorAll('.catalog-row')) as HTMLTableRowElement[]
+    expect(catalogRows[0].dataset.userId).toBe('1001')
+    expect(catalogRows[0].classList.contains('referenced-account')).toBe(true)
+    expect(catalogRows[0].textContent).toContain('已引用 1 个 Key')
+    expect(catalogRows[1].dataset.userId).toBe('1002')
+    expect(newapiCheckinReferencedAccountStyles).toContain('.catalog-row.referenced-account td')
     expect(root.querySelector('.api-key-item')?.textContent).toContain('sk-ab***5678')
     expect(root.querySelector('[data-group-select="7"]')?.textContent).toContain('codex-team · 0.8x')
     expect(root.querySelector('[data-group-select="7"]')?.textContent).toContain('default · 1x')

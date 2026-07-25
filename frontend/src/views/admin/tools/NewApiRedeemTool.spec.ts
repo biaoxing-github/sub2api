@@ -194,8 +194,13 @@ describe('NewApiRedeemTool', () => {
     wrapper.unmount()
   })
 
-  it('shows Sub2API references and supports append and confirmed replace', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+  it('pins and highlights accounts with referenced keys', async () => {
+    const fixture = await getOverview()
+    getOverview.mockClear()
+    getOverview.mockResolvedValue({
+      ...fixture,
+      accounts: fixture.accounts.slice().reverse()
+    })
     const wrapper = mount(NewApiRedeemTool, {
       global: {
         stubs: {
@@ -205,6 +210,35 @@ describe('NewApiRedeemTool', () => {
     })
     await flushPromises()
 
+    const rows = wrapper.findAll('[data-test="account-row"]')
+    expect(rows[0].attributes('data-account-id')).toBe('account-1')
+    expect(rows[0].classes()).toContain('bg-emerald-50/70')
+    expect(rows[0].get('[data-test="account-reference-badge"]').text()).toContain('admin.newapiRedeem.referencedKeyCount')
+    expect(rows[1].attributes('data-account-id')).toBe('account-2')
+    wrapper.unmount()
+  })
+
+  it('shows Sub2API references and supports append and confirmed replace', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const wrapper = mount(NewApiRedeemTool, {
+      global: {
+        stubs: {
+          Icon: { template: '<span />' },
+          BaseDialog: {
+            props: ['show'],
+            template: '<div v-if="show"><slot /></div>'
+          }
+        }
+      }
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-test="manage-account-keys"]').trigger('click')
+    expect(wrapper.get('[data-test="key-tab-panel"]').text()).toContain('sk-abcd****wxyz')
+    await wrapper.get('[data-test="key-dialog-tab-groups"]').trigger('click')
+    expect(wrapper.find('[data-test="group-tab-panel"]').exists()).toBe(true)
+    await wrapper.get('[data-test="key-dialog-tab-references"]').trigger('click')
+    expect(wrapper.find('[data-test="reference-tab-panel"]').exists()).toBe(true)
     expect(wrapper.get('[data-test="api-key-references"]').text()).toContain('Sub2API Cun')
     await wrapper.get('[data-test="append-key"]').trigger('click')
     await flushPromises()
