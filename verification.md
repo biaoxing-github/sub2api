@@ -5387,3 +5387,15 @@ v0.1.149 拉取结果：
 - PASS：Nginx 配置检查及 reload 成功，流量切至 blue。切流前候选 85 秒、切流后 91 秒均 healthy/restart 0，精确关键日志过滤均为 0。
 - PASS：`8080`、`18081`、`18083` 的 health 为 200，runtime metrics 及 Responses 未认证均为 401，主资源 SHA-256 一致。
 - RISK：`openai_request_snapshots` 表约 3.5 GB，1,673 条记录已过期；green 已有周期性 10 秒清理超时。本次未授权数据库写入，作为独立维护项保留。
+
+## 2026-07-26 - OpenAI Codex 客户端身份 v0.1.164.5 生产发布
+
+- 执行者：Devil。
+- PASS：`sub2api:v0.1.164.5` 从已提交 HEAD `d545dbb62ff6f48a6648203dd3422b6fe6f6197a` 的归档构建；归档、镜像标签、OCI revision 和二进制版本一致。
+- PASS：只重建 idle green；候选冒烟、13 次独立健康采样和关键日志检查通过后，`nginx -t` 成功并切流到 `sub2api-green:8080`。
+- PASS：发布后 13 轮四端口健康检查全部为 200；green、PostgreSQL、Redis healthy/restart 0，旧 blue healthy 并保留为回滚目标。
+- PASS：无名公益 508 的新请求从原 nginx 403 变为应用层 503，证明客户端身份限制已穿过；切流后 green 未出现 `Go-http-client/1.1`、`Access forbidden` 或真实 403 状态。
+- PASS：君公益 494 的同类请求成功，首 Token 4364ms、总耗时 4624ms，账号保持正常可调度。
+- 结论：生产账号上游出口已使用 Codex 身份，原客户端识别 403 已消失；无名公益当前不可用原因已变为独立的上游 503。
+- 风险：账号 508 的持久化 `error_message` 仍显示历史 403，可能造成页面误读；其当前真实上游结果以 19:00 左右 green 日志中的 503 为准。
+- 边界：未推送远端，未重启 PostgreSQL、Redis 或旧 active blue；未修改数据库 schema。

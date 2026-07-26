@@ -405,3 +405,14 @@
 - PASS：仅重建 idle blue；候选 `18083` health、根页、主资源为 200，runtime metrics、admin system、Responses 未认证均为 401；容器实际 DB `32/16`、Redis `1024/128`。
 - PASS：排除经 green 历史日志佐证的既有启动快照清理超时后，blue 85 秒独立窗口 healthy/restart 0，关键日志 0。
 - PASS：切流后 `8080`、`18081`、`18083` 均 health 200、受保护契约 401，主资源 SHA-256 一致；blue 91 秒独立窗口 healthy/restart 0，关键日志 0。
+
+## 2026-07-26 OpenAI Codex 客户端身份 v0.1.164.5 发布验证 - Devil
+
+- PASS：功能提交为 `d545dbb62ff6f48a6648203dd3422b6fe6f6197a`；不可变镜像 `sub2api:v0.1.164.5` 的 OCI version/revision、ImageID 和容器二进制版本全部匹配。
+- PASS：green 候选 `/health`、首页、主资源返回 200，未登录管理接口和 `POST /v1/responses` 返回 401；主资源 SHA-256 为 `E7CF0CFDE77F12EFC4CA034546567BFBB174F3A564E0C47F3392150D05C65843`。
+- PASS：候选独立观察窗口 13 次健康采样全部通过，green 始终 healthy、restart 0，关键日志命中 0；`nginx -t` 通过后才切流。
+- PASS：切流后 65 秒内完成 13 轮 `8080`、`18081`、`18082`、`18083` 健康采样，全部为 200；green 和代理关键日志命中 0。
+- PASS：无名公益（508）真实请求返回应用层 503，不再返回 nginx 403；日志记录 `status_code=503/service_unavailable`，且切流后 `Go-http-client/1.1`、`Access forbidden`、真实 403 状态匹配均为 0。
+- PASS：君公益（494）真实请求成功，实际模型 `gpt-5.6-sol`，首 Token 4364ms、总耗时 4624ms，账号保持 `active/probe_success`。
+- PASS：PostgreSQL、Redis 始终 healthy、restart 0；旧 blue 保持 healthy，未被本次发布重建或重启。
+- INFO：账号 508 数据库 `error_message` 仍是切流前历史 403 文本，本次新失败以 green 日志中的 503 为准。

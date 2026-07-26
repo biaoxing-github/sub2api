@@ -257,3 +257,15 @@
 - `docker compose -f docker-compose.blue.yml up -d --no-deps --force-recreate sub2api-blue`：只重建 idle blue；候选健康、资源、认证边界和有效环境变量通过。
 - `docker logs`、只读 `psql`：确认快照清理超时是 green 既有问题，记录表容量和过期数据，不写数据库。
 - `nginx -t`、`nginx -s reload`：上游切至 blue；三入口重复健康、认证边界、主资源哈希和 91 秒观察通过，green 保留回滚。
+
+## 2026-07-26 19:03 +08:00 Devil - v0.1.164.5 蓝绿发布与真实账号验证
+
+- 提交：功能提交 `d545dbb62ff6f48a6648203dd3422b6fe6f6197a`，只包含 OpenAI 上游客户端身份源码与测试；保留工作树其他未提交内容。
+- 构建：从 `git archive HEAD` 构建 `sub2api:v0.1.164.5`，归档 SHA-256 `9328E94E1DF55548A792E1234965CA227362F0D4C1726B6828E624E5F78E53B4`，ImageID `sha256:58e96300b85039453649e23189c7b3843b96a1c5ccadfdcc1397da180e17cd79`。
+- 备份：保留 `D:\sub2api-deploy\.env.20260726-183135.bak` 和 `D:\sub2api-deploy\proxy\upstreams\active.conf.20260726-183135.bak`。
+- 候选：只重建 idle green；冒烟、主资源哈希、13 次独立健康采样和关键日志检查通过，green healthy/restart 0。
+- 切流：`docker exec sub2api-proxy nginx -t` 通过后，将 upstream 从 blue 改为 green 并 reload；旧 blue 未重建，继续作为回滚。
+- 正式观察：65 秒内 13 轮 `8080`、`18081`、`18082`、`18083` 健康检查全部 200；green/代理关键日志为 0，PostgreSQL/Redis healthy/restart 0。
+- 账号验证：无名 508 新请求为 503 `Service temporarily unavailable`，不再为 403；君 494 请求成功并保持 `active/probe_success`。
+- 日志证据：切流后 green 中 `Go-http-client/1.1`、`Access forbidden` 和真实 403 状态均为 0；账号 508 明确记录 `status_code=503/service_unavailable`。
+- 遗留：账号 508 的数据库 `error_message` 仍保留历史 403 文本，上游 503 未恢复；未推送远端。
