@@ -216,7 +216,13 @@ var providerOpenAIChatAdapter = providerAdapter{
 		})
 	},
 	buildHeaders: func(apiKey string) map[string]string {
-		return map[string]string{"Authorization": "Bearer " + apiKey}
+		return map[string]string{
+			"Authorization": "Bearer " + apiKey,
+			"User-Agent":    codexCLIUserAgent(),
+			"originator":    codexCLIOriginator,
+			"OpenAI-Beta":   "responses=experimental",
+			"version":       codexCLIVersion(),
+		}
 	},
 	textPath: "choices.0.message.content",
 }
@@ -234,7 +240,13 @@ var providerOpenAIResponsesAdapter = providerAdapter{
 		})
 	},
 	buildHeaders: func(apiKey string) map[string]string {
-		return map[string]string{"Authorization": "Bearer " + apiKey}
+		return map[string]string{
+			"Authorization": "Bearer " + apiKey,
+			"User-Agent":    codexCLIUserAgent(),
+			"originator":    codexCLIOriginator,
+			"OpenAI-Beta":   "responses=experimental",
+			"version":       codexCLIVersion(),
+		}
 	},
 	textPath: "output.0.content.0.text",
 }

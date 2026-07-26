@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -58,6 +59,31 @@ func TestHTTPUpstreamDoAppliesGrokCLIIdentityBeforeOAuthRoundTrip(t *testing.T) 
 			require.Equal(t, "0.2.93", capturedHeaders.Get("x-grok-client-version"))
 			require.Equal(t, "xai-grok-cli", capturedHeaders.Get("X-XAI-Token-Auth"))
 			require.Equal(t, "xai-grok-workspace/0.2.93", capturedHeaders.Get("User-Agent"))
+		})
+	}
+}
+
+func TestEnsureUpstreamUserAgentReplacesGoDefaultAndPreservesExplicitIdentity(t *testing.T) {
+	tests := []struct {
+		name      string
+		userAgent string
+		want      string
+	}{
+		{name: "empty uses Codex identity", want: openai.GetCurrentCodexCLIUserAgent()},
+		{name: "Go default uses Codex identity", userAgent: "Go-http-client/1.1", want: openai.GetCurrentCodexCLIUserAgent()},
+		{name: "explicit identity is preserved", userAgent: "sub2api-grok/1.0", want: "sub2api-grok/1.0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, "https://upstream.example/v1/responses", nil)
+			require.NoError(t, err)
+			if tt.userAgent != "" {
+				req.Header.Set("User-Agent", tt.userAgent)
+			}
+
+			ensureUpstreamUserAgent(req)
+
+			require.Equal(t, tt.want, req.Header.Get("User-Agent"))
 		})
 	}
 }

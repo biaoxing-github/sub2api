@@ -1283,6 +1283,9 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			}
 		}
 	}
+	if account != nil && account.Type == AccountTypeAPIKey {
+		ensureOpenAICodexUserAgent(headers, account)
+	}
 	if account != nil && account.Type == AccountTypeOAuth {
 		enforceCodexIdentityHeaders(headers)
 	}

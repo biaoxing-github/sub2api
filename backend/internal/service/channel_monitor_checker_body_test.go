@@ -188,6 +188,9 @@ func TestRunCheckForModel_OpenAI_DefaultChatRequest(t *testing.T) {
 	if h.lastHeaders.Get("Authorization") != "Bearer sk-openai" {
 		t.Errorf("expected bearer auth header, got %q", h.lastHeaders.Get("Authorization"))
 	}
+	if h.lastHeaders.Get("User-Agent") != codexCLIUserAgent() {
+		t.Errorf("expected Codex user agent, got %q", h.lastHeaders.Get("User-Agent"))
+	}
 }
 
 func TestRunCheckForModel_OpenAIResponses_DefaultRequest(t *testing.T) {
@@ -223,6 +226,9 @@ func TestRunCheckForModel_OpenAIResponses_DefaultRequest(t *testing.T) {
 	}
 	if h.lastHeaders.Get("Authorization") != "Bearer sk-openai" {
 		t.Errorf("expected bearer auth header, got %q", h.lastHeaders.Get("Authorization"))
+	}
+	if h.lastHeaders.Get("User-Agent") != codexCLIUserAgent() {
+		t.Errorf("expected Codex user agent, got %q", h.lastHeaders.Get("User-Agent"))
 	}
 }
 

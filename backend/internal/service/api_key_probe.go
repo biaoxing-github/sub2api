@@ -446,6 +446,10 @@ func (r *HTTPAPIKeyProbeRunner) RunSample(ctx context.Context, req APIKeyProbeSa
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey.Key)
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", codexCLIUserAgent())
+	httpReq.Header.Set("originator", codexCLIOriginator)
+	httpReq.Header.Set("OpenAI-Beta", "responses=experimental")
+	httpReq.Header.Set("version", codexCLIVersion())
 	httpReq.Header.Set("X-Client-Request-ID", strings.TrimPrefix(req.RequestID, "client:"))
 	httpReq.Header.Set("X-Request-ID", strings.TrimPrefix(req.RequestID, "client:"))
 

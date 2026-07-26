@@ -27,6 +27,31 @@ type failingOpenAIImageWriter struct {
 	writes    int
 }
 
+func TestBuildOpenAIImagesRequestReplacesGoDefaultUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	c.Request.Header.Set("User-Agent", "Go-http-client/1.1")
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://image-upstream.example/v1",
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Security: config.SecurityConfig{
+		URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+	}}}
+
+	req, err := svc.buildOpenAIImagesRequest(
+		context.Background(), c, account, []byte(`{"model":"gpt-image-1"}`),
+		"application/json", "sk-test", openAIImagesGenerationsEndpoint,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, codexCLIUserAgent(), req.Header.Get("User-Agent"))
+}
+
 func (w *failingOpenAIImageWriter) Write(p []byte) (int, error) {
 	if w.writes >= w.failAfter {
 		return 0, errors.New("write failed: client disconnected")

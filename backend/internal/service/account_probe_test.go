@@ -234,6 +234,40 @@ type sequencedAccountProbeHTTPClientStub struct {
 	errors    []error
 }
 
+func TestAccountProbeService_ModelCatalogUsesPassthroughClientIdentity(t *testing.T) {
+	account := &Account{
+		ID:       129,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://model-catalog.example.test/v1",
+			"api_key":  "sk-test",
+		},
+		Extra: map[string]any{
+			"openai_codex_cli_simulation_enabled": true,
+		},
+	}
+	client := &accountProbeHTTPClientStub{}
+	svc := &AccountProbeService{client: client}
+
+	_ = svc.runOpenAIAPIKeySample(
+		context.Background(),
+		account,
+		"https://model-catalog.example.test/v1",
+		"gpt-5.6-sol",
+		"sk-test",
+		APIKeyProbePlannedSample{ModelCatalog: true, Timeout: time.Second},
+		true,
+		AccountProbeRequestModeNonStream,
+	)
+
+	require.Len(t, client.requests, 1)
+	require.Equal(t, codexCLIUserAgent(), client.requests[0].Header.Get("user-agent"))
+	require.Equal(t, codexCLIOriginator, client.requests[0].Header.Get("originator"))
+	require.Equal(t, "responses=experimental", client.requests[0].Header.Get("openai-beta"))
+	require.Empty(t, client.requests[0].Header.Get("accept"))
+}
+
 func (c *sequencedAccountProbeHTTPClientStub) Do(req *http.Request) (*http.Response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

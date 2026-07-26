@@ -220,6 +220,8 @@ func TestHTTPAPIKeyProbeRunner_RunSampleUsesResponsesListInput(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, APIKeyProbeUsageLogMissing, result.UsageLogStatus)
 	require.Equal(t, "https://example.test/v1/responses", client.request.URL.String())
+	require.Equal(t, codexCLIUserAgent(), client.request.Header.Get("User-Agent"))
+	require.Equal(t, codexCLIOriginator, client.request.Header.Get("originator"))
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal([]byte(client.body), &payload))
 	input, ok := payload["input"].([]any)

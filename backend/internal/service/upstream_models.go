@@ -327,6 +327,7 @@ func (s *AccountTestService) buildOpenAIUpstreamModelsRequest(ctx context.Contex
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
+	applyOpenAIAccountPassthroughClientHeaders(req, nil, account, nil)
 	return req, nil
 }
 

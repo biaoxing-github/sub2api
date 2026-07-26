@@ -715,6 +715,28 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersAccountCodexSimulationForceWS(
 	require.Equal(t, "header_conversation_id", sessionResolution.ConversationSource)
 }
 
+func TestOpenAIGatewayService_BuildOpenAIWSHeadersReplacesGoDefaultUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("User-Agent", "Go-http-client/1.1")
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	svc := &OpenAIGatewayService{}
+
+	headers, _ := svc.buildOpenAIWSHeaders(
+		c,
+		account,
+		"sk-test",
+		OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportResponsesWebsocket},
+		false,
+		"",
+		"",
+		"",
+	)
+
+	require.Equal(t, codexCLIUserAgent(), headers.Get("User-Agent"))
+}
+
 func TestOpenAIGatewayService_BuildOpenAIWSHeadersAPIKeyIdentityFollowsCurrentToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

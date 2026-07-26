@@ -167,6 +167,9 @@ func TestSendOpenAISchedulerExhaustionProbeMatchesRequestedStreamMode(t *testing
 					"api_key":  "sk-test",
 					"base_url": "https://compat-upstream.example/v1",
 				},
+				Extra: map[string]any{
+					"openai_codex_cli_simulation_enabled": true,
+				},
 			}
 
 			err := svc.sendOpenAISchedulerExhaustionProbe(context.Background(), account, "gpt-5.6-sol", false, tt.stream)
@@ -174,6 +177,9 @@ func TestSendOpenAISchedulerExhaustionProbeMatchesRequestedStreamMode(t *testing
 			require.NoError(t, err)
 			require.NotNil(t, upstream.request)
 			require.Equal(t, tt.wantAccept, upstream.request.Header.Get("accept"))
+			require.Equal(t, codexCLIUserAgent(), upstream.request.Header.Get("user-agent"))
+			require.Equal(t, codexCLIOriginator, upstream.request.Header.Get("originator"))
+			require.Equal(t, "responses=experimental", upstream.request.Header.Get("openai-beta"))
 			requestBody, readErr := io.ReadAll(upstream.request.Body)
 			require.NoError(t, readErr)
 			var payload map[string]any
@@ -181,6 +187,39 @@ func TestSendOpenAISchedulerExhaustionProbeMatchesRequestedStreamMode(t *testing
 			require.Equal(t, tt.wantBodyStream, payload["stream"])
 		})
 	}
+}
+
+// TestSendOpenAISchedulerExhaustionProbeFallsBackUserAgentWithoutSimulation 覆盖
+// 模拟开关关闭且无自定义 UA 的 API Key 账号：探测请求不允许落到 Go 默认
+// User-Agent（Go-http-client/1.1），否则按客户端 UA 风控的渠道会持续 403。
+func TestSendOpenAISchedulerExhaustionProbeFallsBackUserAgentWithoutSimulation(t *testing.T) {
+	upstream := &schedulerExhaustionHTTPUpstream{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_probe","status":"completed"}`)),
+	}}
+	svc := &OpenAIGatewayService{
+		httpUpstream: upstream,
+		cfg: &config.Config{Security: config.SecurityConfig{
+			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+		}},
+	}
+	account := &Account{
+		ID:          481,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat-upstream.example/v1",
+		},
+	}
+
+	err := svc.sendOpenAISchedulerExhaustionProbe(context.Background(), account, "gpt-5.6-sol", false, false)
+
+	require.NoError(t, err)
+	require.NotNil(t, upstream.request)
+	require.Equal(t, codexCLIUserAgent(), upstream.request.Header.Get("user-agent"))
 }
 
 func TestSendOpenAISchedulerExhaustionProbeRejectsStreamWithoutTerminalEvent(t *testing.T) {

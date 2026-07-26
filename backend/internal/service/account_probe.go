@@ -1277,14 +1277,14 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 		return result
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+	applyOpenAIAccountPassthroughClientHeaders(req, nil, account, wireBody)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if stream {
 		req.Header.Set("Accept", "text/event-stream")
-	}
-	if account.IsOpenAICodexCLISimulationEnabled() && payload != nil {
-		applyOpenAICodexSyntheticClientHeaders(req, wireBody, account)
+	} else {
+		req.Header.Del("Accept")
 	}
 
 	proxyURL := ""

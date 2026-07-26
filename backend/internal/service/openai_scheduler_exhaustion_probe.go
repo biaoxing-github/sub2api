@@ -232,11 +232,6 @@ func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Co
 	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
 	req.Header.Set("authorization", "Bearer "+token)
 	req.Header.Set("content-type", "application/json")
-	if stream {
-		req.Header.Set("accept", "text/event-stream")
-	} else {
-		req.Header.Set("accept", "application/json")
-	}
 	if account.Type == AccountTypeOAuth {
 		req.Host = "chatgpt.com"
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
@@ -249,6 +244,13 @@ func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Co
 		if chatgptAccountID := strings.TrimSpace(account.GetChatGPTAccountID()); chatgptAccountID != "" {
 			req.Header.Set("chatgpt-account-id", chatgptAccountID)
 		}
+	}
+	// 探测复用实际 passthrough 的账户级客户端身份，避免 API Key 回退 Go 默认 User-Agent。
+	s.applyOpenAIPassthroughClientIdentity(probeCtx, req, nil, account, probePayload)
+	if stream {
+		req.Header.Set("accept", "text/event-stream")
+	} else {
+		req.Header.Set("accept", "application/json")
 	}
 
 	proxyURL := ""

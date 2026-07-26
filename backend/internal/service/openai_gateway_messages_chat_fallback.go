@@ -116,10 +116,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 			}
 		}
 	}
-	if customUA := account.GetOpenAIUserAgent(); customUA != "" {
-		upstreamReq.Header.Set("user-agent", customUA)
-	}
-	s.applyOpenAICodexCLISimulationHeaders(upstreamReq, c, account, chatBody)
+	applyOpenAIAccountPassthroughClientHeaders(upstreamReq, c, account, chatBody)
 
 	proxyURL := ""
 	if account.Proxy != nil {

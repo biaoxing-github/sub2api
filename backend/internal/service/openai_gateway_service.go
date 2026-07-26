@@ -2236,6 +2236,44 @@ func (s *OpenAIGatewayService) shouldSimulateOpenAICodexCLI(account *Account) bo
 	return account != nil && account.IsOpenAICodexCLISimulationEnabled()
 }
 
+// applyOpenAIAccountPassthroughClientHeaders 复用 OpenAI passthrough 的账户级 UA 与 Codex 模拟头规则。
+// 该函数不处理 OAuth 专属的浏览器 UA 修正和身份配对，使后台 API Key 探测也能安全复用。
+func applyOpenAIAccountPassthroughClientHeaders(req *http.Request, c *gin.Context, account *Account, body []byte) {
+	if req == nil || account == nil {
+		return
+	}
+	if customUA := account.GetOpenAIUserAgent(); customUA != "" {
+		req.Header.Set("user-agent", customUA)
+	}
+	applyOpenAICodexCLISimulationHeaders(req, c, account, body)
+	if account.Type == AccountTypeAPIKey {
+		ensureOpenAICodexUserAgent(req.Header, account)
+	}
+}
+
+// ensureOpenAICodexUserAgent 保留显式非 Go 客户端身份，只收口空 UA 和 Go 标准库默认 UA。
+// 后两者若直接出站会被部分 OpenAI 兼容渠道按客户端风控拒绝为 403。
+func ensureOpenAICodexUserAgent(headers http.Header, account *Account) {
+	if headers == nil {
+		return
+	}
+	userAgent := strings.TrimSpace(headers.Get("user-agent"))
+	if userAgent != "" && !strings.HasPrefix(strings.ToLower(userAgent), "go-http-client/") {
+		return
+	}
+	headers.Set("user-agent", openAICodexCLIUserAgentForAccount(account))
+}
+
+// applyOpenAIPassthroughClientIdentity 在账户级 UA 与模拟头后完成 OAuth 专属身份收口。
+// enforce 必须位于浏览器 UA 修正之后，确保 originator 与最终 User-Agent 成对。
+func (s *OpenAIGatewayService) applyOpenAIPassthroughClientIdentity(ctx context.Context, req *http.Request, c *gin.Context, account *Account, body []byte) {
+	applyOpenAIAccountPassthroughClientHeaders(req, c, account, body)
+	s.overrideBrowserUserAgent(ctx, account, req)
+	if account != nil && account.Type == AccountTypeOAuth {
+		enforceCodexIdentityHeaders(req.Header)
+	}
+}
+
 // isRealOpenAICodexClientRequest 只用真实 Codex 家族 UA 识别客户端直连请求，避免浏览器 UA 伪装 originator 后被透传。
 func isRealOpenAICodexClientRequest(c *gin.Context) bool {
 	if c == nil {
@@ -2271,8 +2309,8 @@ func copyOpenAIInboundHeaderIfPresent(dst http.Header, c *gin.Context, key strin
 	}
 }
 
-func (s *OpenAIGatewayService) applyOpenAICodexCLISimulationHeaders(req *http.Request, c *gin.Context, account *Account, body []byte) {
-	if req == nil || !s.shouldSimulateOpenAICodexCLI(account) {
+func applyOpenAICodexCLISimulationHeaders(req *http.Request, c *gin.Context, account *Account, body []byte) {
+	if req == nil || account == nil || !account.IsOpenAICodexCLISimulationEnabled() {
 		return
 	}
 	if isRealOpenAICodexClientRequest(c) {
@@ -5106,21 +5144,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 		req.Header.Set("accept", "application/json")
 	}
 
-	// 透传模式支持账户自定义 User-Agent；账号级模拟开关会在下方统一覆盖为 Codex CLI 请求头。
-	customUA := account.GetOpenAIUserAgent()
-	if customUA != "" {
-		req.Header.Set("user-agent", customUA)
-	}
-	if s.shouldSimulateOpenAICodexCLI(account) {
-		s.applyOpenAICodexCLISimulationHeaders(req, c, account, body)
-	}
-
-	// 浏览器型 UA 兜底：仅 OAuth（ChatGPT 内部接口）账号生效，若最终 user-agent 仍为浏览器
-	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。
-	s.overrideBrowserUserAgent(ctx, account, req)
-	if account.Type == AccountTypeOAuth {
-		enforceCodexIdentityHeaders(req.Header)
-	}
+	// 透传与后台账户探测共用同一账户级身份规则。
+	s.applyOpenAIPassthroughClientIdentity(ctx, req, c, account, body)
 
 	if req.Header.Get("content-type") == "" {
 		req.Header.Set("content-type", "application/json")
@@ -6683,20 +6708,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 		req.Header.Set("accept", "application/json")
 	}
 
-	// Apply custom User-Agent if configured
-	customUA := account.GetOpenAIUserAgent()
-	if customUA != "" {
-		req.Header.Set("user-agent", customUA)
-	}
-
-	s.applyOpenAICodexCLISimulationHeaders(req, c, account, body)
-
-	// 浏览器型 UA 兜底：仅 OAuth（ChatGPT 内部接口）账号生效，若最终 user-agent 仍为浏览器
-	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。
-	s.overrideBrowserUserAgent(ctx, account, req)
-	if account.Type == AccountTypeOAuth {
-		enforceCodexIdentityHeaders(req.Header)
-	}
+	// 透传与后台账户探测共用同一账户级身份规则。
+	s.applyOpenAIPassthroughClientIdentity(ctx, req, c, account, body)
 
 	// Ensure required headers exist
 	if req.Header.Get("content-type") == "" {

@@ -23,6 +23,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
@@ -287,6 +288,7 @@ func (entry *upstreamClientEntry) closeIdleConnectionsIfRetired() {
 //   - inFlight > 0 的客户端不会被淘汰，确保活跃请求不被中断
 func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
 	applyGrokCLIProxyHeaders(req)
+	ensureUpstreamUserAgent(req)
 	if err := s.validateRequestHost(req); err != nil {
 		return nil, err
 	}
@@ -329,6 +331,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 		return s.Do(req, proxyURL, accountID, accountConcurrency)
 	}
 	applyGrokCLIProxyHeaders(req)
+	ensureUpstreamUserAgent(req)
 	if err := s.validateRequestHost(req); err != nil {
 		return nil, err
 	}
@@ -393,6 +396,24 @@ func isSupportedGrokCLIVersion(version string) bool {
 	canonical := "v" + version
 	minimum := "v" + grokCLIStableVersion
 	return semver.IsValid(canonical) && semver.Canonical(canonical) == canonical && semver.Compare(canonical, minimum) >= 0
+}
+
+// ensureUpstreamUserAgent 在最终传输边界兜底 User-Agent：
+// 业务层未设置 UA 或显式带入 Go 默认 UA 时补 Codex CLI UA，禁止出站请求落到
+// Go-http-client/1.1——部分渠道按客户端 UA 风控会直接 403。
+// 其他已设置 UA（账号自定义、各平台自设）一律不覆盖。
+func ensureUpstreamUserAgent(req *http.Request) {
+	if req == nil {
+		return
+	}
+	if req.Header == nil {
+		req.Header = make(http.Header)
+	}
+	userAgent := strings.TrimSpace(req.Header.Get("User-Agent"))
+	if userAgent != "" && !strings.HasPrefix(strings.ToLower(userAgent), "go-http-client/") {
+		return
+	}
+	req.Header.Set("User-Agent", openai.GetCurrentCodexCLIUserAgent())
 }
 
 func (s *httpUpstreamService) doOpenAIProfile(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, tlsProfile *tlsfingerprint.Profile) (*http.Response, error) {
