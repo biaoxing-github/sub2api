@@ -2123,6 +2123,8 @@ export interface UsageLog {
 
   // User-Agent
   user_agent: string | null
+  // 客户端显式提供的会话关联标识
+  session_id?: string | null
 
   // Cache TTL Override
   cache_ttl_overridden: boolean

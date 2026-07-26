@@ -337,8 +337,9 @@ func removeCustomFieldFromTools(body []byte) []byte {
 }
 
 // claudeVersionRe 匹配 Claude 模型 ID 中的版本号部分
-// 支持 claude-{tier}-{major}-{minor} 和 claude-{tier}-{major}.{minor} 格式
-var claudeVersionRe = regexp.MustCompile(`claude-(?:haiku|sonnet|opus)-(\d+)[-.](\d+)`)
+// 支持 claude-{tier}-{major}-{minor}、claude-{tier}-{major}.{minor} 和只有主版本号的新模型。
+// minor 为空时按 0 处理，使 claude-opus-5 与 claude-sonnet-5 进入新模型能力闸门。
+var claudeVersionRe = regexp.MustCompile(`claude-(?:haiku|sonnet|opus)-(\d+)(?:[-.](\d+))?`)
 
 // isBedrockClaude45OrNewer 判断 Bedrock 模型 ID 是否为 Claude 4.5 或更新版本
 // Claude 4.5+ 支持 cache_control 中的 ttl 字段（"5m" 和 "1h"）
@@ -461,12 +462,12 @@ func parseAnthropicBetaHeader(header string) []string {
 // 参考: AWS Bedrock 官方文档 + litellm anthropic_beta_headers_config.json
 // 更新策略: 当 AWS Bedrock 新增支持的 beta token 时需同步更新此白名单
 var bedrockSupportedBetaTokens = map[string]bool{
-	"computer-use-2025-01-24":                  true,
-	"computer-use-2025-11-24":                  true,
-	"context-1m-2025-08-07":                    true,
-	"context-management-2025-06-27":            true, // compaction + clear_thinking，AWS 文档已支持
-	"compact-2026-01-12":                       true, // 官方支持，仅 InvokeModel API（Opus 4.6+）
-	"fine-grained-tool-streaming-2025-05-14":   true, // AWS Tool Use 文档已支持
+	"computer-use-2025-01-24":                true,
+	"computer-use-2025-11-24":                true,
+	"context-1m-2025-08-07":                  true,
+	"context-management-2025-06-27":          true, // compaction + clear_thinking，AWS 文档已支持
+	"compact-2026-01-12":                     true, // 官方支持，仅 InvokeModel API（Opus 4.6+）
+	"fine-grained-tool-streaming-2025-05-14": true, // AWS Tool Use 文档已支持
 	// "interleaved-thinking-2025-05-14": false, // 无官方文档支持
 	"tool-search-tool-2025-10-19": true,
 	"tool-examples-2025-10-29":    true,

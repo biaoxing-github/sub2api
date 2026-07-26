@@ -157,6 +157,8 @@ type UsageLog struct {
 	FirstTokenMs *int
 	UserAgent    *string
 	IPAddress    *string
+	// SessionID 仅记录客户端显式提供的会话标识，不从请求内容或 prompt_cache_key 推导。
+	SessionID *string
 
 	// Cache TTL Override 标记（管理员强制替换了缓存 TTL 计费）
 	CacheTTLOverridden bool

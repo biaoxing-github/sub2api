@@ -5399,3 +5399,15 @@ v0.1.149 拉取结果：
 - 结论：生产账号上游出口已使用 Codex 身份，原客户端识别 403 已消失；无名公益当前不可用原因已变为独立的上游 503。
 - 风险：账号 508 的持久化 `error_message` 仍显示历史 403，可能造成页面误读；其当前真实上游结果以 19:00 左右 green 日志中的 503 为准。
 - 边界：未推送远端，未重启 PostgreSQL、Redis 或旧 active blue；未修改数据库 schema。
+
+## 2026-07-26 - v0.1.165 可兼容增量迁移
+
+- 执行者：Devil。
+- PASS：从 `v0.1.164..local-upstream/v0.1.165` 的 168 文件官方增量中，仅迁入当前定制架构可独立闭环的 66 个代码文件。
+- PASS：Grok 5xx 调度、孤立 `tool_choice`、OpenAI 同账号重试冷却、Responses namespace/item ID 清理、Gemini inline 图片、空定价 URL、Claude Opus 5/Bedrock/价格和公告富文本链路均有聚焦自动化覆盖。
+- PASS：新增注册邮箱别名去重，覆盖 Gmail 点号、`+alias`、`googlemail.com`、FQDN 根点、验证码/OAuth/注册入口和并发创建锁；migration 190 为同一 SQL 表达式建立并发索引。
+- PASS：新增 `usage_logs.session_id`，只持久化显式且合法的 session/conversation 标识；控制字符、非法 UTF-8 和超过 255 字符的值不写入。当前全部 handler 用量入口、DTO、单条/批量/best-effort SQL 已接线，migration 187 不包含未吸收的批量图片字段。
+- PASS：后端 service 聚焦、repository 全量 unit、四核心包编译、前端 Vitest 13/13、typecheck 和 production build 通过；工作树静态产物目录保持干净。
+- PASS：未迁入 ChatGPT Live、Apple DeviceCheck、Ollama 请求驱动刷新、批量图片、图片质量日志、`allow_live` 或 migrations 188/189。
+- LIMITED：完整 service 的 3 个身份断言在 detached HEAD `8b7ec536c` 同样失败，已证明不是 165 迁移引入；本轮不修改该既有客户端身份测试基线。
+- 边界：只完成源码迁移、自动化验证和本地提交；未执行数据库 migration、镜像构建、蓝绿部署或 Git push。

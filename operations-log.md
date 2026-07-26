@@ -269,3 +269,13 @@
 - 账号验证：无名 508 新请求为 503 `Service temporarily unavailable`，不再为 403；君 494 请求成功并保持 `active/probe_success`。
 - 日志证据：切流后 green 中 `Go-http-client/1.1`、`Access forbidden` 和真实 403 状态均为 0；账号 508 明确记录 `status_code=503/service_unavailable`。
 - 遗留：账号 508 的数据库 `error_message` 仍保留历史 403 文本，上游 503 未恢复；未推送远端。
+
+## 2026-07-26 20:23 +08:00 Devil - v0.1.165 可兼容增量迁移
+
+- 前馈：读取项目 `AGENTS.md`、Obsidian 项目/开发知识库入口、Memory 索引及过程/功能 JSONL 尾部；CodeGraph 索引健康（2380 files、73596 nodes）。
+- 保护：用户原有 NewAPI/probe 工作保存在 `stash@{0}`（`codex-preserve-before-v0.1.165-migration-20260726`），迁移期间未覆盖或删除。
+- 审计：对比 `v0.1.164..refs/remotes/local-upstream/v0.1.165` 的 168 文件增量，保留 66 个代码文件的独立兼容切片；扫描当前差异和未跟踪文件，确认无 Live/DeviceCheck、Ollama、批量图片、`allow_live`、migration 188/189。
+- 实现：迁入 Grok/OpenAI/Gemini/Claude/Bedrock/价格/模型状态、公告与推广页适配；补齐注册邮箱别名去重和 `usage_logs.session_id` 全入口持久化。
+- 验证：service 聚焦、repository 全量 unit、server/handler/repository/service 编译、Vitest 13/13、Vue typecheck、production build 和 diff check 通过；`backend/internal/web/dist` 无变更。
+- 基线：完整 service 的 3 个客户端身份断言已在 detached HEAD `8b7ec536c` 复现，本轮不扩大范围处理。
+- 边界：本轮不执行数据库迁移、镜像构建、部署、Git push；提交后恢复 `stash@{0}` 并保持其中用户工作未提交。

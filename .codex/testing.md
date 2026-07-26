@@ -416,3 +416,14 @@
 - PASS：君公益（494）真实请求成功，实际模型 `gpt-5.6-sol`，首 Token 4364ms、总耗时 4624ms，账号保持 `active/probe_success`。
 - PASS：PostgreSQL、Redis 始终 healthy、restart 0；旧 blue 保持 healthy，未被本次发布重建或重启。
 - INFO：账号 508 数据库 `error_message` 仍是切流前历史 403 文本，本次新失败以 green 日志中的 503 为准。
+
+## 2026-07-26 v0.1.165 上游增量迁移 - Devil
+
+- PASS：`go test -tags=unit ./internal/service -run '^(TestSanitizeSessionID|TestExtractClientSessionID|TestExtractClientSessionIDNilContext|TestNormalizeEmailForAliasDedup|TestNormalizeEmailForAliasDedupKeepsDistinctInboxes|TestEmailAliasDedupProbes|TestExistsByEmailOrAlias|TestV165.*|TestAuthService_Register_AliasDuplicateRejected|TestAuthService_Register_UsesAliasGuardedCreate)$' -count=1`。
+- PASS：`go test -tags=unit ./internal/repository -count=1`，覆盖 `session_id` 单条/批量/best-effort SQL 接线与邮箱别名仓储查重、并发创建锁。
+- PASS：`go test ./cmd/server ./internal/handler ./internal/repository ./internal/service -run '^$' -count=1`，四个核心包编译通过。
+- PASS：`pnpm exec vitest run src/components/common/__tests__/AnnouncementPopup.spec.ts src/views/user/__tests__/AffiliateView.spec.ts`，2 个文件、13 个用例通过；`pnpm run typecheck` 通过。
+- PASS：此前同一工作树已完成 `pnpm run build`；本次复核 `backend/internal/web/dist` 无 Git 变更，`git diff HEAD --check` 通过。
+- PASS：当前迁移文件扫描未发现 `openai_live`、`liveattestation`、Ollama、`batch_image`、migration 188/189 或 `allow_live` 内容。
+- LIMITED：完整 service 测试仍有 3 个客户端身份断言失败（API Key UA 的 Node.js/iOS 14 差异、OAuth originator 的 `codex_cli_rs`/`Codex Desktop` 差异）。已在未应用 165 工作树改动的 detached HEAD `8b7ec536c` 最小复现，属于本轮前既有基线；165 聚焦测试和编译门禁均通过。
+- 边界：未写生产数据库、未构建镜像、未部署、未推送远端。

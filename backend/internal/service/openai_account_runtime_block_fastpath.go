@@ -63,7 +63,8 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorForModel(ctx cont
 	}
 	stateCtx = withTempUnschedulableModel(stateCtx, []string{requestedModel})
 	// 非池模式可在通用账号错误处理前完成模型级冷却，避免扩大为整账号运行时封锁。
-	if s != nil && s.rateLimitService != nil && statusCode != http.StatusUnauthorized && strings.TrimSpace(requestedModel) != "" &&
+	poolModeRetryable := shouldPreserveOpenAIPoolModeRetry(account, statusCode)
+	if s != nil && s.rateLimitService != nil && statusCode != http.StatusUnauthorized && strings.TrimSpace(requestedModel) != "" && !poolModeRetryable &&
 		s.rateLimitService.HandleTempUnschedulable(stateCtx, account, statusCode, responseBody, requestedModel) {
 		return true
 	}
@@ -80,6 +81,11 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorForModel(ctx cont
 		s.BlockAccountScheduling(account, time.Time{}, "upstream_disable")
 	}
 	return shouldDisable
+}
+
+// shouldPreserveOpenAIPoolModeRetry 保留已显式配置的同账号重试预算，避免先写入模型冷却。
+func shouldPreserveOpenAIPoolModeRetry(account *Account, statusCode int) bool {
+	return account != nil && account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode)
 }
 
 func (s *OpenAIGatewayService) handleOpenAIModelNotFoundCooldown(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel string) bool {

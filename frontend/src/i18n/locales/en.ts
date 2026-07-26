@@ -4912,6 +4912,7 @@ export default {
       timeImmediate: 'Immediate',
       timeNever: 'Never',
       readStatus: 'Read Status',
+      preview: 'Preview',
       eligible: 'Eligible',
       readAt: 'Read at',
       unread: 'Unread',
