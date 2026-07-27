@@ -3695,6 +3695,14 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode i
 	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
 }
 
+// shouldFailoverOpenAICompactContextWindowResponse 仅允许 compact 请求在上游
+// 明确拒绝上下文窗口时切换账号；普通请求继续直接返回错误，避免无效消耗账号池。
+func shouldFailoverOpenAICompactContextWindowResponse(c *gin.Context, statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	return statusCode == http.StatusBadRequest &&
+		isOpenAIResponsesCompactPath(c) &&
+		isOpenAIContextWindowError(upstreamMsg, upstreamBody)
+}
+
 func isOpenAIContextWindowError(upstreamMsg string, upstreamBody []byte) bool {
 	matches := func(text string) bool {
 		lower := strings.ToLower(strings.TrimSpace(text))
@@ -4935,8 +4943,13 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 			// 透传模式保留普通业务错误原样代理；容量错误和基础设施故障仍由网关切号并熔断。
-			if shouldFailoverOpenAIPassthroughResponse(resp.StatusCode, upstreamMsg, respBody) {
-				s.recordOpenAIPathHealthFailure(account, requestBaseURL, firstNonEmptyString(upstreamMsg, strconv.Itoa(resp.StatusCode)))
+			compactContextWindowFailover := shouldFailoverOpenAICompactContextWindowResponse(c, resp.StatusCode, upstreamMsg, respBody)
+			if compactContextWindowFailover ||
+				shouldFailoverOpenAIPassthroughResponse(resp.StatusCode, upstreamMsg, respBody) {
+				// 上下文窗口由本次请求与账号能力共同决定，不能误记为 base URL 故障。
+				if !compactContextWindowFailover {
+					s.recordOpenAIPathHealthFailure(account, requestBaseURL, firstNonEmptyString(upstreamMsg, strconv.Itoa(resp.StatusCode)))
+				}
 				return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body)
 			}
 			return nil, s.handleErrorResponsePassthrough(ctx, resp, c, account, body)
@@ -5278,12 +5291,16 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 		UpstreamResponseBody: upstreamDetail,
 	})
 
-	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/json"
+	if StopOpenAICompactSSEKeepaliveCommitted(c) {
+		writeOpenAICompactSSEFailure(c, resp.StatusCode, body)
+	} else {
+		writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		contentType := resp.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		c.Data(resp.StatusCode, contentType, body)
 	}
-	c.Data(resp.StatusCode, contentType, body)
 
 	if upstreamMsg == "" {
 		return fmt.Errorf("upstream error: %d", resp.StatusCode)
@@ -6816,6 +6833,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	if reqModel == "" {
 		reqModel, _, _ = extractOpenAIRequestMetaFromBody(requestBody)
 	}
+	compactContextWindowFailover := shouldFailoverOpenAICompactContextWindowResponse(c, resp.StatusCode, upstreamMsg, body)
 	infrastructureFailover := s.handleOpenAIUpstreamInfrastructureFailure(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
 
 	if resp.StatusCode == http.StatusRequestEntityTooLarge {
@@ -6823,7 +6841,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		return nil, fmt.Errorf("upstream error: %d request body too large", resp.StatusCode)
 	}
 
-	if !infrastructureFailover {
+	if !infrastructureFailover && !compactContextWindowFailover {
 		if status, errType, errMsg, matched := applyErrorPassthroughRule(
 			c,
 			PlatformOpenAI,
@@ -6833,12 +6851,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			"upstream_error",
 			"Upstream request failed",
 		); matched {
-			c.JSON(status, gin.H{
-				"error": gin.H{
-					"type":    errType,
-					"message": errMsg,
-				},
-			})
+			writeOpenAIForwardLocalError(c, status, errType, errMsg, "")
 			if upstreamMsg == "" {
 				upstreamMsg = errMsg
 			}
@@ -6850,7 +6863,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 
 	// Check custom error codes
-	if !infrastructureFailover && !account.ShouldHandleErrorCode(resp.StatusCode) {
+	if !infrastructureFailover && !compactContextWindowFailover && !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
 			AccountID:          account.ID,
@@ -6861,12 +6874,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
 		})
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": gin.H{
-				"type":    "upstream_error",
-				"message": "Upstream gateway error",
-			},
-		})
+		writeOpenAIForwardLocalError(c, http.StatusInternalServerError, "upstream_error", "Upstream gateway error", "")
 		if upstreamMsg == "" {
 			return nil, fmt.Errorf("upstream error: %d (not in custom error codes)", resp.StatusCode)
 		}
@@ -6874,13 +6882,16 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 
 	// Handle upstream error (mark account status)
-	shouldFailover := infrastructureFailover
+	shouldFailover := infrastructureFailover || compactContextWindowFailover
 	if !shouldFailover {
 		shouldFailover = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
 	}
 	kind := "http_error"
 	if shouldFailover {
 		kind = "failover"
+	}
+	if compactContextWindowFailover {
+		kind = "compact_context_window_failover"
 	}
 	policy := openAIHTTPResponseErrorPolicy(resp.StatusCode, upstreamMsg, body)
 	actionMetadata := s.openAIHTTPResponseActionMetadata(policy, false, account, resp.Header.Get("x-request-id"), resp.StatusCode)
@@ -6900,7 +6911,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
-			RetryableOnSameAccount: isOpenAIPoolModeRetryableOnSameAccount(account, resp.StatusCode, upstreamMsg, body),
+			RetryableOnSameAccount: !compactContextWindowFailover && isOpenAIPoolModeRetryableOnSameAccount(account, resp.StatusCode, upstreamMsg, body),
 			ActionLabel:            policy.ActionLabel,
 			ActionMetadata:         actionMetadata,
 		}
@@ -6938,12 +6949,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		errMsg = upstreamMsg
 	}
 
-	c.JSON(statusCode, gin.H{
-		"error": gin.H{
-			"type":    errType,
-			"message": errMsg,
-		},
-	})
+	writeOpenAIForwardLocalError(c, statusCode, errType, errMsg, "")
 
 	if upstreamMsg == "" {
 		return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
@@ -6952,12 +6958,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 }
 
 func writeOpenAIRequestTooLargeError(c *gin.Context) {
-	c.JSON(http.StatusRequestEntityTooLarge, gin.H{
-		"error": gin.H{
-			"type":    "invalid_request_error",
-			"message": "Request body is too large for upstream OpenAI API",
-		},
-	})
+	writeOpenAIForwardLocalError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", "Request body is too large for upstream OpenAI API", "")
 }
 
 // compatErrorWriter is the signature for format-specific error writers used by

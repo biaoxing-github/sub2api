@@ -401,6 +401,23 @@ func TestOpenAIForwardErrorAlreadyCommunicated_HeartbeatIsNotRealOutput(t *testi
 	require.False(t, openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, errors.New("upstream response failed: boom")))
 }
 
+// compact 心跳只写非语义字节，首个上下文超限仍必须允许 handler 切号。
+func TestOpenAIForwardMayFailover_ContextWindowAfterCompactKeepalive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
+	service.MarkOpenAICompactClientStream(c)
+	stop := service.StartOpenAICompactSSEKeepalive(c, time.Millisecond)
+	writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
+	time.Sleep(20 * time.Millisecond)
+	stop()
+
+	require.True(t, openAIForwardMayFailover(c, writerSizeBeforeForward, &service.UpstreamFailoverError{
+		StatusCode: http.StatusBadRequest,
+	}))
+}
+
 // 首轮 compact 心跳已提交 SSE 后，failover 的下一轮尚未首拍也必须继承该提交
 // 状态；否则本地错误会退回 JSON 并污染已经开始的 SSE 响应。
 func TestOpenAIErrorResponseAfterCompactFailoverRetryUsesSSE(t *testing.T) {

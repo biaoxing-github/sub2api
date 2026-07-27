@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -392,4 +393,81 @@ func TestHandleNonStreamingResponsePassthrough_CompactClientStreamBridgesToSSE(t
 	require.Equal(t, "resp_compact_pt", gjson.Get(events[1][1], "response.id").String())
 	require.NotNil(t, result.usage)
 	require.Equal(t, 7, result.usage.InputTokens)
+}
+
+func TestShouldFailoverOpenAICompactContextWindowResponse(t *testing.T) {
+	c, _ := newCompactBridgeTestContext(t, true)
+	body := []byte(`{
+		"error": {
+			"code": "context_length_exceeded",
+			"message": "Your input exceeds the context window of this model."
+		}
+	}`)
+
+	require.True(t, shouldFailoverOpenAICompactContextWindowResponse(c, http.StatusBadRequest, "", body))
+	c.Request.URL.Path = "/v1/responses"
+	require.False(t, shouldFailoverOpenAICompactContextWindowResponse(c, http.StatusBadRequest, "", body))
+	require.False(t, shouldFailoverOpenAICompactContextWindowResponse(c, http.StatusBadGateway, "", body))
+}
+
+func TestHandleErrorResponse_CompactContextWindowRequestsFailoverAfterKeepalive(t *testing.T) {
+	svc := newCompactBridgeTestService()
+	c, rec := newCompactBridgeTestContext(t, true)
+	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
+	defer stop()
+	waitForKeepaliveBeats()
+
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{
+			"error": {
+				"code": "context_length_exceeded",
+				"message": "Your input exceeds the context window of this model."
+			}
+		}`)),
+	}
+	account := &Account{ID: 1, Name: "compact-native", Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, account, []byte(`{"model":"gpt-5.5"}`), "gpt-5.5")
+
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Empty(t, strings.TrimSpace(stripKeepaliveComments(rec.Body.String())))
+}
+
+func TestHandleFailoverErrorResponsePassthrough_CompactContextWindowRequestsFailoverAfterKeepalive(t *testing.T) {
+	svc := newCompactBridgeTestService()
+	c, rec := newCompactBridgeTestContext(t, true)
+	stop := StartOpenAICompactSSEKeepalive(c, keepaliveTestInterval)
+	defer stop()
+	waitForKeepaliveBeats()
+
+	upstreamBody := []byte(`{
+		"error": {
+			"code": "context_length_exceeded",
+			"message": "Your input exceeds the context window of this model."
+		}
+	}`)
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(string(upstreamBody))),
+	}
+	account := &Account{ID: 1, Name: "compact-passthrough", Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	require.True(t, shouldFailoverOpenAICompactContextWindowResponse(c, resp.StatusCode, "", upstreamBody))
+	err := svc.handleFailoverErrorResponsePassthrough(context.Background(), resp, c, account, []byte(`{"model":"gpt-5.5"}`))
+
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Empty(t, strings.TrimSpace(stripKeepaliveComments(rec.Body.String())))
 }
