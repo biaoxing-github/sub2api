@@ -119,6 +119,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 	if paymentCfg == nil {
 		paymentCfg = &service.PaymentConfig{}
 	}
+	passkeyConfigured, passkeyRPID, passkeyRPOrigins := h.settingService.PasskeyConfiguration()
 
 	payload := dto.SystemSettings{
 		RegistrationEnabled:                           settings.RegistrationEnabled,
@@ -130,6 +131,10 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		InvitationCodeEnabled:                         settings.InvitationCodeEnabled,
 		TotpEnabled:                                   settings.TotpEnabled,
 		TotpEncryptionKeyConfigured:                   h.settingService.IsTotpEncryptionKeyConfigured(),
+		PasskeyEnabled:                                settings.PasskeyEnabled,
+		PasskeyConfigured:                             passkeyConfigured,
+		PasskeyRPID:                                   passkeyRPID,
+		PasskeyRPOrigins:                              passkeyRPOrigins,
 		LoginAgreementEnabled:                         settings.LoginAgreementEnabled,
 		LoginAgreementMode:                            settings.LoginAgreementMode,
 		LoginAgreementUpdatedAt:                       settings.LoginAgreementUpdatedAt,
@@ -444,7 +449,8 @@ type UpdateSettingsRequest struct {
 	PasswordResetEnabled             bool                         `json:"password_reset_enabled"`
 	FrontendURL                      string                       `json:"frontend_url"`
 	InvitationCodeEnabled            bool                         `json:"invitation_code_enabled"`
-	TotpEnabled                      bool                         `json:"totp_enabled"` // TOTP 双因素认证
+	TotpEnabled                      bool                         `json:"totp_enabled"`    // TOTP 双因素认证
+	PasskeyEnabled                   *bool                        `json:"passkey_enabled"` // Passkey 登录（省略时保持现值）
 	LoginAgreementEnabled            bool                         `json:"login_agreement_enabled"`
 	LoginAgreementMode               string                       `json:"login_agreement_mode"`
 	LoginAgreementUpdatedAt          string                       `json:"login_agreement_updated_at"`
@@ -943,6 +949,17 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		// 尝试启用 TOTP，检查加密密钥是否已手动配置
 		if !h.settingService.IsTotpEncryptionKeyConfigured() {
 			response.BadRequest(c, "Cannot enable TOTP: TOTP_ENCRYPTION_KEY environment variable must be configured first. Generate a key with 'openssl rand -hex 32' and set it in your environment.")
+			return
+		}
+	}
+	passkeyEnabled := previousSettings.PasskeyEnabled
+	if req.PasskeyEnabled != nil {
+		passkeyEnabled = *req.PasskeyEnabled
+	}
+	if passkeyEnabled {
+		configured, _, _ := h.settingService.PasskeyConfiguration()
+		if !configured {
+			response.BadRequest(c, "Passkey sign-in requires a valid WebAuthn RP ID and allowed HTTPS origins in the deployment configuration")
 			return
 		}
 	}
@@ -1659,6 +1676,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		FrontendURL:                      req.FrontendURL,
 		InvitationCodeEnabled:            req.InvitationCodeEnabled,
 		TotpEnabled:                      req.TotpEnabled,
+		PasskeyEnabled:                   passkeyEnabled,
 		LoginAgreementEnabled:            req.LoginAgreementEnabled,
 		LoginAgreementMode:               loginAgreementMode,
 		LoginAgreementUpdatedAt:          loginAgreementUpdatedAt,
@@ -2189,6 +2207,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if updatedPaymentCfg == nil {
 		updatedPaymentCfg = &service.PaymentConfig{}
 	}
+	passkeyConfigured, passkeyRPID, passkeyRPOrigins := h.settingService.PasskeyConfiguration()
 
 	payload := dto.SystemSettings{
 		RegistrationEnabled:                        updatedSettings.RegistrationEnabled,
@@ -2200,6 +2219,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		InvitationCodeEnabled:                      updatedSettings.InvitationCodeEnabled,
 		TotpEnabled:                                updatedSettings.TotpEnabled,
 		TotpEncryptionKeyConfigured:                h.settingService.IsTotpEncryptionKeyConfigured(),
+		PasskeyEnabled:                             updatedSettings.PasskeyEnabled,
+		PasskeyConfigured:                          passkeyConfigured,
+		PasskeyRPID:                                passkeyRPID,
+		PasskeyRPOrigins:                           passkeyRPOrigins,
 		LoginAgreementEnabled:                      updatedSettings.LoginAgreementEnabled,
 		LoginAgreementMode:                         updatedSettings.LoginAgreementMode,
 		LoginAgreementUpdatedAt:                    updatedSettings.LoginAgreementUpdatedAt,

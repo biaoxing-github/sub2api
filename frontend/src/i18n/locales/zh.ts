@@ -402,6 +402,10 @@ export default {
     signInToAccount: '登录您的账户以继续',
     signIn: '登录',
     signingIn: '登录中...',
+    passkeySignIn: '使用 Passkey 登录',
+    passkeySigningIn: '正在等待 Passkey...',
+    passkeyCancelled: '已取消 Passkey 登录。',
+    passkeyFailed: 'Passkey 登录失败，请重试。',
     createAccount: '创建账户',
     signUpToStart: '注册以开始使用 {siteName}',
     signUp: '注册',
@@ -1272,6 +1276,31 @@ export default {
     passwordTooShort: '密码至少需要 8 个字符',
     passwordChangeSuccess: '密码修改成功',
     passwordChangeFailed: '密码修改失败',
+    passkey: {
+      title: 'Passkey',
+      description: '使用面容 ID、触控 ID、Windows Hello 或安全密钥免密码登录。',
+      add: '添加 Passkey',
+      continue: '创建 Passkey',
+      name: 'Passkey 名称',
+      namePlaceholder: '例如：MacBook 触控 ID',
+      passwordPlaceholder: '输入当前登录密码以确认',
+      empty: '尚未添加任何 Passkey。',
+      synced: '已同步',
+      createdAt: '创建于 {date}',
+      lastUsed: '上次使用 {date}',
+      featureDisabled: '管理员尚未配置 Passkey 功能。',
+      unsupported: '当前浏览器或设备不支持 Passkey。',
+      loadFailed: '加载 Passkey 失败。',
+      added: 'Passkey 已添加。',
+      addFailed: '添加 Passkey 失败。',
+      renamePrompt: '请输入新的 Passkey 名称',
+      renamed: 'Passkey 已重命名。',
+      renameFailed: '重命名 Passkey 失败。',
+      deleteTitle: '删除 Passkey',
+      deleteConfirm: '删除“{name}”？删除后将无法再使用它登录。',
+      deleted: 'Passkey 已删除。',
+      deleteFailed: '删除 Passkey 失败。'
+    },
     // TOTP 2FA
     totp: {
       title: '双因素认证 (2FA)',
@@ -6592,6 +6621,15 @@ export default {
         totpHint: '允许用户使用 Google Authenticator 等应用进行二次验证',
         totpKeyNotConfigured:
           '请先在环境变量中配置 TOTP_ENCRYPTION_KEY。使用命令 openssl rand -hex 32 生成密钥。'
+      },
+      security: {
+        passkey: 'Passkey 登录',
+        passkeyHint: '当依赖方配置有效时，允许无密码登录及用户自行管理 Passkey。',
+        passkeyConfigured: 'WebAuthn 依赖方配置有效。',
+        passkeyNotConfigured: '请先配置有效的 RP ID 与允许的 HTTPS 来源，再启用 Passkey 登录。',
+        passkeyRPID: 'RP ID',
+        passkeyOrigins: '允许的 HTTPS 来源',
+        passkeyValueNotConfigured: '未配置'
       },
       turnstile: {
         title: 'Cloudflare Turnstile',
