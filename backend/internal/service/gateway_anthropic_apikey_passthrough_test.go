@@ -938,16 +938,26 @@ func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name string
-		body string
+		name                       string
+		body                       string
+		wantOriginalSystem         string
+		wantOriginalSystemCacheTTL string
 	}{
 		{
-			name: "system array",
-			body: `{"model":"claude-3-5-sonnet-latest","system":[{"type":"text","text":"x-anthropic-billing-header keep"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`,
+			name:               "system array",
+			body:               `{"model":"claude-3-5-sonnet-latest","system":[{"type":"text","text":"x-anthropic-billing-header keep"}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`,
+			wantOriginalSystem: "x-anthropic-billing-header keep",
 		},
 		{
-			name: "system string",
-			body: `{"model":"claude-3-5-sonnet-latest","system":"x-anthropic-billing-header keep","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`,
+			name:               "system string",
+			body:               `{"model":"claude-3-5-sonnet-latest","system":"x-anthropic-billing-header keep","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`,
+			wantOriginalSystem: "x-anthropic-billing-header keep",
+		},
+		{
+			name:                       "system array with cache breakpoint",
+			body:                       `{"model":"claude-haiku-4-5","system":[{"type":"text","text":"Pi project instructions","cache_control":{"type":"ephemeral","ttl":"1h"}}],"messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`,
+			wantOriginalSystem:         "Pi project instructions",
+			wantOriginalSystemCacheTTL: "1h",
 		},
 	}
 
@@ -1022,7 +1032,13 @@ func TestGatewayService_AnthropicOAuth_ForwardPreservesBillingHeaderSystemBlock(
 			require.True(t, messages.IsArray())
 			firstMsg := messages.Array()[0]
 			require.Equal(t, "user", firstMsg.Get("role").String())
-			require.Contains(t, firstMsg.Get("content.0.text").String(), "x-anthropic-billing-header keep")
+			require.Contains(t, firstMsg.Get("content.0.text").String(), tt.wantOriginalSystem)
+			if tt.wantOriginalSystemCacheTTL != "" {
+				require.Equal(t, "ephemeral", firstMsg.Get("content.0.cache_control.type").String())
+				require.Equal(t, tt.wantOriginalSystemCacheTTL, firstMsg.Get("content.0.cache_control.ttl").String())
+			} else {
+				require.False(t, firstMsg.Get("content.0.cache_control").Exists())
+			}
 		})
 	}
 }
