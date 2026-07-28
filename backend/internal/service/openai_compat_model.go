@@ -101,3 +101,28 @@ func openAIReasoningEffortToClaudeOutputEffort(effort string) string {
 		return ""
 	}
 }
+
+// normalizeOpenAIReasoningEffortForModel 根据最终上游模型归一化推理强度。
+// GPT-5.6 原生支持 max，其他模型继续沿用通用的 xhigh 兼容语义。
+func normalizeOpenAIReasoningEffortForModel(raw, model string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), "max") {
+		if isOpenAIGPT56Model(model) {
+			return "max"
+		}
+		return "xhigh"
+	}
+	return normalizeOpenAIReasoningEffort(raw)
+}
+
+// openAICompatAnthropicReasoningEffort 在最终上游模型确定后生成桥接请求的推理强度。
+// Anthropic 的 max 通常转换为 OpenAI xhigh，但 GPT-5.6 的 Responses 与 Chat Completions
+// 均可直接接收 max，因此这里必须依据最终映射模型再次校正。
+func openAICompatAnthropicReasoningEffort(req *apicompat.AnthropicRequest, upstreamModel, convertedEffort string) string {
+	if req == nil || req.OutputConfig == nil || !strings.EqualFold(strings.TrimSpace(req.OutputConfig.Effort), "max") {
+		return convertedEffort
+	}
+	if normalized := normalizeOpenAIReasoningEffortForModel(req.OutputConfig.Effort, upstreamModel); normalized != "" {
+		return normalized
+	}
+	return convertedEffort
+}
