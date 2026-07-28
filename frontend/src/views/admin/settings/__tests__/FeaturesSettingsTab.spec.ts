@@ -37,6 +37,9 @@ const mountTab = () => {
     channel_monitor_enabled: true,
     channel_monitor_default_interval_seconds: 60,
     available_channels_enabled: false,
+    model_plaza_enabled: false,
+    model_plaza_require_auth: false,
+    model_plaza_description: "",
     risk_control_enabled: false,
     affiliate_enabled: true,
     affiliate_rebate_rate: 20,
@@ -123,6 +126,7 @@ describe("FeaturesSettingsTab", () => {
     const { wrapper, form, callbacks } = mountTab();
 
     expect(wrapper.text()).toContain("admin.settings.features.channelMonitor.title");
+    expect(wrapper.text()).toContain("admin.settings.features.modelPlaza.title");
     expect(wrapper.text()).toContain("admin.settings.features.affiliate.title");
     expect(wrapper.text()).toContain("demo@example.com");
 

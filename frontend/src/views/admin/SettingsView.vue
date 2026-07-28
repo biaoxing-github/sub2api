@@ -806,6 +806,10 @@ const form = reactive<SettingsForm>({
   channel_monitor_default_interval_seconds: 60,
   // Available Channels feature switch
   available_channels_enabled: false,
+  // 模型广场功能开关与页面说明。
+  model_plaza_enabled: false,
+  model_plaza_require_auth: false,
+  model_plaza_description: "",
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: false,
 });
@@ -2048,6 +2052,10 @@ async function saveSettings() {
         Number(form.channel_monitor_default_interval_seconds) || 60,
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      // 模型广场功能开关与页面说明。
+      model_plaza_enabled: form.model_plaza_enabled,
+      model_plaza_require_auth: form.model_plaza_require_auth,
+      model_plaza_description: form.model_plaza_description,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
     };

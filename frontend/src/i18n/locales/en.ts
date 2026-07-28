@@ -361,6 +361,7 @@ export default {
     groups: 'Groups',
     channels: 'Channels',
     availableChannels: 'Available Channels',
+    modelPlaza: 'Model Plaza',
     subscriptions: 'Subscriptions',
     accounts: 'Accounts',
     accountSchedulingPool: 'Scheduling Pool',
@@ -1137,6 +1138,54 @@ export default {
       intervals: 'Tiered Pricing',
       unitPerMillion: '/ 1M tokens',
       unitPerRequest: '/ request'
+    }
+  },
+
+  // Model Plaza (public group/model pricing showcase)
+  modelPlaza: {
+    title: 'Model Plaza',
+    description: 'Browse available models and pricing by group',
+    loading: 'Loading...',
+    empty: 'No groups to display',
+    loadFailed: 'Failed to load model plaza',
+    noSearchResult: 'No matching models',
+    anonymousHint: 'Sign in to see your exclusive groups and personal rates',
+    filters: {
+      platformLabel: 'Platform',
+      groupLabel: 'Group',
+      rateLabel: 'Rate',
+      modelLabel: 'Model',
+      searchPlaceholder: 'Search models',
+      all: 'All'
+    },
+    badges: {
+      exclusive: 'Exclusive',
+      subscription: 'Subscription'
+    },
+    detail: {
+      noModels: 'No models configured for this group',
+      noPricing: 'Pricing not configured',
+      peakNote: 'Peak hours {window}: billing rate x{multiplier}'
+    },
+    table: {
+      model: 'Model',
+      input: 'Input',
+      output: 'Output',
+      cache: 'Cache',
+      cacheWrite: 'Write',
+      cacheRead: 'Read',
+      paidPrice: 'Your Price (Discounted)',
+      officialPrice: 'Official Price',
+      rate: 'Rate',
+      unitPerMillion: '$ / 1M tokens',
+      perUnitRequest: '/ request',
+      perUnitImage: '/ image',
+      perRequest: 'Per request',
+      perImage: 'Per image'
+    },
+    nav: {
+      login: 'Sign In',
+      backToDashboard: 'Back to Console'
     }
   },
 
@@ -6376,6 +6425,16 @@ export default {
           configureLink: 'Configure model pricing in Channel Management > Channel Pricing',
           enabled: 'Enable Available Channels',
           enabledHint: 'When off, the sidebar entry is hidden and the endpoint returns an empty list.',
+        },
+        modelPlaza: {
+          title: 'Model Plaza',
+          description: 'A public page showcasing available models and pricing by group. Disabled by default.',
+          enabled: 'Enable Model Plaza',
+          enabledHint: 'When enabled, an entry appears in the header and the page is reachable at /model-plaza.',
+          requireAuth: 'Require sign-in to access',
+          requireAuthHint: 'When on, anonymous visitors are redirected to the login page; when off, anonymous visitors only see non-exclusive groups.',
+          priceDescription: 'Pricing notes (Markdown)',
+          priceDescriptionHint: 'Rendered at the top of the plaza page for billing rules, exchange rates, or promotions.',
         },
         riskControl: {
           title: 'Risk Control',

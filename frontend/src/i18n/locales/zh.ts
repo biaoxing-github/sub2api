@@ -361,6 +361,7 @@ export default {
     groups: '分组管理',
     channels: '渠道管理',
     availableChannels: '可用渠道',
+    modelPlaza: '模型广场',
     subscriptions: '订阅管理',
     accounts: '账号管理',
     accountSchedulingPool: '调度池',
@@ -1142,6 +1143,54 @@ export default {
       intervals: '阶梯定价',
       unitPerMillion: '/ 1M token',
       unitPerRequest: '/ 次'
+    }
+  },
+
+  // 模型广场（公开的分组和模型定价展示）
+  modelPlaza: {
+    title: '模型广场',
+    description: '按分组浏览可用模型与价格',
+    loading: '加载中...',
+    empty: '暂无可展示的分组',
+    loadFailed: '加载模型广场失败',
+    noSearchResult: '没有匹配的模型',
+    anonymousHint: '登录后可查看你的专属分组与专属倍率',
+    filters: {
+      platformLabel: '平台',
+      groupLabel: '分组',
+      rateLabel: '倍率',
+      modelLabel: '模型',
+      searchPlaceholder: '搜索模型名称',
+      all: '全部'
+    },
+    badges: {
+      exclusive: '专属分组',
+      subscription: '订阅'
+    },
+    detail: {
+      noModels: '该分组暂未配置模型',
+      noPricing: '未配置定价',
+      peakNote: '高峰时段 {window} 计费倍率 x{multiplier}'
+    },
+    table: {
+      model: '模型',
+      input: '输入',
+      output: '输出',
+      cache: '缓存',
+      cacheWrite: '写入',
+      cacheRead: '读取',
+      paidPrice: '实付价格(折后)',
+      officialPrice: '官方价格',
+      rate: '折扣倍率',
+      unitPerMillion: '$ / 1M token',
+      perUnitRequest: '/ 次',
+      perUnitImage: '/ 张',
+      perRequest: '按次计费',
+      perImage: '按图片计费'
+    },
+    nav: {
+      login: '登录',
+      backToDashboard: '回到后台'
     }
   },
 
@@ -6530,6 +6579,16 @@ export default {
           configureLink: '前往 渠道管理 > 渠道定价 配置模型价格',
           enabled: '启用可用渠道',
           enabledHint: '关闭后用户端侧边栏入口隐藏，接口返回空数组。',
+        },
+        modelPlaza: {
+          title: '模型广场',
+          description: '以分组为单位向访客展示可用模型与价格的公开页面。默认关闭。',
+          enabled: '启用模型广场',
+          enabledHint: '开启后顶栏显示入口，页面可通过 /model-plaza 独立访问。',
+          requireAuth: '需要登录才可访问',
+          requireAuthHint: '开启后未登录访问将跳转登录页；关闭则匿名访客仅展示非专属分组。',
+          priceDescription: '价格说明（Markdown）',
+          priceDescriptionHint: '展示在模型广场页面顶部，可用于说明计费规则、汇率或优惠活动。',
         },
         riskControl: {
           title: '风控中心',
