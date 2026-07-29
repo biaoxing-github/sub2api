@@ -19,6 +19,10 @@ const (
 	newAPIRedeemDefaultMihomoSelector      = "🚀 节点选择"
 	newAPIRedeemDefaultMihomoDelayURL      = "https://www.cun.ai/api/status"
 	newAPIRedeemDefaultExitIPURL           = "https://api.ipify.org"
+	// newAPIRedeemMihomoGroupDelayTimeoutMillis 是 Controller 批量测速的单节点超时。
+	newAPIRedeemMihomoGroupDelayTimeoutMillis = 5000
+	// newAPIRedeemMihomoSwitchTimeout 限制一次限流切换占用全局网络闸门的最长时间。
+	newAPIRedeemMihomoSwitchTimeout = 20 * time.Second
 )
 
 // newAPIRedeemNetworkIdentity 表示一次兑换请求实际使用的节点和出口 IP。
@@ -121,20 +125,26 @@ func (client *newAPIRedeemMihomoClient) inspect(ctx context.Context) (newAPIRede
 	return newAPIRedeemNetworkIdentity{Node: node, ExitIP: exitIP}, nil
 }
 
-// switchExit 逐个测试未使用节点，只有检测到全新出口 IP 时才接受切换结果。
+// switchExit 通过 Controller 批量测速排序未使用节点，只有检测到全新出口 IP 时才接受切换结果。
 func (client *newAPIRedeemMihomoClient) switchExit(ctx context.Context, state *newAPIRedeemNetworkState) (newAPIRedeemNetworkSwitch, error) {
+	switchCtx, cancel := context.WithTimeout(ctx, newAPIRedeemMihomoSwitchTimeout)
+	defer cancel()
 	if state.Current.Node == "" || state.Current.ExitIP == "" {
-		identity, err := client.inspect(ctx)
+		identity, err := client.inspect(switchCtx)
 		if err != nil {
 			return newAPIRedeemNetworkSwitch{}, err
 		}
 		state.accept(identity)
 	}
-	group, err := client.proxyGroup(ctx)
+	group, err := client.proxyGroup(switchCtx)
 	if err != nil {
 		return newAPIRedeemNetworkSwitch{}, err
 	}
-	proxies, err := client.proxies(ctx)
+	proxies, err := client.proxies(switchCtx)
+	if err != nil {
+		return newAPIRedeemNetworkSwitch{}, err
+	}
+	delays, err := client.groupDelays(switchCtx)
 	if err != nil {
 		return newAPIRedeemNetworkSwitch{}, err
 	}
@@ -151,6 +161,10 @@ func (client *newAPIRedeemMihomoClient) switchExit(ctx context.Context, state *n
 		if !isNewAPIRedeemConcreteMihomoNode(newAPIRedeemString(proxy["type"])) {
 			continue
 		}
+		delay := newAPIRedeemInt64(delays[name])
+		if delay <= 0 {
+			continue
+		}
 		candidates = append(candidates, name)
 	}
 	if len(candidates) == 0 {
@@ -163,10 +177,7 @@ func (client *newAPIRedeemMihomoClient) switchExit(ctx context.Context, state *n
 	}
 	available := make([]delayedNode, 0, len(candidates))
 	for _, candidate := range candidates {
-		delay, delayErr := client.delay(ctx, candidate)
-		if delayErr != nil || delay <= 0 {
-			continue
-		}
+		delay := newAPIRedeemInt64(delays[candidate])
 		available = append(available, delayedNode{name: candidate, delay: delay})
 	}
 	sort.SliceStable(available, func(i, j int) bool { return available[i].delay < available[j].delay })
@@ -176,24 +187,27 @@ func (client *newAPIRedeemMihomoClient) switchExit(ctx context.Context, state *n
 
 	from := state.Current
 	for _, candidate := range available {
+		if err := switchCtx.Err(); err != nil {
+			return newAPIRedeemNetworkSwitch{}, err
+		}
 		state.UsedNodes[candidate.name] = struct{}{}
-		if err := client.selectNode(ctx, candidate.name); err != nil {
+		if err := client.selectNode(switchCtx, candidate.name); err != nil {
 			continue
 		}
 		for attempt := 0; attempt < client.pollAttempts; attempt++ {
 			if attempt > 0 {
 				select {
-				case <-ctx.Done():
-					return newAPIRedeemNetworkSwitch{}, ctx.Err()
+				case <-switchCtx.Done():
+					return newAPIRedeemNetworkSwitch{}, switchCtx.Err()
 				case <-time.After(client.pollInterval):
 				}
 			}
-			exitIP, exitErr := client.exitIP(ctx)
+			exitIP, exitErr := client.exitIP(switchCtx)
 			if exitErr != nil || exitIP == "" {
 				continue
 			}
 			if _, used := state.UsedIPs[exitIP]; used {
-				break
+				continue
 			}
 			identity := newAPIRedeemNetworkIdentity{Node: candidate.name, ExitIP: exitIP}
 			state.accept(identity)
@@ -221,17 +235,15 @@ func (client *newAPIRedeemMihomoClient) proxies(ctx context.Context) (map[string
 	return newAPIRedeemMap(payload["proxies"]), nil
 }
 
-func (client *newAPIRedeemMihomoClient) delay(ctx context.Context, node string) (int64, error) {
-	path := "/proxies/" + url.PathEscape(node) + "/delay?url=" + url.QueryEscape(client.delayURL) + "&timeout=5000"
-	payload, err := client.controllerJSON(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return 0, err
-	}
-	delay := newAPIRedeemInt64(payload["delay"])
-	if delay <= 0 {
-		return 0, fmt.Errorf("节点 %s 延迟测试失败", node)
-	}
-	return delay, nil
+// groupDelays 使用 Mihomo 官方分组测速接口一次性获取所有节点延迟，避免逐节点串行请求拖住全局切换锁。
+func (client *newAPIRedeemMihomoClient) groupDelays(ctx context.Context) (map[string]any, error) {
+	path := fmt.Sprintf(
+		"/group/%s/delay?url=%s&timeout=%d",
+		url.PathEscape(client.selectorGroup),
+		url.QueryEscape(client.delayURL),
+		newAPIRedeemMihomoGroupDelayTimeoutMillis,
+	)
+	return client.controllerJSON(ctx, http.MethodGet, path, nil)
 }
 
 func (client *newAPIRedeemMihomoClient) selectNode(ctx context.Context, node string) error {

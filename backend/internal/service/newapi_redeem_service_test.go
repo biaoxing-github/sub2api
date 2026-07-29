@@ -520,6 +520,8 @@ func TestNewAPIRedeemServiceSwitchesToUniqueNodeAndExitIPThenRetriesSameCode(t *
 		currentNode   = "node-a"
 		topupRequests []string
 		switchedNodes []string
+		groupDelays   int
+		ipHitsByNode  = map[string]int{}
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		mu.Lock()
@@ -539,6 +541,9 @@ func TestNewAPIRedeemServiceSwitchesToUniqueNodeAndExitIPThenRetriesSameCode(t *
 			_, _ = writer.Write([]byte(`{"success":true,"message":"充值成功"}`))
 		case strings.HasPrefix(request.URL.Path, "/proxies/") && strings.HasSuffix(request.URL.Path, "/delay"):
 			_, _ = writer.Write([]byte(`{"delay":20}`))
+		case request.URL.Path == "/group/test-group/delay":
+			groupDelays++
+			_, _ = writer.Write([]byte(`{"node-a":30,"node-b":10,"node-c":20}`))
 		case request.URL.Path == "/proxies/test-group" && request.Method == http.MethodGet:
 			_, _ = writer.Write([]byte(fmt.Sprintf(`{"name":"test-group","type":"Selector","now":%q,"all":["node-a","node-b","node-c"]}`, currentNode)))
 		case request.URL.Path == "/proxies/test-group" && request.Method == http.MethodPut:
@@ -552,8 +557,9 @@ func TestNewAPIRedeemServiceSwitchesToUniqueNodeAndExitIPThenRetriesSameCode(t *
 		case request.URL.Path == "/proxies":
 			_, _ = writer.Write([]byte(`{"proxies":{"node-a":{"type":"Trojan"},"node-b":{"type":"Trojan"},"node-c":{"type":"Trojan"}}}`))
 		case request.URL.Path == "/ip":
+			ipHitsByNode[currentNode]++
 			ip := "1.1.1.1"
-			if currentNode == "node-c" {
+			if currentNode == "node-b" && ipHitsByNode[currentNode] >= 2 {
 				ip = "2.2.2.2"
 			}
 			_, _ = writer.Write([]byte(ip))
@@ -587,15 +593,16 @@ func TestNewAPIRedeemServiceSwitchesToUniqueNodeAndExitIPThenRetriesSameCode(t *
 	require.Equal(t, "completed", completed.Status)
 	require.Equal(t, 2, completed.Attempts)
 	require.Equal(t, 1, completed.SwitchCount)
-	require.Equal(t, "node-c", completed.CurrentNode)
+	require.Equal(t, "node-b", completed.CurrentNode)
 	require.Equal(t, "2.2.2.2", completed.CurrentExitIP)
 	require.Equal(t, []string{"same-code", "same-code"}, topupRequests)
-	require.Equal(t, []string{"node-b", "node-c"}, switchedNodes)
+	require.Equal(t, []string{"node-b"}, switchedNodes)
+	require.Equal(t, 1, groupDelays)
 	require.Equal(t, "node-a", completed.Logs[0].Node)
 	require.Equal(t, "1.1.1.1", completed.Logs[0].ExitIP)
-	require.Equal(t, "node-c", completed.Logs[0].SwitchedNode)
+	require.Equal(t, "node-b", completed.Logs[0].SwitchedNode)
 	require.Equal(t, "2.2.2.2", completed.Logs[0].SwitchedExitIP)
-	require.Equal(t, "node-c", completed.Logs[1].Node)
+	require.Equal(t, "node-b", completed.Logs[1].Node)
 	require.Equal(t, "2.2.2.2", completed.Logs[1].ExitIP)
 }
 
@@ -626,6 +633,8 @@ func TestNewAPIRedeemServicePausesAndRetriesCurrentFileAfterExitExhaustion(t *te
 			_, _ = writer.Write([]byte(`{"success":true,"message":"充值成功"}`))
 		case strings.HasPrefix(request.URL.Path, "/proxies/") && strings.HasSuffix(request.URL.Path, "/delay"):
 			_, _ = writer.Write([]byte(`{"delay":20}`))
+		case request.URL.Path == "/group/test-group/delay":
+			_, _ = writer.Write([]byte(`{"node-a":20,"node-b":20}`))
 		case request.URL.Path == "/proxies/test-group" && request.Method == http.MethodGet:
 			inspectionHits++
 			_, _ = writer.Write([]byte(fmt.Sprintf(`{"name":"test-group","type":"Selector","now":%q,"all":["node-a","node-b"]}`, currentNode)))
@@ -698,6 +707,8 @@ func TestNewAPIRedeemServiceCancelsImmediatelyDuringNetworkRetryDelay(t *testing
 			_, _ = writer.Write([]byte(`{"success":false,"message":"请求过于频繁"}`))
 		case strings.HasPrefix(request.URL.Path, "/proxies/") && strings.HasSuffix(request.URL.Path, "/delay"):
 			_, _ = writer.Write([]byte(`{"delay":20}`))
+		case request.URL.Path == "/group/test-group/delay":
+			_, _ = writer.Write([]byte(`{"node-a":20,"node-b":20}`))
 		case request.URL.Path == "/proxies/test-group" && request.Method == http.MethodGet:
 			_, _ = writer.Write([]byte(fmt.Sprintf(`{"name":"test-group","type":"Selector","now":%q,"all":["node-a","node-b"]}`, currentNode)))
 		case request.URL.Path == "/proxies/test-group" && request.Method == http.MethodPut:
@@ -800,6 +811,8 @@ func TestNewAPIRedeemServiceCoordinatesOneNetworkSwitchForConcurrentRateLimits(t
 			_, _ = writer.Write([]byte(`{"success":false,"message":"兑换码无效"}`))
 		case strings.HasPrefix(request.URL.Path, "/proxies/") && strings.HasSuffix(request.URL.Path, "/delay"):
 			_, _ = writer.Write([]byte(`{"delay":20}`))
+		case request.URL.Path == "/group/test-group/delay":
+			_, _ = writer.Write([]byte(`{"node-a":30,"node-b":10,"node-c":20}`))
 		case request.URL.Path == "/proxies/test-group" && request.Method == http.MethodGet:
 			mu.Lock()
 			node := currentNode
