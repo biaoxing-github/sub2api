@@ -289,3 +289,13 @@
 - 任务：为避免 blue/green 共享状态冲突，切流前通过页面 API 停止 run `24269b8f` 和观察期间新建的 run `0f39aac3`；发布完成时活动任务为 0，未自动重启。
 - 发布：只重建 idle green；候选 61.1 秒和切流后 65.1 秒观察均通过，四入口 health/首页/资源与 401 契约通过，资源哈希一致，green/proxy 关键日志 0。
 - 结果：active green 为 `sub2api:v0.1.166.2`，blue `v0.1.166.1` 保留回滚；PostgreSQL/Redis healthy/restart 0；无 migration、SQL、Git push 或镜像 push。
+
+## 2026-07-29 14:50 +08:00 Devil - 发布 v0.1.166.3 并修复 OpenAI 424 不切号
+
+- 前馈：读取 Obsidian 项目/开发知识库入口、Memory 蓝绿发布清单及项目过程/功能记录；沿用已完成的代码提交、构建和候选部署状态。
+- 根因与修复：HTTP 424 未进入 OpenAI 基础设施故障分类，原生与透传路径直接写回异常；现分类为 `upstream_failed_dependency`，当前账号冷却 30 秒并在写回前触发 handler 切号。
+- 回归：发现首次聚焦命令缺少 `unit` build tag 后核对文件构建条件，使用 `-tags unit` 精确重跑 4 个命名测试，全部通过。
+- 构建身份：`sub2api:v0.1.166.3` 镜像 ID `336b9e8ef21e`，OCI 与二进制匹配提交 `b239a0af8`；归档 SHA-256 `7F5B3E163F59BD62B615BC6F78D372A841C7D7B9A5E75C7959015098631BCB42`。
+- 发布：仅重建 idle blue；候选 61.3 秒观察通过。备份 active.conf 后执行 `nginx -t`，切流至 blue 并 reload。
+- 验证：正式 63.4 秒观察通过，四入口 health 全 200，active 三入口资源哈希一致，blue/proxy 关键日志 0；green/PostgreSQL/Redis healthy/restart 0。
+- 边界：未主动制造生产 424，未执行 migration、SQL、Git push 或镜像 push；原 green `v0.1.166.2` 保留回滚。

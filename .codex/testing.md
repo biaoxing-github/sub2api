@@ -438,3 +438,12 @@
 - LIVE：候选 61.1 秒/13 次和切流后 65.1 秒/13 轮观察通过；四入口 health 200、认证契约 401、静态资源哈希一致、关键日志 0。
 - LIVE：前端版本下拉显示主版本 `v0.1.166` 与镜像版本 `v0.1.166.2`；green active、blue rollback、PostgreSQL、Redis 均 healthy/restart 0。
 - LIMIT：`go test -race` 需要 CGO，本机 `CGO_ENABLED=0` 且无 gcc/clang，未执行 race；普通并发回归已通过。
+
+## 2026-07-29 v0.1.166 吸收、OpenAI 424 切号修复与 v0.1.166.3 - Devil
+
+- PASS：`go test -tags unit ./internal/service -run 'Test(ClassifyOpenAIUpstreamInfrastructureFailure|RateLimitServiceHandleFailedDependencyUsesAccountCooldown|OpenAIForwardFailedDependencyReturnsFailoverBeforeWrite|OpenAIPassthroughFailedDependencyReturnsFailoverBeforeWrite)$' -count=1 -v`，4 个命名测试及分类矩阵全部通过。
+- PASS：回归证明 HTTP 424 分类为 `upstream_failed_dependency`，故障账号冷却 30 秒，原生与透传路径均在写回客户端前返回切号错误。
+- PASS：此前完成 frontend Vitest、typecheck、production build 及后端 server/handler/repository/service/config 编译切片；功能提交 diff check 通过。
+- LIVE：候选 61.3 秒/13 次和切流后 63.4 秒/13 轮观察通过；active 三入口资源哈希一致，blue/proxy 关键日志 0。
+- LIVE：blue active、green rollback、PostgreSQL、Redis 全部 healthy/restart 0。
+- LIMIT：线上窗口未自然出现 424，未对生产上游故意注入故障；无 migration、SQL、Git push 或镜像 push。

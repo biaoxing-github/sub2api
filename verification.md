@@ -5423,3 +5423,13 @@ v0.1.149 拉取结果：
 - PASS：管理端版本下拉显示 `v0.1.166` / `v0.1.166.2`；blue 回滚、PostgreSQL、Redis healthy/restart 0。
 - INFO：部署前停止 run `24269b8f`，切流前停止观察期间新建的 run `0f39aac3`；最终活动任务为 0，未自动重启兑换。
 - LIMIT：本机 `CGO_ENABLED=0` 且无 gcc/clang，未执行 race 测试；未执行数据库写入、Git push 或镜像 push。
+
+## 2026-07-29 14:50 - v0.1.166 吸收、OpenAI 424 切号修复与 v0.1.166.3 发布（Devil）
+
+- PASS：功能提交 `b239a0af8` 包含 v166 吸收内容和 OpenAI 424 切号修复，不含 migration/schema 文件。
+- PASS：424 分类、30 秒账号冷却、原生 Forward 和透传 Forward 的 4 个聚焦测试使用 `-tags unit` 重跑通过；切号前 response writer 保持未提交。
+- PASS：镜像从提交归档构建，归档 SHA-256 `7F5B3E163F59BD62B615BC6F78D372A841C7D7B9A5E75C7959015098631BCB42`；镜像 ID、OCI 标签和二进制版本匹配 `v0.1.166.3` / `b239a0af8`。
+- PASS：idle blue 候选 smoke 通过，独立 61.3 秒/13 次观察均为 200、healthy/restart 0、关键日志 0。
+- PASS：`nginx -t` 成功后 upstream 切到 blue；`8080`、`18081`、`18083` 主资源路径和 SHA-256 一致。
+- PASS：切流后独立 63.4 秒/13 轮四入口 health 全为 200；blue/proxy 关键日志 0；green、PostgreSQL、Redis healthy/restart 0。
+- LIMIT：未向生产上游主动注入 424；线上窗口未自然触发 424。未执行数据库写入、Git push 或镜像 push。
