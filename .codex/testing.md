@@ -427,3 +427,14 @@
 - PASS：当前迁移文件扫描未发现 `openai_live`、`liveattestation`、Ollama、`batch_image`、migration 188/189 或 `allow_live` 内容。
 - LIMITED：完整 service 测试仍有 3 个客户端身份断言失败（API Key UA 的 Node.js/iOS 14 差异、OAuth originator 的 `codex_cli_rs`/`Codex Desktop` 差异）。已在未应用 165 工作树改动的 detached HEAD `8b7ec536c` 最小复现，属于本轮前既有基线；165 聚焦测试和编译门禁均通过。
 - 边界：未写生产数据库、未构建镜像、未部署、未推送远端。
+
+## 2026-07-29 Mihomo 切换失败并发扩散修复与 v0.1.166.2 - Devil
+
+- PASS：`go test ./internal/service -run '^TestNewAPIRedeem(Service|RunNetwork)' -count=1`，0.406 秒。
+- PASS：`go test ./cmd/server ./internal/handler ./internal/service -run '^$' -count=1`，三个编译切片通过。
+- PASS：`TestNewAPIRedeemRunNetworkSharesSwitchFailureAcrossWaiters` 覆盖 8 个并发等待者共享同一次 Controller HTTP 503，调用计数为 1。
+- PASS：`gofmt -d backend/internal/service/newapi_redeem_parallel.go backend/internal/service/newapi_redeem_service_test.go` 无输出；`git diff --cached --check` 和功能提交 diff check 通过。
+- PASS：Docker 构建完成 `vue-tsc -b && vite build`、Go embed 编译；镜像 `sub2api:v0.1.166.2` identity 匹配提交 `602ac96f9`。
+- LIVE：候选 61.1 秒/13 次和切流后 65.1 秒/13 轮观察通过；四入口 health 200、认证契约 401、静态资源哈希一致、关键日志 0。
+- LIVE：前端版本下拉显示主版本 `v0.1.166` 与镜像版本 `v0.1.166.2`；green active、blue rollback、PostgreSQL、Redis 均 healthy/restart 0。
+- LIMIT：`go test -race` 需要 CGO，本机 `CGO_ENABLED=0` 且无 gcc/clang，未执行 race；普通并发回归已通过。

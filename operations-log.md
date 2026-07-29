@@ -279,3 +279,13 @@
 - 验证：service 聚焦、repository 全量 unit、server/handler/repository/service 编译、Vitest 13/13、Vue typecheck、production build 和 diff check 通过；`backend/internal/web/dist` 无变更。
 - 基线：完整 service 的 3 个客户端身份断言已在 detached HEAD `8b7ec536c` 复现，本轮不扩大范围处理。
 - 边界：本轮不执行数据库迁移、镜像构建、部署、Git push；提交后恢复 `stash@{0}` 并保持其中用户工作未提交。
+
+## 2026-07-29 14:24 +08:00 Devil - 修复节点切换失败并发扩散并发布 v0.1.166.2
+
+- 根因：切换 leader 在 20 秒内失败时没有推进出口代次；等待全局切换锁的同代 worker 在文件调度器取消 context 后继续依次请求 Controller，集中产生 `/proxies/... context canceled`。
+- 修复：失败也推进 generation，并缓存同代失败结果；锁内先检查 context，取消 follower 不再记录误导性切换失败；提交 `602ac96f9` 只包含实现与回归测试两个文件。
+- 验证：NewAPI 兑换聚焦测试和 server/handler/service 编译通过；8 个并发等待者的 Controller 调用从 8 次收敛为 1 次；`gofmt -d`、cached diff check 通过。
+- 构建：从提交归档构建 `sub2api:v0.1.166.2`，归档 SHA-256 `C0F0D8ADD425769CD60B4EC936DEA2D5DDB32C9FF0A46C9D91092AD80E2B1F62`，镜像 ID `6d94564ce7a9`，OCI 与二进制身份匹配。
+- 任务：为避免 blue/green 共享状态冲突，切流前通过页面 API 停止 run `24269b8f` 和观察期间新建的 run `0f39aac3`；发布完成时活动任务为 0，未自动重启。
+- 发布：只重建 idle green；候选 61.1 秒和切流后 65.1 秒观察均通过，四入口 health/首页/资源与 401 契约通过，资源哈希一致，green/proxy 关键日志 0。
+- 结果：active green 为 `sub2api:v0.1.166.2`，blue `v0.1.166.1` 保留回滚；PostgreSQL/Redis healthy/restart 0；无 migration、SQL、Git push 或镜像 push。

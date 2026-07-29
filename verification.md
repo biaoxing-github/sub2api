@@ -5411,3 +5411,15 @@ v0.1.149 拉取结果：
 - PASS：未迁入 ChatGPT Live、Apple DeviceCheck、Ollama 请求驱动刷新、批量图片、图片质量日志、`allow_live` 或 migrations 188/189。
 - LIMITED：完整 service 的 3 个身份断言在 detached HEAD `8b7ec536c` 同样失败，已证明不是 165 迁移引入；本轮不修改该既有客户端身份测试基线。
 - 边界：只完成源码迁移、自动化验证和本地提交；未执行数据库 migration、镜像构建、蓝绿部署或 Git push。
+
+## 2026-07-29 14:24 - Mihomo 切换失败并发扩散修复与 v0.1.166.2 发布（Devil）
+
+- PASS：`go test ./internal/service -run '^TestNewAPIRedeem(Service|RunNetwork)' -count=1` 通过；新增测试覆盖 8 个同代等待者共享一次 Controller 切换失败。
+- PASS：`go test ./cmd/server ./internal/handler ./internal/service -run '^$' -count=1` 通过；`gofmt -d` 无输出，功能提交 diff check 通过。
+- PASS：功能提交 `602ac96f9` 仅包含 `newapi_redeem_parallel.go` 与对应 service 测试，不含 migration/schema 文件。
+- PASS：镜像从提交归档构建；归档 SHA-256 `C0F0D8ADD425769CD60B4EC936DEA2D5DDB32C9FF0A46C9D91092AD80E2B1F62`，镜像 ID `sha256:6d94564ce7a9cd1cf3b3709d02f14a1ac19b7032aaff08ac1f0ab66e09e4d3b5`，OCI 与二进制身份一致。
+- PASS：idle green 候选 smoke 通过，独立 61.1 秒/13 次观察全部 200、healthy/restart 0、关键日志 0。
+- PASS：切流后 `8080`、`18081`、`18082`、`18083` 独立 65.1 秒/13 轮全部 200；green/proxy 关键日志 0；四入口资源 SHA-256 一致。
+- PASS：管理端版本下拉显示 `v0.1.166` / `v0.1.166.2`；blue 回滚、PostgreSQL、Redis healthy/restart 0。
+- INFO：部署前停止 run `24269b8f`，切流前停止观察期间新建的 run `0f39aac3`；最终活动任务为 0，未自动重启兑换。
+- LIMIT：本机 `CGO_ENABLED=0` 且无 gcc/clang，未执行 race 测试；未执行数据库写入、Git push 或镜像 push。
