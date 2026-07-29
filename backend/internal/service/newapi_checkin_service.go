@@ -1588,6 +1588,116 @@ func (s *NewAPICheckinService) SetSiteEnabled(ctx context.Context, siteName stri
 	}, nil
 }
 
+// CreateSite 新增一个空平台，账号由后续 CreateAccount 按平台类型写入。
+func (s *NewAPICheckinService) CreateSite(ctx context.Context, name, provider, baseURL string) (NewAPICheckinConfigSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	name = cleanNewAPIText(name)
+	provider = strings.ToLower(cleanNewAPIText(provider))
+	if name == "" {
+		return NewAPICheckinConfigSummary{}, errors.New("平台名称不能为空")
+	}
+	if provider != newAPICheckinProviderNewAPI && provider != newAPICheckinProviderSub2API {
+		return NewAPICheckinConfigSummary{}, errors.New("provider 仅支持 newapi 或 sub2api")
+	}
+	normalizedURL, err := normalizeNewAPICheckinSiteURL(baseURL)
+	if err != nil {
+		return NewAPICheckinConfigSummary{}, err
+	}
+	cfg, err := s.loadConfigLocked(ctx)
+	if err != nil {
+		return NewAPICheckinConfigSummary{}, err
+	}
+	if _, index := findNewAPISite(cfg, name); index >= 0 {
+		return NewAPICheckinConfigSummary{}, fmt.Errorf("平台已存在: %s", name)
+	}
+	cfg.Sites = append(cfg.Sites, NewAPICheckinSite{
+		Name:                     name,
+		Provider:                 provider,
+		Enabled:                  true,
+		BackgroundCheckinEnabled: true,
+		BaseURL:                  normalizedURL,
+		SiteStatus:               defaultNewAPISiteStatus(),
+		Accounts:                 []NewAPICheckinAccount{},
+	})
+	if err := s.saveConfigLocked(ctx, cfg); err != nil {
+		return NewAPICheckinConfigSummary{}, err
+	}
+	return s.configSummaryLocked(cfg), nil
+}
+
+// CreateAccount 按目标平台协议新增账号；Sub2API 会登录并把完整 Key/分组写入现有 SQL 缓存。
+func (s *NewAPICheckinService) CreateAccount(ctx context.Context, siteName, userID, accessKey, loginUsername, loginPassword string) (NewAPICheckinConfigSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	siteName = cleanNewAPIText(siteName)
+	userID = cleanNewAPIText(userID)
+	accessKey = cleanNewAPIText(accessKey)
+	loginUsername = cleanNewAPIText(loginUsername)
+	if siteName == "" {
+		return NewAPICheckinConfigSummary{}, errors.New("必须选择账号所属平台")
+	}
+	cfg, err := s.loadConfigLocked(ctx)
+	if err != nil {
+		return NewAPICheckinConfigSummary{}, err
+	}
+	site, siteIndex := findNewAPISite(cfg, siteName)
+	if siteIndex < 0 {
+		return NewAPICheckinConfigSummary{}, fmt.Errorf("未找到站点: %s", siteName)
+	}
+
+	account := NewAPICheckinAccount{IPProfile: "ip-slot-manual", Enabled: true}
+	var apiKeySummary *NewAPICheckinAccountAPIKeySummary
+	if isSub2APISite(site) {
+		if loginUsername == "" || loginPassword == "" {
+			return NewAPICheckinConfigSummary{}, errors.New("Sub2API 账号必须填写邮箱和密码")
+		}
+		userID = loginUsername
+		account.Name = loginUsername
+		account.Username = loginUsername
+		account.DisplayName = loginUsername
+		account.UserID = loginUsername
+		account.LoginUsername = loginUsername
+		account.LoginPassword = loginPassword
+	} else {
+		if userID == "" || accessKey == "" {
+			return NewAPICheckinConfigSummary{}, errors.New("NewAPI 账号必须填写 user_id 和 key")
+		}
+		account.Name = userID
+		account.UserID = userID
+		account.AccessKey = accessKey
+	}
+	if _, accountIndex := findNewAPIAccount(site, userID); accountIndex >= 0 {
+		return NewAPICheckinConfigSummary{}, fmt.Errorf("账号已存在: %s/%s", siteName, userID)
+	}
+
+	if isSub2APISite(site) {
+		_, refreshed, err := s.probeSub2LoginLocked(ctx, site, account, loginUsername, loginPassword)
+		if err != nil {
+			return NewAPICheckinConfigSummary{}, err
+		}
+		if len(refreshed.APIKeys) == 0 || cleanNewAPIText(refreshed.APIKeys[0].MatchKey) == "" {
+			return NewAPICheckinConfigSummary{}, errors.New("Sub2API 登录成功，但账号下没有可用于余额查询的 API Key")
+		}
+		account.AccessKey = normalizeNewAPIFullKey(refreshed.APIKeys[0].MatchKey)
+		apiKeySummary = &refreshed
+	}
+
+	site.Accounts = append(site.Accounts, account)
+	cfg.Sites[siteIndex] = site
+	if err := s.saveConfigLocked(ctx, cfg); err != nil {
+		return NewAPICheckinConfigSummary{}, err
+	}
+	if apiKeySummary != nil {
+		if err := s.saveAPIKeySummaryCacheLocked(ctx, site, account, *apiKeySummary); err != nil {
+			return NewAPICheckinConfigSummary{}, err
+		}
+	}
+	return s.configSummaryLocked(cfg), nil
+}
+
 // AddOrMergeSites 写入单个平台或 sites 数组，按站点名和 user_id 合并。
 func (s *NewAPICheckinService) AddOrMergeSites(ctx context.Context, payload map[string]any) (NewAPICheckinAddConfigResult, error) {
 	s.mu.Lock()
@@ -4170,6 +4280,20 @@ func normalizeNewAPISite(raw map[string]any) (NewAPICheckinSite, error) {
 		Accounts:                 accounts,
 	}
 	return site, nil
+}
+
+// normalizeNewAPICheckinSiteURL 校验新增平台地址并保留可能存在的路径前缀。
+func normalizeNewAPICheckinSiteURL(value string) (string, error) {
+	parsed, err := url.Parse(cleanNewAPIText(value))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", errors.New("站点 URL 必须包含 http 或 https 协议和主机名")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
 func normalizeNewAPIAccount(raw map[string]any) (NewAPICheckinAccount, error) {

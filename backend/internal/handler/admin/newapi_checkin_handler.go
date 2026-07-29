@@ -25,6 +25,30 @@ type newAPICheckinSiteRequest struct {
 	Site string `json:"site"`
 }
 
+// newAPICheckinCreateSiteRequest 是新增平台的结构化请求体。
+type newAPICheckinCreateSiteRequest struct {
+	// Name 是平台目录中的唯一名称。
+	Name string `json:"name"`
+	// Provider 是 newapi 或 sub2api。
+	Provider string `json:"provider"`
+	// BaseURL 是平台站点根地址。
+	BaseURL string `json:"base_url"`
+}
+
+// newAPICheckinCreateAccountRequest 是按目标平台类型新增账号的请求体。
+type newAPICheckinCreateAccountRequest struct {
+	// Site 是账号所属的平台名称。
+	Site string `json:"site"`
+	// UserID 是 NewAPI 的上游用户 ID。
+	UserID string `json:"user_id"`
+	// AccessKey 是 NewAPI 请求使用的访问 Key。
+	AccessKey string `json:"access_key"`
+	// LoginUsername 是 Sub2API 的登录邮箱。
+	LoginUsername string `json:"login_username"`
+	// LoginPassword 是 Sub2API 的登录密码。
+	LoginPassword string `json:"login_password"`
+}
+
 // newAPICheckinAccountRequest 是定位站点账号的请求体。
 type newAPICheckinAccountRequest struct {
 	// Site 是 NewApi 站点名。
@@ -241,6 +265,33 @@ func (h *NewAPICheckinHandler) GetCheckinJobStatus(c *gin.Context) {
 // SyncUsernames POST /admin/newapi-checkin/sync-usernames
 func (h *NewAPICheckinHandler) SyncUsernames(c *gin.Context) {
 	response.BadRequest(c, "全局名称同步已关闭，请使用站点或账号级同步。")
+}
+
+// CreateSite POST /admin/newapi-checkin/sites 新增空平台。
+func (h *NewAPICheckinHandler) CreateSite(c *gin.Context) {
+	var req newAPICheckinCreateSiteRequest
+	if !bindNewAPICheckinJSON(c, &req) {
+		return
+	}
+	data, err := h.checkinService.CreateSite(c.Request.Context(), req.Name, req.Provider, req.BaseURL)
+	respondNewAPICheckin(c, data, err)
+}
+
+// CreateAccount POST /admin/newapi-checkin/accounts 按平台类型新增账号。
+func (h *NewAPICheckinHandler) CreateAccount(c *gin.Context) {
+	var req newAPICheckinCreateAccountRequest
+	if !bindNewAPICheckinJSON(c, &req) {
+		return
+	}
+	data, err := h.checkinService.CreateAccount(
+		c.Request.Context(),
+		req.Site,
+		req.UserID,
+		req.AccessKey,
+		req.LoginUsername,
+		req.LoginPassword,
+	)
+	respondNewAPICheckin(c, data, err)
 }
 
 // AddOrMergeSite POST /admin/newapi-checkin/config-site

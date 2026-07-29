@@ -179,6 +179,92 @@ func TestNewAPICheckinConfigSummaryCountsAndKeepsDisabledSiteVisible(t *testing.
 	require.Equal(t, "Turnstile 保护站点，仅保留余额与月度记录查询", summary.Sites[1].DisabledReason)
 }
 
+// TestNewAPICheckinCreateSiteAndNewAPIAccount 验证空平台和 NewAPI 账号按现有 SQL 配置结构写入。
+func TestNewAPICheckinCreateSiteAndNewAPIAccount(t *testing.T) {
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{})
+	svc := newTestNewAPICheckinService(t, repo, nil)
+
+	siteSummary, err := svc.CreateSite(context.Background(), "demo", "newapi", "https://demo.example/")
+	require.NoError(t, err)
+	require.Equal(t, 1, siteSummary.AllSiteCount)
+	require.Equal(t, "https://demo.example", repo.config.Sites[0].BaseURL)
+	require.Equal(t, "newapi", repo.config.Sites[0].Provider)
+	require.Empty(t, repo.config.Sites[0].Accounts)
+
+	accountSummary, err := svc.CreateAccount(context.Background(), "demo", "1001", "access-key", "", "")
+	require.NoError(t, err)
+	require.Equal(t, 1, accountSummary.AllAccountCount)
+	require.Equal(t, "1001", repo.config.Sites[0].Accounts[0].UserID)
+	require.Equal(t, "access-key", repo.config.Sites[0].Accounts[0].AccessKey)
+	require.Empty(t, repo.config.Sites[0].Accounts[0].LoginPassword)
+
+	_, err = svc.CreateAccount(context.Background(), "demo", "1001", "replacement", "", "")
+	require.EqualError(t, err, "账号已存在: demo/1001")
+	require.Equal(t, "access-key", repo.config.Sites[0].Accounts[0].AccessKey)
+}
+
+// TestNewAPICheckinCreateSub2AccountFromLogin 验证邮箱密码足以建立账号、缓存全部 Key/分组并选择余额查询 Key。
+func TestNewAPICheckinCreateSub2AccountFromLogin(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login":
+			var login map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&login))
+			require.Equal(t, "owner@example.com", login["email"])
+			require.Equal(t, "fixture-password", login["password"])
+			_, _ = w.Write([]byte(`{"code":0,"data":{"access_token":"jwt-token"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/keys":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"id":7,"name":"primary","key":"first-key","group_id":22},{"id":8,"name":"backup","key":"sk-second-key","group_id":26}]}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/groups/available":
+			_, _ = w.Write([]byte(`{"code":0,"data":[{"id":22,"name":"default"},{"id":26,"name":"codex"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{})
+	svc := newTestNewAPICheckinService(t, repo, upstream.Client())
+	_, err := svc.CreateSite(context.Background(), "sub-vc", "sub2api", upstream.URL)
+	require.NoError(t, err)
+
+	summary, err := svc.CreateAccount(context.Background(), "sub-vc", "", "", "owner@example.com", "fixture-password")
+	require.NoError(t, err)
+	require.Equal(t, 1, summary.AllAccountCount)
+	require.Len(t, repo.config.Sites[0].Accounts, 1)
+	account := repo.config.Sites[0].Accounts[0]
+	require.Equal(t, "owner@example.com", account.UserID)
+	require.Equal(t, "owner@example.com", account.Name)
+	require.Equal(t, "owner@example.com", account.DisplayName)
+	require.Equal(t, "owner@example.com", account.LoginUsername)
+	require.Equal(t, "fixture-password", account.LoginPassword)
+	require.Equal(t, "sk-first-key", account.AccessKey)
+	require.Len(t, repo.apiKeyCache, 1)
+	require.Len(t, repo.apiKeyCache[0].Summary.APIKeys, 2)
+	require.Len(t, repo.apiKeyCache[0].Summary.AvailableGroupOptions, 2)
+
+	encoded, err := json.Marshal(summary)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "fixture-password")
+}
+
+// TestNewAPICheckinCreateValidatesProviderSpecificFields 验证平台类型和账号字段不能交叉或缺失。
+func TestNewAPICheckinCreateValidatesProviderSpecificFields(t *testing.T) {
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{})
+	svc := newTestNewAPICheckinService(t, repo, nil)
+
+	_, err := svc.CreateSite(context.Background(), "bad", "other", "https://bad.example")
+	require.EqualError(t, err, "provider 仅支持 newapi 或 sub2api")
+	_, err = svc.CreateSite(context.Background(), "bad", "newapi", "bad.example")
+	require.EqualError(t, err, "站点 URL 必须包含 http 或 https 协议和主机名")
+
+	_, err = svc.CreateSite(context.Background(), "demo", "newapi", "https://demo.example")
+	require.NoError(t, err)
+	_, err = svc.CreateAccount(context.Background(), "demo", "", "", "owner@example.com", "password")
+	require.EqualError(t, err, "NewAPI 账号必须填写 user_id 和 key")
+}
+
 // TestNewAPICheckinSetAccountDisplayName 验证管理员可手工保存用户名或邮箱标识。
 func TestNewAPICheckinSetAccountDisplayName(t *testing.T) {
 	repo := newMemoryNewAPICheckinRepository(t, map[string]any{

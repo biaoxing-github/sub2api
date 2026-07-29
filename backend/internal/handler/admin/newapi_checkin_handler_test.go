@@ -106,6 +106,43 @@ func TestNewAPICheckinHandlerSetSiteEnabledUsesSQLStorageLabel(t *testing.T) {
 	require.Equal(t, "sql:newapi-checkin/config", payload.Data.ConfigPath)
 }
 
+// TestNewAPICheckinHandlerCreatesPlatformAndNewAPIAccount 验证结构化创建接口的请求字段和配置摘要响应。
+func TestNewAPICheckinHandlerCreatesPlatformAndNewAPIAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &newAPICheckinHandlerMemoryRepo{
+		balance: service.NewAPICheckinBalancePayload{SiteStatuses: map[string]service.NewAPICheckinSiteStatus{}},
+	}
+	svc := service.NewNewAPICheckinService(service.NewAPICheckinOptions{Repository: repo})
+	handler := NewNewAPICheckinHandler(svc)
+	router := gin.New()
+	router.POST("/sites", handler.CreateSite)
+	router.POST("/accounts", handler.CreateAccount)
+
+	siteRecorder := httptest.NewRecorder()
+	router.ServeHTTP(siteRecorder, httptest.NewRequest(http.MethodPost, "/sites", strings.NewReader(
+		`{"name":"demo","provider":"newapi","base_url":"https://demo.example/"}`,
+	)))
+	require.Equal(t, http.StatusOK, siteRecorder.Code)
+	require.Len(t, repo.config.Sites, 1)
+	require.Empty(t, repo.config.Sites[0].Accounts)
+
+	accountRecorder := httptest.NewRecorder()
+	router.ServeHTTP(accountRecorder, httptest.NewRequest(http.MethodPost, "/accounts", strings.NewReader(
+		`{"site":"demo","user_id":"1001","access_key":"access-key"}`,
+	)))
+	require.Equal(t, http.StatusOK, accountRecorder.Code)
+	var payload struct {
+		Code int                                `json:"code"`
+		Data service.NewAPICheckinConfigSummary `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(accountRecorder.Body.Bytes(), &payload))
+	require.Equal(t, 0, payload.Code)
+	require.Equal(t, 1, payload.Data.AllSiteCount)
+	require.Equal(t, 1, payload.Data.AllAccountCount)
+	require.Equal(t, "1001", repo.config.Sites[0].Accounts[0].UserID)
+	require.Equal(t, "access-key", repo.config.Sites[0].Accounts[0].AccessKey)
+}
+
 func newTestNewAPICheckinHandler(t *testing.T) *NewAPICheckinHandler {
 	t.Helper()
 	repo := &newAPICheckinHandlerMemoryRepo{

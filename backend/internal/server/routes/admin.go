@@ -127,6 +127,8 @@ func registerNewAPICheckinRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		checkin.GET("/checkin-job-status", h.Admin.NewAPICheckin.GetCheckinJobStatus)
 
 		checkin.POST("/sync-usernames", h.Admin.NewAPICheckin.SyncUsernames)
+		checkin.POST("/sites", h.Admin.NewAPICheckin.CreateSite)
+		checkin.POST("/accounts", h.Admin.NewAPICheckin.CreateAccount)
 		checkin.POST("/config-site", h.Admin.NewAPICheckin.AddOrMergeSite)
 		checkin.POST("/delete-site", h.Admin.NewAPICheckin.DeleteSite)
 		checkin.POST("/delete-account", h.Admin.NewAPICheckin.DeleteAccount)

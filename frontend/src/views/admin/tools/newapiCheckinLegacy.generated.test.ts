@@ -83,6 +83,87 @@ describe('mountNewapiCheckinLegacyTool', () => {
     )
   })
 
+  it('creates platforms and switches account fields by provider', async () => {
+    let sitePayload: Record<string, string> | null = null
+    const accountPayloads: Array<Record<string, string>> = []
+    const config = {
+      all_site_count: 2,
+      enabled_site_count: 2,
+      all_account_count: 0,
+      enabled_account_count: 0,
+      sites: [
+        { name: 'new-demo', provider: 'newapi', enabled: true, base_url: 'https://new.example', accounts: [] },
+        { name: 'sub-demo', provider: 'sub2api', enabled: true, base_url: 'https://sub.example', accounts: [] }
+      ]
+    }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/config')) return jsonResponse(config)
+      if (url.endsWith('/sites')) {
+        sitePayload = JSON.parse(String(init?.body || '{}')) as Record<string, string>
+        return jsonResponse(config)
+      }
+      if (url.endsWith('/accounts')) {
+        accountPayloads.push(JSON.parse(String(init?.body || '{}')) as Record<string, string>)
+        return jsonResponse(config)
+      }
+      if (url.endsWith('/api-keys')) return jsonResponse({ accounts: [] })
+      if (url.endsWith('/last-run')) return jsonResponse({})
+      if (url.endsWith('/balances')) return jsonResponse({ site_statuses: {}, accounts: [] })
+      if (url.endsWith('/history')) return jsonResponse({ entries: [], daily_summaries: [], site_summaries: [], account_summaries: [] })
+      if (url.includes('/monthly?')) return jsonResponse({ records: [], site_summaries: [], account_summaries: [], site_daily_summaries: [], account_daily_summaries: [], available_months: [], sync_state: {} })
+      throw new Error(`unexpected request: ${url}`)
+    })
+
+    const root = document.createElement('div')
+    root.innerHTML = newapiCheckinLegacyBodyHtml
+    document.body.appendChild(root)
+    const cleanup = mountNewapiCheckinLegacyTool({
+      document: createDocumentFacade(root),
+      window: createWindowFacade(),
+      services: {},
+      localStorage,
+      fetch: fetchMock as unknown as typeof fetch,
+      Headers,
+      CSS: window.CSS,
+      structuredClone,
+      console,
+      cleanup: vi.fn()
+    })
+    await vi.waitFor(() => expect(root.querySelector('#configMeta')?.textContent).toContain('2 个站点'))
+
+    ;(root.querySelector('#openPlatformDirectoryBtn') as HTMLButtonElement).click()
+    ;(root.querySelector('#openCreateSiteBtn') as HTMLButtonElement).click()
+    ;(root.querySelector('#createSiteProviderInput') as HTMLSelectElement).value = 'sub2api'
+    ;(root.querySelector('#createSiteNameInput') as HTMLInputElement).value = 'sub-new'
+    ;(root.querySelector('#createSiteURLInput') as HTMLInputElement).value = 'https://sub-new.example'
+    ;(root.querySelector('#createSiteForm') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(sitePayload).toEqual({ name: 'sub-new', provider: 'sub2api', base_url: 'https://sub-new.example' }))
+
+    ;(root.querySelector('#openCreateAccountBtn') as HTMLButtonElement).click()
+    const siteSelect = root.querySelector('#createAccountSiteInput') as HTMLSelectElement
+    siteSelect.value = 'new-demo'
+    siteSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    expect((root.querySelector('#createNewAPIAccountFields') as HTMLElement).hidden).toBe(false)
+    expect((root.querySelector('#createSub2AccountFields') as HTMLElement).hidden).toBe(true)
+    ;(root.querySelector('#createAccountUserIDInput') as HTMLInputElement).value = '1001'
+    ;(root.querySelector('#createAccountAccessKeyInput') as HTMLInputElement).value = 'access-key'
+    ;(root.querySelector('#createAccountForm') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(accountPayloads[0]).toEqual({ site: 'new-demo', user_id: '1001', access_key: 'access-key' }))
+
+    ;(root.querySelector('#openCreateAccountBtn') as HTMLButtonElement).click()
+    siteSelect.value = 'sub-demo'
+    siteSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    expect((root.querySelector('#createNewAPIAccountFields') as HTMLElement).hidden).toBe(true)
+    expect((root.querySelector('#createSub2AccountFields') as HTMLElement).hidden).toBe(false)
+    ;(root.querySelector('#createAccountEmailInput') as HTMLInputElement).value = 'owner@example.com'
+    ;(root.querySelector('#createAccountPasswordInput') as HTMLInputElement).value = 'password'
+    ;(root.querySelector('#createAccountForm') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(accountPayloads[1]).toEqual({ site: 'sub-demo', login_username: 'owner@example.com', login_password: 'password' }))
+
+    cleanup()
+  })
+
   it('opens the platform directory modal and manages generated NewAPI keys and groups', async () => {
     let revealPayload: Record<string, unknown> | null = null
     let groupPayload: Record<string, unknown> | null = null

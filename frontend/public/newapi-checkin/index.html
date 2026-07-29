@@ -672,6 +672,15 @@
       background: var(--surface);
     }
 
+    .provider-fields {
+      display: grid;
+      gap: 14px;
+    }
+
+    .provider-fields[hidden] {
+      display: none;
+    }
+
     .credential-target {
       padding-bottom: 12px;
       border-bottom: 1px solid var(--line);
@@ -1684,6 +1693,8 @@
           <div class="panel-meta">集中管理站点、账号、API Key 和分组</div>
         </div>
         <div class="toolbar">
+          <button class="primary" id="openCreateSiteBtn" type="button">+ 新增平台</button>
+          <button class="secondary" id="openCreateAccountBtn" type="button">+ 新增账号</button>
           <button class="secondary" id="refreshDirectoryKeysBtn" type="button">重新读取 Key / 分组</button>
           <button class="secondary" id="closePlatformDirectoryBtn" type="button">关闭</button>
         </div>
@@ -1722,6 +1733,81 @@
           <div class="table-wrap catalog-wrap" id="configTableWrap"></div>
         </section>
       </div>
+    </div>
+  </dialog>
+
+  <dialog class="directory-dialog credential-dialog" id="createSiteDialog" aria-labelledby="createSiteTitle">
+    <div class="directory-dialog-shell">
+      <div class="directory-dialog-head">
+        <div>
+          <h2 class="panel-title" id="createSiteTitle">新增平台</h2>
+          <div class="panel-meta">建立 NewAPI 或 Sub2API 平台目录</div>
+        </div>
+        <button class="secondary" id="closeCreateSiteBtn" type="button">关闭</button>
+      </div>
+      <form class="credential-form" id="createSiteForm">
+        <label>
+          平台类型
+          <select id="createSiteProviderInput" required>
+            <option value="newapi">NewAPI</option>
+            <option value="sub2api">Sub2API</option>
+          </select>
+        </label>
+        <label>
+          平台名称
+          <input id="createSiteNameInput" type="text" autocomplete="off" required>
+        </label>
+        <label>
+          站点地址
+          <input id="createSiteURLInput" type="url" autocomplete="url" placeholder="https://example.com" required>
+        </label>
+        <div class="status-box" id="createSiteStatus" data-tone="normal">平台创建后可继续添加账号。</div>
+        <div class="toolbar">
+          <button class="primary" id="createSiteSubmitBtn" type="submit">创建平台</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog class="directory-dialog credential-dialog" id="createAccountDialog" aria-labelledby="createAccountTitle">
+    <div class="directory-dialog-shell">
+      <div class="directory-dialog-head">
+        <div>
+          <h2 class="panel-title" id="createAccountTitle">新增账号</h2>
+          <div class="panel-meta">选择账号要加入的具体平台</div>
+        </div>
+        <button class="secondary" id="closeCreateAccountBtn" type="button">关闭</button>
+      </div>
+      <form class="credential-form" id="createAccountForm">
+        <label>
+          所属平台
+          <select id="createAccountSiteInput" required></select>
+        </label>
+        <div class="provider-fields" id="createNewAPIAccountFields">
+          <label>
+            User ID
+            <input id="createAccountUserIDInput" type="text" inputmode="numeric" autocomplete="off">
+          </label>
+          <label>
+            访问 Key
+            <input id="createAccountAccessKeyInput" type="text" autocomplete="off">
+          </label>
+        </div>
+        <div class="provider-fields" id="createSub2AccountFields" hidden>
+          <label>
+            登录邮箱
+            <input id="createAccountEmailInput" type="email" autocomplete="username">
+          </label>
+          <label>
+            登录密码
+            <input id="createAccountPasswordInput" type="password" autocomplete="current-password">
+          </label>
+        </div>
+        <div class="status-box" id="createAccountStatus" data-tone="normal">NewAPI 使用 User ID 和访问 Key。</div>
+        <div class="toolbar">
+          <button class="primary" id="createAccountSubmitBtn" type="submit">创建账号</button>
+        </div>
+      </form>
     </div>
   </dialog>
 
@@ -1783,6 +1869,28 @@
     const closePlatformDirectoryBtn = document.getElementById("closePlatformDirectoryBtn");
     const refreshDirectoryKeysBtn = document.getElementById("refreshDirectoryKeysBtn");
     const platformDirectoryDialog = document.getElementById("platformDirectoryDialog");
+    const openCreateSiteBtn = document.getElementById("openCreateSiteBtn");
+    const createSiteDialog = document.getElementById("createSiteDialog");
+    const closeCreateSiteBtn = document.getElementById("closeCreateSiteBtn");
+    const createSiteForm = document.getElementById("createSiteForm");
+    const createSiteProviderInput = document.getElementById("createSiteProviderInput");
+    const createSiteNameInput = document.getElementById("createSiteNameInput");
+    const createSiteURLInput = document.getElementById("createSiteURLInput");
+    const createSiteStatus = document.getElementById("createSiteStatus");
+    const createSiteSubmitBtn = document.getElementById("createSiteSubmitBtn");
+    const openCreateAccountBtn = document.getElementById("openCreateAccountBtn");
+    const createAccountDialog = document.getElementById("createAccountDialog");
+    const closeCreateAccountBtn = document.getElementById("closeCreateAccountBtn");
+    const createAccountForm = document.getElementById("createAccountForm");
+    const createAccountSiteInput = document.getElementById("createAccountSiteInput");
+    const createNewAPIAccountFields = document.getElementById("createNewAPIAccountFields");
+    const createSub2AccountFields = document.getElementById("createSub2AccountFields");
+    const createAccountUserIDInput = document.getElementById("createAccountUserIDInput");
+    const createAccountAccessKeyInput = document.getElementById("createAccountAccessKeyInput");
+    const createAccountEmailInput = document.getElementById("createAccountEmailInput");
+    const createAccountPasswordInput = document.getElementById("createAccountPasswordInput");
+    const createAccountStatus = document.getElementById("createAccountStatus");
+    const createAccountSubmitBtn = document.getElementById("createAccountSubmitBtn");
     const loginCredentialDialog = document.getElementById("loginCredentialDialog");
     const closeLoginCredentialBtn = document.getElementById("closeLoginCredentialBtn");
     const loginCredentialForm = document.getElementById("loginCredentialForm");
@@ -2268,6 +2376,135 @@
         platformDirectoryDialog.close();
       } else {
         platformDirectoryDialog.removeAttribute("open");
+      }
+    }
+
+    function openCreateSite() {
+      createSiteForm.reset();
+      setInlineStatus(createSiteStatus, "平台创建后可继续添加账号。", "normal");
+      if (typeof createSiteDialog.showModal === "function") {
+        createSiteDialog.showModal();
+      } else {
+        createSiteDialog.setAttribute("open", "");
+      }
+      createSiteNameInput.focus();
+    }
+
+    function closeCreateSite() {
+      if (typeof createSiteDialog.close === "function") {
+        createSiteDialog.close();
+      } else {
+        createSiteDialog.removeAttribute("open");
+      }
+    }
+
+    function updateCreateAccountFields() {
+      const site = getConfigSite(createAccountSiteInput.value);
+      const sub2 = siteProvider(site) === "sub2api";
+      createNewAPIAccountFields.hidden = sub2;
+      createSub2AccountFields.hidden = !sub2;
+      createAccountUserIDInput.required = !sub2;
+      createAccountAccessKeyInput.required = !sub2;
+      createAccountEmailInput.required = sub2;
+      createAccountPasswordInput.required = sub2;
+      setInlineStatus(
+        createAccountStatus,
+        sub2 ? "Sub2API 会先验证登录，并自动读取完整 Key 与分组。" : "NewAPI 使用 User ID 和访问 Key。",
+        "normal",
+      );
+    }
+
+    function openCreateAccount() {
+      const sites = getConfigSites();
+      if (!sites.length) {
+        setAppStatus("请先新增平台，再添加账号。", "error");
+        return;
+      }
+      createAccountForm.reset();
+      createAccountSiteInput.innerHTML = sites.map((site) => `
+        <option value="${escapeHtml(site.name)}">${escapeHtml(site.name)} · ${siteProvider(site)}</option>
+      `).join("");
+      if (state.activeSite !== "all" && sites.some((site) => site.name === state.activeSite)) {
+        createAccountSiteInput.value = state.activeSite;
+      }
+      updateCreateAccountFields();
+      if (typeof createAccountDialog.showModal === "function") {
+        createAccountDialog.showModal();
+      } else {
+        createAccountDialog.setAttribute("open", "");
+      }
+      (createNewAPIAccountFields.hidden ? createAccountEmailInput : createAccountUserIDInput).focus();
+    }
+
+    function closeCreateAccount() {
+      createAccountPasswordInput.value = "";
+      if (typeof createAccountDialog.close === "function") {
+        createAccountDialog.close();
+      } else {
+        createAccountDialog.removeAttribute("open");
+      }
+    }
+
+    async function submitCreateSite() {
+      const payload = {
+        name: createSiteNameInput.value.trim(),
+        provider: createSiteProviderInput.value,
+        base_url: createSiteURLInput.value.trim(),
+      };
+      setInlineStatus(createSiteStatus, "正在创建平台…", "busy");
+      setButtonBusy(createSiteSubmitBtn, true, "创建中");
+      try {
+        state.config = await fetchJson("/api/sites", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        renderConfigSelectors();
+        renderAllViews();
+        closeCreateSite();
+        setAppStatus(`平台 ${payload.name} 已创建`, "ok");
+      } catch (error) {
+        setInlineStatus(createSiteStatus, `创建失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(createSiteSubmitBtn, false);
+      }
+    }
+
+    async function submitCreateAccount() {
+      const site = getConfigSite(createAccountSiteInput.value);
+      if (!site) {
+        setInlineStatus(createAccountStatus, "请选择有效平台。", "error");
+        return;
+      }
+      const sub2 = siteProvider(site) === "sub2api";
+      const payload = sub2
+        ? {
+            site: site.name,
+            login_username: createAccountEmailInput.value.trim(),
+            login_password: createAccountPasswordInput.value,
+          }
+        : {
+            site: site.name,
+            user_id: createAccountUserIDInput.value.trim(),
+            access_key: createAccountAccessKeyInput.value.trim(),
+          };
+      setInlineStatus(createAccountStatus, sub2 ? "正在验证登录并读取 Key / 分组…" : "正在创建账号…", "busy");
+      setButtonBusy(createAccountSubmitBtn, true, "创建中");
+      try {
+        state.config = await fetchJson("/api/accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        await Promise.all([loadAPIKeys(), loadBalances()]);
+        renderConfigSelectors();
+        renderAllViews();
+        closeCreateAccount();
+        setAppStatus(`${site.name} 的账号已创建`, "ok");
+      } catch (error) {
+        setInlineStatus(createAccountStatus, `创建失败: ${error.message}`, "error");
+      } finally {
+        setButtonBusy(createAccountSubmitBtn, false);
       }
     }
 
@@ -4028,6 +4265,19 @@
     reloadLocalBtn.addEventListener("click", loadLocalState);
     openPlatformDirectoryBtn.addEventListener("click", openPlatformDirectory);
     closePlatformDirectoryBtn.addEventListener("click", closePlatformDirectory);
+    openCreateSiteBtn.addEventListener("click", openCreateSite);
+    closeCreateSiteBtn.addEventListener("click", closeCreateSite);
+    createSiteForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitCreateSite();
+    });
+    openCreateAccountBtn.addEventListener("click", openCreateAccount);
+    closeCreateAccountBtn.addEventListener("click", closeCreateAccount);
+    createAccountSiteInput.addEventListener("change", updateCreateAccountFields);
+    createAccountForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitCreateAccount();
+    });
     closeLoginCredentialBtn.addEventListener("click", closeLoginCredentials);
     testLoginCredentialBtn.addEventListener("click", () => submitLoginCredentials(false));
     loginCredentialForm.addEventListener("submit", (event) => {
