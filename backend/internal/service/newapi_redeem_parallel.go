@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -24,14 +25,18 @@ type newAPIRedeemWorkResult struct {
 // newAPIRedeemRunNetwork 协调所有账号 worker 对同一 Mihomo 出口的访问。
 // 普通请求持有读锁；首次观察到某一代出口限流的 worker 独占切换，其他 worker 复用新出口。
 type newAPIRedeemRunNetwork struct {
-	service        *NewAPIRedeemService
-	runID          string
-	gate           sync.RWMutex
-	state          *newAPIRedeemNetworkState
-	generation     uint64
-	paceMu         sync.Mutex
-	nextRequestAt  time.Time
-	requestSpacing time.Duration
+	service    *NewAPIRedeemService
+	runID      string
+	gate       sync.RWMutex
+	state      *newAPIRedeemNetworkState
+	generation uint64
+	// failedGeneration 记录最近一次切换失败对应的出口代次，供并发等待者复用失败结果。
+	failedGeneration uint64
+	// failedSwitchErr 保存最近一次 leader 切换失败，避免同代 worker 重复请求 Controller。
+	failedSwitchErr error
+	paceMu          sync.Mutex
+	nextRequestAt   time.Time
+	requestSpacing  time.Duration
 }
 
 func newNewAPIRedeemRunNetwork(service *NewAPIRedeemService, runID string, accountCount int) *newAPIRedeemRunNetwork {
@@ -105,19 +110,35 @@ func (network *newAPIRedeemRunNetwork) switchExit(ctx context.Context, observedG
 	network.gate.Lock()
 	defer network.gate.Unlock()
 	if network.generation != observedGeneration {
+		if network.failedSwitchErr != nil && network.failedGeneration == observedGeneration {
+			return nil, network.failedSwitchErr
+		}
 		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if network.service.mihomoClient == nil {
 		err := fmt.Errorf("未配置 Mihomo Controller")
+		network.failedGeneration = observedGeneration
+		network.failedSwitchErr = err
+		network.generation++
 		network.service.recordNewAPIRedeemNetwork(network.runID, network.state.Current, 0, err.Error())
 		return nil, err
 	}
 	switched, err := network.service.mihomoClient.switchExit(ctx, network.state)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			err = fmt.Errorf("%s 内未找到新的可用出口", newAPIRedeemMihomoSwitchTimeout)
+		}
+		network.failedGeneration = observedGeneration
+		network.failedSwitchErr = err
+		network.generation++
 		network.service.recordNewAPIRedeemNetwork(network.runID, network.state.Current, 0, err.Error())
 		return nil, err
 	}
 	network.generation++
+	network.failedSwitchErr = nil
 	network.service.closeNewAPIRedeemAccountIdleConnections()
 	network.service.recordNewAPIRedeemNetwork(network.runID, network.state.Current, 1, switched.Message)
 	return &switched, nil
@@ -195,6 +216,9 @@ func (s *NewAPIRedeemService) executeNewAPIRedeemWorkItem(ctx context.Context, r
 		if outcome == "rate_limited" {
 			switched, switchErr := network.switchExit(ctx, generation)
 			if switchErr != nil {
+				if ctx.Err() != nil {
+					return outcome, nil
+				}
 				message = fmt.Sprintf("%s；自动切换节点失败: %v；任务将暂停后重试当前兑换码", message, switchErr)
 				_ = s.recordNewAPIRedeemRequest(runID, item.File, account, item.Code, outcome, message, statusCode, false, requestIdentity, nil, "")
 				return outcome, fmt.Errorf("%w: %v", errNewAPIRedeemNoAvailableExit, switchErr)

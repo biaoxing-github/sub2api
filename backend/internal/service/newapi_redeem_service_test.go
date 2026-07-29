@@ -891,6 +891,69 @@ func TestNewAPIRedeemServiceCoordinatesOneNetworkSwitchForConcurrentRateLimits(t
 	mu.Unlock()
 }
 
+func TestNewAPIRedeemRunNetworkSharesSwitchFailureAcrossWaiters(t *testing.T) {
+	t.Parallel()
+	const waiterCount = 8
+	var (
+		mu                  sync.Mutex
+		groupDelayCalls     int
+		firstDelayStarted   = make(chan struct{})
+		releaseFirstFailure = make(chan struct{})
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/proxies/test-group":
+			_, _ = writer.Write([]byte(`{"name":"test-group","type":"Selector","now":"node-a","all":["node-a","node-b"]}`))
+		case "/proxies":
+			_, _ = writer.Write([]byte(`{"proxies":{"node-a":{"type":"Trojan"},"node-b":{"type":"Trojan"}}}`))
+		case "/group/test-group/delay":
+			mu.Lock()
+			groupDelayCalls++
+			call := groupDelayCalls
+			if call == 1 {
+				close(firstDelayStarted)
+			}
+			mu.Unlock()
+			if call == 1 {
+				<-releaseFirstFailure
+			}
+			http.Error(writer, "delay unavailable", http.StatusServiceUnavailable)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	service := NewNewAPIRedeemService(NewAPIRedeemOptions{
+		RootDir:             t.TempDir(),
+		MihomoControllerURL: server.URL,
+		MihomoSelectorGroup: "test-group",
+		MihomoHTTPClient:    server.Client(),
+	})
+	network := newNewAPIRedeemRunNetwork(service, "shared-switch-failure", waiterCount)
+	network.state.accept(newAPIRedeemNetworkIdentity{Node: "node-a", ExitIP: "1.1.1.1"})
+
+	start := make(chan struct{})
+	errors := make(chan error, waiterCount)
+	for range waiterCount {
+		go func() {
+			<-start
+			_, err := network.switchExit(context.Background(), 0)
+			errors <- err
+		}()
+	}
+	close(start)
+	<-firstDelayStarted
+	time.Sleep(20 * time.Millisecond)
+	close(releaseFirstFailure)
+	for range waiterCount {
+		require.ErrorContains(t, <-errors, "HTTP 503")
+	}
+	mu.Lock()
+	require.Equal(t, 1, groupDelayCalls)
+	mu.Unlock()
+}
+
 func TestNewAPIRedeemServiceInterruptsPersistedActiveRunAfterRestart(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
