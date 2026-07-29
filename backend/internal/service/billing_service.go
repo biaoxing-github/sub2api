@@ -266,6 +266,15 @@ func (s *BillingService) initFallbackPricing() {
 		SupportsCacheBreakdown:     false,
 	}
 
+	// Gemini 3.6 Flash 官方定价：输入 $1.50、输出 $7.50、缓存输入 $0.15 / MTok。
+	// Antigravity 的思考等级别名由 getFallbackPricing 统一匹配，避免远程价格缺失时记为零成本。
+	s.fallbackPrices["gemini-3.6-flash"] = &ModelPricing{
+		InputPricePerToken:     1.5e-6,
+		OutputPricePerToken:    7.5e-6,
+		CacheReadPricePerToken: 0.15e-6,
+		SupportsCacheBreakdown: false,
+	}
+
 	// 智谱 GLM 公开 USD 口径兜底定价；glm-5.2 暂按 GLM-5 系列价格计费，避免动态价格源缺项时中断计费。
 	s.fallbackPrices["glm-5"] = &ModelPricing{
 		InputPricePerToken:     1e-6, // $1.00 per MTok
@@ -433,6 +442,9 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	}
 	if strings.Contains(modelLower, "gemini-3.1-pro") || strings.Contains(modelLower, "gemini-3-1-pro") {
 		return s.fallbackPrices["gemini-3.1-pro"]
+	}
+	if strings.Contains(modelLower, "gemini-3.6-flash") || strings.Contains(modelLower, "gemini-3-6-flash") {
+		return s.fallbackPrices["gemini-3.6-flash"]
 	}
 	if strings.Contains(modelLower, "glm-5") {
 		return s.fallbackPrices["glm-5"]

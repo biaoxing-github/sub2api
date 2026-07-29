@@ -229,6 +229,8 @@ const userKeyword = ref('')
 const userResults = ref<SimpleUser[]>([])
 const showUserDropdown = ref(false)
 let userSearchTimeout: ReturnType<typeof setTimeout> | null = null
+// userSearchSequence 标识用户筛选输入版本，供外部异步标签回填避免覆盖较新的选择。
+let userSearchSequence = 0
 
 const apiKeyKeyword = ref('')
 const apiKeyResults = ref<SimpleApiKey[]>([])
@@ -291,6 +293,7 @@ const billingModeOptions = ref<SelectOption[]>([
 const emitChange = () => emit('change')
 
 const debounceUserSearch = () => {
+  userSearchSequence += 1
   if (userSearchTimeout) clearTimeout(userSearchTimeout)
   userSearchTimeout = setTimeout(async () => {
     if (!userKeyword.value) {
@@ -320,6 +323,7 @@ const debounceApiKeySearch = () => {
 }
 
 const selectUser = async (u: SimpleUser) => {
+  userSearchSequence += 1
   userKeyword.value = u.email
   showUserDropdown.value = false
   filters.value.user_id = u.id
@@ -336,6 +340,7 @@ const selectUser = async (u: SimpleUser) => {
 }
 
 const clearUser = () => {
+  userSearchSequence += 1
   userKeyword.value = ''
   userResults.value = []
   showUserDropdown.value = false
@@ -494,10 +499,14 @@ onUnmounted(() => {
 
 // setUserKeyword 让排行下钻设置 user_id 后同步回显用户邮箱。
 const setUserKeyword = (email: string) => {
+  userSearchSequence += 1
   userKeyword.value = email
   userResults.value = []
   showUserDropdown.value = false
 }
 
-defineExpose({ setUserKeyword })
+// getUserSearchRevision 返回当前筛选输入版本，用于识别异步回填是否已经过期。
+const getUserSearchRevision = () => userSearchSequence
+
+defineExpose({ getUserSearchRevision, setUserKeyword })
 </script>

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 )
 
 // semverPattern 预编译 semver 格式校验正则
@@ -761,14 +763,64 @@ type UpdateSettingsRequest struct {
 	OpenAIFastPolicySettings *dto.OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
 }
 
+// settingKeyJSONAliases 记录请求字段名与持久化 setting key 不一致的别名。
+var settingKeyJSONAliases = map[string]string{
+	"smtp_from_email": service.SettingKeySMTPFrom,
+}
+
+// settingKeyByJSONName 只收集值类型字段。指针字段本身已经使用 nil 表示省略，
+// 由 UpdateSettings 中现有的合并逻辑保留历史值。
+var settingKeyByJSONName = buildSettingKeyByJSONName()
+
+// buildSettingKeyByJSONName 从请求结构的 JSON 标签生成字段到 setting key 的映射，
+// 保证后续新增值类型字段也能自动获得部分更新语义。
+func buildSettingKeyByJSONName() map[string]string {
+	typeOfRequest := reflect.TypeOf(UpdateSettingsRequest{})
+	result := make(map[string]string, typeOfRequest.NumField())
+	for i := 0; i < typeOfRequest.NumField(); i++ {
+		field := typeOfRequest.Field(i)
+		if field.Type.Kind() == reflect.Ptr {
+			continue
+		}
+		jsonName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if jsonName == "" || jsonName == "-" {
+			continue
+		}
+		if settingKey, ok := settingKeyJSONAliases[jsonName]; ok {
+			result[jsonName] = settingKey
+			continue
+		}
+		result[jsonName] = jsonName
+	}
+	return result
+}
+
+// omittedSettingKeys 返回本次 JSON payload 未出现的持久化 key。
+// 显式传入零值的字段不会进入集合，因此仍可按原语义清空。
+func omittedSettingKeys(sentFields map[string]json.RawMessage) service.OmittedSettingKeys {
+	omitted := make(service.OmittedSettingKeys, len(settingKeyByJSONName))
+	for jsonName, settingKey := range settingKeyByJSONName {
+		if _, sent := sentFields[jsonName]; !sent {
+			omitted[settingKey] = struct{}{}
+		}
+	}
+	return omitted
+}
+
 // UpdateSettings 更新系统设置
 // PUT /api/v1/admin/settings
 func (h *SettingHandler) UpdateSettings(c *gin.Context) {
-	var req UpdateSettingsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var sentFields map[string]json.RawMessage
+	if err := c.ShouldBindBodyWith(&sentFields, binding.JSON); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	var req UpdateSettingsRequest
+	if err := c.ShouldBindBodyWith(&req, binding.JSON); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	omitted := omittedSettingKeys(sentFields)
 
 	previousSettings, err := h.settingService.GetAllSettings(c.Request.Context())
 	if err != nil {
@@ -2058,7 +2110,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		},
 		ForceEmailOnThirdPartySignup: boolValueOrDefault(req.ForceEmailOnThirdPartySignup, previousAuthSourceDefaults.ForceEmailOnThirdPartySignup),
 	}
-	if err := h.settingService.UpdateSettingsWithAuthSourceDefaults(c.Request.Context(), settings, authSourceDefaults); err != nil {
+	if err := h.settingService.UpdateSettingsWithAuthSourceDefaultsOmitting(c.Request.Context(), settings, authSourceDefaults, omitted); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}

@@ -9,6 +9,15 @@ import (
 	"time"
 )
 
+func TestCurrentClaudeCLIVersionHeadersStayAligned(t *testing.T) {
+	if CLICurrentVersion != "2.1.220" {
+		t.Fatalf("CLICurrentVersion = %q, want 2.1.220", CLICurrentVersion)
+	}
+	if got := DefaultHeaders["User-Agent"]; got != "claude-cli/2.1.220 (external, cli)" {
+		t.Fatalf("User-Agent = %q, want current Claude CLI version", got)
+	}
+}
+
 func TestVersionFetcherAcceptsNpmLatestEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/@anthropic-ai/claude-code/latest" {

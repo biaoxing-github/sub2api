@@ -377,7 +377,7 @@ func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Cont
 
 	probeModel := requestedModel
 	if strings.TrimSpace(probeModel) == "" {
-		probeModel = "grok-4.3"
+		probeModel = grokDefaultResponsesModel
 	}
 	upstreamProbeModel := strings.TrimSpace(account.GetMappedModel(probeModel))
 	if upstreamProbeModel == "" {

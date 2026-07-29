@@ -4270,6 +4270,33 @@ func isClaudeCodeClient(userAgent string, metadataUserID string) bool {
 	return ParseMetadataUserID(metadataUserID) != nil
 }
 
+const (
+	claudeCodeBillingHeaderPrefix = "x-anthropic-billing-header:"
+	claudeCodeEntrypointMarker    = "cc_entrypoint=cli"
+)
+
+// isProxiedClaudeCodeRequest 识别 UA 被中间网关替换、但 body 仍保留真实 CLI 指纹的请求。
+// metadata.user_id 与 system billing block 必须同时存在，避免仅凭普通 system 文本误判。
+func isProxiedClaudeCodeRequest(body []byte, metadataUserID string) bool {
+	if strings.TrimSpace(metadataUserID) == "" {
+		return false
+	}
+	system := gjson.GetBytes(body, "system")
+	if !system.IsArray() {
+		return false
+	}
+	found := false
+	system.ForEach(func(_, item gjson.Result) bool {
+		text := item.Get("text").String()
+		if strings.HasPrefix(text, claudeCodeBillingHeaderPrefix) && strings.Contains(text, claudeCodeEntrypointMarker) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
 // normalizeSystemParam 将 json.RawMessage 类型的 system 参数转为标准 Go 类型（string / []any / nil），
 // 避免 type switch 中 json.RawMessage（底层 []byte）无法匹配 case string / case []any / case nil 的问题。
 // 这是 Go 的 typed nil 陷阱：(json.RawMessage, nil) ≠ (nil, nil)。
@@ -4831,6 +4858,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		clientUserAgent = c.GetHeader("User-Agent")
 	}
 	isClaudeCode := IsClaudeCodeClient(ctx) || isClaudeCodeClient(clientUserAgent, parsed.MetadataUserID)
+	if !isClaudeCode {
+		isClaudeCode = isProxiedClaudeCodeRequest(body, parsed.MetadataUserID)
+	}
 	shouldMimicClaudeCode := account.IsOAuth() && !isClaudeCode
 
 	if shouldMimicClaudeCode {
@@ -10032,7 +10062,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		RequestID:             requestID,
 		Model:                 result.Model,
 		RequestedModel:        requestedModel,
-		UpstreamModel:         optionalNonEqualStringPtr(result.UpstreamModel, result.Model),
+		UpstreamModel:         optionalTrimmedStringPtr(result.UpstreamModel),
 		ReasoningEffort:       result.ReasoningEffort,
 		InboundEndpoint:       optionalTrimmedStringPtr(input.InboundEndpoint),
 		UpstreamEndpoint:      optionalTrimmedStringPtr(input.UpstreamEndpoint),

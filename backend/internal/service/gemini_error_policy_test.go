@@ -339,6 +339,58 @@ func TestGeminiErrorPolicyIntegration(t *testing.T) {
 	}
 }
 
+func TestPoolModeSkippedFailoverError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &GeminiMessagesCompatService{}
+
+	poolAccount := func(extra map[string]any) *Account {
+		credentials := map[string]any{"pool_mode": true}
+		for key, value := range extra {
+			credentials[key] = value
+		}
+		return &Account{ID: 300, Type: AccountTypeAPIKey, Platform: PlatformGemini, Credentials: credentials}
+	}
+
+	tests := []struct {
+		name              string
+		account           *Account
+		statusCode        int
+		expectFailover    bool
+		expectSameAccount bool
+	}{
+		{name: "pool_500_failover_without_same_account_retry", account: poolAccount(nil), statusCode: 500, expectFailover: true},
+		{name: "pool_429_uses_default_same_account_retry", account: poolAccount(nil), statusCode: 429, expectFailover: true, expectSameAccount: true},
+		{name: "pool_500_uses_custom_same_account_retry", account: poolAccount(map[string]any{
+			"pool_mode_retry_status_codes": []any{float64(500)},
+		}), statusCode: 500, expectFailover: true, expectSameAccount: true},
+		{name: "pool_400_keeps_passthrough", account: poolAccount(nil), statusCode: 400},
+		{name: "non_pool_keeps_passthrough", account: &Account{
+			ID: 301, Type: AccountTypeAPIKey, Platform: PlatformGemini,
+			Credentials: map[string]any{"custom_error_codes_enabled": true},
+		}, statusCode: 500},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writer := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(writer)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			body := []byte(`{"error":{"message":"upstream failed"}}`)
+
+			failoverErr := svc.poolModeSkippedFailoverError(c, tt.account, tt.statusCode, body, "req-1")
+			if !tt.expectFailover {
+				require.Nil(t, failoverErr)
+				return
+			}
+
+			require.NotNil(t, failoverErr)
+			require.Equal(t, tt.statusCode, failoverErr.StatusCode)
+			require.Equal(t, body, failoverErr.ResponseBody)
+			require.Equal(t, tt.expectSameAccount, failoverErr.RetryableOnSameAccount)
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // TestGeminiErrorPolicy_NilRateLimitService — verifies nil safety
 // ---------------------------------------------------------------------------

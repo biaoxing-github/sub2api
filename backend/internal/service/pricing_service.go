@@ -648,16 +648,22 @@ func (s *PricingService) GetModelPricing(modelName string) *LiteLLMModelPricing 
 }
 
 func (s *PricingService) buildModelLookupCandidates(modelLower string) []string {
-	// Prefer canonical model name first (this also improves billing compatibility with "models/xxx").
-	candidates := []string{
-		normalizeModelNameForPricing(modelLower),
+	rawCandidates := []string{
 		modelLower,
-	}
-	candidates = append(candidates,
 		strings.TrimPrefix(modelLower, "models/"),
 		lastSegment(modelLower),
 		lastSegment(strings.TrimPrefix(modelLower, "models/")),
-	)
+	}
+	normalized := normalizeModelNameForPricing(modelLower)
+
+	// Gemini 3.6 Flash 的 tier 专属价格优先于基础价格；当前没有专属价格时再回退到基础模型。
+	// 其他模型仍优先使用规范化名称，保持现有 models/ 与 Vertex AI 资源名兼容行为。
+	candidates := rawCandidates
+	if normalizeGeminiThinkingTierAlias(lastSegment(modelLower)) != lastSegment(modelLower) {
+		candidates = append(candidates, normalized)
+	} else {
+		candidates = append([]string{normalized}, candidates...)
+	}
 
 	seen := make(map[string]struct{}, len(candidates))
 	out := make([]string, 0, len(candidates))
@@ -704,6 +710,18 @@ func normalizeModelNameForPricing(model string) string {
 			return "gpt-5.6-sol"
 		}
 		return canonical
+	}
+	return normalizeGeminiThinkingTierAlias(model)
+}
+
+// normalizeGeminiThinkingTierAlias 将 Antigravity 的 Gemini 3.6 Flash 思考等级别名归一到公开基础模型。
+// tier 只控制推理行为，不改变公开 token 单价。
+func normalizeGeminiThinkingTierAlias(model string) string {
+	const baseModel = "gemini-3.6-flash"
+	for _, tier := range []string{"-high", "-low", "-medium", "-tiered"} {
+		if model == baseModel+tier {
+			return baseModel
+		}
 	}
 	return model
 }

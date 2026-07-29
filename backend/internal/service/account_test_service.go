@@ -340,6 +340,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	// Route to platform-specific test method
+	if account.IsGrok() {
+		return s.testGrokAccountConnection(c, account, modelID)
+	}
+
 	if account.IsOpenAI() {
 		return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
 	}
@@ -353,6 +357,37 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
+}
+
+// testGrokAccountConnection 复用正式 Grok Responses 探测链验证账号，避免测试接口维护第二套路由规则。
+func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *Account, modelID string) error {
+	if s.httpUpstream == nil {
+		return s.sendErrorAndEnd(c, "HTTP upstream not configured")
+	}
+
+	testModelID := strings.TrimSpace(modelID)
+	if testModelID == "" {
+		testModelID = grokDefaultResponsesModel
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+
+	gateway := &OpenAIGatewayService{
+		accountRepo:  s.accountRepo,
+		httpUpstream: s.httpUpstream,
+		cfg:          s.cfg,
+	}
+	if err := gateway.sendGrokSchedulerExhaustionProbe(c.Request.Context(), account, testModelID, true); err != nil {
+		return s.sendErrorAndEnd(c, err.Error())
+	}
+
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
 }
 
 // TestAccountConnectionWithResult 在保留 SSE 输出的同时返回人工探测的结构化结果。

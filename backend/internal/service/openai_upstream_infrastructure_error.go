@@ -29,6 +29,10 @@ func classifyOpenAIUpstreamInfrastructureFailure(statusCode int, message string,
 	if isOpenAIContextWindowError(message, responseBody) || isOpenAIModelNotFoundError(statusCode, responseBody) {
 		return openAIUpstreamInfrastructureFailure{}, false
 	}
+	// 424 表示当前上游依赖不可用，请求本身无法通过同一账号立即恢复。
+	if statusCode == http.StatusFailedDependency {
+		return openAIUpstreamInfrastructureFailure{Reason: "upstream_failed_dependency"}, true
+	}
 
 	classification := ClassifyUpstreamError(UpstreamErrorInput{
 		StatusCode: statusCode,

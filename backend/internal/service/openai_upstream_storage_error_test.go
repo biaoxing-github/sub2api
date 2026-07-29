@@ -39,6 +39,7 @@ func TestClassifyOpenAIUpstreamInfrastructureFailure(t *testing.T) {
 		{name: "generic 502", statusCode: http.StatusBadGateway, body: []byte(`{"error":{"message":"bad gateway"}}`), wantMatched: true, wantReason: "upstream_server_error"},
 		{name: "generic 503", statusCode: http.StatusServiceUnavailable, body: []byte(`{"error":{"message":"service unavailable"}}`), wantMatched: true, wantReason: "upstream_server_error"},
 		{name: "generic 504", statusCode: http.StatusGatewayTimeout, body: []byte(`{"error":{"message":"gateway timeout"}}`), wantMatched: true, wantReason: "upstream_server_error"},
+		{name: "failed dependency", statusCode: http.StatusFailedDependency, body: []byte(`{"error":{"message":"Service temporarily unavailable"}}`), wantMatched: true, wantReason: "upstream_failed_dependency"},
 		{name: "529 keeps overload path", statusCode: 529, body: []byte(`{"error":{"message":"overloaded"}}`)},
 		{name: "ordinary bad request", statusCode: http.StatusBadRequest, body: []byte(`{"error":{"message":"invalid parameter: temperature"}}`)},
 		{name: "context window", statusCode: http.StatusBadRequest, body: []byte(`{"error":{"message":"maximum context length exceeded"}}`)},
@@ -63,6 +64,44 @@ func TestClassifyOpenAIUpstreamInfrastructureFailure(t *testing.T) {
 			require.Equal(t, tt.wantMinCooldown, failure.MinimumCooldown)
 		})
 	}
+}
+
+// TestRateLimitServiceHandleFailedDependencyUsesAccountCooldown 验证 424 会短暂隔离故障账号，避免并发请求持续命中。
+func TestRateLimitServiceHandleFailedDependencyUsesAccountCooldown(t *testing.T) {
+	account := &Account{
+		ID:          62027,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"api_keys": []any{"sk-failed-dependency"}},
+	}
+	repo := &rateLimitAccountRepoStub{account: account}
+	blocker := &runtimeBlockRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetAccountRuntimeBlocker(blocker)
+	startedAt := time.Now()
+
+	shouldDisable := service.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusFailedDependency,
+		http.Header{},
+		[]byte(`{"error":{"message":"Service temporarily unavailable"}}`),
+	)
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.tempCalls)
+	require.NotNil(t, account.TempUnschedulableUntil)
+	require.WithinDuration(t, startedAt.Add(30*time.Second), *account.TempUnschedulableUntil, 2*time.Second)
+	require.Len(t, blocker.accounts, 1)
+	require.Equal(t, "upstream_failed_dependency", blocker.reasons[0])
+
+	var state TempUnschedState
+	require.NoError(t, json.Unmarshal([]byte(account.TempUnschedulableReason), &state))
+	require.Equal(t, http.StatusFailedDependency, state.StatusCode)
+	require.Equal(t, "upstream_failed_dependency", state.MatchedKeyword)
+	require.Equal(t, 1, state.ErrorCount)
 }
 
 // TestRateLimitServiceHandleUpstreamStorageFailureUsesAccountCooldown 验证上游磁盘故障冷却整个账号，而不是依次禁用账号内的 Key。
@@ -318,6 +357,53 @@ func TestOpenAIHandleErrorResponseGeneric5xxTriggersAccountFailover(t *testing.T
 	require.Equal(t, 0, repo.updateCredentialsCalls)
 }
 
+// TestOpenAIForwardFailedDependencyReturnsFailoverBeforeWrite 验证原生 Responses 收到 424 后由 handler 接管切号。
+func TestOpenAIForwardFailedDependencyReturnsFailoverBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	responseBody := []byte(`{"error":{"message":"Service temporarily unavailable"}}`)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusFailedDependency,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(responseBody)),
+	}}
+	account := &Account{
+		ID:             62029,
+		Name:           "openai-failed-dependency",
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeAPIKey,
+		Concurrency:    1,
+		Status:         StatusActive,
+		Schedulable:    true,
+		Credentials:    map[string]any{"api_key": "sk-native-424"},
+		RateMultiplier: f64p(1),
+	}
+	repo := &rateLimitAccountRepoStub{account: account}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service := &OpenAIGatewayService{
+		cfg:              &config.Config{},
+		accountRepo:      repo,
+		rateLimitService: rateLimitService,
+		httpUpstream:     upstream,
+	}
+	rateLimitService.SetAccountRuntimeBlocker(service)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	requestBody := []byte(`{"model":"gpt-5.6-sol","input":"hello","stream":true}`)
+
+	result, err := service.Forward(context.Background(), c, account, requestBody)
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusFailedDependency, failoverErr.StatusCode)
+	require.JSONEq(t, string(responseBody), string(failoverErr.ResponseBody))
+	require.False(t, failoverErr.RetryableOnSameAccount)
+	require.False(t, c.Writer.Written(), "切号前不得向客户端提交 424 响应")
+	require.True(t, service.isOpenAIAccountRuntimeBlocked(account))
+	require.Equal(t, 1, repo.tempCalls)
+}
+
 // TestOpenAIPoolModeInfrastructureFailureNeverRetriesSameAccount 验证池模式配置不会覆盖基础设施熔断。
 func TestOpenAIPoolModeInfrastructureFailureNeverRetriesSameAccount(t *testing.T) {
 	account := &Account{
@@ -338,8 +424,46 @@ func TestOpenAIPoolModeInfrastructureFailureNeverRetriesSameAccount(t *testing.T
 func TestOpenAIPassthroughInfrastructureFailureTriggersFailover(t *testing.T) {
 	require.True(t, shouldFailoverOpenAIPassthroughResponse(http.StatusBadRequest, "", []byte(upstreamDiskStorageFailureBody)))
 	require.True(t, shouldFailoverOpenAIPassthroughResponse(http.StatusServiceUnavailable, "service unavailable", nil))
+	require.True(t, shouldFailoverOpenAIPassthroughResponse(http.StatusFailedDependency, "Service temporarily unavailable", nil))
 	require.False(t, shouldFailoverOpenAIPassthroughResponse(http.StatusBadRequest, "invalid parameter", nil))
 	require.False(t, shouldFailoverOpenAIPassthroughResponse(http.StatusBadGateway, "", []byte(`{"error":{"message":"maximum context length exceeded"}}`)))
+}
+
+// TestOpenAIPassthroughFailedDependencyReturnsFailoverBeforeWrite 验证透传 424 不会先写回客户端，并会隔离当前账号。
+func TestOpenAIPassthroughFailedDependencyReturnsFailoverBeforeWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := &Account{
+		ID:          62028,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{"api_keys": []any{"sk-passthrough-424"}},
+	}
+	repo := &rateLimitAccountRepoStub{account: account}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service := &OpenAIGatewayService{accountRepo: repo, rateLimitService: rateLimitService}
+	rateLimitService.SetAccountRuntimeBlocker(service)
+	responseBody := []byte(`{"error":{"message":"Service temporarily unavailable"}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusFailedDependency,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(responseBody)),
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	requestBody := []byte(`{"model":"gpt-5.6-sol","input":"hello","stream":true}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(requestBody))
+
+	err := service.handleFailoverErrorResponsePassthrough(context.Background(), resp, c, account, requestBody)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusFailedDependency, failoverErr.StatusCode)
+	require.JSONEq(t, string(responseBody), string(failoverErr.ResponseBody))
+	require.False(t, c.Writer.Written(), "切号前不得向客户端提交 424 响应")
+	require.True(t, service.isOpenAIAccountRuntimeBlocked(account))
+	require.Equal(t, 1, repo.tempCalls)
 }
 
 // TestOpenAITempUnschedulerDoesNotShortenInfrastructureCooldown 验证 handler 不会用 30 秒覆盖已写入的资源故障冷却。

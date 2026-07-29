@@ -84,6 +84,28 @@ func TestIsClaudeCodeClient(t *testing.T) {
 	}
 }
 
+func TestIsProxiedClaudeCodeRequest(t *testing.T) {
+	validBlock := `{"metadata":{"user_id":"proxied-user"},"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.220.abc; cc_entrypoint=cli; cch=00000;"}]}`
+	tests := []struct {
+		name           string
+		body           string
+		metadataUserID string
+		want           bool
+	}{
+		{name: "完整代理指纹", body: validBlock, metadataUserID: "proxied-user", want: true},
+		{name: "缺少 metadata", body: validBlock, want: false},
+		{name: "system 不是数组", body: `{"system":"x-anthropic-billing-header: cc_entrypoint=cli"}`, metadataUserID: "proxied-user", want: false},
+		{name: "billing 前缀不在开头", body: `{"system":[{"text":"prefix x-anthropic-billing-header: cc_entrypoint=cli"}]}`, metadataUserID: "proxied-user", want: false},
+		{name: "缺少 cli entrypoint", body: `{"system":[{"text":"x-anthropic-billing-header: cc_version=2.1.220.abc"}]}`, metadataUserID: "proxied-user", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isProxiedClaudeCodeRequest([]byte(tt.body), tt.metadataUserID))
+		})
+	}
+}
+
 func TestSystemIncludesClaudeCodePrompt(t *testing.T) {
 	tests := []struct {
 		name   string
