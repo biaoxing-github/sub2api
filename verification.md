@@ -5433,3 +5433,14 @@ v0.1.149 拉取结果：
 - PASS：`nginx -t` 成功后 upstream 切到 blue；`8080`、`18081`、`18083` 主资源路径和 SHA-256 一致。
 - PASS：切流后独立 63.4 秒/13 轮四入口 health 全为 200；blue/proxy 关键日志 0；green、PostgreSQL、Redis healthy/restart 0。
 - LIMIT：未向生产上游主动注入 424；线上窗口未自然触发 424。未执行数据库写入、Git push 或镜像 push。
+
+## 2026-07-30 18:49 - v0.1.168 官方逻辑迁移验证（Devil）
+
+- 迁移结果：从主工作树 `ba9f88be2` 起吸收 12 个可兼容官方提交，覆盖真实 message ID、OpenAI 透传模型映射、模型 ID 复制、Claude OAuth cache breakpoint、GPT-5.6 max effort、Rapid Cloud、Kimi K3、Passkey/WebAuthn、scoped-column updates、Model Plaza、Passkey 关闭提示和 Claude Sonnet 5 状态别名。
+- 后端验证：Passkey、Model Plaza、Optional JWT、GPT-5.6/Kimi/Rapid、Grok 与 OpenAI 424 聚焦回归通过；server/handler/middleware/service/repository 编译切片通过。
+- 数据验证：Testcontainers 创建独立 PostgreSQL 18.1 与 Redis 8.4，12 个 lost-update 集成用例通过；未连接或写入生产数据库。
+- 前端验证：10 个文件 90 个 Vitest 用例通过，`vue-tsc --noEmit` 通过，生产构建完成 972 modules，Model Plaza 资源成功生成。
+- 迁移修正：`68650291d` 补齐 Passkey 测试夹具，并让 scoped-column 集成测试使用当前分支已有的限额更新入口；运行时代码未新增未被业务调用的批量限额 API。
+- 基线风险：完整 config 包仅有既存 `OpenAIRequestHeaderTimeoutSeconds` 20/30 秒断言失配；已在主工作树同命令复现。目标 WebAuthn/Kimi 配置测试均通过。
+- 未迁入：OpenAI Live store resilience `99c8e4bf75`，原因是当前分支缺少约 55 文件的完整 ChatGPT Live 产品链，单独迁入会产生不可达代码与缺失依赖。
+- 发布边界：未构建镜像、未部署、未切流、未推送远端；生产仍保持原有 v0.1.168.1 发布状态。

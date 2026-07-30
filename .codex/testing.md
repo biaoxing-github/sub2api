@@ -447,3 +447,14 @@
 - LIVE：候选 61.3 秒/13 次和切流后 63.4 秒/13 轮观察通过；active 三入口资源哈希一致，blue/proxy 关键日志 0。
 - LIVE：blue active、green rollback、PostgreSQL、Redis 全部 healthy/restart 0。
 - LIMIT：线上窗口未自然出现 424，未对生产上游故意注入故障；无 migration、SQL、Git push 或镜像 push。
+
+## 2026-07-30 v0.1.168 官方逻辑迁移 - Devil
+
+- PASS：后端 Passkey、Model Plaza、Optional JWT、GPT-5.6、Kimi K3、Rapid Cloud、共享字段更新聚焦测试通过；Grok 与 OpenAI 424 本地定制使用 `unit` build tag 回归通过。
+- PASS：`go test ./cmd/server ./internal/handler ./internal/server/middleware ./internal/service ./internal/repository -run '^$' -count=1`，五个核心包编译通过。
+- PASS：Testcontainers 隔离 PostgreSQL/Redis 下完成 repository lost-update 回归；API Key 2 项、User 10 项全部通过，覆盖并发用量、余额、状态、限额和分组授权。
+- PASS：前端 10 个文件、90 个 Vitest 用例全部通过；`pnpm run typecheck` 与 `pnpm run build` 通过，生产构建完成 972 个模块转换。
+- FIXED：补齐 `SecuritySettingsTab` 测试夹具的 Passkey 字段；将官方 lost-update 用例适配为当前分支真实的 `BatchSetConcurrency` 与显式 `RPMLimit` 更新入口，未引入孤立的 `BatchUpdateLimits` API。
+- BASELINE：完整 `go test ./internal/config -count=1` 仍有 `TestLoadDefaultOpenAIRequestHeaderTimeout` 期望 20 秒、实际 30 秒的既有失配；同一测试已在迁移前主工作树复现，且本轮配置差异未修改该字段。v168 涉及的 `TestLoadDefaultSecurityToggles` 与 `TestValidateWebAuthnConfig` 单独通过。
+- LIMITED：`99c8e4bf75` 依赖完整 ChatGPT Live handler/store/attestation/route/migration/usage 产品链，当前分支没有 `openai_live.go` 基础实现，本轮不迁入孤立的 store resilience 补丁。
+- 边界：仅完成本地源码迁移、测试、构建和提交；未执行数据库 migration、镜像构建、部署、Git push 或镜像 push。

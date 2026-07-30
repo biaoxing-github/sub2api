@@ -299,3 +299,13 @@
 - 发布：仅重建 idle blue；候选 61.3 秒观察通过。备份 active.conf 后执行 `nginx -t`，切流至 blue 并 reload。
 - 验证：正式 63.4 秒观察通过，四入口 health 全 200，active 三入口资源哈希一致，blue/proxy 关键日志 0；green/PostgreSQL/Redis healthy/restart 0。
 - 边界：未主动制造生产 424，未执行 migration、SQL、Git push 或镜像 push；原 green `v0.1.166.2` 保留回滚。
+
+## 2026-07-30 18:49 +08:00 Devil - 吸收 v0.1.168 官方逻辑
+
+- 前馈：读取项目 `AGENTS.md`、Obsidian 项目/开发知识库入口、Memory 索引及过程/功能 JSONL；独立集成 worktree 为 `D:\sub2api-v168-integrate`。
+- CodeGraph：首次 `codegraph init -i` 超过 120 秒命令超时，但数据库持续增长；随后状态查询确认索引完成，覆盖 2420 files、74727 nodes、218612 edges，并用于 Passkey、Optional JWT、Model Plaza 调用面确认。
+- 迁移：在 `codex/absorb-v0.1.168` 完成 12 个可兼容官方提交；保留 Grok、OpenAI 424 failover、账号管理和现有合并式 settings/i18n 架构。
+- 排障：前端安全设置测试因旧夹具缺少 `passkey_rp_origins` 失败，确认真实表单固定初始化数组后只补测试夹具；repository integration 因测试引用未迁入的 `BatchUpdateLimits` 无法编译，对照官方完整产品链后改用当前真实入口。
+- 验证：后端聚焦与编译、Testcontainers 12 项 lost-update、前端 90/90、typecheck、production build、diff check 全部通过；完整 config 的 20/30 秒既有基线失配已在主工作树复现并记录。
+- 取舍：不迁入 `99c8e4bf75` OpenAI Live store resilience；它依赖当前分支不存在的完整 ChatGPT Live 链路，不能独立闭环。
+- 边界：未执行生产数据库写入、migration、镜像构建、部署、Git push 或镜像 push。
