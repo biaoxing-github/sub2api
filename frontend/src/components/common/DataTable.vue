@@ -89,7 +89,7 @@
               getStickyColumnClass(column, index),
               column.class
             ]"
-            @click="column.sortable && handleSort(column.key)"
+            @click="column.sortable && handleSort(column)"
           >
             <slot
               :name="`header-${column.key}`"
@@ -545,8 +545,9 @@ watch(actionsExpanded, async () => {
   checkScrollable()
 })
 
-const handleSort = (key: string) => {
-  let newOrder: 'asc' | 'desc' = 'asc'
+const handleSort = (column: Column) => {
+  const key = column.key
+  let newOrder: 'asc' | 'desc' = column.defaultSortOrder ?? 'asc'
   if (sortKey.value === key) {
     newOrder = sortOrder.value === 'asc' ? 'desc' : 'asc'
   }

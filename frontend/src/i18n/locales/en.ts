@@ -3459,6 +3459,7 @@ export default {
         expiresAt: 'Expires At',
         actions: 'Actions'
       },
+      todayUsageRanking: "Today's Usage Ranking",
       accountAgeToday: 'Alive < 1 day',
       accountAgeDays: 'Alive {count} days',
       accountAgeUnknown: 'Age unknown',

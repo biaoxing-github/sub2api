@@ -17,6 +17,22 @@
             @create="showCreate = true"
           >
             <template #after>
+              <button
+                type="button"
+                data-test="today-usage-ranking"
+                :disabled="loading"
+                :class="[
+                  'btn px-2 md:px-3',
+                  sortState.sort_by === 'today_stats' && sortState.sort_order === 'desc'
+                    ? 'btn-primary'
+                    : 'btn-secondary'
+                ]"
+                :title="t('admin.accounts.todayUsageRanking')"
+                @click="showTodayUsageRanking"
+              >
+                <Icon name="chartBar" size="sm" class="md:mr-1.5" />
+                <span class="hidden md:inline">{{ t('admin.accounts.todayUsageRanking') }}</span>
+              </button>
               <div ref="autoRefreshDropdownRef">
                 <AccountAutoRefreshControl
                   :open="showAutoRefreshDropdown"
@@ -1253,6 +1269,7 @@ const ACCOUNT_SORTABLE_KEYS = new Set([
   'rate_multiplier',
   'last_used_at',
   'expires_at',
+  'today_stats',
   'total_account_cost',
   'total_requests'
 ])
@@ -1705,6 +1722,11 @@ const handleSort = (key: string, order: AccountSortOrder) => {
   load()
 }
 
+// showTodayUsageRanking 一键按配置时区内的今日账号成本从高到低排列。
+const showTodayUsageRanking = () => {
+  handleSort('today_stats', 'desc')
+}
+
 watch(loading, (isLoading, wasLoading) => {
   if (wasLoading && !isLoading && pendingTodayStatsRefresh.value) {
     pendingTodayStatsRefresh.value = false
@@ -2073,7 +2095,7 @@ const allColumns = computed(() => {
     { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false, class: 'align-top' },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true, class: 'align-top' },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true, class: 'align-top' },
-    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false, class: 'align-top' }
+    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: true, defaultSortOrder: 'desc' as const, class: 'align-top' }
   ]
   if (!authStore.isSimpleMode) {
     c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false, class: 'align-top' })

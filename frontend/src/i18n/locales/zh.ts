@@ -3488,6 +3488,7 @@ export default {
         expiresAt: '过期时间',
         actions: '操作'
       },
+      todayUsageRanking: '今日消耗排行',
       accountAgeToday: '存活不足 1 天',
       accountAgeDays: '存活 {count} 天',
       accountAgeUnknown: '存活时间未知',
