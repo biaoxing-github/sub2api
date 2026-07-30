@@ -645,6 +645,26 @@ func TestGetModelPricing_GrokCatalogFallbacks(t *testing.T) {
 	}
 }
 
+// TestGetModelPricing_KimiK3Fallbacks 验证 K3 官方 ID 与 bare aliases 的价格，
+// 同时确保相似但未知的模型名不会被宽泛匹配。
+func TestGetModelPricing_KimiK3Fallbacks(t *testing.T) {
+	svc := newTestBillingService()
+
+	for _, model := range []string{"kimi-k3", "k3", "k3-256k", "moonshot/kimi-k3", "kimi-code/k3", "kimi-code/k3-256k"} {
+		pricing, err := svc.GetModelPricing(model)
+		require.NoError(t, err, "model %s", model)
+		require.InDelta(t, 3e-6, pricing.InputPricePerToken, 1e-12, "model %s input", model)
+		require.InDelta(t, 0.30e-6, pricing.CacheReadPricePerToken, 1e-12, "model %s cached input", model)
+		require.InDelta(t, 15e-6, pricing.OutputPricePerToken, 1e-12, "model %s output", model)
+	}
+
+	for _, model := range []string{"foo-k3-bar", "vendor/foo-k3", "kimi-k30", "foo-kimi-k3-bar", "kimi-k3[1m]", "moonshot/kimi-k3[1m]"} {
+		pricing, err := svc.GetModelPricing(model)
+		require.Error(t, err, "model %s", model)
+		require.Nil(t, pricing, "model %s", model)
+	}
+}
+
 func TestCalculateCost_SupportsCacheBreakdown(t *testing.T) {
 	svc := &BillingService{
 		cfg: &config.Config{},

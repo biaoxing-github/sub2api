@@ -66,6 +66,15 @@ func TestFilterWebSearchHistoryBlocks_StripsAllBlocksForPassbackRequired(t *test
 	require.Contains(t, string(out), "summary with citations")
 }
 
+// TestRequiresWebSearchHistoryStripAll_KimiK3BareAliases 验证 Kimi Code bare ID
+// 使用 passback-required 语义，且相似未知别名不会被宽泛匹配。
+func TestRequiresWebSearchHistoryStripAll_KimiK3BareAliases(t *testing.T) {
+	require.True(t, requiresWebSearchHistoryStripAll("kimi-k3"))
+	require.True(t, requiresWebSearchHistoryStripAll("k3"))
+	require.True(t, requiresWebSearchHistoryStripAll("k3-256k"))
+	require.False(t, requiresWebSearchHistoryStripAll("foo-k3-bar"))
+}
+
 func TestFilterWebSearchHistoryBlocks_StripsEmulatedBlocksForUnknownModel(t *testing.T) {
 	out := FilterWebSearchHistoryBlocks([]byte(emulatedWebSearchBody), "totally-unknown-model")
 

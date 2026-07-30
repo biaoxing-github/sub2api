@@ -46,6 +46,9 @@ func TestIsModelSupported_OpenAIOAuthEmptyMapping_RejectsForeignModels(t *testin
 		"deepseek-chat",
 		"glm-4.7",
 		"kimi-k2",
+		"k3",
+		"k3-256k",
+		"provider/k3",
 		"gemini-3.0-pro",
 		"grok-4",
 		"qwen3-max",
@@ -58,10 +61,14 @@ func TestIsModelSupported_OpenAIOAuthEmptyMapping_RejectsForeignModels(t *testin
 func TestIsModelSupported_OpenAIOAuthExplicitMappingUnchanged(t *testing.T) {
 	account := newOpenAIOAuthAccountForModelTest()
 	account.Credentials = map[string]any{
-		"model_mapping": map[string]any{"deepseek-v4": "gpt-5.4"},
+		"model_mapping": map[string]any{
+			"deepseek-v4": "gpt-5.4",
+			"k3":          "gpt-5.4",
+		},
 	}
 
 	require.True(t, account.IsModelSupported("deepseek-v4"))
+	require.True(t, account.IsModelSupported("k3"))
 	require.False(t, account.IsModelSupported("glm-4.7"))
 }
 
@@ -110,4 +117,8 @@ func TestIsOpenAIOAuthServableModel(t *testing.T) {
 	require.True(t, isOpenAIOAuthServableModel("claude-3-5-haiku-20241022"))
 	require.False(t, isOpenAIOAuthServableModel("claude-unknown-family"))
 	require.False(t, isOpenAIOAuthServableModel("deepseek-v4"))
+	require.False(t, isOpenAIOAuthServableModel("k3"))
+	require.False(t, isOpenAIOAuthServableModel("k3-256k"))
+	require.False(t, isOpenAIOAuthServableModel("provider/k3"))
+	require.False(t, isOpenAIOAuthServableModel("my-k3-alias"))
 }

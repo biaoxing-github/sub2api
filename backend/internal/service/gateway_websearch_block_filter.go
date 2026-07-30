@@ -110,7 +110,9 @@ func requiresWebSearchHistoryStripAll(mappedModel string) bool {
 		strings.HasPrefix(id, "kimi-"),
 		strings.HasPrefix(id, "moonshot-"),
 		strings.HasPrefix(id, "glm-"),
-		strings.HasPrefix(id, "minimax-m"):
+		strings.HasPrefix(id, "minimax-m"),
+		id == "k3",
+		id == "k3-256k":
 		return true
 	}
 
