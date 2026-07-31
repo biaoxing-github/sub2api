@@ -319,3 +319,13 @@
 - 页面：使用已登录 Chrome 验证主版本与镜像版本；新增账号选择 Grok 后显示正确标题与 OAuth/xAI API Key 入口，应用 error/warn 为 0。
 - 最终复核：blue `v0.1.168.6` active healthy/restart 0；green `v0.1.168.5` healthy/restart 0 并保留回滚；`8080`、`18081`、`18083` health 均为 200。
 - 边界：未创建生产 Grok 账号、未写数据库、未重启 PostgreSQL/Redis、未执行 Git push 或镜像 push；无关工作树修改保持未暂存。
+
+## 2026-07-31 17:48 +08:00 Devil - 发布 DeepSeek Responses reasoning 归一化 v0.1.168.7
+
+- 提交与构建：功能切片提交为 `9ff70e157c8ba1d1bfbbf08421410633fb0a1919`；从 committed HEAD 的 `git archive` 构建不可变镜像 `sub2api:v0.1.168.7`，归档 SHA-256、镜像 ID、OCI version/revision 与二进制身份一致。
+- 候选：只重建 idle green；health、首页、主资源与 401 鉴权边界 smoke 通过，61.4 秒 13/13 次独立观察通过，green healthy/restart 0，关键日志 0。
+- 切流：备份部署 `.env` 与 `active.conf`，通过 `nginx -t` 后 reload 到 `sub2api-green:8080`；未重建 active blue，未重启 PostgreSQL 或 Redis。
+- 线上：切流后入口与资源哈希一致；64.6 秒 13/13 轮四入口 health 全部 200，green/proxy 关键日志 0。
+- 页面：已登录 Chrome 显示主版本 `v0.1.168` 与镜像版本 `v0.1.168.7`。
+- 最终状态：green `.7` active healthy/restart 0；blue `.6` healthy/restart 0 并保留回滚；PostgreSQL、Redis healthy/restart 0；代理生效配置指向 green。
+- 边界：未主动调用真实 DeepSeek 上游，未写生产数据库，未执行 Git push 或镜像 push；无关工作树修改保持未暂存。

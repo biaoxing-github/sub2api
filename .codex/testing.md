@@ -468,3 +468,15 @@
 - PASS：未登录管理版本接口与 `/v1/responses` 均保持 401；已登录 Chrome 显示 `v0.1.168` / `v0.1.168.6`，Grok 创建入口显示 OAuth 与 xAI API Key，应用 error/warn 为 0。
 - PASS：最终复核 active upstream 为 `sub2api-blue:8080`，blue `v0.1.168.6` 与 green 回滚 `v0.1.168.5` 均 healthy/restart 0，三个正式入口 health 均为 200。
 - LIMIT：生产 52 个账号中没有 Grok 平台账号，未为验证创建生产账号；未写生产数据库，未执行 Git push 或镜像 push。
+
+## 2026-07-31 v0.1.168.7 蓝绿发布验证 - Devil
+
+- PASS：功能提交 `9ff70e157c8ba1d1bfbbf08421410633fb0a1919`；`git archive HEAD` SHA-256 为 `81A102429244BBBAC1DA949E0C7BD466926469F1CA980A2654D6F619539C043B`。
+- PASS：不可变镜像 `sub2api:v0.1.168.7` 的镜像 ID、OCI version/revision 与二进制版本均匹配目标提交和版本。
+- PASS：idle green 候选 smoke 与 61.4 秒独立观察通过，13/13 次采样成功，容器始终 healthy/restart 0，关键日志命中 0。
+- PASS：切流后入口资源路径为 `/assets/index-BKWgQvnT.js`，三入口 SHA-256 一致为 `0E3181EEBC4579985E32B7852A2970DE13AEC9B4473F4A5F6FBA56838B765E03`。
+- PASS：切流后 64.6 秒独立观察通过，13/13 轮四入口 health 全部 200；green/blue 均 healthy/restart 0，green/proxy 关键日志 0。
+- PASS：已登录 Chrome 管理端显示 `v0.1.168` / `v0.1.168.7`；最终 `active.conf` 与 `nginx -T` 均指向 green。
+- PASS：PostgreSQL、Redis 全程保持 healthy/restart 0，未执行 migration 或数据写入。
+- LIMIT：未主动向生产 DeepSeek 上游注入请求；协议行为由本地自动化测试覆盖。unit-tag 全包和 `go vet` 的既有失败保持原记录。
+- BOUNDARY：未执行 Git push 或镜像仓库 push。

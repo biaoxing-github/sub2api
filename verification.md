@@ -5454,3 +5454,14 @@ v0.1.149 拉取结果：
 - 页面验证：已登录 Chrome 显示主版本 `v0.1.168`、镜像版本 `v0.1.168.6`；选择 Grok 后显示“Grok 账户授权”，OAuth 与 xAI API Key 两种入口可见，应用控制台 error/warn 为 0。
 - 最终状态：blue `v0.1.168.6` 正式生效；green `v0.1.168.5` 保留回滚；PostgreSQL、Redis 和两个应用容器均 healthy/restart 0。
 - 验证边界：生产没有现存 Grok 账号，未创建账号或写数据库；未执行 Git push 和镜像仓库 push。
+
+## 2026-07-31 DeepSeek Responses reasoning 归一化 v0.1.168.7 发布验证（Devil）
+
+- 发布结果：正式 upstream 已切到 green `sub2api:v0.1.168.7`；blue `sub2api:v0.1.168.6` 保留回滚，`passes: true`。
+- 代码与镜像：功能提交 `9ff70e157c8ba1d1bfbbf08421410633fb0a1919`；镜像 ID `sha256:9c983f66b4a1e967388d9bfd9e95ed2b3e36dad1c1c172293947dc41beed8515`，归档 SHA-256 `81A102429244BBBAC1DA949E0C7BD466926469F1CA980A2654D6F619539C043B`，OCI 与二进制身份一致。
+- 候选证据：idle green smoke、鉴权边界和 61.4 秒 13/13 次采样通过，green healthy/restart 0，关键日志 0。
+- 切流证据：`nginx -t` 与 reload 成功；`8080`、`18081`、`18082` 主资源路径和 SHA-256 一致。
+- 稳定证据：切流后 64.6 秒 13/13 轮四入口 health 全部 200；green/blue、PostgreSQL、Redis 均 healthy/restart 0，green/proxy 关键日志 0。
+- 页面证据：已登录 Chrome 显示主版本 `v0.1.168`、镜像版本 `v0.1.168.7`。
+- 最终状态：`active.conf` 与 `nginx -T` 均指向 `sub2api-green:8080`；blue `.6` 保留为健康回滚目标。
+- 验证边界：未主动调用真实 DeepSeek 上游、未写生产数据库、未执行 Git push 或镜像 push；unit-tag 全包和 `go vet` 的既有失败不涉及本次文件。
