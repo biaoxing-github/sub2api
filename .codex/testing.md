@@ -458,3 +458,13 @@
 - BASELINE：完整 `go test ./internal/config -count=1` 仍有 `TestLoadDefaultOpenAIRequestHeaderTimeout` 期望 20 秒、实际 30 秒的既有失配；同一测试已在迁移前主工作树复现，且本轮配置差异未修改该字段。v168 涉及的 `TestLoadDefaultSecurityToggles` 与 `TestValidateWebAuthnConfig` 单独通过。
 - LIMITED：`99c8e4bf75` 依赖完整 ChatGPT Live handler/store/attestation/route/migration/usage 产品链，当前分支没有 `openai_live.go` 基础实现，本轮不迁入孤立的 store resilience 补丁。
 - 边界：仅完成本地源码迁移、测试、构建和提交；未执行数据库 migration、镜像构建、部署、Git push 或镜像 push。
+
+## 2026-07-31 v0.1.168.6 蓝绿发布验证 - Devil
+
+- PASS：功能提交为 `886b497fcd0dde4e3b13b8af8c42c5eb178f4a19`；`git archive HEAD` SHA-256 为 `0D53C4A0BEC9387A68D816E7CFF9680A54DA7C63965182C06207F3926C7AC91C`，重建归档结果一致。
+- PASS：不可变镜像 `sub2api:v0.1.168.6` 的镜像 ID、OCI version/revision 与二进制版本均匹配目标提交和版本。
+- PASS：idle blue 候选 smoke 与 63 秒独立观察通过，13/13 次采样成功，容器始终 healthy/restart 0，关键日志命中 0。
+- PASS：切流后 70 秒独立观察通过，13/13 轮四入口 health 全部 200；`8080`、`18081`、`18083` 主资源路径和 SHA-256 一致。
+- PASS：未登录管理版本接口与 `/v1/responses` 均保持 401；已登录 Chrome 显示 `v0.1.168` / `v0.1.168.6`，Grok 创建入口显示 OAuth 与 xAI API Key，应用 error/warn 为 0。
+- PASS：最终复核 active upstream 为 `sub2api-blue:8080`，blue `v0.1.168.6` 与 green 回滚 `v0.1.168.5` 均 healthy/restart 0，三个正式入口 health 均为 200。
+- LIMIT：生产 52 个账号中没有 Grok 平台账号，未为验证创建生产账号；未写生产数据库，未执行 Git push 或镜像 push。

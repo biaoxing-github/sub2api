@@ -5444,3 +5444,13 @@ v0.1.149 拉取结果：
 - 基线风险：完整 config 包仅有既存 `OpenAIRequestHeaderTimeoutSeconds` 20/30 秒断言失配；已在主工作树同命令复现。目标 WebAuthn/Kimi 配置测试均通过。
 - 未迁入：OpenAI Live store resilience `99c8e4bf75`，原因是当前分支缺少约 55 文件的完整 ChatGPT Live 产品链，单独迁入会产生不可达代码与缺失依赖。
 - 发布边界：未构建镜像、未部署、未切流、未推送远端；生产仍保持原有 v0.1.168.1 发布状态。
+
+## 2026-07-31 Grok 平台显示修复 v0.1.168.6 发布验证（Devil）
+
+- 代码与镜像：功能提交 `886b497fcd0dde4e3b13b8af8c42c5eb178f4a19`；不可变镜像 `sub2api:v0.1.168.6` ID 为 `sha256:7ad8efbc249df137a933fcad42c52aa93eeba60bd4b8f1fd5550ed156d995aec`，OCI 与二进制身份一致。
+- 构建来源：从已提交 `HEAD` 归档构建，归档 SHA-256 为 `0D53C4A0BEC9387A68D816E7CFF9680A54DA7C63965182C06207F3926C7AC91C`，重新生成归档复核一致。
+- 候选验证：仅重建 idle blue；smoke、鉴权边界和 63 秒 13 次采样全部通过，blue healthy/restart 0，关键日志 0。
+- 切流验证：Nginx 配置测试通过后切到 `sub2api-blue:8080`；70 秒 13 轮四入口 health 全部 200，正式入口主资源哈希一致，blue/proxy 关键日志 0。
+- 页面验证：已登录 Chrome 显示主版本 `v0.1.168`、镜像版本 `v0.1.168.6`；选择 Grok 后显示“Grok 账户授权”，OAuth 与 xAI API Key 两种入口可见，应用控制台 error/warn 为 0。
+- 最终状态：blue `v0.1.168.6` 正式生效；green `v0.1.168.5` 保留回滚；PostgreSQL、Redis 和两个应用容器均 healthy/restart 0。
+- 验证边界：生产没有现存 Grok 账号，未创建账号或写数据库；未执行 Git push 和镜像仓库 push。

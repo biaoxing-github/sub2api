@@ -309,3 +309,13 @@
 - 验证：后端聚焦与编译、Testcontainers 12 项 lost-update、前端 90/90、typecheck、production build、diff check 全部通过；完整 config 的 20/30 秒既有基线失配已在主工作树复现并记录。
 - 取舍：不迁入 `99c8e4bf75` OpenAI Live store resilience；它依赖当前分支不存在的完整 ChatGPT Live 链路，不能独立闭环。
 - 边界：未执行生产数据库写入、migration、镜像构建、部署、Git push 或镜像 push。
+
+## 2026-07-31 11:31 +08:00 Devil - 发布 Grok 平台显示修复 v0.1.168.6
+
+- 前馈：读取项目发布约束、Obsidian 项目与开发知识库入口、Memory 蓝绿发布规则和现有会话记录；复核工作树脏文件并明确只提交本次发布审计切片。
+- 构建：从功能提交 `886b497fcd0dde4e3b13b8af8c42c5eb178f4a19` 的 `git archive HEAD` 构建 `sub2api:v0.1.168.6`；归档哈希、镜像 ID、OCI version/revision 和二进制身份全部匹配。
+- 候选：部署 idle blue，完成 health、首页、静态资源、401 鉴权边界、容器健康与关键日志 smoke；63 秒 13 次独立采样全部通过。
+- 切流：备份部署 `.env` 与 `active.conf`，通过 `nginx -t` 后 reload 到 `sub2api-blue:8080`；70 秒 13 轮四入口观察、主资源哈希和关键日志复核全部通过。
+- 页面：使用已登录 Chrome 验证主版本与镜像版本；新增账号选择 Grok 后显示正确标题与 OAuth/xAI API Key 入口，应用 error/warn 为 0。
+- 最终复核：blue `v0.1.168.6` active healthy/restart 0；green `v0.1.168.5` healthy/restart 0 并保留回滚；`8080`、`18081`、`18083` health 均为 200。
+- 边界：未创建生产 Grok 账号、未写数据库、未重启 PostgreSQL/Redis、未执行 Git push 或镜像 push；无关工作树修改保持未暂存。
