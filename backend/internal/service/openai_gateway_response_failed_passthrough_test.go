@@ -237,7 +237,7 @@ func TestHandlePassthroughSSEToJSON_ResponseFailedAppliesSemanticRuleAndReturnsU
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 	}
 
-	result, err := svc.handlePassthroughSSEToJSON(resp, c, []byte(buildContextLengthFailedSSE()), PlatformOpenAI, "gpt-5.4", "gpt-5.4")
+	result, err := svc.handlePassthroughSSEToJSON(resp, c, []byte(buildContextLengthFailedSSE()), PlatformOpenAI, "gpt-5.4", "gpt-5.4", false)
 
 	require.Error(t, err)
 	require.NotNil(t, result)

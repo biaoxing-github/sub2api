@@ -382,7 +382,7 @@ func TestHandleNonStreamingResponsePassthrough_CompactClientStreamBridgesToSSE(t
 		}`)),
 	}
 
-	result, err := svc.handleNonStreamingResponsePassthrough(context.Background(), resp, c, PlatformOpenAI, "gpt-5.5", "")
+	result, err := svc.handleNonStreamingResponsePassthrough(context.Background(), resp, c, PlatformOpenAI, "gpt-5.5", "", false)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 

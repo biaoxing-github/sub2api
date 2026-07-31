@@ -4967,6 +4967,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	imageCount := 0
 	var imageOutputSizes []string
 	var forwardErr error
+	normalizeDeepSeekReasoning := shouldNormalizeDeepSeekResponsesReasoning(account, reqModel, upstreamPassthroughModel)
 	if reqStream {
 		result, handleErr := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel)
 		if result != nil {
@@ -4984,7 +4985,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			forwardErr = handleErr
 		}
 	} else {
-		result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account.Platform, reqModel, upstreamPassthroughModel)
+		result, handleErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account.Platform, reqModel, upstreamPassthroughModel, normalizeDeepSeekReasoning)
 		if result != nil {
 			usage = result.usage
 			usageObserved = result.usageObserved
@@ -6134,7 +6135,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 	defer putSSEScannerBuf64K(scanBuf)
-	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
+	var documentScanner openAISSELineScanner = newOpenAISSEJSONDocumentScanner(scanner)
+	if shouldNormalizeDeepSeekResponsesReasoning(account, originalModel, mappedModel) {
+		documentScanner = newDeepSeekResponsesReasoningSSEScanner(documentScanner, true)
+	}
 
 	streamInterval := time.Duration(0)
 	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
@@ -6467,6 +6471,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	platform string,
 	originalModel string,
 	mappedModel string,
+	normalizeDeepSeekReasoning bool,
 ) (*openaiNonStreamingResultPassthrough, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
@@ -6478,7 +6483,11 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// stream=false was requested. Without this conversion the client would
 	// receive raw SSE text or a terminal event with empty output.
 	if isEventStreamResponse(resp.Header) {
-		return s.handlePassthroughSSEToJSON(resp, c, body, platform, originalModel, mappedModel)
+		return s.handlePassthroughSSEToJSON(resp, c, body, platform, originalModel, mappedModel, normalizeDeepSeekReasoning)
+	}
+
+	if normalized, changed := normalizeDeepSeekResponsesReasoningResponse(body, normalizeDeepSeekReasoning); changed {
+		body = normalized
 	}
 
 	usage := &OpenAIUsage{}
@@ -6517,7 +6526,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 // response for the passthrough path. It mirrors handleSSEToJSON while
 // preserving passthrough payloads, except compact-only model remapping may
 // rewrite model fields back to the original requested model.
-func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c *gin.Context, body []byte, platform string, originalModel string, mappedModel string) (*openaiNonStreamingResultPassthrough, error) {
+func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c *gin.Context, body []byte, platform string, originalModel string, mappedModel string, normalizeDeepSeekReasoning bool) (*openaiNonStreamingResultPassthrough, error) {
+	if normalized, changed := normalizeDeepSeekResponsesReasoningSSEBody(body, normalizeDeepSeekReasoning); changed {
+		body = normalized
+	}
 	bodyText := string(body)
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 

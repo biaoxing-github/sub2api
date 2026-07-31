@@ -4590,7 +4590,7 @@ func TestHandlePassthroughSSEToJSON_CompletedEventReturnsJSONContentType(t *test
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handlePassthroughSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-5.4", "gpt-5.4")
+	usage, err := svc.handlePassthroughSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-5.4", "gpt-5.4", false)
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 5, usage.InputTokens)
