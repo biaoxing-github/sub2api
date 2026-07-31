@@ -142,6 +142,13 @@ function isPlatform(p: string): p is Platform {
   return p === 'anthropic' || p === 'openai' || p === 'antigravity' || p === 'gemini' || p === 'grok'
 }
 
+// 将接口中的平台别名和格式差异统一为前端使用的规范平台值。
+export function normalizePlatform(p: string): Platform | undefined {
+  const normalized = p.trim().toLowerCase()
+  const canonical = normalized === 'xai' ? 'grok' : normalized
+  return isPlatform(canonical) ? canonical : undefined
+}
+
 export function platformBadgeClass(p: string): string {
   return isPlatform(p) ? BADGE[p] : BADGE_DEFAULT
 }
@@ -195,12 +202,12 @@ export function platformGradientSubtextClass(p: string): string {
 }
 
 export function platformLabel(p: string): string {
-  switch (p) {
+  switch (normalizePlatform(p)) {
     case 'anthropic': return 'Anthropic'
     case 'openai': return 'OpenAI'
     case 'antigravity': return 'Antigravity'
     case 'gemini': return 'Gemini'
     case 'grok': return 'Grok'
-    default: return p || 'API'
+    default: return p.trim() || 'API'
   }
 }

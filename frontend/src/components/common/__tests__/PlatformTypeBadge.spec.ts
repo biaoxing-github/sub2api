@@ -33,6 +33,43 @@ describe('PlatformTypeBadge', () => {
     expect(badges[1].classes()).toContain('text-cyan-600')
   })
 
+  it.each(['xai', ' Grok '])('normalizes the Grok platform alias %j', (platform) => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: platform as 'grok',
+        type: 'apikey'
+      },
+      global: {
+        stubs: {
+          PlatformIcon: true,
+          Icon: true
+        }
+      }
+    })
+
+    expect(wrapper.text()).toContain('Grok')
+    expect(wrapper.text()).not.toContain('Gemini')
+    expect(wrapper.find('.bg-cyan-100').exists()).toBe(true)
+  })
+
+  it('does not mislabel an unknown platform as Gemini', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'custom-provider' as 'grok',
+        type: 'apikey'
+      },
+      global: {
+        stubs: {
+          PlatformIcon: true,
+          Icon: true
+        }
+      }
+    })
+
+    expect(wrapper.text()).toContain('custom-provider')
+    expect(wrapper.text()).not.toContain('Gemini')
+  })
+
   it('keeps Gemini and existing platforms labeled correctly', async () => {
     const wrapper = mount(PlatformTypeBadge, {
       props: {

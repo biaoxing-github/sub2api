@@ -3,7 +3,7 @@
     <!-- Row 1: Platform + Type -->
     <div class="inline-flex items-center overflow-hidden rounded-md">
       <span :class="['inline-flex items-center gap-1 px-2 py-1', platformClass]">
-        <PlatformIcon :platform="platform" size="xs" />
+        <PlatformIcon :platform="normalizedPlatform" size="xs" />
         <span>{{ platformLabel }}</span>
       </span>
       <span :class="['inline-flex items-center gap-1 px-1.5 py-1', typeClass]">
@@ -57,6 +57,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AccountPlatform, AccountType } from '@/types'
+import { normalizePlatform, platformLabel as resolvePlatformLabel } from '@/utils/platformColors'
 import PlatformIcon from './PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 
@@ -73,13 +74,9 @@ interface Props {
 
 const props = defineProps<Props>()
 
-const platformLabel = computed(() => {
-  if (props.platform === 'anthropic') return 'Anthropic'
-  if (props.platform === 'openai') return 'OpenAI'
-  if (props.platform === 'grok') return 'Grok'
-  if (props.platform === 'antigravity') return 'Antigravity'
-  return 'Gemini'
-})
+// 账号接口可能返回 xAI 别名或带格式差异的平台值，展示前统一归一化。
+const normalizedPlatform = computed(() => normalizePlatform(String(props.platform)))
+const platformLabel = computed(() => resolvePlatformLabel(String(props.platform)))
 
 const normalizedAuthMode = computed(() =>
   (props.authMode || '').trim().toLowerCase().replace(/[\s_-]+/g, '')
@@ -127,35 +124,41 @@ const planLabel = computed(() => {
 })
 
 const platformClass = computed(() => {
-  if (props.platform === 'anthropic') {
+  if (normalizedPlatform.value === 'anthropic') {
     return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
   }
-  if (props.platform === 'openai') {
+  if (normalizedPlatform.value === 'openai') {
     return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
   }
-  if (props.platform === 'grok') {
+  if (normalizedPlatform.value === 'grok') {
     return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400'
   }
-  if (props.platform === 'antigravity') {
+  if (normalizedPlatform.value === 'antigravity') {
     return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
   }
-  return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+  if (normalizedPlatform.value === 'gemini') {
+    return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+  }
+  return 'bg-gray-100 text-gray-700 dark:bg-dark-600 dark:text-gray-300'
 })
 
 const typeClass = computed(() => {
-  if (props.platform === 'anthropic') {
+  if (normalizedPlatform.value === 'anthropic') {
     return 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
   }
-  if (props.platform === 'openai') {
+  if (normalizedPlatform.value === 'openai') {
     return 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
   }
-  if (props.platform === 'grok') {
+  if (normalizedPlatform.value === 'grok') {
     return 'bg-cyan-100 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400'
   }
-  if (props.platform === 'antigravity') {
+  if (normalizedPlatform.value === 'antigravity') {
     return 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400'
   }
-  return 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+  if (normalizedPlatform.value === 'gemini') {
+    return 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+  }
+  return 'bg-gray-100 text-gray-600 dark:bg-dark-600 dark:text-gray-300'
 })
 
 const planBadgeClass = computed(() => {
