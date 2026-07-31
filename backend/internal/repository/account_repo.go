@@ -28,7 +28,6 @@ import (
 	dbproxy "github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 
@@ -618,7 +617,7 @@ func accountListOrder(params pagination.PaginationParams) []func(*entsql.Selecto
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderAsc)
 
-	if sortBy == "today_stats" || sortBy == "total_account_cost" || sortBy == "total_requests" {
+	if sortBy == "total_account_cost" || sortBy == "total_requests" {
 		return accountUsageTotalOrder(sortBy, sortOrder)
 	}
 
@@ -666,28 +665,20 @@ func accountUsageTotalOrder(sortBy, sortOrder string) []func(*entsql.Selector) {
 	return []func(*entsql.Selector){
 		func(s *entsql.Selector) {
 			accountIDCol := s.C(dbaccount.FieldID)
+			var subquery string
+			switch sortBy {
+			case "total_requests":
+				subquery = fmt.Sprintf("(SELECT COUNT(*) FROM usage_logs ul WHERE ul.account_id = %s)", accountIDCol)
+			default:
+				subquery = fmt.Sprintf("(SELECT COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) FROM usage_logs ul WHERE ul.account_id = %s)", accountIDCol)
+			}
 			direction := "ASC"
 			tieOrder := entsql.Asc
 			if sortOrder == pagination.SortOrderDesc {
 				direction = "DESC"
 				tieOrder = entsql.Desc
 			}
-			switch sortBy {
-			case "total_requests":
-				subquery := fmt.Sprintf("(SELECT COUNT(*) FROM usage_logs ul WHERE ul.account_id = %s)", accountIDCol)
-				s.OrderExpr(entsql.Expr(subquery + " " + direction))
-			case "today_stats":
-				// 今日统计与账号列表现有展示口径一致，按配置时区的当天零点过滤账号成本。
-				s.OrderExpr(entsql.ExprFunc(func(b *entsql.Builder) {
-					b.WriteString("(SELECT COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) FROM usage_logs ul WHERE ul.account_id = ")
-					b.WriteString(accountIDCol)
-					b.WriteString(" AND ul.created_at >= ").Arg(timezone.Today())
-					b.WriteString(") " + direction)
-				}))
-			default:
-				subquery := fmt.Sprintf("(SELECT COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) FROM usage_logs ul WHERE ul.account_id = %s)", accountIDCol)
-				s.OrderExpr(entsql.Expr(subquery + " " + direction))
-			}
+			s.OrderExpr(entsql.Expr(subquery + " " + direction))
 			s.OrderBy(tieOrder(accountIDCol))
 		},
 	}

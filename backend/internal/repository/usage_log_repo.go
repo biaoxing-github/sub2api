@@ -2241,6 +2241,10 @@ type UserUsageTrendPoint = usagestats.UserUsageTrendPoint
 type UserSpendingRankingItem = usagestats.UserSpendingRankingItem
 type UserSpendingRankingResponse = usagestats.UserSpendingRankingResponse
 
+// AccountSpendingRankingItem 表示账号成本排行中的单行数据。
+type AccountSpendingRankingItem = usagestats.AccountSpendingRankingItem
+type AccountSpendingRankingResponse = usagestats.AccountSpendingRankingResponse
+
 // APIKeyUsageTrendPoint represents API key usage trend data point
 type APIKeyUsageTrendPoint = usagestats.APIKeyUsageTrendPoint
 
@@ -2434,6 +2438,100 @@ func (r *usageLogRepository) GetUserSpendingRanking(ctx context.Context, startTi
 		TotalActualCost: totalActualCost,
 		TotalRequests:   totalRequests,
 		TotalTokens:     totalTokens,
+	}, nil
+}
+
+// GetAccountSpendingRanking 按账号聚合指定时间范围内的账号成本并从高到低返回。
+func (r *usageLogRepository) GetAccountSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (result *AccountSpendingRankingResponse, err error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	query := `
+		WITH account_spend AS (
+			SELECT
+				u.account_id,
+				COALESCE(a.name, '') AS account_name,
+				COALESCE(a.platform, '') AS platform,
+				COALESCE(SUM(COALESCE(u.account_stats_cost, u.total_cost) * COALESCE(u.account_rate_multiplier, 1)), 0) AS account_cost,
+				COUNT(*) AS requests,
+				COALESCE(SUM(u.input_tokens + u.output_tokens + u.cache_creation_tokens + u.cache_read_tokens), 0) AS tokens
+			FROM usage_logs u
+			LEFT JOIN accounts a ON a.id = u.account_id
+			WHERE u.account_id > 0
+			  AND u.created_at >= $1 AND u.created_at < $2
+			GROUP BY u.account_id, a.name, a.platform
+		),
+		ranked AS (
+			SELECT
+				account_id,
+				account_name,
+				platform,
+				account_cost,
+				requests,
+				tokens,
+				COALESCE(SUM(account_cost) OVER (), 0) AS total_account_cost,
+				COALESCE(SUM(requests) OVER (), 0) AS total_requests,
+				COALESCE(SUM(tokens) OVER (), 0) AS total_tokens
+			FROM account_spend
+			ORDER BY account_cost DESC, tokens DESC, account_id ASC
+			LIMIT $3
+		)
+		SELECT
+			account_id,
+			account_name,
+			platform,
+			account_cost,
+			requests,
+			tokens,
+			total_account_cost,
+			total_requests,
+			total_tokens
+		FROM ranked
+		ORDER BY account_cost DESC, tokens DESC, account_id ASC
+	`
+
+	rows, err := r.sql.QueryContext(ctx, query, startTime, endTime, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+			result = nil
+		}
+	}()
+
+	ranking := make([]AccountSpendingRankingItem, 0)
+	totalAccountCost := 0.0
+	totalRequests := int64(0)
+	totalTokens := int64(0)
+	for rows.Next() {
+		var row AccountSpendingRankingItem
+		if err = rows.Scan(
+			&row.AccountID,
+			&row.AccountName,
+			&row.Platform,
+			&row.AccountCost,
+			&row.Requests,
+			&row.Tokens,
+			&totalAccountCost,
+			&totalRequests,
+			&totalTokens,
+		); err != nil {
+			return nil, err
+		}
+		ranking = append(ranking, row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &AccountSpendingRankingResponse{
+		Ranking:          ranking,
+		TotalAccountCost: totalAccountCost,
+		TotalRequests:    totalRequests,
+		TotalTokens:      totalTokens,
 	}, nil
 }
 

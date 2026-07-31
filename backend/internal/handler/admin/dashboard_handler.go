@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -478,6 +479,7 @@ type BatchUsersUsageRequest struct {
 }
 
 var dashboardUsersRankingCache = newSnapshotCache(5 * time.Minute)
+var dashboardAccountsRankingCache = newSnapshotCache(5 * time.Minute)
 var dashboardBatchUsersUsageCache = newSnapshotCache(30 * time.Second)
 var dashboardBatchAPIKeysUsageCache = newSnapshotCache(30 * time.Second)
 
@@ -529,6 +531,77 @@ func (h *DashboardHandler) GetUserSpendingRanking(c *gin.Context) {
 		"end_date":          endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 	}
 	dashboardUsersRankingCache.Set(cacheKey, payload)
+	c.Header("X-Snapshot-Cache", "miss")
+	response.Success(c, payload)
+}
+
+func parseAccountRankingPeriod(rawPeriod, userTZ string, now time.Time) (string, time.Time, time.Time, error) {
+	period := strings.ToLower(strings.TrimSpace(rawPeriod))
+	if period == "" {
+		period = "today"
+	}
+
+	switch period {
+	case "today":
+		return period, timezone.StartOfDayInUserLocation(now, userTZ), now, nil
+	case "24h":
+		return period, now.Add(-24 * time.Hour), now, nil
+	case "7d":
+		return period, now.AddDate(0, 0, -7), now, nil
+	default:
+		return "", time.Time{}, time.Time{}, fmt.Errorf("invalid period %q", rawPeriod)
+	}
+}
+
+// GetAccountSpendingRanking 返回独立时间窗口内按账号成本从高到低排列的消费榜。
+// GET /api/v1/admin/dashboard/accounts-ranking
+func (h *DashboardHandler) GetAccountSpendingRanking(c *gin.Context) {
+	userTZ := c.Query("timezone")
+	period, startTime, endTime, err := parseAccountRankingPeriod(
+		c.DefaultQuery("period", "today"),
+		userTZ,
+		timezone.NowInUserLocation(userTZ),
+	)
+	if err != nil {
+		response.BadRequest(c, "Invalid period, use today/24h/7d")
+		return
+	}
+	limit := parseRankingLimit(c.DefaultQuery("limit", "20"))
+
+	keyRaw, _ := json.Marshal(struct {
+		Period   string `json:"period"`
+		Timezone string `json:"timezone"`
+		Bucket   string `json:"bucket"`
+		Limit    int    `json:"limit"`
+	}{
+		Period:   period,
+		Timezone: userTZ,
+		Bucket:   endTime.UTC().Truncate(5 * time.Minute).Format(time.RFC3339),
+		Limit:    limit,
+	})
+	cacheKey := string(keyRaw)
+	if cached, ok := dashboardAccountsRankingCache.Get(cacheKey); ok {
+		c.Header("X-Snapshot-Cache", "hit")
+		response.Success(c, cached.Payload)
+		return
+	}
+
+	ranking, err := h.dashboardService.GetAccountSpendingRanking(c.Request.Context(), startTime, endTime, limit)
+	if err != nil {
+		response.Error(c, 500, "Failed to get account spending ranking")
+		return
+	}
+
+	payload := gin.H{
+		"ranking":            ranking.Ranking,
+		"total_account_cost": ranking.TotalAccountCost,
+		"total_requests":     ranking.TotalRequests,
+		"total_tokens":       ranking.TotalTokens,
+		"period":             period,
+		"start_time":         startTime.Format(time.RFC3339),
+		"end_time":           endTime.Format(time.RFC3339),
+	}
+	dashboardAccountsRankingCache.Set(cacheKey, payload)
 	c.Header("X-Snapshot-Cache", "miss")
 	response.Success(c, payload)
 }

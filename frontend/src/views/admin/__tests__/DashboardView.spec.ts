@@ -156,6 +156,7 @@ describe('admin DashboardView', () => {
           Select: true,
           ModelDistributionChart: true,
           TokenUsageTrend: true,
+          AccountSpendingRanking: true,
           Line: true
         }
       }
@@ -186,6 +187,7 @@ describe('admin DashboardView', () => {
           Select: true,
           ModelDistributionChart: true,
           TokenUsageTrend: true,
+          AccountSpendingRanking: true,
           Line: true
         }
       }
@@ -225,6 +227,7 @@ describe('admin DashboardView', () => {
           Select: true,
           ModelDistributionChart: true,
           TokenUsageTrend: true,
+          AccountSpendingRanking: true,
           Line: true
         }
       }

@@ -22,6 +22,10 @@ type dashboardUsageRepoCapture struct {
 	rankingLimit     int
 	ranking          []usagestats.UserSpendingRankingItem
 	rankingTotal     float64
+	accountStart     time.Time
+	accountEnd       time.Time
+	accountLimit     int
+	accountRanking   []usagestats.AccountSpendingRankingItem
 }
 
 func (s *dashboardUsageRepoCapture) GetUsageTrendWithFilters(
@@ -66,6 +70,22 @@ func (s *dashboardUsageRepoCapture) GetUserSpendingRanking(
 	}, nil
 }
 
+func (s *dashboardUsageRepoCapture) GetAccountSpendingRanking(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	limit int,
+) (*usagestats.AccountSpendingRankingResponse, error) {
+	s.accountStart = startTime
+	s.accountEnd = endTime
+	s.accountLimit = limit
+	return &usagestats.AccountSpendingRankingResponse{
+		Ranking:          s.accountRanking,
+		TotalAccountCost: 66.6,
+		TotalRequests:    77,
+		TotalTokens:      8800,
+	}, nil
+}
+
 func newDashboardRequestTypeTestRouter(repo *dashboardUsageRepoCapture) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	dashboardSvc := service.NewDashboardService(repo, nil, nil, nil)
@@ -74,6 +94,7 @@ func newDashboardRequestTypeTestRouter(repo *dashboardUsageRepoCapture) *gin.Eng
 	router.GET("/admin/dashboard/trend", handler.GetUsageTrend)
 	router.GET("/admin/dashboard/models", handler.GetModelStats)
 	router.GET("/admin/dashboard/users-ranking", handler.GetUserSpendingRanking)
+	router.GET("/admin/dashboard/accounts-ranking", handler.GetAccountSpendingRanking)
 	return router
 }
 
@@ -198,4 +219,48 @@ func TestDashboardUsersRankingLimitAndCache(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec2.Code)
 	require.Equal(t, "hit", rec2.Header().Get("X-Snapshot-Cache"))
+}
+
+func TestDashboardAccountsRankingRollingWindowAndLimit(t *testing.T) {
+	dashboardAccountsRankingCache = newSnapshotCache(5 * time.Minute)
+	repo := &dashboardUsageRepoCapture{
+		accountRanking: []usagestats.AccountSpendingRankingItem{
+			{AccountID: 9, AccountName: "OpenAI-09", Platform: "openai", AccountCost: 18.5, Requests: 4, Tokens: 500},
+		},
+	}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/accounts-ranking?period=24h&limit=100&timezone=Asia/Shanghai", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 50, repo.accountLimit)
+	require.InDelta(t, 24*time.Hour, repo.accountEnd.Sub(repo.accountStart), float64(time.Second))
+	require.Contains(t, rec.Body.String(), "\"total_account_cost\":66.6")
+	require.Contains(t, rec.Body.String(), "\"period\":\"24h\"")
+	require.Equal(t, "miss", rec.Header().Get("X-Snapshot-Cache"))
+}
+
+func TestDashboardAccountsRankingRejectsInvalidPeriod(t *testing.T) {
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/accounts-ranking?period=month", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestParseAccountRankingPeriodTodayUsesRequestedTimezone(t *testing.T) {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	now := time.Date(2026, 7, 31, 15, 30, 0, 0, loc)
+
+	period, start, end, err := parseAccountRankingPeriod("today", "Asia/Shanghai", now)
+	require.NoError(t, err)
+	require.Equal(t, "today", period)
+	require.Equal(t, time.Date(2026, 7, 31, 0, 0, 0, 0, loc), start)
+	require.Equal(t, now, end)
 }

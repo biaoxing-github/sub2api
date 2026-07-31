@@ -12,6 +12,7 @@ import type {
   ApiKeyUsageTrendPoint,
   UserUsageTrendPoint,
   UserSpendingRankingResponse,
+  AccountSpendingRankingResponse,
   UserBreakdownItem,
   UsageRequestType
 } from '@/types'
@@ -267,6 +268,26 @@ export async function getUserSpendingRanking(
   return data
 }
 
+export type AccountSpendingRankingPeriod = 'today' | '24h' | '7d'
+
+export interface AccountSpendingRankingParams {
+  period?: AccountSpendingRankingPeriod
+  limit?: number
+}
+
+/**
+ * Get account cost ranking for a rolling or calendar-day period.
+ */
+export async function getAccountSpendingRanking(
+  params?: AccountSpendingRankingParams
+): Promise<AccountSpendingRankingResponse> {
+  const { data } = await apiClient.get<AccountSpendingRankingResponse>(
+    '/admin/dashboard/accounts-ranking',
+    { params }
+  )
+  return data
+}
+
 export interface PlatformUsage {
   platform: string
   today_actual_cost: number
@@ -333,6 +354,7 @@ export const dashboardAPI = {
   getApiKeyUsageTrend,
   getUserUsageTrend,
   getUserSpendingRanking,
+  getAccountSpendingRanking,
   getBatchUsersUsage,
   getBatchApiKeysUsage
 }

@@ -2394,6 +2394,25 @@ export interface UserSpendingRankingResponse {
   end_date: string
 }
 
+export interface AccountSpendingRankingItem {
+  account_id: number
+  account_name: string
+  platform: string
+  account_cost: number
+  requests: number
+  tokens: number
+}
+
+export interface AccountSpendingRankingResponse {
+  ranking: AccountSpendingRankingItem[]
+  total_account_cost: number
+  total_requests: number
+  total_tokens: number
+  period: 'today' | '24h' | '7d'
+  start_time: string
+  end_time: string
+}
+
 export interface ApiKeyUsageTrendPoint {
   date: string
   api_key_id: number

@@ -365,6 +365,23 @@ func (s *DashboardService) GetUserSpendingRanking(ctx context.Context, startTime
 	return ranking, nil
 }
 
+type accountSpendingRankingRepository interface {
+	GetAccountSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (*usagestats.AccountSpendingRankingResponse, error)
+}
+
+// GetAccountSpendingRanking 获取账号成本排行，同时保持共享用量仓储接口兼容既有调用方。
+func (s *DashboardService) GetAccountSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (*usagestats.AccountSpendingRankingResponse, error) {
+	repo, ok := s.usageRepo.(accountSpendingRankingRepository)
+	if !ok {
+		return nil, errors.New("usage repository does not support account spending ranking")
+	}
+	ranking, err := repo.GetAccountSpendingRanking(ctx, startTime, endTime, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get account spending ranking: %w", err)
+	}
+	return ranking, nil
+}
+
 func (s *DashboardService) GetUserBreakdownStats(ctx context.Context, startTime, endTime time.Time, dim usagestats.UserBreakdownDimension, limit int) ([]usagestats.UserBreakdownItem, error) {
 	stats, err := s.usageRepo.GetUserBreakdownStats(ctx, startTime, endTime, dim, limit)
 	if err != nil {
