@@ -480,3 +480,25 @@
 - PASS：PostgreSQL、Redis 全程保持 healthy/restart 0，未执行 migration 或数据写入。
 - LIMIT：未主动向生产 DeepSeek 上游注入请求；协议行为由本地自动化测试覆盖。unit-tag 全包和 `go vet` 的既有失败保持原记录。
 - BOUNDARY：未执行 Git push 或镜像仓库 push。
+
+## 2026-08-01 OpenAI Responses 90 秒头等待与断流取消
+
+- PASS：测试先行基线成立；`openAIResponsesUpstreamContext` 实现前聚焦测试因符号不存在而构建失败，配置测试显示旧默认值为 30 秒。
+- PASS：`go test ./internal/config -count=1`。
+- PASS：Responses context、OAuth/API Key passthrough 取消传播、旧 detached helper、写失败后 usage drain、响应头策略聚焦测试通过。
+- PASS：`go test ./internal/service -count=1`，完整 service 包通过。
+- PASS：`go test ./internal/handler/... -run '^$' -count=1` 与 `go test ./cmd/server -run '^$' -count=1`。
+- PASS：相关 Go 文件 `gofmt`、目标文件 `git diff --check` 通过。
+- PASS：部署 `.env`、blue/green compose 默认和数据库 wait-guard 均核验为 90；green/blue 容器保持 healthy，未重启。
+- LIMIT：未构建或部署新镜像，无法在生产 active 请求上验证真实客户端断开后上游连接立即取消。
+
+## 2026-08-01 v0.1.168.8 蓝绿发布验证 - Devil
+
+- PASS：功能提交 `848e0e04ff633504c26d9cbf22bff661a2d1d1bc` 仅含本次 9 个文件，无 migration/schema。
+- PASS：归档 SHA-256 `E2B6980538C87ABC85507C8F6B54F1F601B86CCE9286DC0C9B8A6F7C7F5662EC`；镜像 `sub2api:v0.1.168.8` ID、OCI 标签和二进制身份一致。
+- PASS：idle blue 候选 smoke 通过；61.5 秒独立窗口 13/13 次 health 200，blue healthy/restart 0，关键日志 0。
+- PASS：`nginx -t` 和 reload 成功；切流后四入口 health/home/asset 200，未登录管理 API 与 Responses 401，资源 SHA-256 一致。
+- PASS：切流后 66.3 秒独立窗口 13/13 轮四入口 health 200；blue/proxy 关键日志 0，green、PostgreSQL、Redis 状态未变。
+- PASS：Chrome 登录态显示 `v0.1.168` / `v0.1.168.8`，应用 console error 0。
+- LIMIT：未执行真实付费上游长请求的客户端中途断开测试；取消传播由自动化测试覆盖。
+- BOUNDARY：未执行 Git push 或镜像仓库 push。

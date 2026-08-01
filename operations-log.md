@@ -329,3 +329,24 @@
 - 页面：已登录 Chrome 显示主版本 `v0.1.168` 与镜像版本 `v0.1.168.7`。
 - 最终状态：green `.7` active healthy/restart 0；blue `.6` healthy/restart 0 并保留回滚；PostgreSQL、Redis healthy/restart 0；代理生效配置指向 green。
 - 边界：未主动调用真实 DeepSeek 上游，未写生产数据库，未执行 Git push 或镜像 push；无关工作树修改保持未暂存。
+
+## 2026-08-01 16:33 +08:00 Devil - OpenAI Responses 90 秒头等待与断流取消
+
+- 前馈与定界：读取项目约束、Obsidian 入口、相关 Memory 与会话记录；按 `superpowers:systematic-debugging` 完成根因确认。CodeGraph 未覆盖 HTTP Responses 细节后，使用 PowerShell 定点读取两条请求构造路径、超时策略和既有断流回归。
+- 根因：`detachUpstreamContext` 使用 `context.WithoutCancel`，原生与 passthrough `/v1/responses` 流式请求均忽略客户端取消；响应头环境变量又被请求体 `10/15/20s` 分桶和生产 wait-guard `20s` 二次截断。
+- 测试先行：先新增 Responses 流式 context、OAuth passthrough、API Key passthrough 取消传播断言，确认实现前因缺少专用 helper 而失败；90 秒默认配置测试确认实现前实际为 30 秒。
+- 实现：新增 `openAIResponsesUpstreamContext`，仅 HTTP Responses 流式请求继承客户端取消；非流式及 Chat Completions、Anthropic、图片、WebSocket 继续保持既有 detached 行为。响应头等待改为直接使用配置秒数，不再按请求体截短。
+- 配置：源码默认、示例、蓝绿 compose 默认和部署 `.env` 均设为 90；生产 `codex_wait_guard_max_header_wait_seconds` 通过受保护事务从 20 更新为 90，并生成 `.env` 与 SQL 回滚备份。
+- 验证：config 全包、Responses 聚焦测试、完整 `internal/service`、handler/admin/dto 与 server 编译切片、`gofmt`、`git diff --check` 全部通过。
+- 边界：未提交、未推送、未构建镜像、未重建容器、未切流；active green `v0.1.168.7` 仍运行旧二进制，本次行为需后续蓝绿发布后生效。
+
+## 2026-08-01 17:08 +08:00 Devil - 发布 Responses 断流取消 v0.1.168.8
+
+- 功能提交：`848e0e04ff633504c26d9cbf22bff661a2d1d1bc`，只包含 9 个本次代码、测试和配置示例文件，无 migration/schema。
+- 构建：从 committed HEAD 归档构建 `sub2api:v0.1.168.8`；归档 SHA-256 `E2B6980538C87ABC85507C8F6B54F1F601B86CCE9286DC0C9B8A6F7C7F5662EC`，镜像 ID、OCI version/revision 与二进制身份一致。
+- 候选：active green 保持服务，只重建 idle blue；候选 smoke 通过，独立 61.5 秒 13/13 次采样通过，blue healthy/restart 0、关键日志 0。
+- 切流：备份 `.env` 和 `active.conf`，`nginx -t` 通过后 reload 到 `sub2api-blue:8080`。
+- 线上：四入口 health/home/asset 全部 200，管理 API 与 Responses 未登录均 401；资源路径和 SHA-256 一致；66.3 秒 13/13 轮观察通过，blue/proxy 关键日志 0。
+- 页面：已登录 Chrome 显示主版本 `v0.1.168`、镜像版本 `v0.1.168.8`，应用 console error 0。
+- 最终状态：blue `.8` active healthy/restart 0；green `.7` healthy 保留回滚；PostgreSQL、Redis healthy/restart 0；响应头环境变量和 wait-guard 均为 90。
+- 边界：未向真实付费上游主动注入中途断流请求，未执行 Git push 或镜像 push。

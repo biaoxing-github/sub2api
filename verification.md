@@ -5465,3 +5465,25 @@ v0.1.149 拉取结果：
 - 页面证据：已登录 Chrome 显示主版本 `v0.1.168`、镜像版本 `v0.1.168.7`。
 - 最终状态：`active.conf` 与 `nginx -T` 均指向 `sub2api-green:8080`；blue `.6` 保留为健康回滚目标。
 - 验证边界：未主动调用真实 DeepSeek 上游、未写生产数据库、未执行 Git push 或镜像 push；unit-tag 全包和 `go vet` 的既有失败不涉及本次文件。
+
+## 2026-08-01 OpenAI Responses 断流取消验证（Devil）
+
+- 结果：本地实现与自动化回归通过，`passes: true`。
+- 超时行为：`openai_request_header_timeout_seconds` 现在直接表示等待上游响应头的秒数，默认和部署基线均为 90；不再被请求体大小分桶截为 10/15/20 秒，Codex wait-guard 上限同步为 90。
+- 取消行为：仅 HTTP `/v1/responses` 的流式原生与 passthrough 请求继承客户端 context；真实客户端取消会传递到上游 HTTP request。非流式请求及其他协议保持原行为。
+- 计费边界：取消前已经观察到的 usage 仍可按既有逻辑记录；取消发生在终态 usage 之前时不虚构 usage，上游已经生成的部分仍可能由提供商计费。
+- 验证证据：config 全包、完整 service 包、handler/server 编译切片、OAuth/API Key 取消传播和既有 usage drain 回归全部通过；格式与 diff 检查通过。
+- 生产状态：部署 `.env`、compose 默认和数据库 wait-guard 已更新为 90，但 active green 仍为 `sub2api:v0.1.168.7`，未重启、未切流，因此新取消行为尚未上线。
+- 回滚证据：`D:\sub2api-deploy\.env.backup-openai-header-timeout-90-20260801-161837` 与 `D:\sub2api-deploy\backup-codex-wait-guard-header-20260801-1620.sql`。
+
+## 2026-08-01 v0.1.168.8 发布验证（Devil）
+
+- 发布结果：正式 upstream 已切到 blue `sub2api:v0.1.168.8`；green `sub2api:v0.1.168.7` 保留回滚，`passes: true`。
+- 代码与镜像：功能提交 `848e0e04ff633504c26d9cbf22bff661a2d1d1bc`；镜像 ID `sha256:dc2cc5b9149daf82d7da0d1ddff4f6aad3cd5e9cbb1d749fb29736abfbe6db5c`；归档、OCI 与二进制身份一致。
+- 候选证据：`18083` smoke 与 61.5 秒 13/13 次观察通过，blue healthy/restart 0，关键日志 0。
+- 切流证据：`nginx -t` 与 reload 成功；`8080`、`18081`、`18083`、`18082` 的 health/home/asset 均为 200，鉴权边界为 401，资源哈希一致。
+- 稳定证据：切流后 66.3 秒 13/13 轮通过；blue/proxy 关键日志 0，green healthy，PostgreSQL/Redis healthy/restart 0。
+- 页面证据：Chrome 登录态显示主版本 `v0.1.168` 和镜像版本 `v0.1.168.8`，应用 console error 0。
+- 配置证据：blue 容器 `GATEWAY_OPENAI_REQUEST_HEADER_TIMEOUT_SECONDS=90`，数据库 `codex_wait_guard_max_header_wait_seconds=90`。
+- 遗留风险：未主动向真实付费上游注入中途断流请求；上游收到取消前已生成部分仍可能计费。
+- 边界：未执行 Git push 或镜像 push。
