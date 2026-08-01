@@ -9638,6 +9638,18 @@ func detachStreamUpstreamContext(ctx context.Context, stream bool) (context.Cont
 	return context.WithoutCancel(ctx), func() {}
 }
 
+// openAIResponsesUpstreamContext 仅让流式 Responses 继承客户端取消信号。
+// 非流式请求保持既有 detached 语义，避免扩大本次行为变更范围。
+func openAIResponsesUpstreamContext(ctx context.Context, stream bool) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		return context.Background(), func() {}
+	}
+	if stream {
+		return ctx, func() {}
+	}
+	return context.WithoutCancel(ctx), func() {}
+}
+
 func detachUpstreamContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		return context.Background(), func() {}

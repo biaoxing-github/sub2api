@@ -91,8 +91,8 @@ func TestLoadDefaultOpenAIRequestHeaderTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds != 20 {
-		t.Fatalf("OpenAIRequestHeaderTimeoutSeconds = %d, want 20", cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds)
+	if cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds != 90 {
+		t.Fatalf("OpenAIRequestHeaderTimeoutSeconds = %d, want 90", cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds)
 	}
 }
 

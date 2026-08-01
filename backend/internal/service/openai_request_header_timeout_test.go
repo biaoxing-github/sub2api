@@ -56,21 +56,21 @@ func (u *headerRaceHTTPUpstreamStub) usedTLS() bool {
 	return u.tlsHit
 }
 
-func TestOpenAIRequestHeaderTimeoutForBodyUsesContextSizeBuckets(t *testing.T) {
+func TestOpenAIRequestHeaderTimeoutForBodyUsesConfiguredDuration(t *testing.T) {
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{
 			Gateway: config.GatewayConfig{
-				OpenAIRequestHeaderTimeoutSeconds: 60,
+				OpenAIRequestHeaderTimeoutSeconds: 90,
 			},
 		},
 	}
 
-	require.Equal(t, 10*time.Second, svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"hello"}`)))
-	require.Equal(t, 15*time.Second, svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"`+strings.Repeat("中", 40000)+`"}`)))
-	require.Equal(t, 20*time.Second, svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"`+strings.Repeat("中", 160000)+`"}`)))
+	require.Equal(t, 90*time.Second, svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"hello"}`)))
+	require.Equal(t, 90*time.Second, svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"`+strings.Repeat("中", 40000)+`"}`)))
+	require.Equal(t, 90*time.Second, svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"`+strings.Repeat("中", 160000)+`"}`)))
 }
 
-func TestOpenAIRequestHeaderTimeoutForBodyRespectsConfiguredCap(t *testing.T) {
+func TestOpenAIRequestHeaderTimeoutForBodyUsesSmallerConfiguredDuration(t *testing.T) {
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{
 			Gateway: config.GatewayConfig{
@@ -79,7 +79,7 @@ func TestOpenAIRequestHeaderTimeoutForBodyRespectsConfiguredCap(t *testing.T) {
 		},
 	}
 
-	require.Equal(t, 10*time.Second, svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"hello"}`)))
+	require.Equal(t, 12*time.Second, svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"hello"}`)))
 	require.Equal(t, 12*time.Second, svc.openAIRequestHeaderTimeoutForBody([]byte(`{"input":"`+strings.Repeat("x", 160000)+`"}`)))
 }
 
@@ -240,7 +240,7 @@ func TestOpenAIRequestHeaderTimeoutRequiresStablePolicy(t *testing.T) {
 	require.Equal(t, time.Duration(0), svc.openAIRequestHeaderTimeoutForBodyWithPolicy([]byte(`{"input":"hello"}`), svc.openAICodexStabilityPolicy(true)))
 
 	svc.cfg.Gateway.CodexStability.Mode = config.GatewayCodexStabilityModeCodex
-	require.Equal(t, 10*time.Second, svc.openAIRequestHeaderTimeoutForBodyWithPolicy([]byte(`{"input":"hello"}`), svc.openAICodexStabilityPolicy(true)))
+	require.Equal(t, 60*time.Second, svc.openAIRequestHeaderTimeoutForBodyWithPolicy([]byte(`{"input":"hello"}`), svc.openAICodexStabilityPolicy(true)))
 }
 
 func TestOpenAIPassthroughTimeoutHeadersRespectsStableSuppression(t *testing.T) {

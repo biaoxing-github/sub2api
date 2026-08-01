@@ -1609,24 +1609,11 @@ func (s *OpenAIGatewayService) openAIUpstreamTLSProfile(account *Account) *tlsfi
 	return resolveOpenAIUpstreamTLSProfile(s.cfg, s.tlsFPProfileService, account)
 }
 
-func (s *OpenAIGatewayService) openAIRequestHeaderTimeoutForBody(body []byte) time.Duration {
+func (s *OpenAIGatewayService) openAIRequestHeaderTimeoutForBody(_ []byte) time.Duration {
 	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds <= 0 {
 		return 0
 	}
-
-	timeout := 10 * time.Second
-	switch size := len(body); {
-	case size >= 300000:
-		timeout = 20 * time.Second
-	case size >= 100000:
-		timeout = 15 * time.Second
-	}
-
-	capDuration := time.Duration(s.cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds) * time.Second
-	if capDuration < timeout {
-		return capDuration
-	}
-	return timeout
+	return time.Duration(s.cfg.Gateway.OpenAIRequestHeaderTimeoutSeconds) * time.Second
 }
 
 func (s *OpenAIGatewayService) openAIRequestHeaderTimeoutForBodyWithPolicy(body []byte, policy openAICodexStabilityPolicy) time.Duration {
@@ -4508,7 +4495,7 @@ httpRetryLoop:
 		}
 		for _, requestBaseURL := range requestBaseURLs {
 			// Build upstream request
-			upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+			upstreamCtx, releaseUpstreamCtx := openAIResponsesUpstreamContext(ctx, reqStream)
 			var headerGuard *openAIFirstOutputHeaderGuard
 			if firstOutputTimeout > 0 {
 				upstreamCtx, headerGuard = newOpenAIFirstOutputHeaderGuard(upstreamCtx, releaseUpstreamCtx, startTime.Add(firstOutputTimeout))
@@ -4903,7 +4890,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	var resp *http.Response
 	for _, requestBaseURL := range requestBaseURLs {
-		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+		upstreamCtx, releaseUpstreamCtx := openAIResponsesUpstreamContext(ctx, reqStream)
 		upstreamReq, err := s.buildUpstreamRequestOpenAIPassthroughWithBaseURL(upstreamCtx, c, account, body, token, requestBaseURL)
 		releaseUpstreamCtx()
 		if err != nil {

@@ -63,3 +63,25 @@ func TestDetachUpstreamContextIgnoresClientCancel(t *testing.T) {
 	require.NoError(t, upstreamCtx.Err())
 	require.Equal(t, "test-value", upstreamCtx.Value(upstreamContextTestKey("test-key")))
 }
+
+func TestOpenAIResponsesUpstreamContextPropagatesStreamingClientCancel(t *testing.T) {
+	parent, cancel := context.WithCancel(context.WithValue(context.Background(), upstreamContextTestKey("test-key"), "test-value"))
+	upstreamCtx, release := openAIResponsesUpstreamContext(parent, true)
+	defer release()
+
+	cancel()
+
+	require.ErrorIs(t, upstreamCtx.Err(), context.Canceled)
+	require.Equal(t, "test-value", upstreamCtx.Value(upstreamContextTestKey("test-key")))
+}
+
+func TestOpenAIResponsesUpstreamContextKeepsNonStreamingRequestDetached(t *testing.T) {
+	parent, cancel := context.WithCancel(context.WithValue(context.Background(), upstreamContextTestKey("test-key"), "test-value"))
+	upstreamCtx, release := openAIResponsesUpstreamContext(parent, false)
+	defer release()
+
+	cancel()
+
+	require.NoError(t, upstreamCtx.Err())
+	require.Equal(t, "test-value", upstreamCtx.Value(upstreamContextTestKey("test-key")))
+}

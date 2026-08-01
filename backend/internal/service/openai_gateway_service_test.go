@@ -1547,7 +1547,7 @@ func TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover(t *test
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Equal(t, "true", failoverErr.ActionMetadata["first_byte_cutover_allowed"])
-	require.Equal(t, "10000", failoverErr.ActionMetadata["first_byte_wait_ms"])
+	require.Equal(t, "60000", failoverErr.ActionMetadata["first_byte_wait_ms"])
 	require.Equal(t, "123", failoverErr.ActionMetadata["degraded_account_id"])
 	degradedBaseURL := failoverErr.ActionMetadata["degraded_base_url"]
 	require.NotEmpty(t, degradedBaseURL)
@@ -1562,7 +1562,7 @@ func TestOpenAIGatewayService_ForwardRequestHeaderTimeoutReturnsFailover(t *test
 	require.Equal(t, int64(0), accountSnapshot.FailureCount)
 	require.Equal(t, int64(0), accountSnapshot.WindowFailures)
 	require.Equal(t, int64(1), accountSnapshot.FirstByteSlowCount)
-	require.Equal(t, int64(10000), accountSnapshot.LastFirstByteSlowMs)
+	require.Equal(t, int64(60000), accountSnapshot.LastFirstByteSlowMs)
 
 	baseURLKey := OpenAIPathHealthKeyForAccountBaseURL(account, string(OpenAIUpstreamTransportHTTPSSE), degradedBaseURL)
 	baseURLSnapshot := pathHealth.Snapshot(baseURLKey)
