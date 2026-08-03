@@ -42,15 +42,17 @@ type newAPIRedeemNetworkSwitch struct {
 
 // newAPIRedeemNetworkState 只在单次兑换任务内使用，保证节点名和出口 IP 都不重复。
 type newAPIRedeemNetworkState struct {
-	Current   newAPIRedeemNetworkIdentity
-	UsedNodes map[string]struct{}
-	UsedIPs   map[string]struct{}
+	Current     newAPIRedeemNetworkIdentity
+	UsedNodes   map[string]struct{}
+	UsedIPs     map[string]struct{}
+	UsedRegions map[string]struct{}
 }
 
 func newNewAPIRedeemNetworkState() *newAPIRedeemNetworkState {
 	return &newAPIRedeemNetworkState{
-		UsedNodes: map[string]struct{}{},
-		UsedIPs:   map[string]struct{}{},
+		UsedNodes:   map[string]struct{}{},
+		UsedIPs:     map[string]struct{}{},
+		UsedRegions: map[string]struct{}{},
 	}
 }
 
@@ -62,6 +64,21 @@ func (state *newAPIRedeemNetworkState) accept(identity newAPIRedeemNetworkIdenti
 	if identity.ExitIP != "" {
 		state.UsedIPs[identity.ExitIP] = struct{}{}
 	}
+	if region := newAPIRedeemMihomoNodeRegion(identity.Node); region != "" {
+		if state.UsedRegions == nil {
+			state.UsedRegions = map[string]struct{}{}
+		}
+		state.UsedRegions[region] = struct{}{}
+	}
+}
+
+// newAPIRedeemMihomoNodeRegion 提取节点名称的地区前缀，用于在延迟相近时轮换不同地区。
+func newAPIRedeemMihomoNodeRegion(name string) string {
+	fields := strings.Fields(name)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 // newAPIRedeemMihomoClient 通过 Mihomo 官方 REST API 读取并切换 Clash Verge 节点。
@@ -74,6 +91,42 @@ type newAPIRedeemMihomoClient struct {
 	httpClient    *http.Client
 	pollInterval  time.Duration
 	pollAttempts  int
+}
+
+type newAPIRedeemMihomoDelayedNode struct {
+	name   string
+	region string
+	delay  int64
+}
+
+// prioritizeNewAPIRedeemMihomoRegions 将尚未尝试过的地区排在前面，避免 20 秒切换窗口只消耗同一地区。
+func prioritizeNewAPIRedeemMihomoRegions(nodes []newAPIRedeemMihomoDelayedNode, usedRegions map[string]struct{}) []newAPIRedeemMihomoDelayedNode {
+	remaining := append([]newAPIRedeemMihomoDelayedNode(nil), nodes...)
+	ordered := make([]newAPIRedeemMihomoDelayedNode, 0, len(nodes))
+	roundRegions := make(map[string]struct{}, len(usedRegions))
+	for region := range usedRegions {
+		roundRegions[region] = struct{}{}
+	}
+	for len(remaining) > 0 {
+		selected := -1
+		for index, node := range remaining {
+			if _, used := roundRegions[node.region]; !used {
+				selected = index
+				break
+			}
+		}
+		if selected < 0 {
+			for region := range roundRegions {
+				delete(roundRegions, region)
+			}
+			selected = 0
+		}
+		node := remaining[selected]
+		ordered = append(ordered, node)
+		remaining = append(remaining[:selected], remaining[selected+1:]...)
+		roundRegions[node.region] = struct{}{}
+	}
+	return ordered
 }
 
 func newNewAPIRedeemMihomoClient(options NewAPIRedeemOptions, fallbackClient *http.Client) *newAPIRedeemMihomoClient {
@@ -171,26 +224,33 @@ func (client *newAPIRedeemMihomoClient) switchExit(ctx context.Context, state *n
 		return newAPIRedeemNetworkSwitch{}, fmt.Errorf("没有剩余的未使用 Mihomo 节点")
 	}
 
-	type delayedNode struct {
-		name  string
-		delay int64
-	}
-	available := make([]delayedNode, 0, len(candidates))
+	available := make([]newAPIRedeemMihomoDelayedNode, 0, len(candidates))
 	for _, candidate := range candidates {
 		delay := newAPIRedeemInt64(delays[candidate])
-		available = append(available, delayedNode{name: candidate, delay: delay})
+		available = append(available, newAPIRedeemMihomoDelayedNode{
+			name:   candidate,
+			region: newAPIRedeemMihomoNodeRegion(candidate),
+			delay:  delay,
+		})
 	}
 	sort.SliceStable(available, func(i, j int) bool { return available[i].delay < available[j].delay })
 	if len(available) == 0 {
 		return newAPIRedeemNetworkSwitch{}, fmt.Errorf("未找到延迟测试可用的 Mihomo 节点")
 	}
 
+	if state.UsedRegions == nil {
+		state.UsedRegions = map[string]struct{}{}
+	}
+	available = prioritizeNewAPIRedeemMihomoRegions(available, state.UsedRegions)
 	from := state.Current
 	for _, candidate := range available {
 		if err := switchCtx.Err(); err != nil {
 			return newAPIRedeemNetworkSwitch{}, err
 		}
 		state.UsedNodes[candidate.name] = struct{}{}
+		if candidate.region != "" {
+			state.UsedRegions[candidate.region] = struct{}{}
+		}
 		if err := client.selectNode(switchCtx, candidate.name); err != nil {
 			continue
 		}

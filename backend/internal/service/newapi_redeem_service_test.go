@@ -513,6 +513,80 @@ func TestNewAPIRedeemRequestSpacingSmoothsAggregateConcurrency(t *testing.T) {
 	require.Equal(t, time.Duration(0), newAPIRedeemRequestSpacing(0, 10))
 }
 
+// TestPrioritizeNewAPIRedeemMihomoRegionsIncludesDistantRegionsEarly 验证低延迟地区不会独占候选窗口。
+func TestPrioritizeNewAPIRedeemMihomoRegionsIncludesDistantRegionsEarly(t *testing.T) {
+	t.Parallel()
+	nodes := []newAPIRedeemMihomoDelayedNode{
+		{name: "🇰🇷 韩国2", region: "🇰🇷", delay: 80},
+		{name: "🇯🇵 日本12", region: "🇯🇵", delay: 100},
+		{name: "🇺🇸 美国5", region: "🇺🇸", delay: 110},
+		{name: "🇩🇪 德国4", region: "🇩🇪", delay: 120},
+		{name: "🇭🇰 香港1", region: "🇭🇰", delay: 130},
+	}
+	ordered := prioritizeNewAPIRedeemMihomoRegions(nodes, map[string]struct{}{"🇰🇷": {}})
+	require.Equal(t, []string{"🇯🇵 日本12", "🇺🇸 美国5", "🇩🇪 德国4", "🇭🇰 香港1", "🇰🇷 韩国2"}, nodeNames(ordered))
+}
+
+// nodeNames 提取测试候选名称，便于直接断言地区轮换顺序。
+func nodeNames(nodes []newAPIRedeemMihomoDelayedNode) []string {
+	names := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		names = append(names, node.name)
+	}
+	return names
+}
+
+// TestNewAPIRedeemMihomoSwitchExitRotatesRegions 验证实际 Controller 切换会覆盖美国和德国等不同地区。
+func TestNewAPIRedeemMihomoSwitchExitRotatesRegions(t *testing.T) {
+	t.Parallel()
+	var currentNode = "🇰🇷 韩国2"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/proxies/test-group" && request.Method == http.MethodGet:
+			_, _ = writer.Write([]byte(fmt.Sprintf(`{"name":"test-group","type":"Selector","now":%q,"all":["🇰🇷 韩国2","🇯🇵 日本12","🇺🇸 美国5","🇩🇪 德国4","🇭🇰 香港1"]}`, currentNode)))
+		case request.URL.Path == "/proxies/test-group" && request.Method == http.MethodPut:
+			body, err := io.ReadAll(request.Body)
+			require.NoError(t, err)
+			var payload map[string]string
+			require.NoError(t, json.Unmarshal(body, &payload))
+			currentNode = payload["name"]
+			writer.WriteHeader(http.StatusNoContent)
+		case request.URL.Path == "/proxies":
+			_, _ = writer.Write([]byte(`{"proxies":{"🇰🇷 韩国2":{"type":"Trojan"},"🇯🇵 日本12":{"type":"Trojan"},"🇺🇸 美国5":{"type":"Trojan"},"🇩🇪 德国4":{"type":"Trojan"},"🇭🇰 香港1":{"type":"Trojan"}}}`))
+		case request.URL.Path == "/group/test-group/delay":
+			_, _ = writer.Write([]byte(`{"🇰🇷 韩国2":80,"🇯🇵 日本12":100,"🇺🇸 美国5":110,"🇩🇪 德国4":120,"🇭🇰 香港1":130}`))
+		case request.URL.Path == "/ip":
+			ips := map[string]string{"🇰🇷 韩国2": "1.1.1.1", "🇯🇵 日本12": "2.2.2.2", "🇺🇸 美国5": "3.3.3.3", "🇩🇪 德国4": "4.4.4.4", "🇭🇰 香港1": "5.5.5.5"}
+			_, _ = writer.Write([]byte(ips[currentNode]))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	client := newNewAPIRedeemMihomoClient(NewAPIRedeemOptions{
+		MihomoControllerURL:      server.URL,
+		MihomoSelectorGroup:      "test-group",
+		MihomoDelayURL:           server.URL + "/status",
+		ExitIPURL:                server.URL + "/ip",
+		MihomoHTTPClient:         server.Client(),
+		MihomoSwitchPollInterval: time.Millisecond,
+		MihomoSwitchPollAttempts: 1,
+	}, server.Client())
+	state := newNewAPIRedeemNetworkState()
+	state.accept(newAPIRedeemNetworkIdentity{Node: currentNode, ExitIP: "1.1.1.1"})
+
+	first, err := client.switchExit(context.Background(), state)
+	require.NoError(t, err)
+	require.Equal(t, "🇯🇵 日本12", first.ToNode)
+	second, err := client.switchExit(context.Background(), state)
+	require.NoError(t, err)
+	require.Equal(t, "🇺🇸 美国5", second.ToNode)
+	third, err := client.switchExit(context.Background(), state)
+	require.NoError(t, err)
+	require.Equal(t, "🇩🇪 德国4", third.ToNode)
+}
+
 func TestNewAPIRedeemServiceSwitchesToUniqueNodeAndExitIPThenRetriesSameCode(t *testing.T) {
 	t.Parallel()
 	var (
