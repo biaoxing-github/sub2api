@@ -553,12 +553,16 @@ func TestIsOpenAIContextWindowError(t *testing.T) {
 	require.False(t, isOpenAIContextWindowError("context canceled", nil))
 }
 
-func TestShouldFailoverOpenAIUpstreamResponseContextWindow502(t *testing.T) {
+func TestShouldFailoverOpenAIUpstreamResponseUsesAllNon2xxStatuses(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	body := []byte(`{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","type":"upstream_error","code":null}}`)
 
-	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, "", body))
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, "", body))
 	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadGateway, "temporary upstream outage", []byte(`{"error":{"message":"temporary upstream outage"}}`)))
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusRequestEntityTooLarge, "Request Entity Too Large", nil))
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadRequest, "invalid parameter", nil))
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusMultipleChoices, "redirected upstream", nil))
+	require.False(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusOK, "upstream response failed", nil))
 }
 
 func TestOpenAIGatewayService_Forward_LogsInstructionsRequiredDetails(t *testing.T) {
@@ -604,7 +608,10 @@ func TestOpenAIGatewayService_Forward_LogsInstructionsRequiredDetails(t *testing
 
 	_, err := svc.Forward(context.Background(), c, account, body)
 	require.Error(t, err)
-	require.Equal(t, http.StatusBadGateway, rec.Code)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
+	require.False(t, c.Writer.Written(), "切号前不得向客户端提交 400 响应")
 	require.Contains(t, err.Error(), "upstream error: 400")
 
 	require.True(t, logSink.ContainsMessageAtLevel("OpenAI 上游返回 Instructions are required，已记录请求详情用于排查", "warn"))

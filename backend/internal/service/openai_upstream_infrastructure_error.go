@@ -23,11 +23,17 @@ type openAIUpstreamInfrastructureFailure struct {
 // classifyOpenAIUpstreamInfrastructureFailure 只识别继续请求同一上游也无法恢复的高置信度故障。
 func classifyOpenAIUpstreamInfrastructureFailure(statusCode int, message string, responseBody []byte) (openAIUpstreamInfrastructureFailure, bool) {
 	if statusCode == 529 || statusCode == http.StatusUnauthorized || statusCode == http.StatusPaymentRequired ||
-		statusCode == http.StatusForbidden || statusCode == http.StatusTooManyRequests || statusCode == http.StatusRequestEntityTooLarge {
+		statusCode == http.StatusForbidden || statusCode == http.StatusTooManyRequests {
 		return openAIUpstreamInfrastructureFailure{}, false
 	}
 	if isOpenAIContextWindowError(message, responseBody) || isOpenAIModelNotFoundError(statusCode, responseBody) {
 		return openAIUpstreamInfrastructureFailure{}, false
+	}
+	if statusCode == http.StatusRequestEntityTooLarge {
+		return openAIUpstreamInfrastructureFailure{
+			Reason:          "upstream_request_entity_too_large",
+			MinimumCooldown: openAIUpstreamResourceMinimumCooldown,
+		}, true
 	}
 	// 424 表示当前上游依赖不可用，请求本身无法通过同一账号立即恢复。
 	if statusCode == http.StatusFailedDependency {
@@ -40,7 +46,6 @@ func classifyOpenAIUpstreamInfrastructureFailure(statusCode int, message string,
 		Body:       responseBody,
 	})
 	if classification.Category == UpstreamErrorCategoryPreviousResponseNotFound ||
-		classification.Category == UpstreamErrorCategoryRequestTooLarge ||
 		classification.Category == UpstreamErrorCategoryUnauthorized ||
 		classification.Category == UpstreamErrorCategoryRateLimited ||
 		classification.Category == UpstreamErrorCategoryQuota ||

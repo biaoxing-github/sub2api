@@ -43,7 +43,14 @@ type UpstreamErrorClass struct {
 	LineDegraded     bool
 }
 
-func ClassifyUpstreamError(input UpstreamErrorInput) UpstreamErrorClass {
+func ClassifyUpstreamError(input UpstreamErrorInput) (classification UpstreamErrorClass) {
+	// 非 2xx 上游响应统一允许切换账号；具体认证、额度和限流标记仍由各专用分类保留。
+	defer func() {
+		if isNon2xxUpstreamStatus(input.StatusCode) {
+			classification.Retryable = true
+		}
+	}()
+
 	msg := strings.TrimSpace(input.Message)
 	if msg == "" && len(input.Body) > 0 {
 		msg = strings.TrimSpace(extractUpstreamErrorMessage(input.Body))
@@ -56,7 +63,7 @@ func ClassifyUpstreamError(input UpstreamErrorInput) UpstreamErrorClass {
 	_, resourceLabel, resourceExhausted := classifyUpstreamResourceExhaustion(input.StatusCode, lower)
 
 	switch {
-	case input.Err == nil && input.StatusCode >= 200 && input.StatusCode < 400 && strings.TrimSpace(raw) == "":
+	case input.Err == nil && input.StatusCode >= 200 && input.StatusCode < 300 && strings.TrimSpace(raw) == "":
 		return upstreamErrorClass(UpstreamErrorCategoryOK, "正常", "", false, false, false, false)
 	case input.StatusCode == http.StatusRequestEntityTooLarge || strings.Contains(lower, "413 request entity too large"):
 		return upstreamErrorClass(UpstreamErrorCategoryRequestTooLarge, "请求体过大/413", "", false, false, false, false)
@@ -123,22 +130,20 @@ func ClassifyUpstreamError(input UpstreamErrorInput) UpstreamErrorClass {
 	}
 }
 
+// isNon2xxUpstreamStatus 判断上游 HTTP 状态是否不属于成功响应范围。
+// 状态码为 0 表示传输层错误，由对应传输错误策略单独处理。
+func isNon2xxUpstreamStatus(statusCode int) bool {
+	return statusCode > 0 && (statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices)
+}
+
 // IsRetryableSchedulerExhaustionStatus 判断调度候选耗尽后是否允许进入退避/探测重试。
 // 这里复用统一上游错误分类，再保留调度层的窄口径白名单，避免 500 或未知错误被误判为可等待恢复。
 func IsRetryableSchedulerExhaustionStatus(statusCode int) bool {
-	if statusCode == 0 {
+	if !isNon2xxUpstreamStatus(statusCode) {
 		return false
 	}
 	classification := ClassifyUpstreamError(UpstreamErrorInput{StatusCode: statusCode})
-	if !classification.Retryable {
-		return false
-	}
-	switch statusCode {
-	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return true
-	default:
-		return false
-	}
+	return classification.Retryable
 }
 
 func isUpstreamBusinessLimitMessage(lower string) bool {

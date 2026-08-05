@@ -170,7 +170,7 @@ func stubOpenAITestPlatformIn(platform string, platforms []string) bool {
 	return false
 }
 
-func TestOpenAIGatewayServiceHandleErrorResponseMaps413ToClient413(t *testing.T) {
+func TestOpenAIGatewayServiceHandleErrorResponseFailsOver413(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -188,10 +188,10 @@ func TestOpenAIGatewayServiceHandleErrorResponseMaps413ToClient413(t *testing.T)
 
 	_, err := svc.handleErrorResponse(context.Background(), resp, c, &Account{ID: 300, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, []byte(`{"model":"gpt-5.5","input":"hello"}`))
 
-	require.Error(t, err)
-	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
-	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
-	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "Request body is too large")
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusRequestEntityTooLarge, failoverErr.StatusCode)
+	require.False(t, c.Writer.Written(), "切号前不得向客户端提交 413 响应")
 }
 
 func TestOpenAIGatewayServiceRequestPhaseFailoverCarriesActionMetadata(t *testing.T) {

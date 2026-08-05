@@ -73,8 +73,11 @@ func classifyOpenAIUpstreamErrorPolicy(phase openAIUpstreamErrorPolicyPhase, inp
 	case UpstreamErrorCategoryUpstream5xx:
 		// HTTP 5xx 会触发账号级短熔断，避免并发请求持续命中同一异常上游。
 		action = OpenAIStreamActionAvoidAccountTTL
-	case UpstreamErrorCategoryBusinessLimited, UpstreamErrorCategoryPreviousResponseNotFound, UpstreamErrorCategoryRequestTooLarge:
+	case UpstreamErrorCategoryBusinessLimited, UpstreamErrorCategoryPreviousResponseNotFound:
 		action = OpenAIStreamActionRetryNextAccount
+	case UpstreamErrorCategoryRequestTooLarge:
+		// 上游网关 413 可能来自账号线路前置 Nginx，按账号级故障切号并冷却。
+		action = OpenAIStreamActionAvoidAccountTTL
 	case UpstreamErrorCategoryUpstreamError:
 		action = OpenAIStreamActionRetryNextAccount
 	case UpstreamErrorCategoryOK:

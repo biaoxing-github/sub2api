@@ -3661,17 +3661,12 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 }
 
 func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
-	switch statusCode {
-	case 401, 402, 403, 429, 529:
-		return true
-	default:
-		return statusCode >= 500
-	}
+	return isNon2xxUpstreamStatus(statusCode)
 }
 
 func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
-	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
-		return false
+	if isNon2xxUpstreamStatus(statusCode) {
+		return true
 	}
 	if _, matched := classifyOpenAIUpstreamInfrastructureFailure(statusCode, upstreamMsg, upstreamBody); matched {
 		return true
@@ -4553,7 +4548,7 @@ httpRetryLoop:
 			}
 
 			// Handle error response
-			if resp.StatusCode >= 400 {
+			if isNon2xxUpstreamStatus(resp.StatusCode) {
 				respBody := s.readUpstreamErrorBody(resp)
 				_ = resp.Body.Close()
 				if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
@@ -4610,6 +4605,8 @@ httpRetryLoop:
 						}
 						upstreamDetail = truncateString(string(respBody), maxBytes)
 					}
+					// 非 2xx 在此直接进入切号，仍需保留上游 instructions 要求的可观测诊断。
+					logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, body, respBody)
 					policy := openAIHTTPResponseErrorPolicy(resp.StatusCode, upstreamMsg, respBody)
 					actionMetadata := s.openAIHTTPResponseActionMetadata(policy, false, account, resp.Header.Get("x-request-id"), resp.StatusCode)
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -4916,7 +4913,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
 		}
 
-		if resp.StatusCode >= 400 {
+		if isNon2xxUpstreamStatus(resp.StatusCode) {
 			respBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
@@ -5182,6 +5179,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 }
 
 func shouldFailoverOpenAIPassthroughResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	if isNon2xxUpstreamStatus(statusCode) {
+		return true
+	}
 	if _, matched := classifyOpenAIUpstreamInfrastructureFailure(statusCode, upstreamMsg, upstreamBody); matched {
 		return true
 	}
@@ -5215,7 +5215,10 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
 	logOpenAIInstructionsRequiredDebug(ctx, c, account, resp.StatusCode, upstreamMsg, requestBody, body)
 	reqModel, _, _ := extractOpenAIRequestMetaFromBody(requestBody)
-	_ = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
+	infrastructureFailover := s.handleOpenAIUpstreamInfrastructureFailure(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
+	if !infrastructureFailover {
+		_ = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
+	}
 	policy := openAIHTTPResponseErrorPolicy(resp.StatusCode, upstreamMsg, body)
 	actionMetadata := s.openAIHTTPResponseActionMetadata(policy, true, account, resp.Header.Get("x-request-id"), resp.StatusCode)
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -6834,13 +6837,9 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 	compactContextWindowFailover := shouldFailoverOpenAICompactContextWindowResponse(c, resp.StatusCode, upstreamMsg, body)
 	infrastructureFailover := s.handleOpenAIUpstreamInfrastructureFailure(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
+	non2xxUpstream := isNon2xxUpstreamStatus(resp.StatusCode)
 
-	if resp.StatusCode == http.StatusRequestEntityTooLarge {
-		writeOpenAIRequestTooLargeError(c)
-		return nil, fmt.Errorf("upstream error: %d request body too large", resp.StatusCode)
-	}
-
-	if !infrastructureFailover && !compactContextWindowFailover {
+	if !infrastructureFailover && !compactContextWindowFailover && !non2xxUpstream {
 		if status, errType, errMsg, matched := applyErrorPassthroughRule(
 			c,
 			PlatformOpenAI,
@@ -6862,7 +6861,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 
 	// Check custom error codes
-	if !infrastructureFailover && !compactContextWindowFailover && !account.ShouldHandleErrorCode(resp.StatusCode) {
+	if !infrastructureFailover && !compactContextWindowFailover && !non2xxUpstream && !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
 			AccountID:          account.ID,
@@ -6881,7 +6880,11 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	}
 
 	// Handle upstream error (mark account status)
-	shouldFailover := infrastructureFailover || compactContextWindowFailover
+	shouldFailover := non2xxUpstream || infrastructureFailover || compactContextWindowFailover
+	if non2xxUpstream && !infrastructureFailover {
+		// 所有上游 HTTP 非 2xx 都先执行账号状态策略，再由统一重试器切换账号。
+		_ = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
+	}
 	if !shouldFailover {
 		shouldFailover = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
 	}
@@ -6956,10 +6959,6 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 }
 
-func writeOpenAIRequestTooLargeError(c *gin.Context) {
-	writeOpenAIForwardLocalError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", "Request body is too large for upstream OpenAI API", "")
-}
-
 // compatErrorWriter is the signature for format-specific error writers used by
 // the compat paths (Chat Completions and Anthropic Messages).
 type compatErrorWriter func(c *gin.Context, statusCode int, errType, message string)
@@ -7006,14 +7005,10 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	infrastructureFailover := s.handleOpenAIUpstreamInfrastructureFailure(
 		c.Request.Context(), account, resp.StatusCode, resp.Header, body, modelForCooldown,
 	)
-
-	if resp.StatusCode == http.StatusRequestEntityTooLarge {
-		writeError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", "Request body is too large for upstream OpenAI API")
-		return nil, fmt.Errorf("upstream error: %d request body too large", resp.StatusCode)
-	}
+	non2xxUpstream := isNon2xxUpstreamStatus(resp.StatusCode)
 
 	// Apply error passthrough rules
-	if !infrastructureFailover {
+	if !infrastructureFailover && !non2xxUpstream {
 		if status, errType, errMsg, matched := applyErrorPassthroughRule(
 			c, account.Platform, resp.StatusCode, body,
 			http.StatusBadGateway, "api_error", "Upstream request failed",
@@ -7031,7 +7026,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 
 	// Check custom error codes — if the account does not handle this status,
 	// return a generic error without exposing upstream details.
-	if !infrastructureFailover && !account.ShouldHandleErrorCode(resp.StatusCode) {
+	if !infrastructureFailover && !non2xxUpstream && !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
 			AccountID:          account.ID,
@@ -7050,7 +7045,13 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	}
 
 	// Track rate limits and decide whether to trigger secondary failover.
-	shouldFailover := infrastructureFailover
+	shouldFailover := non2xxUpstream || infrastructureFailover
+	if non2xxUpstream && !infrastructureFailover {
+		// 兼容协议与 Responses 保持一致：HTTP 非 2xx 先执行账号状态策略，再交给统一切号。
+		_ = s.handleOpenAIAccountUpstreamError(
+			c.Request.Context(), account, resp.StatusCode, resp.Header, body, modelForCooldown,
+		)
+	}
 	if !shouldFailover {
 		shouldFailover = s.handleOpenAIAccountUpstreamError(
 			c.Request.Context(), account, resp.StatusCode, resp.Header, body, modelForCooldown,

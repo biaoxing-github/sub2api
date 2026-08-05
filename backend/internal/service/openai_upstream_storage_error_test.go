@@ -45,7 +45,7 @@ func TestClassifyOpenAIUpstreamInfrastructureFailure(t *testing.T) {
 		{name: "context window", statusCode: http.StatusBadRequest, body: []byte(`{"error":{"message":"maximum context length exceeded"}}`)},
 		{name: "model unsupported", statusCode: http.StatusBadRequest, body: []byte(`{"error":{"message":"The requested model is not supported with Codex when using a ChatGPT account"}}`)},
 		{name: "previous response", statusCode: http.StatusBadRequest, body: []byte(`{"error":{"code":"previous_response_not_found","message":"previous response not found"}}`)},
-		{name: "request too large", statusCode: http.StatusRequestEntityTooLarge, body: []byte(`{"error":{"message":"request too large"}}`)},
+		{name: "request too large", statusCode: http.StatusRequestEntityTooLarge, body: []byte(`{"error":{"message":"request too large"}}`), wantMatched: true, wantReason: "upstream_request_entity_too_large", wantMinCooldown: 5 * time.Minute},
 		{name: "unauthorized", statusCode: http.StatusUnauthorized, body: []byte(`{"error":{"message":"invalid api key"}}`)},
 		{name: "forbidden", statusCode: http.StatusForbidden, body: []byte(`{"error":{"message":"forbidden"}}`)},
 		{name: "rate limited", statusCode: http.StatusTooManyRequests, body: []byte(`{"error":{"message":"rate limit exceeded"}}`)},
@@ -404,6 +404,59 @@ func TestOpenAIForwardFailedDependencyReturnsFailoverBeforeWrite(t *testing.T) {
 	require.Equal(t, 1, repo.tempCalls)
 }
 
+// TestOpenAIForwardRequestEntityTooLargeCoolsAccountThenFailsOver 验证真实 Responses 转发收到前置 Nginx 413 时，先冷却账号再切号。
+func TestOpenAIForwardRequestEntityTooLargeCoolsAccountThenFailsOver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	responseBody := []byte(`<html><head><title>413 Request Entity Too Large</title></head><body><h1>413 Request Entity Too Large</h1></body></html>`)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusRequestEntityTooLarge,
+		Header:     http.Header{"Content-Type": []string{"text/html"}},
+		Body:       io.NopCloser(bytes.NewReader(responseBody)),
+	}}
+	account := &Account{
+		ID:             62030,
+		Name:           "openai-request-entity-too-large",
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeAPIKey,
+		Concurrency:    1,
+		Status:         StatusActive,
+		Schedulable:    true,
+		Credentials:    map[string]any{"api_key": "sk-native-413"},
+		RateMultiplier: f64p(1),
+	}
+	repo := &rateLimitAccountRepoStub{account: account}
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service := &OpenAIGatewayService{
+		cfg:              &config.Config{},
+		accountRepo:      repo,
+		rateLimitService: rateLimitService,
+		httpUpstream:     upstream,
+	}
+	rateLimitService.SetAccountRuntimeBlocker(service)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	requestBody := []byte(`{"model":"gpt-5.6-sol","input":"hello","stream":true}`)
+	startedAt := time.Now()
+
+	result, err := service.Forward(context.Background(), c, account, requestBody)
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusRequestEntityTooLarge, failoverErr.StatusCode)
+	require.False(t, c.Writer.Written(), "切号前不得向客户端提交 413 响应")
+	require.True(t, service.isOpenAIAccountRuntimeBlocked(account))
+	require.Equal(t, 1, repo.tempCalls)
+	require.NotNil(t, account.TempUnschedulableUntil)
+	require.WithinDuration(t, startedAt.Add(5*time.Minute), *account.TempUnschedulableUntil, 2*time.Second)
+
+	var state TempUnschedState
+	require.NoError(t, json.Unmarshal([]byte(account.TempUnschedulableReason), &state))
+	require.Equal(t, http.StatusRequestEntityTooLarge, state.StatusCode)
+	require.Equal(t, "upstream_request_entity_too_large", state.MatchedKeyword)
+}
+
 // TestOpenAIPoolModeInfrastructureFailureNeverRetriesSameAccount 验证池模式配置不会覆盖基础设施熔断。
 func TestOpenAIPoolModeInfrastructureFailureNeverRetriesSameAccount(t *testing.T) {
 	account := &Account{
@@ -425,8 +478,9 @@ func TestOpenAIPassthroughInfrastructureFailureTriggersFailover(t *testing.T) {
 	require.True(t, shouldFailoverOpenAIPassthroughResponse(http.StatusBadRequest, "", []byte(upstreamDiskStorageFailureBody)))
 	require.True(t, shouldFailoverOpenAIPassthroughResponse(http.StatusServiceUnavailable, "service unavailable", nil))
 	require.True(t, shouldFailoverOpenAIPassthroughResponse(http.StatusFailedDependency, "Service temporarily unavailable", nil))
-	require.False(t, shouldFailoverOpenAIPassthroughResponse(http.StatusBadRequest, "invalid parameter", nil))
-	require.False(t, shouldFailoverOpenAIPassthroughResponse(http.StatusBadGateway, "", []byte(`{"error":{"message":"maximum context length exceeded"}}`)))
+	require.True(t, shouldFailoverOpenAIPassthroughResponse(http.StatusBadRequest, "invalid parameter", nil))
+	require.True(t, shouldFailoverOpenAIPassthroughResponse(http.StatusRequestEntityTooLarge, "request too large", nil))
+	require.True(t, shouldFailoverOpenAIPassthroughResponse(http.StatusBadGateway, "", []byte(`{"error":{"message":"maximum context length exceeded"}}`)))
 }
 
 // TestOpenAIPassthroughFailedDependencyReturnsFailoverBeforeWrite 验证透传 424 不会先写回客户端，并会隔离当前账号。

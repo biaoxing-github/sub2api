@@ -461,7 +461,6 @@ func shouldSkipOpenAIAccountStateMutation(account *Account, statusCode int, upst
 	switch classification.Category {
 	case UpstreamErrorCategoryCloudflareWAF,
 		UpstreamErrorCategoryPreviousResponseNotFound,
-		UpstreamErrorCategoryRequestTooLarge,
 		UpstreamErrorCategoryUpstream5xx:
 		return true
 	default:

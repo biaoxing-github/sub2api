@@ -129,6 +129,14 @@ func TestOpenAIUpstreamErrorPolicySeparatesPhasesAndActions(t *testing.T) {
 			wantRecord: true,
 		},
 		{
+			name:       "http 413 avoids account ttl",
+			phase:      openAIUpstreamErrorPolicyPhaseHTTPResponse,
+			input:      UpstreamErrorInput{StatusCode: http.StatusRequestEntityTooLarge, Message: "Request Entity Too Large"},
+			wantAction: OpenAIStreamActionAvoidAccountTTL,
+			wantScope:  "account",
+			wantRecord: false,
+		},
+		{
 			name:       "stream policy rejection only retries next account",
 			phase:      openAIUpstreamErrorPolicyPhaseStream,
 			input:      UpstreamErrorInput{Message: "request denied by safety policy"},

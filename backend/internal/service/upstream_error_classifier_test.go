@@ -20,13 +20,14 @@ func TestClassifyUpstreamErrorCoversSharedCategories(t *testing.T) {
 		wantLineDegraded bool
 		wantPathReason   string
 	}{
-		{name: "401", statusCode: http.StatusUnauthorized, message: "bad token", want: UpstreamErrorCategoryUnauthorized, wantInvalid: true, wantPathReason: OpenAIPathFailureHTTP401},
+		{name: "401", statusCode: http.StatusUnauthorized, message: "bad token", want: UpstreamErrorCategoryUnauthorized, wantRetryable: true, wantInvalid: true, wantPathReason: OpenAIPathFailureHTTP401},
 		{name: "429", statusCode: http.StatusTooManyRequests, message: "rate limit exceeded", want: UpstreamErrorCategoryRateLimited, wantRetryable: true, wantRateLimited: true, wantPathReason: OpenAIPathFailureHTTP429},
 		{name: "cloudflare", statusCode: http.StatusForbidden, body: []byte(`<html><title>Just a moment...</title><center>cloudflare</center>`), want: UpstreamErrorCategoryCloudflareWAF, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureOther},
 		{name: "client ip circuit", statusCode: http.StatusTooManyRequests, message: "client_ip_error_circuit_open", want: UpstreamErrorCategoryClientIPCircuitOpen, wantRetryable: true, wantRateLimited: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureHTTP429},
 		{name: "unexpected eof", err: errors.New("unexpected EOF"), want: UpstreamErrorCategoryUnexpectedEOF, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureEOF},
 		{name: "header timeout", err: errors.New("timed out waiting for OpenAI upstream response headers after 20s"), want: UpstreamErrorCategoryHeaderTimeout, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureHeaderTimeout},
-		{name: "previous response", statusCode: http.StatusBadRequest, message: "previous response not found", want: UpstreamErrorCategoryPreviousResponseNotFound},
+		{name: "previous response", statusCode: http.StatusBadRequest, message: "previous response not found", want: UpstreamErrorCategoryPreviousResponseNotFound, wantRetryable: true},
+		{name: "request too large", statusCode: http.StatusRequestEntityTooLarge, message: "Request Entity Too Large", want: UpstreamErrorCategoryRequestTooLarge, wantRetryable: true},
 		{name: "infrastructure exhaustion", statusCode: http.StatusBadRequest, message: "database connection pool exhausted", want: UpstreamErrorCategoryInfrastructureFailure, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureOther},
 		{name: "infrastructure exhaustion with incidental status digits", statusCode: http.StatusBadRequest, message: "failed to write to temp file: no space left on device (request id: req-401429)", want: UpstreamErrorCategoryInfrastructureFailure, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureOther},
 		{name: "5xx", statusCode: http.StatusBadGateway, message: "upstream failed", want: UpstreamErrorCategoryUpstream5xx, wantRetryable: true, wantLineDegraded: true, wantPathReason: OpenAIPathFailureOther},
@@ -122,12 +123,15 @@ func TestRetryableSchedulerExhaustionStatusUsesSharedClassifier(t *testing.T) {
 		want       bool
 	}{
 		{name: "429", statusCode: http.StatusTooManyRequests, want: true},
+		{name: "400", statusCode: http.StatusBadRequest, want: true},
+		{name: "401", statusCode: http.StatusUnauthorized, want: true},
+		{name: "413", statusCode: http.StatusRequestEntityTooLarge, want: true},
 		{name: "502", statusCode: http.StatusBadGateway, want: true},
 		{name: "503", statusCode: http.StatusServiceUnavailable, want: true},
 		{name: "504", statusCode: http.StatusGatewayTimeout, want: true},
-		{name: "500", statusCode: http.StatusInternalServerError, want: false},
-		{name: "401", statusCode: http.StatusUnauthorized, want: false},
-		{name: "400", statusCode: http.StatusBadRequest, want: false},
+		{name: "500", statusCode: http.StatusInternalServerError, want: true},
+		{name: "300", statusCode: http.StatusMultipleChoices, want: true},
+		{name: "200", statusCode: http.StatusOK, want: false},
 		{name: "empty", statusCode: 0, want: false},
 	}
 

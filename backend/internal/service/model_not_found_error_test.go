@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -314,7 +313,7 @@ func TestOpenAIHandleErrorResponse_ChatGPTAccountUnsupportedModelTriggersFailove
 	require.Equal(t, upstreamModel, repo.modelRateLimitCalls[0].scope)
 }
 
-func TestOpenAIHandleErrorResponse_UnsupportedParameterDoesNotTriggerFailover(t *testing.T) {
+func TestOpenAIHandleErrorResponse_UnsupportedParameterFailsOverForNon2xx(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	repo := &modelNotFoundAccountRepoStub{}
@@ -341,8 +340,9 @@ func TestOpenAIHandleErrorResponse_UnsupportedParameterDoesNotTriggerFailover(t 
 	require.Nil(t, result)
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr))
-	require.Equal(t, http.StatusBadGateway, recorder.Code)
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadRequest, failoverErr.StatusCode)
+	require.False(t, c.Writer.Written(), "切号前不得向客户端提交 400 响应")
 	require.Empty(t, repo.modelRateLimitCalls)
 }
 
