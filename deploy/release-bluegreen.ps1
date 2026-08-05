@@ -467,7 +467,11 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $deployRootResolved = (Resolve-Path -LiteralPath $DeployRoot).Path
 $envPath = Join-Path $deployRootResolved '.env'
 $activeConfPath = Join-Path $deployRootResolved 'proxy\upstreams\active.conf'
-$majorVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'backend\cmd\server\VERSION') -Raw).Trim()
+# 发布主版本必须以最新语义化 tag 为准，仓库内 VERSION 文件可能落后于已发布版本线。
+$majorVersion = (Invoke-ExternalOutput -File 'git' -Arguments @('-C', $repoRoot, 'tag', '--sort=-v:refname')).Split([Environment]::NewLine)[0].Trim()
+if ($majorVersion -notmatch '^v\d+\.\d+\.\d+$') {
+    throw "Cannot resolve latest semantic version tag from ${repoRoot}: $majorVersion"
+}
 $imageTag = "$ImageRepository`:$ImageVersion"
 
 Write-Step 'Read release boundary'
