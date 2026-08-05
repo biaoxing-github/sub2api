@@ -193,9 +193,9 @@ func TestOpenAIStreamingPassthroughResponseFailedBeforeOutputAppliesPassthroughR
 	require.NotNil(t, result.usage)
 	require.Equal(t, 100000, result.usage.InputTokens)
 	require.Contains(t, err.Error(), "passthrough")
-	require.Equal(t, http.StatusOK, rec.Code, "heartbeat 已提交后必须保持 HTTP 200")
-	require.Contains(t, rec.Body.String(), "event: response.failed")
-	require.Contains(t, rec.Body.String(), "context window")
+	require.Equal(t, http.StatusBadRequest, rec.Code, "首个真实 SSE 事件前未提交时应返回语义 HTTP 状态")
+	require.Equal(t, "upstream_error", gjson.Get(rec.Body.String(), "error.type").String())
+	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "context window")
 	requireOpsUpstreamErrorRecorded(t, c, PlatformOpenAI)
 }
 

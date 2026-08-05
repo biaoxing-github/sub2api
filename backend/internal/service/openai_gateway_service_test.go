@@ -1386,8 +1386,8 @@ func TestOpenAIStreamingReadErrorBeforeOutputReturnsFailover(t *testing.T) {
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-	require.True(t, c.Writer.Written())
-	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
@@ -1902,8 +1902,8 @@ func TestOpenAIStreamingResponseFailedBeforeOutputReturnsFailover(t *testing.T) 
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "An error occurred while processing your request")
-	require.True(t, c.Writer.Written())
-	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
@@ -2022,8 +2022,8 @@ func TestOpenAIStreamingEventErrorBeforeOutputReturnsFailoverWithRawBody(t *test
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "backend overloaded with trace id abc123")
-	require.True(t, c.Writer.Written())
-	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 
 	raw, ok := c.Get(OpsUpstreamErrorsKey)
@@ -2148,8 +2148,8 @@ func TestOpenAIStreamingConfiguredResponseTextReturnsFailoverBeforeOutput(t *tes
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "加入新家园")
-	require.True(t, c.Writer.Written())
-	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 	require.Equal(t, 1, repo.tempCalls)
 	require.Equal(t, account.ID, repo.lastTempAccountID)
@@ -2460,8 +2460,8 @@ func TestOpenAIStreamingResponseFailedBeforeOutputCapacityErrorReturnsFailover(t
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Contains(t, string(failoverErr.ResponseBody), "Selected model is at capacity")
-	require.True(t, c.Writer.Written())
-	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
@@ -2507,6 +2507,51 @@ func TestOpenAIStreamingQuotaFailedAfterOutputWritesGatewayRetryableFailure(t *t
 	require.Contains(t, body, "response.failed")
 	require.Contains(t, body, "upstream_retryable_error")
 	require.NotContains(t, body, "current quota")
+	require.True(t, openAIStreamClientOutputStarted(c, false))
+}
+
+// TestOpenAIStreamingCapacityFailedAfterOutputWritesGatewayRetryableFailure 验证已经下发内容时不重放流。
+func TestOpenAIStreamingCapacityFailedAfterOutputWritesGatewayRetryableFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			StreamKeepaliveInterval:   0,
+			MaxLineSize:               defaultMaxLineSize,
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: cfg}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			"event: response.created",
+			`data: {"type":"response.created","response":{"id":"resp_capacity_after_output"}}`,
+			"",
+			"event: response.output_text.delta",
+			`data: {"type":"response.output_text.delta","delta":"partial"}`,
+			"",
+			"event: response.failed",
+			`data: {"type":"response.failed","error":{"message":"Selected model is at capacity. Please try a different model.","type":"invalid_request_error"}}`,
+			"",
+		}, "\n"))),
+		Header: http.Header{"X-Request-Id": []string{"rid-capacity-after-output"}},
+	}
+
+	_, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, &Account{ID: 1, Platform: PlatformOpenAI, Name: "acc"}, time.Now(), "model", "model")
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	body := rec.Body.String()
+	require.Contains(t, body, "response.output_text.delta")
+	require.Contains(t, body, "partial")
+	require.Contains(t, body, "response.failed")
+	require.Contains(t, body, "upstream_retryable_error")
+	require.NotContains(t, body, "Selected model is at capacity")
 	require.True(t, openAIStreamClientOutputStarted(c, false))
 }
 
@@ -2598,8 +2643,8 @@ func TestOpenAIStreamingPreambleOnlyMissingTerminalReturnsFailover(t *testing.T)
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.True(t, c.Writer.Written())
-	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
@@ -2639,7 +2684,7 @@ func TestOpenAIStreamingPreambleKeepaliveUsesDownstreamIdle(t *testing.T) {
 	_ = pr.Close()
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Contains(t, rec.Body.String(), ":\n\n")
+	require.NotContains(t, rec.Body.String(), ":\n\n")
 	require.Contains(t, rec.Body.String(), "response.completed")
 }
 
@@ -2693,8 +2738,8 @@ func TestOpenAIStreamingWaitGuardTimeoutBeforeOutputReturnsFailover(t *testing.T
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.True(t, c.Writer.Written())
-	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
@@ -2731,8 +2776,8 @@ func TestOpenAIStreamingPolicyResponseFailedBeforeOutputReturnsFailover(t *testi
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-	require.True(t, c.Writer.Written())
-	require.Equal(t, ":\n\n", rec.Body.String())
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
@@ -3031,7 +3076,7 @@ func TestOpenAIStreamingPassthroughMissingTerminalEventReturnsIncompleteError(t 
 	}
 }
 
-func TestOpenAIStreamingPassthroughResponseFailedBeforeOutputReturnsFailover(t *testing.T) {
+func TestOpenAIStreamingPassthroughCapacityFailedBeforeOutputReturnsFailoverWithoutCommit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{
@@ -3051,7 +3096,7 @@ func TestOpenAIStreamingPassthroughResponseFailedBeforeOutputReturnsFailover(t *
 			`data: {"type":"response.created","response":{"id":"resp_1"}}`,
 			"",
 			"event: response.failed",
-			`data: {"type":"response.failed","error":{"message":"upstream processing failed"}}`,
+			`data: {"type":"response.failed","error":{"message":"Selected model is at capacity. Please try a different model."}}`,
 			"",
 		}, "\n"))),
 		Header: http.Header{"X-Request-Id": []string{"rid-passthrough-failed"}},
@@ -3062,9 +3107,9 @@ func TestOpenAIStreamingPassthroughResponseFailedBeforeOutputReturnsFailover(t *
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-	require.Contains(t, string(failoverErr.ResponseBody), "upstream processing failed")
-	require.True(t, c.Writer.Written())
-	require.Equal(t, ":\n\n", rec.Body.String())
+	require.Contains(t, string(failoverErr.ResponseBody), "Selected model is at capacity")
+	require.False(t, c.Writer.Written())
+	require.Empty(t, rec.Body.String())
 	require.False(t, openAIStreamClientOutputStarted(c, false))
 }
 
@@ -3406,8 +3451,8 @@ func TestOpenAIStreamingPassthroughTimeoutBeforeOutputReturnsFailover(t *testing
 		require.ErrorAs(t, err, &failoverErr)
 		require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 		require.Contains(t, string(failoverErr.ResponseBody), "stream data interval timeout")
-		require.True(t, c.Writer.Written())
-		require.Equal(t, ":\n\n", rec.Body.String())
+		require.False(t, c.Writer.Written())
+		require.Empty(t, rec.Body.String())
 		require.False(t, openAIStreamClientOutputStarted(c, false))
 	case <-time.After(1500 * time.Millisecond):
 		_ = pw.Close()

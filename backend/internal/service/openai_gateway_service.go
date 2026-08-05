@@ -5369,7 +5369,7 @@ func markOpenAIRealClientOutputStarted(c *gin.Context) {
 }
 
 // OpenAIRealClientOutputStarted 只表示真实 OpenAI SSE 事件已经下发。
-// SSE 注释心跳会提交 HTTP 200，但不应阻断真实输出前的账号 failover。
+// 首个真实事件前不写 SSE 注释心跳，保证账号切换可以复用同一个客户端连接。
 func OpenAIRealClientOutputStarted(c *gin.Context) bool {
 	if c == nil {
 		return false
@@ -5397,14 +5397,6 @@ func openAIStreamPreOutputTimeoutFailoverEnabled(c *gin.Context) bool {
 	}
 	enabled, _ := c.Get(openAIStreamPreOutputTimeoutFailoverContextKey)
 	return enabled == true
-}
-
-func flushOpenAIInitialSSEHeartbeat(w io.Writer, flusher http.Flusher) error {
-	if _, err := io.WriteString(w, ":\n\n"); err != nil {
-		return err
-	}
-	flusher.Flush()
-	return nil
 }
 
 func openAIStreamEventIsPreamble(eventType string) bool {
@@ -6082,10 +6074,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	var firstTokenMs *int
 	responseID := ""
 	clientDisconnected := false
-	if err := flushOpenAIInitialSSEHeartbeat(w, flusher); err != nil {
-		clientDisconnected = true
-		logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during initial heartbeat, continue draining upstream for usage: account=%d", account.ID)
-	}
 	sawDone := false
 	sawTerminalEvent := false
 	sawFailedEvent := false
@@ -7246,13 +7234,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		flusher.Flush()
 		return nil
 	}
-	flushPreOutputHeartbeat := func() error {
-		if c == nil || c.Writer == nil || c.Writer.Written() {
-			return nil
-		}
-		return flushOpenAIInitialSSEHeartbeat(w, flusher)
-	}
-
 	var usage *OpenAIUsage
 	usageObserved := false
 	imageCounter := newOpenAIImageOutputCounter()
@@ -7383,7 +7364,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			missingTerminalEvent: missingTerminalEvent,
 		}
 	}
-	// 首个真实 SSE event 前只暂存 preamble；心跳仍直接下发用于保活。
+	// 首个真实 SSE event 前只暂存 preamble，避免提交响应后无法透明切换账号。
 	pendingClientLines := make([]string, 0, 64)
 	pendingClientLinesHaveOutput := false
 	pendingClientBytes := int64(0)
@@ -7474,10 +7455,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			missingTerminalEvent = true
 			s.recordOpenAIPathHealthStreamIncomplete(account, "")
 			if !upstreamOutputStarted {
-				if err := flushPreOutputHeartbeat(); err != nil {
-					clientDisconnected = true
-					return resultWithUsage(), fmt.Errorf("stream usage incomplete before failover heartbeat")
-				}
 				return resultWithUsage(), s.newOpenAIStreamFailoverError(
 					c,
 					account,
@@ -7560,10 +7537,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			msg := "OpenAI stream disconnected before completion"
 			if errText := strings.TrimSpace(scanErr.Error()); errText != "" {
 				msg += ": " + errText
-			}
-			if err := flushPreOutputHeartbeat(); err != nil {
-				clientDisconnected = true
-				return resultWithUsage(), fmt.Errorf("stream usage incomplete before failover heartbeat"), true
 			}
 			return resultWithUsage(), s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, nil, msg), true
 		}
@@ -7648,11 +7621,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					streamFailoverErr = fmt.Errorf("upstream response failed: %s", failedMessage)
 					return
 				}
-				if err := flushPreOutputHeartbeat(); err != nil {
-					clientDisconnected = true
-					streamFailoverErr = fmt.Errorf("stream usage incomplete before event:error failover heartbeat")
-					return
-				}
 				streamFailoverErr = s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, rawDataBytes, failedMessage)
 				return
 			}
@@ -7707,11 +7675,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					return
 				}
 				if interceptDecision.FailoverBeforeOutput {
-					if err := flushPreOutputHeartbeat(); err != nil {
-						clientDisconnected = true
-						streamFailoverErr = fmt.Errorf("stream usage incomplete before failover heartbeat")
-						return
-					}
 					streamFailoverErr = s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, dataBytes, failedMessage)
 					return
 				}
@@ -7796,11 +7759,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 							s.applyOpenAIResponseTextAccountState(ctx, account, match.Keyword)
 						}
 						streamFailoverErr = fmt.Errorf("%s", message)
-						return
-					}
-					if err := flushPreOutputHeartbeat(); err != nil {
-						clientDisconnected = true
-						streamFailoverErr = fmt.Errorf("stream usage incomplete before response text failover heartbeat")
 						return
 					}
 					streamFailoverErr = s.newOpenAIResponseTextFailoverError(ctx, c, account, false, upstreamRequestID, match)
@@ -7919,10 +7877,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
 			}
 			if openAIStreamPreOutputTimeoutFailoverEnabled(c) && !upstreamOutputStarted && !isClientRequestCanceled(c) {
-				if err := flushPreOutputHeartbeat(); err != nil {
-					clientDisconnected = true
-					return resultWithUsage(), fmt.Errorf("stream usage incomplete after pre-output timeout")
-				}
 				return resultWithUsage(), s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, nil, "OpenAI stream timed out before real output: stream data interval timeout")
 			}
 			if !clientDisconnected {
@@ -7944,6 +7898,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 		case <-keepaliveCh:
 			if clientDisconnected {
+				continue
+			}
+			// 真实事件之前不能写心跳，否则 HTTP 响应已提交，容量不足等错误不能无感切号。
+			if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
 				continue
 			}
 			if time.Since(lastDownstreamWriteAt)+10*time.Millisecond < keepaliveInterval {
