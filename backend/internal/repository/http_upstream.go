@@ -66,7 +66,7 @@ const (
 
 const (
 	grokCLIProxyHost       = "cli-chat-proxy.grok.com"
-	grokCLIStableVersion   = "0.2.93"
+	grokCLIStableVersion   = "0.2.114"
 	grokCLIVersionOverride = "XAI_GROK_CLI_VERSION"
 )
 

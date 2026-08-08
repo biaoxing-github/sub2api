@@ -22,7 +22,7 @@ import (
 const (
 	grokQuotaSnapshotExtraKey = "grok_quota_snapshot"
 	grokUpstreamUserAgent     = "sub2api-grok/1.0"
-	grokCLIVersion            = "0.2.93"
+	grokCLIVersion            = "0.2.114"
 	grokDefaultResponsesModel = "grok-4.5"
 )
 

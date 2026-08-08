@@ -234,7 +234,7 @@ func TestBuildUpstreamModelsRequestSupportsGrokOAuth(t *testing.T) {
 	require.Equal(t, "https://cli-chat-proxy.grok.com/v1/models", req.URL.String())
 	require.Equal(t, "Bearer oauth-access-token", req.Header.Get("Authorization"))
 	require.Equal(t, "sub2api-grok/1.0", req.Header.Get("User-Agent"))
-	require.Equal(t, "0.2.93", req.Header.Get("X-Grok-Client-Version"))
+	require.Equal(t, "0.2.114", req.Header.Get("X-Grok-Client-Version"))
 	require.Equal(t, "interactive", req.Header.Get("X-Grok-Client-Mode"))
 	require.Equal(t, "grok-user-id", req.Header.Get("X-UserID"))
 	require.Equal(t, "grok-user@example.com", req.Header.Get("X-Email"))
