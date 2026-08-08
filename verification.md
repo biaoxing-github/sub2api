@@ -5497,3 +5497,11 @@ v0.1.149 拉取结果：
 - `git diff --check` 通过。
 - 宽匹配 service 回归仍命中 5 个当前分支既有失败：2 个 first-output keepalive 计时断言、2 个未知模型状态断言、1 个 fallback pricing 断言；本功能精确测试与相关编译均通过，未修改这些既有行为。
 - 未执行：Git push、镜像构建、部署和生产迁移。
+
+## 2026-08-08 Composite Reasoning
+
+- 执行者：Devil
+- 后端：Composite route Ent/repository/resolver、管理 CRUD、Responses/Chat/Messages/Count Tokens/WS 调度和 Gemini URL 模型解析已完成；`go test ./internal/service -run 'Composite|Reasoning|DetectModelPlatform'`、repository 聚焦、handler/admin/routes/cmd-server 编译切片通过。
+- 前端：Composite 路由注册表 CRUD/预览、reasoning policy 配置、模型广场具体平台展示已完成；Vitest 3 文件 18/18、typecheck、生产 build 通过。
+- 边界：Embeddings 当前项目没有已注册独立 handler；Images 使用现有图像解析与 resolver middleware，未新增独立端点。未执行数据库迁移、镜像构建、部署或 Git push。
+- 工具：`go generate ./cmd/server` 仍受当前分支既有 Wire provider 缺口阻断，`wire_gen.go` 已手工同步并通过 cmd/server 编译。
