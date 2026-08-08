@@ -73,6 +73,19 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	body, upstreamModel, err := resolveCompositeRequest(c, h.compositeRouteResolver, apiKey, reqModel, service.CompositeRouteEndpointChatCompletions, body)
+	if err != nil {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if upstreamModel != "" {
+		reqModel = upstreamModel
+	}
+	if compositeOpenAIReasoningAllowed(c, apiKey) {
+		if policyBody, changed := service.ApplyOpenAIReasoningEffortPolicy(body, apiKey.Group.MaxReasoningEffort, apiKey.Group.ReasoningEffortMappings); changed {
+			body = policyBody
+		}
+	}
 	reqStream := gjson.GetBytes(body, "stream").Bool()
 
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))

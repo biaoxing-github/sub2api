@@ -11,6 +11,9 @@ const (
 	// ResolvedUpstreamModel 保存 composite 路由解析后的真实上游模型。
 	ResolvedUpstreamModel Key = "ctx_resolved_upstream_model"
 
+	// ResolvedTargetPlatform 保存 composite 路由解析后的真实目标平台。
+	ResolvedTargetPlatform Key = "ctx_resolved_target_platform"
+
 	// RequestID 为服务端生成/透传的请求 ID。
 	RequestID Key = "ctx_request_id"
 

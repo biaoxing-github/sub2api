@@ -562,6 +562,8 @@ type adminServiceImpl struct {
 	privacyClientFactory PrivacyClientFactory
 	runtimeBlocker       AccountRuntimeBlocker
 	gatewayService       groupModelsListProvider
+	compositeRouteRepo   CompositeModelRouteRepository
+	compositeResolver    *CompositeRouteResolver
 }
 
 type userGroupRateBatchReader interface {
@@ -621,6 +623,15 @@ func (s *adminServiceImpl) SetGatewayService(gatewayService groupModelsListProvi
 		return
 	}
 	s.gatewayService = gatewayService
+}
+
+// SetCompositeRouteDependencies 注入 Composite 路由管理所需的持久化和解析器。
+func (s *adminServiceImpl) SetCompositeRouteDependencies(repo CompositeModelRouteRepository, resolver *CompositeRouteResolver) {
+	if s == nil {
+		return
+	}
+	s.compositeRouteRepo = repo
+	s.compositeResolver = resolver
 }
 
 // User management implementations

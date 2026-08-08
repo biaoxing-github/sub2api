@@ -85,8 +85,12 @@ func (s *ChannelService) ListPlazaGroups(ctx context.Context) ([]PlazaGroup, err
 		order = append(order, g.ID)
 	}
 
-	// modelIdx[groupID][modelName] = index into byGroup[groupID].Models
-	modelIdx := make(map[int64]map[string]int, len(groups))
+	type modelKey struct {
+		platform string
+		name     string
+	}
+	// Composite 允许不同平台使用同名模型，因此索引必须同时包含平台和模型名。
+	modelIdx := make(map[int64]map[modelKey]int, len(groups))
 	for i := range channels {
 		ch := &channels[i]
 		if ch.Status != StatusActive {
@@ -103,22 +107,28 @@ func (s *ChannelService) ListPlazaGroups(ctx context.Context) ([]PlazaGroup, err
 			}
 			idx := modelIdx[gid]
 			if idx == nil {
-				idx = make(map[string]int, len(supported))
+				idx = make(map[modelKey]int, len(supported))
 				modelIdx[gid] = idx
 			}
 			for j := range supported {
 				m := supported[j]
-				if m.Platform != pg.Platform {
+				// Composite 分组承载多个具体平台，只展示可实际调度的平台模型。
+				if pg.Platform == PlatformComposite {
+					if !isConcreteRequestPlatform(m.Platform) {
+						continue
+					}
+				} else if m.Platform != pg.Platform {
 					continue
 				}
-				if at, seen := idx[m.Name]; seen {
+				key := modelKey{platform: m.Platform, name: m.Name}
+				if at, seen := idx[key]; seen {
 					// 先见者胜；仅当已存条目无定价而新条目有定价时升级。
 					if pg.Models[at].Pricing == nil && m.Pricing != nil {
 						pg.Models[at].Pricing = m.Pricing
 					}
 					continue
 				}
-				idx[m.Name] = len(pg.Models)
+				idx[key] = len(pg.Models)
 				pg.Models = append(pg.Models, PlazaModel{
 					Name:     m.Name,
 					Platform: m.Platform,

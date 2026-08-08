@@ -2347,6 +2347,9 @@ export default {
         userNotes: 'Notes',
         userStatus: 'Status'
       },
+      compositeRoutes: {
+        action: 'Routes'
+      },
       usageToday: 'Today',
       usageTotal: 'Total',
       accountsAvailable: 'Avail:',
@@ -2364,7 +2367,14 @@ export default {
         exclusive: 'Exclusive Group',
         rpmLimit: 'Requests Per Minute (RPM)',
         rpmLimitPlaceholder: '0 = unlimited',
-        rpmLimitHint: 'Max requests per minute for each user in this group; 0 = unlimited. Once set, it takes over per-user rate limiting in this group (overrides the user-level rpm_limit fallback).'
+        rpmLimitHint: 'Max requests per minute for each user in this group; 0 = unlimited. Once set, it takes over per-user rate limiting in this group (overrides the user-level rpm_limit fallback).',
+        maxReasoningEffort: 'Max reasoning effort', maxReasoningEffortUnlimited: 'Unlimited (follow request)',
+        maxReasoningEffortHint: 'Mappings apply first, then values above the ceiling are capped. Omitted effort stays omitted.',
+        reasoningEffortMappings: 'Reasoning effort mappings', addReasoningEffortMapping: 'Add mapping',
+        reasoningEffortFrom: 'Request value A', reasoningEffortTo: 'Forwarded value B',
+        reasoningEffortFromPlaceholder: 'Select A', reasoningEffortToPlaceholder: 'Select B',
+        removeReasoningEffortMapping: 'Remove mapping', fromRequired: 'Select request value A', toRequired: 'Select forwarded value B',
+        unsupportedFrom: 'Request value is not supported by this platform', unsupportedTo: 'Forwarded value is not supported by this platform', duplicateFrom: 'Request value A must be unique'
       },
       enterGroupName: 'Enter group name',
       optionalDescription: 'Optional description',

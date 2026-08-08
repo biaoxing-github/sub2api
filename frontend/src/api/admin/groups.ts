@@ -7,6 +7,10 @@ import { apiClient } from '../client'
 import type {
   AdminGroup,
   GroupPlatform,
+  CompositeModelRoute,
+  CompositeModelRouteInput,
+  CompositeRoutePreviewRequest,
+  CompositeRouteDecision,
   CreateGroupRequest,
   UpdateGroupRequest,
   PaginatedResponse
@@ -171,6 +175,62 @@ export async function getGroupApiKeys(
   return data
 }
 
+/** 获取 Composite 分组的全部显式模型路由。 */
+export async function listCompositeRoutes(id: number): Promise<CompositeModelRoute[]> {
+  const { data } = await apiClient.get<CompositeModelRoute[]>(
+    `/admin/groups/${id}/composite-routes`
+  )
+  return data
+}
+
+/** 为 Composite 分组新增显式模型路由。 */
+export async function createCompositeRoute(
+  id: number,
+  route: CompositeModelRouteInput
+): Promise<CompositeModelRoute> {
+  const { data } = await apiClient.post<CompositeModelRoute>(
+    `/admin/groups/${id}/composite-routes`,
+    route
+  )
+  return data
+}
+
+/** 更新 Composite 分组的一条显式模型路由。 */
+export async function updateCompositeRoute(
+  id: number,
+  routeId: number,
+  route: CompositeModelRouteInput
+): Promise<CompositeModelRoute> {
+  const { data } = await apiClient.put<CompositeModelRoute>(
+    `/admin/groups/${id}/composite-routes/${routeId}`,
+    route
+  )
+  return data
+}
+
+/** 删除 Composite 分组的一条显式模型路由。 */
+export async function deleteCompositeRoute(
+  id: number,
+  routeId: number
+): Promise<{ message: string }> {
+  const { data } = await apiClient.delete<{ message: string }>(
+    `/admin/groups/${id}/composite-routes/${routeId}`
+  )
+  return data
+}
+
+/** 预览模型与端点最终命中的显式路由或内置识别结果。 */
+export async function previewCompositeRoute(
+  id: number,
+  request: CompositeRoutePreviewRequest
+): Promise<CompositeRouteDecision> {
+  const { data } = await apiClient.post<CompositeRouteDecision>(
+    `/admin/groups/${id}/composite-routes/preview`,
+    request
+  )
+  return data
+}
+
 /**
  * Rate multiplier entry for a user in a group
  */
@@ -328,6 +388,11 @@ export const groupsAPI = {
   toggleStatus,
   getStats,
   getGroupApiKeys,
+  listCompositeRoutes,
+  createCompositeRoute,
+  updateCompositeRoute,
+  deleteCompositeRoute,
+  previewCompositeRoute,
   getGroupRateMultipliers,
   clearGroupRateMultipliers,
   batchSetGroupRateMultipliers,

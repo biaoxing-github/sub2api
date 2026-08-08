@@ -38,6 +38,7 @@ type OpenAIGatewayHandler struct {
 	imageLimiter             *imageConcurrencyLimiter
 	maxAccountSwitches       int
 	cfg                      *config.Config
+	compositeRouteResolver   *service.CompositeRouteResolver
 }
 
 const (
@@ -265,6 +266,7 @@ func NewOpenAIGatewayHandler(
 	errorPassthroughService *service.ErrorPassthroughService,
 	contentModerationService *service.ContentModerationService,
 	cfg *config.Config,
+	compositeRouteResolver *service.CompositeRouteResolver,
 ) *OpenAIGatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 3
@@ -288,6 +290,7 @@ func NewOpenAIGatewayHandler(
 		imageLimiter:             &imageConcurrencyLimiter{},
 		maxAccountSwitches:       maxAccountSwitches,
 		cfg:                      cfg,
+		compositeRouteResolver:   compositeRouteResolver,
 	}
 }
 
@@ -367,6 +370,19 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	body, upstreamModel, err := resolveCompositeRequest(c, h.compositeRouteResolver, apiKey, reqModel, service.CompositeRouteEndpointResponses, body)
+	if err != nil {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if upstreamModel != "" {
+		reqModel = upstreamModel
+	}
+	if compositeOpenAIReasoningAllowed(c, apiKey) {
+		if policyBody, changed := service.ApplyOpenAIReasoningEffortPolicy(body, apiKey.Group.MaxReasoningEffort, apiKey.Group.ReasoningEffortMappings); changed {
+			body = policyBody
+		}
+	}
 
 	reqStream, ok := parseOpenAICompatibleStream(body)
 	if !ok {
@@ -1076,6 +1092,14 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	body, upstreamModel, err := resolveCompositeRequest(c, h.compositeRouteResolver, apiKey, reqModel, service.CompositeRouteEndpointMessages, body)
+	if err != nil {
+		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if upstreamModel != "" {
+		reqModel = upstreamModel
+	}
 	routingModel := service.NormalizeOpenAICompatRequestedModel(reqModel)
 	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(apiKey, reqModel)
 	reqStream := gjson.GetBytes(body, "stream").Bool()
@@ -1256,6 +1280,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 		defaultMappedModel := strings.TrimSpace(effectiveMappedModel)
 		forwardBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
+		if compositeOpenAIReasoningAllowed(c, apiKey) {
+			if policyBody, changed := service.ApplyOpenAIReasoningEffortPolicy(forwardBody, apiKey.Group.MaxReasoningEffort, apiKey.Group.ReasoningEffortMappings); changed {
+				forwardBody = policyBody
+			}
+		}
 		writerSizeBeforeForward := c.Writer.Size()
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
@@ -1837,6 +1866,22 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	if reqModel == "" {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
+	}
+	firstMessage, upstreamModel, err := resolveCompositeRequest(c, h.compositeRouteResolver, apiKey, reqModel, service.CompositeRouteEndpointResponses, firstMessage)
+	if err != nil {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, err.Error())
+		return
+	}
+	if upstreamModel != "" {
+		reqModel = upstreamModel
+	}
+	ctx = c.Request.Context()
+	if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
+		platform, ok := service.ResolvedTargetPlatformFromContext(ctx)
+		if !ok || (platform != service.PlatformOpenAI && platform != service.PlatformGrok) {
+			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "Responses WebSocket API only supports OpenAI-compatible models for composite groups")
+			return
+		}
 	}
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(firstMessage, "previous_response_id").String())
 	previousResponseIDKind := service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID)

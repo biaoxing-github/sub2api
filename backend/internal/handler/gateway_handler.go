@@ -54,6 +54,7 @@ type GatewayHandler struct {
 	maxAccountSwitchesGemini  int
 	cfg                       *config.Config
 	settingService            *service.SettingService
+	compositeRouteResolver    *service.CompositeRouteResolver
 }
 
 // NewGatewayHandler creates a new GatewayHandler
@@ -73,6 +74,7 @@ func NewGatewayHandler(
 	cfg *config.Config,
 	settingService *service.SettingService,
 	openAIGatewayService *service.OpenAIGatewayService,
+	compositeRouteResolver *service.CompositeRouteResolver,
 ) *GatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 10
@@ -119,6 +121,7 @@ func NewGatewayHandler(
 		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,
 		cfg:                       cfg,
 		settingService:            settingService,
+		compositeRouteResolver:    compositeRouteResolver,
 	}
 }
 
@@ -180,6 +183,32 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
+	body, upstreamModel, err := resolveCompositeRequest(c, h.compositeRouteResolver, apiKey, reqModel, service.CompositeRouteEndpointMessages, body)
+	if err != nil {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if upstreamModel != "" && upstreamModel != reqModel {
+		reqModel = upstreamModel
+		bodyRef = service.NewRequestBodyRef(body)
+		parsedReq, err = service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
+		if err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse composite upstream request body")
+			return
+		}
+		reqStream = parsedReq.Stream
+	}
+	if compositeOpenAIReasoningAllowed(c, apiKey) {
+		if policyBody, changed := service.ApplyOpenAIReasoningEffortPolicy(body, apiKey.Group.MaxReasoningEffort, apiKey.Group.ReasoningEffortMappings); changed {
+			body = policyBody
+			bodyRef = service.NewRequestBodyRef(body)
+			parsedReq, err = service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
+			if err != nil {
+				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to apply reasoning policy")
+				return
+			}
+		}
+	}
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
 	// 解析渠道级模型映射
@@ -1842,6 +1871,19 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	if err != nil {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
+	}
+	body, upstreamModel, err := resolveCompositeRequest(c, h.compositeRouteResolver, apiKey, parsedReq.Model, service.CompositeRouteEndpointCountTokens, body)
+	if err != nil {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if upstreamModel != "" && upstreamModel != parsedReq.Model {
+		bodyRef = service.NewRequestBodyRef(body)
+		parsedReq, err = service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
+		if err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse rewritten request body")
+			return
+		}
 	}
 	// count_tokens 走 messages 严格校验时，复用已解析请求，避免二次反序列化。
 	SetClaudeCodeClientContext(c, body, parsedReq)

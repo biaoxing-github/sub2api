@@ -74,6 +74,14 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	body, upstreamModel, err := resolveCompositeRequest(c, h.compositeRouteResolver, apiKey, reqModel, service.CompositeRouteEndpointChatCompletions, body)
+	if err != nil {
+		h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if upstreamModel != "" {
+		reqModel = upstreamModel
+	}
 	reqStream, ok := parseOpenAICompatibleStream(body)
 	if !ok {
 		h.chatCompletionsErrorResponse(c, http.StatusBadRequest, "invalid_request_error", invalidStreamFieldTypeMessage)

@@ -74,6 +74,14 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	body, upstreamModel, err := resolveCompositeRequest(c, h.compositeRouteResolver, apiKey, reqModel, service.CompositeRouteEndpointResponses, body)
+	if err != nil {
+		h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+	if upstreamModel != "" {
+		reqModel = upstreamModel
+	}
 	reqStream, ok := parseOpenAICompatibleStream(body)
 	if !ok {
 		h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", invalidStreamFieldTypeMessage)

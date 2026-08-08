@@ -297,6 +297,16 @@
                 <span class="text-xs">{{ t("common.edit") }}</span>
               </button>
               <button
+                v-if="row.platform === 'composite'"
+                @click="handleCompositeRoutes(row)"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-cyan-50 hover:text-cyan-700 dark:hover:bg-cyan-900/20 dark:hover:text-cyan-300"
+                :title="t('admin.groups.compositeRoutes.action')"
+                data-testid="open-composite-routes"
+              >
+                <Icon name="swap" size="sm" />
+                <span class="text-xs">{{ t("admin.groups.compositeRoutes.action") }}</span>
+              </button>
+              <button
                 @click="handleRateMultipliers(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-purple-600 dark:hover:bg-dark-700 dark:hover:text-purple-400"
               >
@@ -393,6 +403,15 @@
           />
           <p class="input-hint">{{ t("admin.groups.platformHint") }}</p>
         </div>
+        <ReasoningEffortPolicyFields
+          v-if="createForm.platform === 'openai' || createForm.platform === 'composite'"
+          id-prefix="create-group-reasoning"
+          :platform="createForm.platform"
+          :max-effort="createForm.max_reasoning_effort"
+          :mappings="createForm.reasoning_effort_mappings"
+          @update:max-effort="createForm.max_reasoning_effort = $event"
+          @update:mappings="createForm.reasoning_effort_mappings = $event"
+        />
         <!-- 从分组复制账号 -->
         <div v-if="copyAccountsGroupOptions.length > 0">
           <div class="mb-1.5 flex items-center gap-1">
@@ -1669,6 +1688,15 @@
           />
           <p class="input-hint">{{ t("admin.groups.platformNotEditable") }}</p>
         </div>
+        <ReasoningEffortPolicyFields
+          v-if="editForm.platform === 'openai' || editForm.platform === 'composite'"
+          id-prefix="edit-group-reasoning"
+          :platform="editForm.platform"
+          :max-effort="editForm.max_reasoning_effort"
+          :mappings="editForm.reasoning_effort_mappings"
+          @update:max-effort="editForm.max_reasoning_effort = $event"
+          @update:mappings="editForm.reasoning_effort_mappings = $event"
+        />
         <!-- 从分组复制账号（编辑时） -->
         <div v-if="copyAccountsGroupOptionsForEdit.length > 0">
           <div class="mb-1.5 flex items-center gap-1">
@@ -3015,6 +3043,12 @@
       @close="showRPMOverridesModal = false"
       @success="loadGroups"
     />
+
+    <CompositeRouteRegistry
+      :show="showCompositeRoutesModal"
+      :group="compositeRoutesGroup"
+      @close="closeCompositeRoutesModal"
+    />
   </AppLayout>
 </template>
 
@@ -3038,6 +3072,7 @@ import PlatformIcon from "@/components/common/PlatformIcon.vue";
 import Icon from "@/components/icons/Icon.vue";
 import GroupRateMultipliersModal from "@/components/admin/group/GroupRateMultipliersModal.vue";
 import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesModal.vue";
+import CompositeRouteRegistry from "@/components/admin/group/CompositeRouteRegistry.vue";
 import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { createStableObjectKeyResolver } from "@/utils/stableObjectKey";
@@ -3065,6 +3100,12 @@ import {
   type ModelsListCandidatesMode,
 } from "./groupsModelsListCandidates";
 import { normalizeSupportedModelScopesForPlatform } from "./groupsSupportedModelScopes";
+import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffortPolicyFields.vue";
+import {
+  reasoningEffortMappingsToAPI,
+  reasoningEffortMappingsToRows,
+  type ReasoningEffortMappingRow,
+} from "./groupsReasoningEffort";
 
 const { t } = useI18n();
 const appStore = useAppStore();
@@ -3125,6 +3166,7 @@ const platformOptions = computed(() => [
   { value: "openai", label: "OpenAI" },
   { value: "gemini", label: "Gemini" },
   { value: "antigravity", label: "Antigravity" },
+  { value: "composite", label: "Composite" },
 ]);
 
 const platformFilterOptions = computed(() => [
@@ -3133,6 +3175,7 @@ const platformFilterOptions = computed(() => [
   { value: "openai", label: "OpenAI" },
   { value: "gemini", label: "Gemini" },
   { value: "antigravity", label: "Antigravity" },
+  { value: "composite", label: "Composite" },
 ]);
 
 const editStatusOptions = computed(() => [
@@ -3295,6 +3338,8 @@ const showRateMultipliersModal = ref(false);
 const rateMultipliersGroup = ref<AdminGroup | null>(null);
 const showRPMOverridesModal = ref(false);
 const rpmOverridesGroup = ref<AdminGroup | null>(null);
+const showCompositeRoutesModal = ref(false);
+const compositeRoutesGroup = ref<AdminGroup | null>(null);
 const sortableGroups = ref<AdminGroup[]>([]);
 const createMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
 const editMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
@@ -3347,6 +3392,8 @@ const createForm = reactive({
   copy_accounts_from_group_ids: [] as number[],
   // 分组级 RPM 限制（每用户每分钟最大请求数；0 = 不限制）
   rpm_limit: 0 as number,
+	max_reasoning_effort: "",
+	reasoning_effort_mappings: [] as ReasoningEffortMappingRow[],
 });
 
 const resetModelsListState = (state: ModelsListState) => {
@@ -3711,6 +3758,8 @@ const editForm = reactive({
   copy_accounts_from_group_ids: [] as number[],
   // 分组级 RPM 限制（每用户每分钟最大请求数；0 = 不限制）
   rpm_limit: 0 as number,
+	max_reasoning_effort: "",
+	reasoning_effort_mappings: [] as ReasoningEffortMappingRow[],
 });
 
 type ImagePricingFormState = {
@@ -3959,6 +4008,8 @@ const closeCreateModal = () => {
   createForm.supported_model_scopes = ["claude", "gemini_text", "gemini_image"];
   createForm.mcp_xml_inject = true;
   createForm.copy_accounts_from_group_ids = [];
+	createForm.max_reasoning_effort = "";
+	createForm.reasoning_effort_mappings = [];
   createModelRoutingRules.value = [];
 };
 
@@ -4031,6 +4082,8 @@ const handleCreateGroup = async () => {
         createForm.platform === "openai"
           ? buildGroupModelsListConfig(createModelsListState)
           : undefined,
+		max_reasoning_effort: createForm.max_reasoning_effort,
+		reasoning_effort_mappings: reasoningEffortMappingsToAPI(createForm.reasoning_effort_mappings),
     };
     // v-model.number 清空输入框时产生 ""，转为 null 让后端设为无限制
     const emptyToNull = (v: any) => (v === "" ? null : v);
@@ -4064,6 +4117,8 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.name = group.name;
   editForm.description = group.description || "";
   editForm.platform = group.platform;
+	editForm.max_reasoning_effort = group.max_reasoning_effort || "";
+	editForm.reasoning_effort_mappings = reasoningEffortMappingsToRows(group.reasoning_effort_mappings, group.platform);
   editForm.rate_multiplier = group.rate_multiplier;
   editForm.is_exclusive = group.is_exclusive;
   editForm.status = group.status;
@@ -4173,6 +4228,8 @@ const handleUpdateGroup = async () => {
         editForm.platform === "openai"
           ? buildGroupModelsListConfig(editModelsListState)
           : undefined,
+		max_reasoning_effort: editForm.max_reasoning_effort,
+		reasoning_effort_mappings: reasoningEffortMappingsToAPI(editForm.reasoning_effort_mappings),
     };
     // v-model.number 清空输入框时产生 ""，转为 null 让后端设为无限制
     const emptyToNull = (v: any) => (v === "" ? null : v);
@@ -4228,6 +4285,16 @@ const handleRateMultipliers = (group: AdminGroup) => {
 const handleRPMOverrides = (group: AdminGroup) => {
   rpmOverridesGroup.value = group;
   showRPMOverridesModal.value = true;
+};
+
+const handleCompositeRoutes = (group: AdminGroup) => {
+  compositeRoutesGroup.value = group;
+  showCompositeRoutesModal.value = true;
+};
+
+const closeCompositeRoutesModal = () => {
+  showCompositeRoutesModal.value = false;
+  compositeRoutesGroup.value = null;
 };
 
 const handleDelete = (group: AdminGroup) => {

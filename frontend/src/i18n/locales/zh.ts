@@ -2398,6 +2398,9 @@ export default {
         userNotes: '备注',
         userStatus: '状态'
       },
+      compositeRoutes: {
+        action: '路由'
+      },
       usageToday: '今日',
       usageTotal: '累计',
       accountsAvailable: '可用:',
@@ -2420,6 +2423,14 @@ export default {
         rpmLimit: '每分钟请求数 (RPM)',
         rpmLimitPlaceholder: '0 表示不限制',
         rpmLimitHint: '每用户在本分组每分钟最大请求数，0 = 不限制；一旦设置即接管该用户的限流（覆盖用户级 rpm_limit）',
+        maxReasoningEffort: '推理强度上限',
+        maxReasoningEffortUnlimited: '不限制（跟随请求）',
+        maxReasoningEffortHint: '映射后若超过上限会自动降档；请求未指定时不会主动开启推理。',
+        reasoningEffortMappings: '推理强度映射', addReasoningEffortMapping: '添加映射',
+        reasoningEffortFrom: '请求值 A', reasoningEffortTo: '转发值 B',
+        reasoningEffortFromPlaceholder: '请选择 A', reasoningEffortToPlaceholder: '请选择 B',
+        removeReasoningEffortMapping: '删除映射', fromRequired: '请选择请求值 A', toRequired: '请选择转发值 B',
+        unsupportedFrom: '请求值不受当前平台支持', unsupportedTo: '转发值不受当前平台支持', duplicateFrom: '请求值 A 不能重复',
         exclusiveLabel: '专属分组',
         exclusiveHint: '专属分组，可以手动指定给用户',
         platformLabel: '平台限制',
