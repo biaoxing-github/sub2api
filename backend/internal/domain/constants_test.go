@@ -14,6 +14,14 @@ func TestDefaultModelMappingsIncludeClaudeFable5(t *testing.T) {
 	}
 }
 
+func TestDefaultAntigravityModelMappingGemini36FlashModels(t *testing.T) {
+	for _, model := range []string{"gemini-3.6-flash", "gemini-3.6-flash-high", "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-tiered"} {
+		if got := DefaultAntigravityModelMapping[model]; got != model {
+			t.Fatalf("expected %s to map to itself, got %q", model, got)
+		}
+	}
+}
+
 func TestDefaultAntigravityModelMapping_ImageCompatibilityAliases(t *testing.T) {
 	t.Parallel()
 
