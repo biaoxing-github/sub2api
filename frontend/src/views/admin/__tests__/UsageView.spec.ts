@@ -246,6 +246,24 @@ describe('admin UsageView route filters', () => {
     expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 42 }), expect.anything())
     expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('42')
   })
+
+  it.each([true, false])('forwards upstream_model_mismatch=%s to every usage query', async (mismatch) => {
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+    list.mockClear()
+    getStats.mockClear()
+    getModelStats.mockClear()
+    getSnapshotV2.mockClear()
+
+    ;(wrapper.vm as any).filters.upstream_model_mismatch = mismatch
+    ;(wrapper.vm as any).applyFilters()
+    await flushPromises()
+
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ upstream_model_mismatch: mismatch }), expect.anything())
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining({ upstream_model_mismatch: mismatch }))
+    expect(getModelStats).toHaveBeenCalledWith(expect.objectContaining({ upstream_model_mismatch: mismatch }))
+    expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ upstream_model_mismatch: mismatch }))
+  })
 })
 
 describe('admin UsageView distribution metric toggles', () => {

@@ -81,6 +81,7 @@ export interface AdminUsageQueryParams extends UsageQueryParams {
   user_id?: number
   exact_total?: boolean
   billing_mode?: string
+  upstream_model_mismatch?: boolean | null
   error_phase?: string
   error_category?: string
   status_code?: number | null
@@ -119,6 +120,7 @@ export async function getStats(params: {
   model?: string
   request_type?: UsageRequestType
   stream?: boolean
+  upstream_model_mismatch?: boolean | null
   period?: string
   start_date?: string
   end_date?: string
