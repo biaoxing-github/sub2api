@@ -20,6 +20,9 @@ services:
       options:
         max-size: "${DOCKER_LOG_MAX_SIZE:-100m}"
         max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
+    security_opt:
+      - no-new-privileges:true
     ulimits:
       nofile:
         soft: 100000

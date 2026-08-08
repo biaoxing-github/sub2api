@@ -47,6 +47,23 @@ var claudeCodeSystemPrompts = []string{
 	"You are an interactive CLI tool that helps users",
 }
 
+const (
+	// These markers identify Claude Code's official security-monitor classifier
+	// request without coupling validation to every wording change in the prompt.
+	claudeCodeSecurityMonitorPromptPrefix = "You are a security monitor for autonomous AI coding agents."
+	claudeCodeSecurityMonitorPromptMinLen = 10_000
+
+	// claudeCodeBillingHeaderPrefix 是 Claude Code 在 system 数组首块注入的计费归因块前缀。
+	// 大多数真实 CLI 请求（含部分无身份 prose 的子请求）会携带该块；不携带该块的
+	// 固定官方辅助请求由独立规则识别。该格式比身份 prose 更稳定。
+	// 生成见 gateway_billing_block.go；同类识别见 pkg/apicompat/anthropic_to_responses.go。
+	claudeCodeBillingHeaderPrefix = "x-anthropic-billing-header"
+	// claudeCodeEntrypointMarker 标识计费块携带入口归因字段。不绑定具体入口值
+	// （cli / claude-vscode / jetbrains / sdk 等都是真实入口）：入口值会随新增 IDE 漂移，
+	// 且伪造者同样可填任意值、不构成防伪边界，故仅要求该字段存在即可。
+	claudeCodeEntrypointMarker = "cc_entrypoint="
+)
+
 // NewClaudeCodeValidator 创建验证器实例
 func NewClaudeCodeValidator() *ClaudeCodeValidator {
 	return &ClaudeCodeValidator{}
@@ -74,6 +91,11 @@ func (v *ClaudeCodeValidator) Validate(r *http.Request, body map[string]any) boo
 	// Step 2: 非 messages 路径，只要 UA 匹配就通过
 	path := r.URL.Path
 	if !strings.Contains(path, "messages") {
+		return true
+	}
+
+	// count_tokens 是 Claude Code 官方辅助请求，通常不携带完整 system prompt。
+	if isMessagesCountTokensPath(path) {
 		return true
 	}
 
@@ -128,6 +150,10 @@ func (v *ClaudeCodeValidator) Validate(r *http.Request, body map[string]any) boo
 	return true
 }
 
+func isMessagesCountTokensPath(path string) bool {
+	return strings.HasSuffix(strings.TrimRight(path, "/"), "/messages/count_tokens")
+}
+
 // hasClaudeCodeSystemPrompt 检查请求是否包含 Claude Code 系统提示词
 // 使用字符串相似度匹配（Dice coefficient）
 func (v *ClaudeCodeValidator) hasClaudeCodeSystemPrompt(body map[string]any) bool {
@@ -146,6 +172,10 @@ func (v *ClaudeCodeValidator) hasClaudeCodeSystemPrompt(body map[string]any) boo
 		return false
 	}
 
+	if isClaudeCodeSecurityMonitorPrompt(systemEntries) {
+		return true
+	}
+
 	// 检查每个 system entry
 	for _, entry := range systemEntries {
 		entryMap, ok := entry.(map[string]any)
@@ -158,6 +188,12 @@ func (v *ClaudeCodeValidator) hasClaudeCodeSystemPrompt(body map[string]any) boo
 			continue
 		}
 
+		// 官方计费归因块包含稳定的前缀和入口字段，可识别无身份 prose 的辅助请求。
+		if strings.HasPrefix(text, claudeCodeBillingHeaderPrefix) &&
+			strings.Contains(text, claudeCodeEntrypointMarker) {
+			return true
+		}
+
 		// 计算与所有模板的最佳相似度
 		bestScore := v.bestSimilarityScore(text)
 		if bestScore >= systemPromptThreshold {
@@ -166,6 +202,46 @@ func (v *ClaudeCodeValidator) hasClaudeCodeSystemPrompt(body map[string]any) boo
 	}
 
 	return false
+}
+
+func isClaudeCodeSecurityMonitorPrompt(systemEntries []any) bool {
+	if len(systemEntries) != 1 {
+		return false
+	}
+
+	entry, ok := systemEntries[0].(map[string]any)
+	if !ok {
+		return false
+	}
+
+	entryType, ok := entry["type"].(string)
+	if !ok || entryType != "text" {
+		return false
+	}
+
+	text, ok := entry["text"].(string)
+	if !ok || len(text) < claudeCodeSecurityMonitorPromptMinLen ||
+		!strings.HasPrefix(text, claudeCodeSecurityMonitorPromptPrefix) {
+		return false
+	}
+
+	markers := []string{
+		"## Threat Model",
+		"- `<transcript>`:",
+		"## HARD BLOCK",
+		"## SOFT BLOCK",
+		"## Classification Process",
+		"## Output Format",
+		"<block>yes</block>",
+		"<block>no</block>",
+	}
+	for _, marker := range markers {
+		if !strings.Contains(text, marker) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // bestSimilarityScore 计算文本与所有 Claude Code 模板的最佳相似度

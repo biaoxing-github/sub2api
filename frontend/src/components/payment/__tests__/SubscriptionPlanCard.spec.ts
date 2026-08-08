@@ -24,7 +24,7 @@ const i18n = createI18n({
   },
 });
 
-const mountPlanCard = (groupPlatform: string) =>
+const mountPlanCard = (groupPlatform: string, overrides: Record<string, unknown> = {}) =>
   mount(SubscriptionPlanCard, {
     props: {
       plan: {
@@ -40,6 +40,7 @@ const mountPlanCard = (groupPlatform: string) =>
         validity_unit: "day",
         supported_model_scopes: ["claude", "gemini_text", "gemini_image"],
         is_active: true,
+        ...overrides,
       },
     },
     global: { plugins: [i18n] },
@@ -60,5 +61,20 @@ describe("SubscriptionPlanCard", () => {
     expect(text).toContain("Claude");
     expect(text).toContain("Gemini");
     expect(text).toContain("Imagen");
+  });
+
+  it("keeps a long plan title accessible in a bounded two-line area", () => {
+    const name = "Enterprise Global Acceleration Subscription with Priority Support";
+    const title = mountPlanCard("openai", { name }).get("h3");
+
+    expect(title.text()).toBe(name);
+    expect(title.attributes("title")).toBe(name);
+    expect(title.classes()).toEqual(expect.arrayContaining([
+      "h-12",
+      "break-words",
+      "line-clamp-2",
+      "[overflow-wrap:anywhere]",
+    ]));
+    expect(title.classes()).not.toContain("truncate");
   });
 });

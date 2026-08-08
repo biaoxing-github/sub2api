@@ -81,8 +81,12 @@ func (s *GrokOAuthService) GenerateAuthURL(ctx context.Context, proxyID *int64, 
 		CreatedAt:     time.Now(),
 	})
 
+	authURL, err := xai.BuildAuthorizationURL(state, codeChallenge, redirectURI, nonce)
+	if err != nil {
+		return nil, err
+	}
 	return &GrokAuthURLResult{
-		AuthURL:   xai.BuildAuthorizationURL(state, codeChallenge, redirectURI, nonce),
+		AuthURL:   authURL,
 		SessionID: sessionID,
 		State:     state,
 	}, nil

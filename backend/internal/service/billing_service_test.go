@@ -175,14 +175,19 @@ func TestGetModelPricing_FallbackWarnPerModelNotGlobal(t *testing.T) {
 	require.Equal(t, 0, strings.Count(out, "model: GLM-5.2"), out)
 }
 
-func TestGetModelPricing_GLM52FallsBackToGLM5Price(t *testing.T) {
+// 回归:glm-5.2 必须命中自己的兜底价,不能被 strings.Contains("glm-5") 抢成 glm-5 价。
+// 历史 bug:兜底表缺 glm-5.2 条目,使用记录按 $1.00/$3.20 计费,比官方 $1.40/$4.40 少收约 27%。
+func TestGetModelPricing_GLM52UsesOwnPrice(t *testing.T) {
 	svc := newTestBillingService()
 
 	got, err := svc.GetModelPricing("glm-5.2")
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	require.InDelta(t, 1e-6, got.InputPricePerToken, 1e-12)
-	require.InDelta(t, 3.2e-6, got.OutputPricePerToken, 1e-12)
+
+	// 官方 z.ai 口径:与 glm-5.1 同价(见 TestGetFallbackPricing_FamilyMatching)。
+	require.InDelta(t, 1.4e-6, got.InputPricePerToken, 1e-12)
+	require.InDelta(t, 4.4e-6, got.OutputPricePerToken, 1e-12)
+	require.InDelta(t, 0.26e-6, got.CacheReadPricePerToken, 1e-12)
 }
 
 func TestGetModelPricing_UnknownClaudeModelFallsBackToSonnet(t *testing.T) {
@@ -379,7 +384,319 @@ func TestGetFallbackPricing_FamilyMatching(t *testing.T) {
 		{name: "openai legacy gpt5.1 codex falls back to gpt5.3 codex", model: "gpt-5.1-codex", expectedInput: 1.5e-6},
 		{name: "openai legacy codex mini latest falls back to gpt5.3 codex", model: "codex-mini-latest", expectedInput: 1.5e-6},
 		{name: "openai unknown no fallback", model: "gpt-unknown-model", expectNilPricing: true},
-		{name: "non supported family", model: "qwen-max", expectNilPricing: true},
+		{
+			name:              "deepseek v4 pro",
+			model:             "deepseek-v4-pro",
+			expectedInput:     4.35e-7,
+			expectedOutput:    floatPtr(8.7e-7),
+			expectedCacheRead: floatPtr(3.625e-9),
+		},
+		{
+			name:              "deepseek v4 flash",
+			model:             "deepseek-v4-flash",
+			expectedInput:     1.4e-7,
+			expectedOutput:    floatPtr(2.8e-7),
+			expectedCacheRead: floatPtr(2.8e-9),
+		},
+		{
+			name:              "deepseek chat alias → flash",
+			model:             "deepseek-chat",
+			expectedInput:     1.4e-7,
+			expectedOutput:    floatPtr(2.8e-7),
+			expectedCacheRead: floatPtr(2.8e-9),
+		},
+		{
+			name:              "deepseek reasoner alias → flash",
+			model:             "deepseek-reasoner",
+			expectedInput:     1.4e-7,
+			expectedOutput:    floatPtr(2.8e-7),
+			expectedCacheRead: floatPtr(2.8e-9),
+		},
+
+		// ---- 智谱 GLM（z.ai USD 口径）----
+		{
+			name:              "glm 5.2 flagship",
+			model:             "glm-5.2",
+			expectedInput:     1.4e-6,
+			expectedOutput:    floatPtr(4.4e-6),
+			expectedCacheRead: floatPtr(0.26e-6),
+		},
+		{
+			name:              "glm 5.1 flagship",
+			model:             "glm-5.1",
+			expectedInput:     1.4e-6,
+			expectedOutput:    floatPtr(4.4e-6),
+			expectedCacheRead: floatPtr(0.26e-6),
+		},
+		{
+			name:              "glm 5 base",
+			model:             "glm-5",
+			expectedInput:     1e-6,
+			expectedOutput:    floatPtr(3.2e-6),
+			expectedCacheRead: floatPtr(0.2e-6),
+		},
+		{
+			name:              "glm 5 turbo",
+			model:             "glm-5-turbo",
+			expectedInput:     1.2e-6,
+			expectedOutput:    floatPtr(4e-6),
+			expectedCacheRead: floatPtr(0.24e-6),
+		},
+		{
+			name:              "glm 4.7",
+			model:             "glm-4.7",
+			expectedInput:     0.6e-6,
+			expectedOutput:    floatPtr(2.2e-6),
+			expectedCacheRead: floatPtr(0.11e-6),
+		},
+		{
+			name:              "glm 4.6",
+			model:             "glm-4.6",
+			expectedInput:     0.6e-6,
+			expectedOutput:    floatPtr(2.2e-6),
+			expectedCacheRead: floatPtr(0.11e-6),
+		},
+		{
+			name:              "glm 4.5",
+			model:             "glm-4.5",
+			expectedInput:     0.6e-6,
+			expectedOutput:    floatPtr(2.2e-6),
+			expectedCacheRead: floatPtr(0.11e-6),
+		},
+		{
+			name:              "glm 4.5-x premium",
+			model:             "glm-4.5-x",
+			expectedInput:     2.2e-6,
+			expectedOutput:    floatPtr(8.9e-6),
+			expectedCacheRead: floatPtr(0.45e-6),
+		},
+		{
+			name:              "glm 4.5-air lightweight",
+			model:             "glm-4.5-air",
+			expectedInput:     0.2e-6,
+			expectedOutput:    floatPtr(1.1e-6),
+			expectedCacheRead: floatPtr(0.03e-6),
+		},
+		{
+			name:              "glm 4.7-flashx",
+			model:             "glm-4.7-flashx",
+			expectedInput:     0.07e-6,
+			expectedOutput:    floatPtr(0.4e-6),
+			expectedCacheRead: floatPtr(0.01e-6),
+		},
+		{
+			name:              "glm 4.5-flash free tier",
+			model:             "glm-4.5-flash",
+			expectedInput:     0, // Free tier on z.ai
+			expectedOutput:    floatPtr(0),
+			expectedCacheRead: floatPtr(0),
+		},
+		{
+			name:              "glm 4.7-flash free tier",
+			model:             "glm-4.7-flash",
+			expectedInput:     0,
+			expectedOutput:    floatPtr(0),
+			expectedCacheRead: floatPtr(0),
+		},
+		{
+			name:           "glm 4-32b legacy",
+			model:          "glm-4-32b-0414-128k",
+			expectedInput:  0.1e-6,
+			expectedOutput: floatPtr(0.1e-6),
+		},
+		// 关键：5.1 / 5.2 必须先于 5 匹配（避免被 glm-5 抢走）
+		{
+			name:              "glm 5.1 vs glm 5 ordering (verbatim 5.1)",
+			model:             "glm-5.1",
+			expectedInput:     1.4e-6, // = glm-5.1 价格
+			expectedOutput:    floatPtr(4.4e-6),
+			expectedCacheRead: floatPtr(0.26e-6),
+		},
+		{
+			name:              "glm 5.2 vs glm 5 ordering (verbatim 5.2)",
+			model:             "glm-5.2",
+			expectedInput:     1.4e-6, // = glm-5.2 价格（不是 glm-5 的 1e-6）
+			expectedOutput:    floatPtr(4.4e-6),
+			expectedCacheRead: floatPtr(0.26e-6),
+		},
+		{
+			name:              "glm 4.5-air vs glm 4.5 ordering",
+			model:             "glm-4.5-air",
+			expectedInput:     0.2e-6, // = glm-4.5-air 价格（不是 glm-4.5 的 0.6e-6）
+			expectedOutput:    floatPtr(1.1e-6),
+			expectedCacheRead: floatPtr(0.03e-6),
+		},
+
+		// ---- 月之暗面 Kimi ----
+		{
+			name:              "kimi k3 flagship",
+			model:             "kimi-k3",
+			expectedInput:     3e-6,
+			expectedOutput:    floatPtr(15e-6),
+			expectedCacheRead: floatPtr(0.30e-6),
+		},
+		{
+			name:              "kimi code bare alias k3",
+			model:             "k3",
+			expectedInput:     3e-6,
+			expectedOutput:    floatPtr(15e-6),
+			expectedCacheRead: floatPtr(0.30e-6),
+		},
+		{
+			name:              "kimi code bare alias k3-256k",
+			model:             "k3-256k",
+			expectedInput:     3e-6,
+			expectedOutput:    floatPtr(15e-6),
+			expectedCacheRead: floatPtr(0.30e-6),
+		},
+		{
+			name:              "kimi k3 path suffix moonshot",
+			model:             "moonshot/kimi-k3",
+			expectedInput:     3e-6,
+			expectedOutput:    floatPtr(15e-6),
+			expectedCacheRead: floatPtr(0.30e-6),
+		},
+		{
+			name:              "kimi code bare path suffix",
+			model:             "kimi-code/k3",
+			expectedInput:     3e-6,
+			expectedOutput:    floatPtr(15e-6),
+			expectedCacheRead: floatPtr(0.30e-6),
+		},
+		{
+			name:              "kimi k2.6 flagship",
+			model:             "kimi-k2.6",
+			expectedInput:     0.95e-6,
+			expectedOutput:    floatPtr(4e-6),
+			expectedCacheRead: floatPtr(0.15e-6),
+		},
+		{
+			name:              "kimi for coding explicit alias",
+			model:             "kimi-for-coding",
+			expectedInput:     0.95e-6,
+			expectedOutput:    floatPtr(4e-6),
+			expectedCacheRead: floatPtr(0.15e-6),
+		},
+		{
+			name:              "kimi k2.5",
+			model:             "kimi-k2.5",
+			expectedInput:     0.60e-6,
+			expectedOutput:    floatPtr(3e-6),
+			expectedCacheRead: floatPtr(0.098e-6),
+		},
+		{
+			name:              "kimi k2-thinking",
+			model:             "kimi-k2-thinking",
+			expectedInput:     0.56e-6,
+			expectedOutput:    floatPtr(2.24e-6),
+			expectedCacheRead: floatPtr(0.14e-6),
+		},
+		{
+			name:              "kimi k2 base",
+			model:             "kimi-k2",
+			expectedInput:     0.56e-6,
+			expectedOutput:    floatPtr(2.24e-6),
+			expectedCacheRead: floatPtr(0.14e-6),
+		},
+		// 关键：k2.6 / k2.5 / k2-thinking 必须先于 k2 匹配
+		{
+			name:              "kimi k2.6 vs k2 ordering",
+			model:             "kimi-k2.6",
+			expectedInput:     0.95e-6, // = k2.6 不是 k2 的 0.56e-6
+			expectedOutput:    floatPtr(4e-6),
+			expectedCacheRead: floatPtr(0.15e-6),
+		},
+		{
+			name:              "kimi k2 thinking hyphenated variant",
+			model:             "kimi-k2-thinking-preview",
+			expectedInput:     0.56e-6,
+			expectedOutput:    floatPtr(2.24e-6),
+			expectedCacheRead: floatPtr(0.14e-6),
+		},
+
+		// ---- MiniMax M 系列 ----
+		{
+			name:              "minimax m3",
+			model:             "minimax-m3",
+			expectedInput:     0.60e-6,
+			expectedOutput:    floatPtr(2.40e-6),
+			expectedCacheRead: floatPtr(0.12e-6),
+		},
+		{
+			name:              "minimax m3 long ctx boundary keep standard tier",
+			model:             "minimax-m3-long", // 仍按 standard tier (≤512K)
+			expectedInput:     0.60e-6,
+			expectedOutput:    floatPtr(2.40e-6),
+			expectedCacheRead: floatPtr(0.12e-6),
+		},
+		{
+			name:              "minimax m2.7",
+			model:             "minimax-m2.7",
+			expectedInput:     0.30e-6,
+			expectedOutput:    floatPtr(1.20e-6),
+			expectedCacheRead: floatPtr(0.06e-6),
+		},
+		{
+			name:              "minimax m2.7 highspeed",
+			model:             "minimax-m2.7-highspeed",
+			expectedInput:     0.60e-6,
+			expectedOutput:    floatPtr(2.40e-6),
+			expectedCacheRead: floatPtr(0.06e-6),
+		},
+		{
+			name:              "minimax m2.5",
+			model:             "minimax-m2.5",
+			expectedInput:     0.30e-6,
+			expectedOutput:    floatPtr(1.20e-6),
+			expectedCacheRead: floatPtr(0.03e-6),
+		},
+		{
+			name:              "minimax m2 legacy",
+			model:             "minimax-m2",
+			expectedInput:     0.30e-6,
+			expectedOutput:    floatPtr(1.20e-6),
+			expectedCacheRead: floatPtr(0.03e-6),
+		},
+
+		// ---- 火山方舟 豆包 Embedding（多模态向量化）----
+		{
+			name:           "doubao embedding vision text rate",
+			model:          "doubao-embedding-vision",
+			expectedInput:  0.098e-6,
+			expectedOutput: floatPtr(0),
+		},
+		{
+			name:          "doubao embedding vision versioned alias",
+			model:         "doubao-embedding-vision-251215",
+			expectedInput: 0.098e-6,
+		},
+
+		// ---- 负向用例 ----
+		{name: "qwen unknown no fallback", model: "qwen-max", expectNilPricing: true},
+		// doubao-pro / doubao-embedding（纯文本）不在白名单，不回退；仅 doubao-embedding-vision 显式命中。
+		{name: "doubao unknown no fallback", model: "doubao-pro", expectNilPricing: true},
+		{name: "doubao text embedding no fallback", model: "doubao-embedding-text-240515", expectNilPricing: true},
+		{name: "hunyuan unknown no fallback", model: "hunyuan-t1", expectNilPricing: true},
+		{name: "moonshot v1 not covered", model: "moonshot-v1-8k", expectNilPricing: true},
+		// bare k3 仅精确/后缀匹配：相似未知型号不得因含 "k3" 误命中。
+		{name: "k3-like unknown no fallback", model: "foo-k3-bar", expectNilPricing: true},
+		// 路径最后一段不是 /k3：foo-k3 不得因 HasSuffix("/k3") 或 Contains 误命中。
+		{name: "path segment not bare k3 no fallback", model: "vendor/foo-k3", expectNilPricing: true},
+		// kimi-k3 非 Contains：kimi-k30 / 内嵌 foo-kimi-k3-bar 不得误命中。
+		{name: "kimi-k30 unknown no fallback", model: "kimi-k30", expectNilPricing: true},
+		{name: "embedded kimi-k3 unknown no fallback", model: "foo-kimi-k3-bar", expectNilPricing: true},
+		// kimi-k3[1m] 是 Claude Code 上下文选择语法，不是 Kimi API 模型 ID，不命中 fallback。
+		{name: "kimi-k3[1m] not an API model id no fallback", model: "kimi-k3[1m]", expectNilPricing: true},
+		{name: "path kimi-k3[1m] not an API model id no fallback", model: "moonshot/kimi-k3[1m]", expectNilPricing: true},
+		// kimi-k2-0905 / kimi-k2-0711 官方未公布独立价，走 kimi-k2 隐性回退（接受）——
+		// 如未来官方公布独立价，需在 getFallbackPricing 加显式分支。
+		{
+			name:              "kimi k2-0905-preview implicit fallback to k2",
+			model:             "kimi-k2-0905-preview",
+			expectedInput:     0.56e-6,
+			expectedOutput:    floatPtr(2.24e-6),
+			expectedCacheRead: floatPtr(0.14e-6),
+		},
 	}
 
 	for _, tt := range tests {

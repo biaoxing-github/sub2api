@@ -371,7 +371,10 @@ func sanitizeGrokResponsesInput(body []byte) ([]byte, error) {
 }
 
 func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, cacheIdentities ...string) (*http.Request, error) {
-	targetURL := xai.BuildResponsesURL(account.GetGrokBaseURL())
+	targetURL, err := xai.BuildResponsesURL(account.GetGrokBaseURL())
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
