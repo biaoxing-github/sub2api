@@ -314,8 +314,10 @@ type UsageLogFilters struct {
 	Stream      *bool
 	BillingType *int8
 	BillingMode string
-	StartTime   *time.Time
-	EndTime     *time.Time
+	// UpstreamModelMismatch 按上游实际响应模型与发送模型是否不一致筛选。
+	UpstreamModelMismatch *bool
+	StartTime             *time.Time
+	EndTime               *time.Time
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
 }

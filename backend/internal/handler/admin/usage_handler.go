@@ -112,6 +112,15 @@ func (h *UsageHandler) List(c *gin.Context) {
 	model := c.Query("model")
 	requestID := strings.TrimSpace(c.Query("request_id"))
 	billingMode := strings.TrimSpace(c.Query("billing_mode"))
+	var upstreamModelMismatch *bool
+	if raw := strings.TrimSpace(c.Query("upstream_model_mismatch")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
+			return
+		}
+		upstreamModelMismatch = &value
+	}
 
 	var requestType *int16
 	var stream *bool
@@ -182,10 +191,10 @@ func (h *UsageHandler) List(c *gin.Context) {
 		RequestType: requestType,
 		Stream:      stream,
 		BillingType: billingType,
-		BillingMode: billingMode,
-		StartTime:   startTime,
-		EndTime:     endTime,
-		ExactTotal:  exactTotal,
+		BillingMode: billingMode, UpstreamModelMismatch: upstreamModelMismatch,
+		StartTime:  startTime,
+		EndTime:    endTime,
+		ExactTotal: exactTotal,
 	}
 
 	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, filters)
@@ -244,6 +253,15 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 
 	model := c.Query("model")
 	billingMode := strings.TrimSpace(c.Query("billing_mode"))
+	var upstreamModelMismatch *bool
+	if raw := strings.TrimSpace(c.Query("upstream_model_mismatch")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
+			return
+		}
+		upstreamModelMismatch = &value
+	}
 
 	var requestType *int16
 	var stream *bool
@@ -322,9 +340,9 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		RequestType: requestType,
 		Stream:      stream,
 		BillingType: billingType,
-		BillingMode: billingMode,
-		StartTime:   &startTime,
-		EndTime:     &endTime,
+		BillingMode: billingMode, UpstreamModelMismatch: upstreamModelMismatch,
+		StartTime: &startTime,
+		EndTime:   &endTime,
 	}
 
 	stats, err := h.usageService.GetStatsWithFilters(c.Request.Context(), filters)

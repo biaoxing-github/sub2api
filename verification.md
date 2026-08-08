@@ -5487,3 +5487,13 @@ v0.1.149 拉取结果：
 - 配置证据：blue 容器 `GATEWAY_OPENAI_REQUEST_HEADER_TIMEOUT_SECONDS=90`，数据库 `codex_wait_guard_max_header_wait_seconds=90`。
 - 遗留风险：未主动向真实付费上游注入中途断流请求；上游收到取消前已生成部分仍可能计费。
 - 边界：未执行 Git push 或镜像 push。
+## 2026-08-08 v172 调度与上游响应实际模型审计
+
+- 执行者：Devil
+- 调度：统一 OpenAI 高级/兼容调度账号准入，修复 proxy quarantine fail-open、transient streak 和 scheduler snapshot cancellation。
+- 实际模型审计：覆盖 OpenAI Responses、Chat Completions、Anthropic 兼容、Gemini/AI Studio、HTTP bridge 和 WebSocket v2；写入 `upstream_response_model` 与 `upstream_model_mismatch`，管理端支持筛选、展示和导出。
+- 后端通过：observer 精确测试、repository 全包、openai_ws_v2 全包、admin/dto 全包、server/handler 编译切片。
+- 前端通过：UsageFilters/UsageTable/UsageView 20/20，`pnpm run typecheck`，`pnpm run build`（976 modules）。
+- `git diff --check` 通过。
+- 宽匹配 service 回归仍命中 5 个当前分支既有失败：2 个 first-output keepalive 计时断言、2 个未知模型状态断言、1 个 fallback pricing 断言；本功能精确测试与相关编译均通过，未修改这些既有行为。
+- 未执行：Git push、镜像构建、部署和生产迁移。
