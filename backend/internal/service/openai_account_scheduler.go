@@ -392,50 +392,17 @@ func (s *defaultOpenAIAccountScheduler) isAccountTransportCompatible(account *Ac
 }
 
 func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest) bool {
-	if account == nil {
-		return false
-	}
-	if account.IsOpenAICompatible() && account.Type == AccountTypeAPIKey && len(account.GetAPIKeys()) == 0 {
-		return false
-	}
-	if s != nil && s.service != nil && s.service.isOpenAIAccountRuntimeBlocked(account) {
-		return false
-	}
-	if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
-		return false
-	}
-	if !account.SupportsOpenAIEndpointCapability(req.RequiredEndpoint) {
-		return false
-	}
-	if req.GroupID != nil && s != nil && s.service != nil &&
-		s.service.needsUpstreamChannelRestrictionCheck(ctx, req.GroupID) &&
-		s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact) {
-		return false
-	}
-	return account.SupportsOpenAIImageCapability(req.RequiredImageCapability)
+	compatible, _ := s.isAccountRequestCompatibleReason(ctx, account, req)
+	return compatible
 }
 
-// isAccountPathHealthBlocked 用 path-health 的熔断状态判断当前 sticky 账号是否应被跳过。
-// open_circuit 一律跳过；half_open 仅允许探针流量命中。
-func (s *defaultOpenAIAccountScheduler) isAccountPathHealthBlocked(account *Account, req OpenAIAccountScheduleRequest) bool {
-	if s == nil || s.service == nil || account == nil || !s.service.openAIPathHealthCircuitBreakerEnabled() {
-		return false
-	}
-	key := OpenAIPathHealthKeyForAccount(account, string(req.RequiredTransport))
-	snapshot := s.service.openaiPathHealth.Snapshot(key)
-	bucketSnapshot := s.service.openaiPathHealth.Snapshot(OpenAIPathHealthBucketKeyForAccount(account, string(req.RequiredTransport)))
-	state := openAIPathHealthWorseState(snapshot.State, bucketSnapshot.State)
-	if state == OpenAIPathHealthStateOpenCircuit {
-		return true
-	}
-	return state == OpenAIPathHealthStateHalfOpen &&
-		openAIAccountScheduleProfileFromRequest(req) != openAIAccountScheduleProfileProbe
-}
-
-// isAccountRequestCompatibleReason reports the first scheduler veto for diagnostics.
+// isAccountRequestCompatibleReason 统一所有调度层的账号准入规则，并返回首个拒绝原因供诊断使用。
 func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx context.Context, account *Account, req OpenAIAccountScheduleRequest) (bool, string) {
 	if account == nil {
 		return false, "account_nil"
+	}
+	if account.IsOpenAICompatible() && account.Type == AccountTypeAPIKey && len(account.GetAPIKeys()) == 0 {
+		return false, "api_key_missing"
 	}
 	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
 		return false, "runtime_blocked"
@@ -459,7 +426,29 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if !account.SupportsOpenAIImageCapability(req.RequiredImageCapability) {
 		return false, "image_capability_mismatch"
 	}
+	if req.GroupID != nil && s != nil && s.service != nil &&
+		s.service.needsUpstreamChannelRestrictionCheck(ctx, req.GroupID) &&
+		s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact) {
+		return false, "upstream_channel_restricted"
+	}
 	return true, ""
+}
+
+// isAccountPathHealthBlocked 用 path-health 的熔断状态判断当前 sticky 账号是否应被跳过。
+// open_circuit 一律跳过；half_open 仅允许探针流量命中。
+func (s *defaultOpenAIAccountScheduler) isAccountPathHealthBlocked(account *Account, req OpenAIAccountScheduleRequest) bool {
+	if s == nil || s.service == nil || account == nil || !s.service.openAIPathHealthCircuitBreakerEnabled() {
+		return false
+	}
+	key := OpenAIPathHealthKeyForAccount(account, string(req.RequiredTransport))
+	snapshot := s.service.openaiPathHealth.Snapshot(key)
+	bucketSnapshot := s.service.openaiPathHealth.Snapshot(OpenAIPathHealthBucketKeyForAccount(account, string(req.RequiredTransport)))
+	state := openAIPathHealthWorseState(snapshot.State, bucketSnapshot.State)
+	if state == OpenAIPathHealthStateOpenCircuit {
+		return true
+	}
+	return state == OpenAIPathHealthStateHalfOpen &&
+		openAIAccountScheduleProfileFromRequest(req) != openAIAccountScheduleProfileProbe
 }
 
 func (s *OpenAIGatewayService) openAIPathHealthCircuitBreakerEnabled() bool {
@@ -718,6 +707,19 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	scheduler := s.getOpenAIAccountScheduler(ctx)
 	if scheduler == nil {
 		decision.Layer = openAIAccountScheduleLayerLoadBalance
+		compatibility := &defaultOpenAIAccountScheduler{service: s}
+		request := OpenAIAccountScheduleRequest{
+			GroupID:                 groupID,
+			Platform:                platform,
+			SessionHash:             sessionHash,
+			PreviousResponseID:      previousResponseID,
+			RequestedModel:          requestedModel,
+			RequiredTransport:       requiredTransport,
+			RequiredEndpoint:        requiredEndpoint,
+			RequiredImageCapability: requiredImageCapability,
+			RequireCompact:          requireCompact,
+			ExcludedIDs:             excludedIDs,
+		}
 		if requiredTransport == OpenAIUpstreamTransportAny || requiredTransport == OpenAIUpstreamTransportHTTPSSE {
 			effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
 			for {
@@ -728,8 +730,8 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 				if selection == nil || selection.Account == nil {
 					return selection, decision, nil
 				}
-				if selection.Account.SupportsOpenAIEndpointCapability(requiredEndpoint) &&
-					selection.Account.SupportsOpenAIImageCapability(requiredImageCapability) {
+				if compatibility.isAccountTransportCompatible(selection.Account, requiredTransport) &&
+					compatibility.isAccountRequestCompatible(ctx, selection.Account, request) {
 					return selection, decision, nil
 				}
 				if selection.ReleaseFunc != nil {
@@ -754,8 +756,8 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 			if selection == nil || selection.Account == nil {
 				return selection, decision, nil
 			}
-			if selection.Account.SupportsOpenAIEndpointCapability(requiredEndpoint) &&
-				s.isOpenAIAccountTransportCompatible(selection.Account, requiredTransport) {
+			if compatibility.isAccountTransportCompatible(selection.Account, requiredTransport) &&
+				compatibility.isAccountRequestCompatible(ctx, selection.Account, request) {
 				return selection, decision, nil
 			}
 			if selection.ReleaseFunc != nil {

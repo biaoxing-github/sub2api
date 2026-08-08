@@ -1402,6 +1402,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 			Priority:    0,
 			Credentials: map[string]any{
 				"openai_capabilities": []any{"chat_completions"},
+				"api_keys":            []any{"sk-chat-only"},
 			},
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
@@ -1417,6 +1418,7 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_Enabled_EmbeddingsSkips
 			Priority:    5,
 			Credentials: map[string]any{
 				"openai_capabilities": []any{"chat_completions", "embeddings"},
+				"api_keys":            []any{"sk-embeddings"},
 			},
 			Extra: map[string]any{
 				"openai_apikey_responses_websockets_v2_enabled": true,
@@ -1485,6 +1487,10 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SkipsQuarantinedSharedP
 		}),
 	}
 	svc.openaiProxyStreamCircuit.recordFailure(proxyA, time.Now())
+	require.Equal(t, 1, svc.openaiProxyStreamCircuit.activeBlockCount(time.Now()))
+	compatibility := &defaultOpenAIAccountScheduler{service: svc}
+	require.False(t, compatibility.isAccountRequestCompatible(context.Background(), &accounts[0], OpenAIAccountScheduleRequest{RequestedModel: "gpt-5.6-sol"}))
+	require.True(t, compatibility.isAccountRequestCompatible(withOpenAIProxyStreamQuarantineBypass(context.Background()), &accounts[0], OpenAIAccountScheduleRequest{RequestedModel: "gpt-5.6-sol"}))
 
 	selection, _, err := svc.SelectAccountWithScheduler(
 		context.Background(), nil, "", "", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false,
