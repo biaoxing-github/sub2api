@@ -22,7 +22,7 @@ import (
 const (
 	grokQuotaSnapshotExtraKey = "grok_quota_snapshot"
 	grokUpstreamUserAgent     = "sub2api-grok/1.0"
-	grokCLIVersion            = "0.2.93"
+	grokCLIVersion            = "0.2.114"
 	grokDefaultResponsesModel = "grok-4.5"
 )
 
@@ -371,7 +371,10 @@ func sanitizeGrokResponsesInput(body []byte) ([]byte, error) {
 }
 
 func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, cacheIdentities ...string) (*http.Request, error) {
-	targetURL := xai.BuildResponsesURL(account.GetGrokBaseURL())
+	targetURL, err := xai.BuildResponsesURL(account.GetGrokBaseURL())
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

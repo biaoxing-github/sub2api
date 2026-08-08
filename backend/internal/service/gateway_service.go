@@ -4270,11 +4270,6 @@ func isClaudeCodeClient(userAgent string, metadataUserID string) bool {
 	return ParseMetadataUserID(metadataUserID) != nil
 }
 
-const (
-	claudeCodeBillingHeaderPrefix = "x-anthropic-billing-header:"
-	claudeCodeEntrypointMarker    = "cc_entrypoint=cli"
-)
-
 // isProxiedClaudeCodeRequest 识别 UA 被中间网关替换、但 body 仍保留真实 CLI 指纹的请求。
 // metadata.user_id 与 system billing block 必须同时存在，避免仅凭普通 system 文本误判。
 func isProxiedClaudeCodeRequest(body []byte, metadataUserID string) bool {
@@ -9920,6 +9915,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {
+		usageLog.ActualCost = 0
+		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
@@ -10872,6 +10869,7 @@ func sanitizeCountTokensRequestBody(body []byte) []byte {
 		"stream",
 		"stop_sequences",
 		"stop",
+		"max_tokens",
 	} {
 		if gjson.GetBytes(out, path).Exists() {
 			if next, ok := deleteJSONPathBytes(out, path); ok {

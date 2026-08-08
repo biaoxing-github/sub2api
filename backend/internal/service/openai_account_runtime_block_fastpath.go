@@ -247,6 +247,31 @@ func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) b
 	return ok
 }
 
+func (s *OpenAIGatewayService) getOpenAIAccountModelTransientState() *openAIAccountModelTransientState {
+	if s == nil {
+		return nil
+	}
+	if s.openaiModelTransient == nil {
+		s.openaiModelTransient = newOpenAIAccountModelTransientState(openAIModelTransientDefaultMax)
+	}
+	return s.openaiModelTransient
+}
+
+func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlocked(account *Account, requestedModel string) bool {
+	if s == nil || account == nil || account.ID <= 0 {
+		return false
+	}
+	state := s.getOpenAIAccountModelTransientState()
+	if state == nil {
+		return false
+	}
+	return state.isBlocked(account.ID, normalizeOpenAIAccountModelTransientModel(requestedModel), time.Now())
+}
+
+func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string) bool {
+	return s != nil && (s.isOpenAIAccountRuntimeBlocked(account) || s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel))
+}
+
 // isOpenAIAccountRuntimeBlockedByID 供 handler 冷却入口判断账号状态是否已在请求链路内写入。
 func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlockedByID(accountID int64, now time.Time) bool {
 	if s == nil || accountID <= 0 {

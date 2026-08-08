@@ -800,13 +800,15 @@ type GatewayConfig struct {
 	CodexAutopilot   GatewayCodexAutopilotConfig   `mapstructure:"codex_autopilot"`
 	OpenAIPathHealth GatewayOpenAIPathHealthConfig `mapstructure:"openai_path_health"`
 	// OpenAIHTTP2: OpenAI HTTP 上游协议策略（默认启用 HTTP/2，可按代理能力回退 HTTP/1.1）。
-	OpenAIHTTP2                     GatewayOpenAIHTTP2Config            `mapstructure:"openai_http2"`
-	OpenAIFastLane                  GatewayOpenAIFastLaneConfig         `mapstructure:"openai_fast_lane"`
-	RealtimeBalancePrewarm          GatewayRealtimeBalancePrewarmConfig `mapstructure:"realtime_balance_prewarm"`
-	RealtimeBalanceConfirmTopN      int                                 `mapstructure:"realtime_balance_confirm_top_n"`
-	RealtimeBalanceConfirmTimeoutMs int                                 `mapstructure:"realtime_balance_confirm_timeout_ms"`
-	CodexWaitGuard                  GatewayCodexWaitGuardConfig         `mapstructure:"codex_wait_guard"`
-	ContextJournal                  GatewayContextJournalConfig         `mapstructure:"context_journal"`
+	OpenAIHTTP2 GatewayOpenAIHTTP2Config `mapstructure:"openai_http2"`
+	// OpenAIProxyStreamCircuit: Responses SSE 代理断流熔断策略。
+	OpenAIProxyStreamCircuit        GatewayOpenAIProxyStreamCircuitConfig `mapstructure:"openai_proxy_stream_circuit"`
+	OpenAIFastLane                  GatewayOpenAIFastLaneConfig           `mapstructure:"openai_fast_lane"`
+	RealtimeBalancePrewarm          GatewayRealtimeBalancePrewarmConfig   `mapstructure:"realtime_balance_prewarm"`
+	RealtimeBalanceConfirmTopN      int                                   `mapstructure:"realtime_balance_confirm_top_n"`
+	RealtimeBalanceConfirmTimeoutMs int                                   `mapstructure:"realtime_balance_confirm_timeout_ms"`
+	CodexWaitGuard                  GatewayCodexWaitGuardConfig           `mapstructure:"codex_wait_guard"`
+	ContextJournal                  GatewayContextJournalConfig           `mapstructure:"context_journal"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
 	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
@@ -952,6 +954,24 @@ type GatewayConfig struct {
 	// UserMessageQueue: 用户消息串行队列配置
 	// 对 role:"user" 的真实用户消息实施账号级串行化 + RPM 自适应延迟
 	UserMessageQueue UserMessageQueueConfig `mapstructure:"user_message_queue"`
+}
+
+type GatewayLiveConfig struct {
+	// MaxSessionDurationSeconds 是 Live 会话的硬上限。
+	MaxSessionDurationSeconds int `mapstructure:"max_session_duration_seconds"`
+}
+
+// GatewayOpenAIProxyStreamCircuitConfig controls the bounded, in-process
+// proxy-ID circuit used for incomplete OpenAI Responses SSE streams.
+type GatewayOpenAIProxyStreamCircuitConfig struct {
+	// Disabled: 完全关闭代理断流熔断（默认开启）。
+	Disabled bool `mapstructure:"disabled"`
+	// FailureThreshold: 统计窗口内多少次断流后隔离代理。
+	FailureThreshold int `mapstructure:"failure_threshold"`
+	// WindowSeconds: 断流统计窗口（秒）。
+	WindowSeconds int `mapstructure:"window_seconds"`
+	// TTLSeconds: 代理隔离持续时间（秒）。
+	TTLSeconds int `mapstructure:"ttl_seconds"`
 }
 
 // UserMessageQueueConfig 用户消息串行队列配置
@@ -2012,6 +2032,10 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_http2.fallback_error_threshold", 2)
 	viper.SetDefault("gateway.openai_http2.fallback_window_seconds", 60)
 	viper.SetDefault("gateway.openai_http2.fallback_ttl_seconds", 600)
+	viper.SetDefault("gateway.openai_proxy_stream_circuit.disabled", false)
+	viper.SetDefault("gateway.openai_proxy_stream_circuit.failure_threshold", 2)
+	viper.SetDefault("gateway.openai_proxy_stream_circuit.window_seconds", 60)
+	viper.SetDefault("gateway.openai_proxy_stream_circuit.ttl_seconds", 600)
 	viper.SetDefault("gateway.image_concurrency.enabled", false)
 	viper.SetDefault("gateway.image_concurrency.max_concurrent_requests", 0)
 	viper.SetDefault("gateway.image_concurrency.overflow_mode", ImageConcurrencyOverflowModeReject)
