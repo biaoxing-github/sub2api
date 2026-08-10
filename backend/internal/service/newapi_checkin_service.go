@@ -72,6 +72,8 @@ type NewAPICheckinRepository interface {
 	LoadConfig(ctx context.Context) (NewAPICheckinConfig, error)
 	// SaveConfig 保存平台和账号配置。
 	SaveConfig(ctx context.Context, cfg NewAPICheckinConfig) error
+	// DeleteSiteData 删除站点及其账号、Key 缓存和余额缓存，避免重新导入复用旧数据。
+	DeleteSiteData(ctx context.Context, siteName string) error
 	// LoadLatestReport 读取最近一次签到执行报告。
 	LoadLatestReport(ctx context.Context) (NewAPICheckinReport, error)
 	// SaveLatestReport 保存最近一次签到执行报告。
@@ -1813,6 +1815,9 @@ func (s *NewAPICheckinService) DeleteSite(ctx context.Context, siteName string) 
 	if err != nil {
 		return NewAPICheckinDeleteResult{}, err
 	}
+	if err := s.repo.DeleteSiteData(ctx, siteName); err != nil {
+		return NewAPICheckinDeleteResult{}, fmt.Errorf("清理站点数据库残留失败: %w", err)
+	}
 	return s.deleteResultLocked(ctx, cfg, siteName, "", len(site.Accounts), removedCache, removedHistory, removedMonthly, lastRun)
 }
 
@@ -2751,6 +2756,9 @@ func (s *NewAPICheckinService) queryAPIKeysLocked(ctx context.Context, site NewA
 	data := mapFromAny(result.payload["data"])
 	for _, raw := range sliceFromAny(data["items"]) {
 		item := mapFromAny(raw)
+		if newAPICheckinTokenDeleted(item) {
+			continue
+		}
 		apiKeyID := int64FromAny(item["id"])
 		if apiKeyID <= 0 {
 			summary.Status = "error"
@@ -2868,6 +2876,9 @@ func buildSub2APIKeySummary(site NewAPICheckinSite, account NewAPICheckinAccount
 	summary.AvailableGroupOptions = options
 	for _, raw := range session.keys {
 		item := mapFromAny(raw)
+		if newAPICheckinTokenDeleted(item) {
+			continue
+		}
 		key := normalizeNewAPIFullKey(cleanNewAPIText(item["key"]))
 		if key == "" {
 			continue
@@ -2884,6 +2895,23 @@ func buildSub2APIKeySummary(site NewAPICheckinSite, account NewAPICheckinAccount
 	}
 	summary.GroupMessage = fmt.Sprintf("登录成功，已读取 %d 个可用分组", len(options))
 	return summary
+}
+
+// newAPICheckinTokenDeleted 识别不同 NewAPI/Sub2API 版本返回的明确删除标记。
+func newAPICheckinTokenDeleted(item map[string]any) bool {
+	for _, field := range []string{"deleted", "is_deleted", "isDeleted"} {
+		if boolFromAny(item[field], false) {
+			return true
+		}
+	}
+	for _, field := range []string{"deleted_at", "deletedAt", "deleted_time", "delete_time"} {
+		value := cleanNewAPIText(item[field])
+		if value != "" && value != "0" && value != "null" {
+			return true
+		}
+	}
+	status := strings.ToLower(cleanNewAPIText(item["status"]))
+	return status == "deleted" || status == "removed" || status == "revoked"
 }
 
 // loginSub2AccountLocked 使用账号密码临时换取 JWT，并读取当前用户的 Key 和可用分组。

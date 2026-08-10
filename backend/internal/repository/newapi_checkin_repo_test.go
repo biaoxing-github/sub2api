@@ -136,3 +136,22 @@ func TestNewAPICheckinRepositoryAPIKeyCacheRoundTrip(t *testing.T) {
 	require.NotContains(t, string(encoded), "sk-secret")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// TestNewAPICheckinRepositoryDeleteSiteDataRemovesAllRows 验证平台删除使用同一事务清理关联表。
+func TestNewAPICheckinRepositoryDeleteSiteDataRemovesAllRows(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM newapi_checkin_run_results").WithArgs("demo").WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec("DELETE FROM newapi_checkin_history").WithArgs("demo").WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectExec("DELETE FROM newapi_checkin_monthly_records").WithArgs("demo").WillReturnResult(sqlmock.NewResult(0, 4))
+	mock.ExpectExec("DELETE FROM newapi_checkin_api_key_cache").WithArgs("demo").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM newapi_checkin_account_balances").WithArgs("demo").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM newapi_checkin_accounts").WithArgs("demo").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM newapi_checkin_sites").WithArgs("demo").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	repo := NewAPICheckinRepository(db)
+	require.NoError(t, repo.DeleteSiteData(context.Background(), "demo"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

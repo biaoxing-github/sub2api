@@ -294,7 +294,7 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/token/":
 			if r.Header.Get("New-Api-User") == "1001" {
-				_, _ = w.Write([]byte(`{"success":true,"data":{"total":1,"items":[{"id":7,"name":"codex","key":"abcd**********5678","status":1,"group":"codex-team"}]}}`))
+				_, _ = w.Write([]byte(`{"success":true,"data":{"total":2,"items":[{"id":7,"name":"codex","key":"abcd**********5678","status":1,"group":"codex-team"},{"id":9,"name":"deleted","key":"deleted-key","status":1,"deleted":true,"group":"old-group"}]}}`))
 				return
 			}
 			_, _ = w.Write([]byte(`{"success":true,"data":{"total":0,"items":[]}}`))
@@ -361,9 +361,43 @@ func TestNewAPICheckinAPIKeysMasksGeneratedKeys(t *testing.T) {
 	require.Empty(t, payload.Accounts[1].APIKeys)
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-a 1001")
 	require.Contains(t, requests, "POST /api/token/7/key Bearer access-a 1001")
+	require.NotContains(t, requests, "POST /api/token/9/key Bearer access-a 1001")
 	require.Contains(t, requests, "GET /api/user/self/groups Bearer access-a 1001")
 	require.Contains(t, requests, "GET /api/token/?p=1&size=100 Bearer access-b 1002")
 	require.Equal(t, "sk-abcdef12345678", repo.apiKeyCache[0].Summary.APIKeys[0].MatchKey)
+}
+
+// TestNewAPICheckinDeleteSitePurgesDatabaseData 验证删除平台先清理数据库关联数据再保存配置。
+func TestNewAPICheckinDeleteSitePurgesDatabaseData(t *testing.T) {
+	repo := newMemoryNewAPICheckinRepository(t, map[string]any{
+		"sites": []map[string]any{{
+			"name":     "demo",
+			"base_url": "https://demo.example",
+			"accounts": []map[string]any{{"name": "alpha", "user_id": "1001", "access_key": "access-a"}},
+		}},
+	})
+	svc := newTestNewAPICheckinService(t, repo, nil)
+	result, err := svc.DeleteSite(context.Background(), "demo")
+	require.NoError(t, err)
+	require.Equal(t, "demo", result.Site)
+	require.Equal(t, []string{"demo"}, repo.deletedSites)
+	require.Empty(t, repo.config.Sites)
+}
+
+// TestNewAPICheckinTokenDeletedMarkers 验证不同上游版本的删除字段都不会进入平台目录。
+func TestNewAPICheckinTokenDeletedMarkers(t *testing.T) {
+	for name, item := range map[string]map[string]any{
+		"deleted bool":   {"deleted": true},
+		"snake bool":     {"is_deleted": true},
+		"camel bool":     {"isDeleted": true},
+		"deleted at":     {"deleted_at": "2026-08-10T10:00:00Z"},
+		"deleted status": {"status": "deleted"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.True(t, newAPICheckinTokenDeleted(item))
+		})
+	}
+	require.False(t, newAPICheckinTokenDeleted(map[string]any{"status": 1, "deleted_at": nil}))
 }
 
 // TestNewAPICheckinAPIKeysWithoutCacheDoesNotCallNewAPI 验证普通打开页面只读数据库，不自动访问未缓存的 NewAPI 账号。
@@ -1121,12 +1155,13 @@ func TestAggregateMonthlyCountsEachAccountDayOnce(t *testing.T) {
 }
 
 type memoryNewAPICheckinRepository struct {
-	config      NewAPICheckinConfig
-	report      NewAPICheckinReport
-	balance     NewAPICheckinBalancePayload
-	history     NewAPICheckinHistoryPayload
-	monthly     []NewAPICheckinMonthlyRecord
-	apiKeyCache []NewAPICheckinAPIKeyCacheEntry
+	config       NewAPICheckinConfig
+	report       NewAPICheckinReport
+	balance      NewAPICheckinBalancePayload
+	history      NewAPICheckinHistoryPayload
+	monthly      []NewAPICheckinMonthlyRecord
+	apiKeyCache  []NewAPICheckinAPIKeyCacheEntry
+	deletedSites []string
 }
 
 func newMemoryNewAPICheckinRepository(t *testing.T, rawConfig map[string]any) *memoryNewAPICheckinRepository {
@@ -1147,6 +1182,11 @@ func (r *memoryNewAPICheckinRepository) LoadConfig(context.Context) (NewAPICheck
 
 func (r *memoryNewAPICheckinRepository) SaveConfig(_ context.Context, cfg NewAPICheckinConfig) error {
 	r.config = cfg
+	return nil
+}
+
+func (r *memoryNewAPICheckinRepository) DeleteSiteData(_ context.Context, siteName string) error {
+	r.deletedSites = append(r.deletedSites, siteName)
 	return nil
 }
 

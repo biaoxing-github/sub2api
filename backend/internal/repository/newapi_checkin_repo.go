@@ -275,6 +275,29 @@ WHERE NOT (name = ANY($1))`, pq.Array(siteNames)); err != nil {
 	return tx.Commit()
 }
 
+// DeleteSiteData 删除指定站点的关联数据，兼容历史库中可能存在的孤儿缓存行。
+func (r *newAPICheckinRepository) DeleteSiteData(ctx context.Context, siteName string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, query := range []string{
+		`DELETE FROM newapi_checkin_run_results WHERE site = $1`,
+		`DELETE FROM newapi_checkin_history WHERE site = $1`,
+		`DELETE FROM newapi_checkin_monthly_records WHERE site = $1`,
+		`DELETE FROM newapi_checkin_api_key_cache c USING newapi_checkin_accounts a, newapi_checkin_sites s WHERE c.account_id = a.id AND a.site_id = s.id AND s.name = $1`,
+		`DELETE FROM newapi_checkin_account_balances b USING newapi_checkin_accounts a, newapi_checkin_sites s WHERE b.account_id = a.id AND a.site_id = s.id AND s.name = $1`,
+		`DELETE FROM newapi_checkin_accounts a USING newapi_checkin_sites s WHERE a.site_id = s.id AND s.name = $1`,
+		`DELETE FROM newapi_checkin_sites WHERE name = $1`,
+	} {
+		if _, err := tx.ExecContext(ctx, query, siteName); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (r *newAPICheckinRepository) LoadLatestReport(ctx context.Context) (service.NewAPICheckinReport, error) {
 	var report service.NewAPICheckinReport
 	var runID int64

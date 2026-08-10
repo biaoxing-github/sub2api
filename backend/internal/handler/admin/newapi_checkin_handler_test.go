@@ -187,12 +187,13 @@ func newTestNewAPICheckinHandler(t *testing.T) *NewAPICheckinHandler {
 }
 
 type newAPICheckinHandlerMemoryRepo struct {
-	config      service.NewAPICheckinConfig
-	report      service.NewAPICheckinReport
-	balance     service.NewAPICheckinBalancePayload
-	history     service.NewAPICheckinHistoryPayload
-	monthly     []service.NewAPICheckinMonthlyRecord
-	apiKeyCache []service.NewAPICheckinAPIKeyCacheEntry
+	config       service.NewAPICheckinConfig
+	report       service.NewAPICheckinReport
+	balance      service.NewAPICheckinBalancePayload
+	history      service.NewAPICheckinHistoryPayload
+	monthly      []service.NewAPICheckinMonthlyRecord
+	apiKeyCache  []service.NewAPICheckinAPIKeyCacheEntry
+	deletedSites []string
 }
 
 func (r *newAPICheckinHandlerMemoryRepo) LoadConfig(context.Context) (service.NewAPICheckinConfig, error) {
@@ -201,6 +202,11 @@ func (r *newAPICheckinHandlerMemoryRepo) LoadConfig(context.Context) (service.Ne
 
 func (r *newAPICheckinHandlerMemoryRepo) SaveConfig(_ context.Context, cfg service.NewAPICheckinConfig) error {
 	r.config = cfg
+	return nil
+}
+
+func (r *newAPICheckinHandlerMemoryRepo) DeleteSiteData(_ context.Context, siteName string) error {
+	r.deletedSites = append(r.deletedSites, siteName)
 	return nil
 }
 
