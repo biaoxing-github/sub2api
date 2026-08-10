@@ -228,11 +228,14 @@ func (h *GroupHandler) List(c *gin.Context) {
 // GET /api/v1/admin/groups/all
 func (h *GroupHandler) GetAll(c *gin.Context) {
 	platform := c.Query("platform")
+	includeInactive := c.Query("include_inactive") == "true"
 
 	var groups []service.Group
 	var err error
 
-	if platform != "" {
+	if includeInactive {
+		groups, err = h.adminService.GetAllGroupsIncludingInactive(c.Request.Context())
+	} else if platform != "" {
 		groups, err = h.adminService.GetAllGroupsByPlatform(c.Request.Context(), platform)
 	} else {
 		groups, err = h.adminService.GetAllGroups(c.Request.Context())

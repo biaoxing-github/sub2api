@@ -46,25 +46,30 @@ func normalizeObservedUpstreamResponseModel(model string) string {
 }
 
 func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType string) {
-	if o == nil || len(payload) == 0 || !gjson.ValidBytes(payload) {
+	if o == nil {
 		return
 	}
-	model := firstTrimmedGJSONModel(gjson.GetBytes(payload, "response.model"), gjson.GetBytes(payload, "model"))
+	model := firstValidTrimmedGJSONModel(payload, "response.model", "model")
 	o.Observe(model, isUpstreamResponseModelTerminalEvent(eventType))
 }
 
 func (o *upstreamResponseModelObserver) ObserveAnthropic(payload []byte) {
-	if o == nil || len(payload) == 0 || !gjson.ValidBytes(payload) {
+	if o == nil {
 		return
 	}
-	o.Observe(firstTrimmedGJSONModel(gjson.GetBytes(payload, "message.model"), gjson.GetBytes(payload, "model")), false)
+	o.Observe(firstValidTrimmedGJSONModel(payload, "message.model", "model"), false)
 }
 
 func (o *upstreamResponseModelObserver) ObserveGemini(payload []byte) {
-	if o == nil || len(payload) == 0 || !gjson.ValidBytes(payload) {
+	if o == nil {
 		return
 	}
-	o.Observe(firstTrimmedGJSONModel(gjson.GetBytes(payload, "modelVersion"), gjson.GetBytes(payload, "response.modelVersion")), true)
+	o.Observe(firstValidTrimmedGJSONModel(
+		payload,
+		"modelVersion",
+		"response.modelVersion",
+		"response.response.modelVersion",
+	), true)
 }
 
 func (o *upstreamResponseModelObserver) Model() string {
@@ -107,12 +112,21 @@ func observedUpstreamResponseModelConflict(c *gin.Context) bool {
 	return upstreamResponseModelObserverFromContext(c).Conflict()
 }
 
-func firstTrimmedGJSONModel(values ...gjson.Result) string {
-	for _, value := range values {
-		if value.Exists() && value.Type == gjson.String {
-			if model := strings.TrimSpace(value.String()); model != "" {
-				return model
+func firstValidTrimmedGJSONModel(payload []byte, paths ...string) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	for _, path := range paths {
+		value := gjson.GetBytes(payload, path)
+		if !value.Exists() || value.Type != gjson.String {
+			continue
+		}
+		if model := strings.TrimSpace(value.String()); model != "" {
+			// 仅在发现候选模型字段后校验完整 JSON，避免为不含模型的流式增量重复扫描。
+			if !gjson.ValidBytes(payload) {
+				return ""
 			}
+			return model
 		}
 	}
 	return ""
