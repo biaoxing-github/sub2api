@@ -408,6 +408,10 @@ const baseSettingsResponse = {
   subscription_expiry_notify_enabled: true,
   account_quota_notify_enabled: false,
   account_quota_notify_emails: [],
+  channel_monitor_enabled: true,
+  channel_monitor_mode: "v2",
+  channel_monitor_default_interval_seconds: 60,
+  channel_monitor_hide_throughput: false,
 };
 
 function mountView() {
@@ -470,6 +474,16 @@ async function openGatewayTab(wrapper: ReturnType<typeof mountView>) {
 
   expect(gatewayTabButton).toBeDefined();
   await gatewayTabButton?.trigger("click");
+  await flushPromises();
+}
+
+async function openFeaturesTab(wrapper: ReturnType<typeof mountView>) {
+  const featuresTabButton = wrapper
+    .findAll("button")
+    .find((node) => node.text().includes("admin.settings.tabs.features"));
+
+  expect(featuresTabButton).toBeDefined();
+  await featuresTabButton?.trigger("click");
   await flushPromises();
 }
 
@@ -753,6 +767,30 @@ describe("admin SettingsView payment visible method controls", () => {
         realtime_balance_confirm_timeout_ms: 1800,
         context_journal_backend: "redis",
         context_journal_ttl_hours: 48,
+      }),
+    );
+  });
+
+  it("loads and saves Channel Monitor V2 mode and throughput privacy", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openFeaturesTab(wrapper);
+
+    expect(wrapper.find('[data-test="channel-monitor-v2-settings"]').exists()).toBe(true);
+    await wrapper
+      .get('[data-test="channel-monitor-v2-settings"]')
+      .get('input[type="checkbox"]')
+      .setValue(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel_monitor_enabled: true,
+        channel_monitor_mode: "v2",
+        channel_monitor_default_interval_seconds: 60,
+        channel_monitor_hide_throughput: true,
       }),
     );
   });

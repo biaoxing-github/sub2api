@@ -56,6 +56,10 @@ type ChannelMonitorRunner struct {
 	wg      sync.WaitGroup
 	started bool
 	stopped bool
+	unsub   func()
+
+	// runtimeKickCh 合并短时间内连续设置更新，避免阻塞管理端保存请求。
+	runtimeKickCh chan struct{}
 
 	// inFlight 跟踪正在执行的 monitor.ID。fire 调度前会检查避免重复提交，
 	// 防止单次检测耗时 > interval 时同一 monitor 被并发执行。
@@ -68,6 +72,7 @@ type scheduledMonitor struct {
 	id       int64
 	name     string
 	interval time.Duration
+	ctx      context.Context
 	cancel   context.CancelFunc
 }
 
@@ -91,6 +96,7 @@ func newChannelMonitorRunner(svc monitorRunnerSvc, settingService *SettingServic
 		parentCancel:   cancel,
 		tasks:          make(map[int64]*scheduledMonitor),
 		inFlight:       make(map[int64]struct{}),
+		runtimeKickCh:  make(chan struct{}, 1),
 	}
 }
 
@@ -108,17 +114,131 @@ func (r *ChannelMonitorRunner) Start() {
 	r.started = true
 	r.mu.Unlock()
 
+	if r.settingService != nil {
+		unsubscribe := r.settingService.SubscribeChannelMonitorRuntime(r.kickRuntimeReconcile)
+		r.mu.Lock()
+		if r.stopped {
+			r.mu.Unlock()
+			unsubscribe()
+			return
+		}
+		r.unsub = unsubscribe
+		r.wg.Add(1)
+		r.mu.Unlock()
+		go r.runtimeReconcileLoop()
+	}
+
+	if err := r.reconcileRuntime(); err != nil {
+		slog.Error("channel_monitor: reconcile runtime failed at startup", "error", err)
+	}
+	slog.Info("channel_monitor: runner started", "scheduled_tasks", r.taskCount())
+}
+
+// kickRuntimeReconcile 非阻塞唤醒运行时对账；连续通知会合并为一次。
+func (r *ChannelMonitorRunner) kickRuntimeReconcile() {
+	if r == nil {
+		return
+	}
+	select {
+	case r.runtimeKickCh <- struct{}{}:
+	default:
+	}
+}
+
+// runtimeReconcileLoop 在设置持久化成功后立即应用 V1/V2 模式变化。
+func (r *ChannelMonitorRunner) runtimeReconcileLoop() {
+	defer r.wg.Done()
+	for {
+		select {
+		case <-r.parentCtx.Done():
+			return
+		case <-r.runtimeKickCh:
+			if err := r.reconcileRuntime(); err != nil {
+				slog.Error("channel_monitor: reconcile runtime after settings update failed", "error", err)
+			}
+		}
+	}
+}
+
+// reconcileRuntime 根据当前开关和模式增量对账 V1 定时任务。
+// V2 或禁用时取消全部主动探测；V1 时只重建新增或配置变化的任务。
+func (r *ChannelMonitorRunner) reconcileRuntime() error {
+	if r == nil || r.svc == nil {
+		return nil
+	}
+	if r.settingService != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), monitorStartupLoadTimeout)
+		runtime := r.settingService.GetChannelMonitorRuntime(ctx)
+		cancel()
+		if !runtime.ActiveProbesAllowed() {
+			r.replaceScheduledMonitors(nil)
+			return nil
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), monitorStartupLoadTimeout)
 	defer cancel()
 	enabled, err := r.svc.ListEnabledMonitors(ctx)
 	if err != nil {
-		slog.Error("channel_monitor: load enabled monitors failed at startup", "error", err)
+		return err
+	}
+	r.replaceScheduledMonitors(enabled)
+	return nil
+}
+
+// replaceScheduledMonitors 原子计算任务差异，锁外取消旧任务并启动新任务。
+func (r *ChannelMonitorRunner) replaceScheduledMonitors(monitors []*ChannelMonitor) {
+	desired := make(map[int64]*ChannelMonitor, len(monitors))
+	for _, monitor := range monitors {
+		if monitor == nil || !monitor.Enabled || monitor.IntervalSeconds <= 0 {
+			continue
+		}
+		desired[monitor.ID] = monitor
+	}
+
+	var cancelled []*scheduledMonitor
+	var started []*scheduledMonitor
+	r.mu.Lock()
+	if r.stopped || !r.started {
+		r.mu.Unlock()
 		return
 	}
-	for _, m := range enabled {
-		r.Schedule(m)
+	for id, task := range r.tasks {
+		monitor, keep := desired[id]
+		if keep && task.name == monitor.Name && task.interval == time.Duration(monitor.IntervalSeconds)*time.Second {
+			delete(desired, id)
+			continue
+		}
+		delete(r.tasks, id)
+		cancelled = append(cancelled, task)
 	}
-	slog.Info("channel_monitor: runner started", "scheduled_tasks", len(enabled))
+	for _, monitor := range desired {
+		ctx, cancel := context.WithCancel(r.parentCtx)
+		task := &scheduledMonitor{
+			id:       monitor.ID,
+			name:     monitor.Name,
+			interval: time.Duration(monitor.IntervalSeconds) * time.Second,
+			ctx:      ctx,
+			cancel:   cancel,
+		}
+		r.tasks[monitor.ID] = task
+		r.wg.Add(1)
+		started = append(started, task)
+	}
+	r.mu.Unlock()
+
+	for _, task := range cancelled {
+		task.cancel()
+	}
+	for _, task := range started {
+		go r.runScheduled(task.ctx, task)
+	}
+}
+
+func (r *ChannelMonitorRunner) taskCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.tasks)
 }
 
 // Schedule 为指定监控创建（或重置）独立定时任务。
@@ -132,6 +252,15 @@ func (r *ChannelMonitorRunner) Schedule(m *ChannelMonitor) {
 	if !m.Enabled {
 		r.Unschedule(m.ID)
 		return
+	}
+	if r.settingService != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), monitorStartupLoadTimeout)
+		runtime := r.settingService.GetChannelMonitorRuntime(ctx)
+		cancel()
+		if !runtime.ActiveProbesAllowed() {
+			r.Unschedule(m.ID)
+			return
+		}
 	}
 	interval := time.Duration(m.IntervalSeconds) * time.Second
 	if interval <= 0 {
@@ -165,6 +294,7 @@ func (r *ChannelMonitorRunner) Schedule(m *ChannelMonitor) {
 		id:       m.ID,
 		name:     m.Name,
 		interval: interval,
+		ctx:      ctx,
 		cancel:   cancel,
 	}
 	r.tasks[m.ID] = task
@@ -202,9 +332,14 @@ func (r *ChannelMonitorRunner) Stop() {
 		return
 	}
 	r.stopped = true
+	unsubscribe := r.unsub
+	r.unsub = nil
 	r.parentCancel()
 	r.tasks = nil
 	r.mu.Unlock()
+	if unsubscribe != nil {
+		unsubscribe()
+	}
 
 	r.wg.Wait()
 	r.pool.StopAndWait()

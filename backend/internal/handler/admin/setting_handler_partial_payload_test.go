@@ -74,3 +74,45 @@ func TestUpdateSettingsSMTPFromEmailAliasIsWritable(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, "new@example.com", repo.values[service.SettingKeySMTPFrom])
 }
+
+func TestUpdateSettingsChannelMonitorV2FieldsAreWritableAndReturned(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, repo := newPartialSettingsTestHandler(map[string]string{
+		service.SettingKeyChannelMonitorEnabled:                "true",
+		service.SettingKeyChannelMonitorMode:                   service.ChannelMonitorModeV1,
+		service.SettingKeyChannelMonitorDefaultIntervalSeconds: "60",
+		service.SettingKeyChannelMonitorHideThroughput:         "true",
+	})
+
+	recorder := doPartialSettingsUpdate(t, handler, map[string]any{
+		"channel_monitor_mode":            service.ChannelMonitorModeV2,
+		"channel_monitor_hide_throughput": false,
+	})
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, service.ChannelMonitorModeV2, repo.values[service.SettingKeyChannelMonitorMode])
+	require.Equal(t, "false", repo.values[service.SettingKeyChannelMonitorHideThroughput])
+	require.Equal(t, "60", repo.values[service.SettingKeyChannelMonitorDefaultIntervalSeconds])
+
+	var responseBody struct {
+		Data struct {
+			ChannelMonitorMode           string `json:"channel_monitor_mode"`
+			ChannelMonitorHideThroughput bool   `json:"channel_monitor_hide_throughput"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &responseBody))
+	require.Equal(t, service.ChannelMonitorModeV2, responseBody.Data.ChannelMonitorMode)
+	require.False(t, responseBody.Data.ChannelMonitorHideThroughput)
+}
+
+func TestUpdateSettingsChannelMonitorV2FieldsKeepPreviousValuesWhenOmitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, repo := newPartialSettingsTestHandler(map[string]string{
+		service.SettingKeyChannelMonitorMode:           service.ChannelMonitorModeV2,
+		service.SettingKeyChannelMonitorHideThroughput: "false",
+	})
+
+	recorder := doPartialSettingsUpdate(t, handler, map[string]any{"risk_control_enabled": true})
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, service.ChannelMonitorModeV2, repo.values[service.SettingKeyChannelMonitorMode])
+	require.Equal(t, "false", repo.values[service.SettingKeyChannelMonitorHideThroughput])
+}

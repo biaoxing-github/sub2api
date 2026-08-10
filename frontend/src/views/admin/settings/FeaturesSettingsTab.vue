@@ -31,21 +31,91 @@
           <Toggle v-model="form.channel_monitor_enabled" />
         </div>
 
-        <div v-if="form.channel_monitor_enabled">
-          <label class="input-label">
-            {{ t("admin.settings.features.channelMonitor.defaultInterval") }}
-            <span class="text-red-500">*</span>
-          </label>
-          <input
-            v-model.number="form.channel_monitor_default_interval_seconds"
-            type="number"
-            min="15"
-            max="3600"
-            class="input"
-          />
-          <p class="mt-1 text-xs text-gray-400">
-            {{ t("admin.settings.features.channelMonitor.defaultIntervalHint") }}
-          </p>
+        <div v-if="form.channel_monitor_enabled" class="space-y-5">
+          <div>
+            <label class="input-label">
+              {{ t("admin.settings.features.channelMonitor.mode") }}
+            </label>
+            <div
+              class="mt-1.5 inline-flex w-full max-w-md rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-dark-600 dark:bg-dark-900/40"
+            >
+              <button
+                type="button"
+                data-test="channel-monitor-mode-v1"
+                class="inline-flex flex-1 items-center justify-center rounded-md px-3 py-2 text-sm font-medium transition"
+                :class="
+                  form.channel_monitor_mode === 'v1'
+                    ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                    : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
+                "
+                @click="form.channel_monitor_mode = 'v1'"
+              >
+                {{ t("admin.settings.features.channelMonitor.modeV1") }}
+              </button>
+              <button
+                type="button"
+                data-test="channel-monitor-mode-v2"
+                class="inline-flex flex-1 items-center justify-center rounded-md px-3 py-2 text-sm font-medium transition"
+                :class="
+                  form.channel_monitor_mode === 'v2'
+                    ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
+                    : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
+                "
+                @click="form.channel_monitor_mode = 'v2'"
+              >
+                {{ t("admin.settings.features.channelMonitor.modeV2") }}
+              </button>
+            </div>
+            <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+              {{
+                form.channel_monitor_mode === "v1"
+                  ? t("admin.settings.features.channelMonitor.modeV1Hint")
+                  : t("admin.settings.features.channelMonitor.modeV2Hint")
+              }}
+            </p>
+            <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+              {{ t("admin.settings.features.channelMonitor.modeHint") }}
+            </p>
+          </div>
+
+          <div
+            v-if="form.channel_monitor_mode === 'v1'"
+            data-test="channel-monitor-v1-settings"
+          >
+            <label class="input-label">
+              {{ t("admin.settings.features.channelMonitor.defaultInterval") }}
+              <span class="text-red-500">*</span>
+            </label>
+            <input
+              v-model.number="form.channel_monitor_default_interval_seconds"
+              type="number"
+              min="15"
+              max="3600"
+              class="input"
+            />
+            <p class="mt-1 text-xs text-gray-400">
+              {{ t("admin.settings.features.channelMonitor.defaultIntervalHint") }}
+            </p>
+          </div>
+
+          <div
+            v-if="form.channel_monitor_mode === 'v2'"
+            data-test="channel-monitor-v2-settings"
+            class="flex items-start justify-between gap-4"
+          >
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-gray-900 dark:text-white">
+                {{ t("admin.settings.features.channelMonitor.hideThroughput") }}
+              </p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.features.channelMonitor.hideThroughputHint") }}
+              </p>
+            </div>
+            <Toggle
+              v-model="form.channel_monitor_hide_throughput"
+              data-test="channel-monitor-hide-throughput"
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -612,7 +682,9 @@ import type {
 
 type FeaturesSettingsForm = {
   channel_monitor_enabled: boolean;
+  channel_monitor_mode: "v1" | "v2";
   channel_monitor_default_interval_seconds: number;
+  channel_monitor_hide_throughput: boolean;
   available_channels_enabled: boolean;
   model_plaza_enabled: boolean;
   model_plaza_require_auth: boolean;

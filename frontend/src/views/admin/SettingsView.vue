@@ -505,7 +505,11 @@ type SettingsForm = Omit<
   | "wechat_connect_open_enabled"
   | "wechat_connect_mp_enabled"
   | "wechat_connect_mobile_enabled"
+  | "channel_monitor_mode"
+  | "channel_monitor_hide_throughput"
 > & {
+  channel_monitor_mode: "v1" | "v2";
+  channel_monitor_hide_throughput: boolean;
   smtp_password: string;
   turnstile_secret_key: string;
   linuxdo_connect_client_secret: string;
@@ -803,7 +807,9 @@ const form = reactive<SettingsForm>({
   account_quota_notify_emails: [] as NotifyEmailEntry[],
   // Channel Monitor feature switch
   channel_monitor_enabled: true,
+  channel_monitor_mode: "v1" as "v1" | "v2",
   channel_monitor_default_interval_seconds: 60,
+  channel_monitor_hide_throughput: true,
   // Available Channels feature switch
   available_channels_enabled: false,
   // 模型广场功能开关与页面说明。
@@ -2048,8 +2054,12 @@ async function saveSettings() {
       ).filter((e) => e.email.trim() !== ""),
       // Channel Monitor feature switch
       channel_monitor_enabled: form.channel_monitor_enabled,
+      channel_monitor_mode: form.channel_monitor_mode === "v2" ? "v2" : "v1",
       channel_monitor_default_interval_seconds:
         Number(form.channel_monitor_default_interval_seconds) || 60,
+      channel_monitor_hide_throughput: Boolean(
+        form.channel_monitor_hide_throughput,
+      ),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
       // 模型广场功能开关与页面说明。

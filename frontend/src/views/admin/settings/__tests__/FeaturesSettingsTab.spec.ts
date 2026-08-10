@@ -35,7 +35,9 @@ const ToggleStub = defineComponent({
 const mountTab = () => {
   const form = reactive({
     channel_monitor_enabled: true,
+    channel_monitor_mode: "v1" as "v1" | "v2",
     channel_monitor_default_interval_seconds: 60,
+    channel_monitor_hide_throughput: true,
     available_channels_enabled: false,
     model_plaza_enabled: false,
     model_plaza_require_auth: false,
@@ -145,5 +147,27 @@ describe("FeaturesSettingsTab", () => {
 
     await wrapper.get('input[type="number"]').setValue("90");
     expect(form.channel_monitor_default_interval_seconds).toBe(90);
+  });
+
+  it("switches between V1 probe settings and V2 throughput privacy", async () => {
+    const { wrapper, form } = mountTab();
+
+    expect(wrapper.find('[data-test="channel-monitor-v1-settings"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="channel-monitor-v2-settings"]').exists()).toBe(false);
+
+    await wrapper.get('[data-test="channel-monitor-mode-v2"]').trigger("click");
+    expect(form.channel_monitor_mode).toBe("v2");
+    expect(wrapper.find('[data-test="channel-monitor-v1-settings"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="channel-monitor-v2-settings"]').exists()).toBe(true);
+
+    const privacyToggle = wrapper
+      .get('[data-test="channel-monitor-v2-settings"]')
+      .get('input[type="checkbox"]');
+    await privacyToggle.setValue(false);
+    expect(form.channel_monitor_hide_throughput).toBe(false);
+
+    await wrapper.get('[data-test="channel-monitor-mode-v1"]').trigger("click");
+    expect(form.channel_monitor_mode).toBe("v1");
+    expect(wrapper.find('[data-test="channel-monitor-v1-settings"]').exists()).toBe(true);
   });
 });
