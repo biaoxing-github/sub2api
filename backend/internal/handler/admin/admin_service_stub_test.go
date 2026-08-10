@@ -270,6 +270,10 @@ func (s *stubAdminService) GetAllGroups(ctx context.Context) ([]service.Group, e
 	return s.groups, nil
 }
 
+func (s *stubAdminService) GetAllGroupsIncludingInactive(ctx context.Context) ([]service.Group, error) {
+	return s.groups, nil
+}
+
 func (s *stubAdminService) GetAllGroupsByPlatform(ctx context.Context, platform string) ([]service.Group, error) {
 	return s.groups, nil
 }
