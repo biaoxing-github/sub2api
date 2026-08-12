@@ -30,3 +30,19 @@ describe('AppSidebar header styles', () => {
     expect(sidebarBrandBlockMatch?.[0]).not.toContain('overflow: hidden;')
   })
 })
+
+describe('AppSidebar optional admin entries', () => {
+  it('guards the five admin entries with opt-in flags', () => {
+    const expected = [
+      ["/admin/subscriptions", 'flagAdminSubscriptions'],
+      ["/admin/promo-codes", 'flagAdminPromoCodes'],
+      ["/admin/redeem", 'flagAdminRedeem'],
+      ["/admin/announcements", 'flagAdminAnnouncements'],
+      ["/admin/model-probes", 'flagAdminModelProbes'],
+    ]
+    for (const [path, flag] of expected) {
+      expect(componentSource).toContain(`path: '${path}'`)
+      expect(componentSource).toContain(`featureFlag: ${flag}`)
+    }
+  })
+})

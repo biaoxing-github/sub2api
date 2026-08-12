@@ -649,6 +649,11 @@ const ChevronDownIcon = {
 const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
 const flagPayment = makeSidebarFlag(FeatureFlags.payment)
 const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
+const flagAdminSubscriptions = makeSidebarFlag(FeatureFlags.adminSidebarSubscriptions)
+const flagAdminPromoCodes = makeSidebarFlag(FeatureFlags.adminSidebarPromoCodes)
+const flagAdminRedeem = makeSidebarFlag(FeatureFlags.adminSidebarRedeem)
+const flagAdminAnnouncements = makeSidebarFlag(FeatureFlags.adminSidebarAnnouncements)
+const flagAdminModelProbes = makeSidebarFlag(FeatureFlags.adminSidebarModelProbes)
 const flagAffiliate = makeSidebarFlag(FeatureFlags.affiliate)
 const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
 const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
@@ -732,17 +737,17 @@ const adminNavItems = computed((): NavItem[] => {
         { path: '/admin/channels/monitor', label: t('nav.channelMonitor'), icon: SignalIcon, featureFlag: flagChannelMonitor },
       ],
     },
-    { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
+    { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagAdminSubscriptions },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
     { path: '/admin/account-scheduling-pool', label: t('nav.accountSchedulingPool'), icon: SignalIcon },
     { path: '/admin/account-probe-reports', label: t('nav.accountProbeReports'), icon: ChartIcon },
-    { path: '/admin/model-probes', label: t('nav.accountModelProbes'), icon: SignalIcon },
+    { path: '/admin/model-probes', label: t('nav.accountModelProbes'), icon: SignalIcon, featureFlag: flagAdminModelProbes },
     { path: '/admin/tools', label: t('nav.adminTools'), icon: GiftIcon },
-    { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
+    { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon, featureFlag: flagAdminAnnouncements },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
     { path: '/admin/risk-control', label: t('nav.riskControl'), icon: ShieldIcon, hideInSimpleMode: true, featureFlag: flagRiskControl },
-    { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: TicketIcon, hideInSimpleMode: true },
-    { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: GiftIcon, hideInSimpleMode: true },
+    { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: TicketIcon, hideInSimpleMode: true, featureFlag: flagAdminRedeem },
+    { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: GiftIcon, hideInSimpleMode: true, featureFlag: flagAdminPromoCodes },
     {
       path: '/admin/affiliates',
       label: t('nav.affiliateManagement'),

@@ -178,7 +178,12 @@ type SystemSettings struct {
 	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
 
 	// Available Channels feature (user-facing aggregate view)
-	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+	AvailableChannelsEnabled         bool `json:"available_channels_enabled"`
+	AdminSidebarSubscriptionsEnabled bool `json:"admin_sidebar_subscriptions_enabled"`
+	AdminSidebarPromoCodesEnabled    bool `json:"admin_sidebar_promo_codes_enabled"`
+	AdminSidebarRedeemEnabled        bool `json:"admin_sidebar_redeem_enabled"`
+	AdminSidebarAnnouncementsEnabled bool `json:"admin_sidebar_announcements_enabled"`
+	AdminSidebarModelProbesEnabled   bool `json:"admin_sidebar_model_probes_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled     bool   `json:"model_plaza_enabled"`
@@ -354,7 +359,12 @@ type PublicSettings struct {
 	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
 
 	// Available Channels feature (user-facing aggregate view)
-	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+	AvailableChannelsEnabled         bool `json:"available_channels_enabled"`
+	AdminSidebarSubscriptionsEnabled bool `json:"admin_sidebar_subscriptions_enabled"`
+	AdminSidebarPromoCodesEnabled    bool `json:"admin_sidebar_promo_codes_enabled"`
+	AdminSidebarRedeemEnabled        bool `json:"admin_sidebar_redeem_enabled"`
+	AdminSidebarAnnouncementsEnabled bool `json:"admin_sidebar_announcements_enabled"`
+	AdminSidebarModelProbesEnabled   bool `json:"admin_sidebar_model_probes_enabled"`
 
 	// Model Plaza feature (public group/model pricing showcase)
 	ModelPlazaEnabled     bool `json:"model_plaza_enabled"`

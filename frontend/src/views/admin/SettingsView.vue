@@ -812,6 +812,11 @@ const form = reactive<SettingsForm>({
   channel_monitor_hide_throughput: true,
   // Available Channels feature switch
   available_channels_enabled: false,
+  admin_sidebar_subscriptions_enabled: false,
+  admin_sidebar_promo_codes_enabled: false,
+  admin_sidebar_redeem_enabled: false,
+  admin_sidebar_announcements_enabled: false,
+  admin_sidebar_model_probes_enabled: false,
   // 模型广场功能开关与页面说明。
   model_plaza_enabled: false,
   model_plaza_require_auth: false,
@@ -2062,6 +2067,11 @@ async function saveSettings() {
       ),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      admin_sidebar_subscriptions_enabled: form.admin_sidebar_subscriptions_enabled,
+      admin_sidebar_promo_codes_enabled: form.admin_sidebar_promo_codes_enabled,
+      admin_sidebar_redeem_enabled: form.admin_sidebar_redeem_enabled,
+      admin_sidebar_announcements_enabled: form.admin_sidebar_announcements_enabled,
+      admin_sidebar_model_probes_enabled: form.admin_sidebar_model_probes_enabled,
       // 模型广场功能开关与页面说明。
       model_plaza_enabled: form.model_plaza_enabled,
       model_plaza_require_auth: form.model_plaza_require_auth,

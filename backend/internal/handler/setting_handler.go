@@ -96,7 +96,12 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 		ChannelMonitorHideThroughput:         settings.ChannelMonitorHideThroughput,
 
-		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
+		AvailableChannelsEnabled:         settings.AvailableChannelsEnabled,
+		AdminSidebarSubscriptionsEnabled: settings.AdminSidebarSubscriptionsEnabled,
+		AdminSidebarPromoCodesEnabled:    settings.AdminSidebarPromoCodesEnabled,
+		AdminSidebarRedeemEnabled:        settings.AdminSidebarRedeemEnabled,
+		AdminSidebarAnnouncementsEnabled: settings.AdminSidebarAnnouncementsEnabled,
+		AdminSidebarModelProbesEnabled:   settings.AdminSidebarModelProbesEnabled,
 
 		ModelPlazaEnabled:     settings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth: settings.ModelPlazaRequireAuth,

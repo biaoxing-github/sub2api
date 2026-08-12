@@ -306,6 +306,22 @@ type OpenAIForwardResult struct {
 	wsReplayInputExists bool
 }
 
+// isOpenAIEmptyTokenResponse 判断无图片、无搜索且输入输出 token 都为零的异常空回。
+func isOpenAIEmptyTokenResponse(result *OpenAIForwardResult) bool {
+	return result != nil && result.ImageCount == 0 && result.WebSearchCalls == 0 &&
+		result.Usage.InputTokens == 0 && result.Usage.OutputTokens == 0
+}
+
+// openAIEmptyResponseFailoverError 把上游 2xx 空回转换为现有账号切换异常。
+func openAIEmptyResponseFailoverError() *UpstreamFailoverError {
+	body := []byte(`{"error":{"type":"upstream_error","message":"Upstream returned an empty response"}}`)
+	return &UpstreamFailoverError{
+		StatusCode: http.StatusBadGateway, ResponseBody: body,
+		RetryableOnSameAccount: true,
+		ActionMetadata:         map[string]string{"reason": "empty_response"},
+	}
+}
+
 // SetActualOpenAIUpstreamEndpoint 记录当前转发尝试选择的上游端点。
 func SetActualOpenAIUpstreamEndpoint(c *gin.Context, endpoint string) {
 	if c == nil {
@@ -4743,6 +4759,11 @@ httpRetryLoop:
 				forwardResult.ImageOutputSizes = imageOutputSizes
 				forwardResult.BillingModel = imageBillingModel
 			}
+			if forwardErr == nil && isOpenAIEmptyTokenResponse(forwardResult) {
+				setOpsUpstreamError(c, http.StatusBadGateway, "Upstream returned an empty response", "")
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{Platform: account.Platform, AccountID: account.ID, AccountName: account.Name, UpstreamStatusCode: http.StatusBadGateway, Kind: "empty_response", Message: "input_tokens and output_tokens are both zero"})
+				return forwardResult, openAIEmptyResponseFailoverError()
+			}
 			return forwardResult, forwardErr
 		}
 	}
@@ -5035,6 +5056,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		forwardResult.ImageInputSize = imageInputSize
 		forwardResult.ImageOutputSizes = imageOutputSizes
 		forwardResult.BillingModel = imageBillingModel
+	}
+	if forwardErr == nil && isOpenAIEmptyTokenResponse(forwardResult) {
+		setOpsUpstreamError(c, http.StatusBadGateway, "Upstream returned an empty response", "")
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{Platform: account.Platform, AccountID: account.ID, AccountName: account.Name, UpstreamStatusCode: http.StatusBadGateway, Kind: "empty_response", Message: "input_tokens and output_tokens are both zero"})
+		return forwardResult, openAIEmptyResponseFailoverError()
 	}
 	return forwardResult, forwardErr
 }
@@ -6502,6 +6528,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	}
 	if !usageParsed {
 		// 兜底：尝试从 SSE 文本中解析 usage
+	imageCount := countOpenAIResponseImageOutputsFromJSONBytes(body)
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && imageCount == 0 {
+		return &openaiNonStreamingResultPassthrough{OpenAIUsage: usage, usage: usage, usageObserved: usageParsed}, openAIEmptyResponseFailoverError()
+	}
 		usage = s.parseSSEUsageFromBody(string(body))
 	}
 
@@ -6519,7 +6549,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 		usage:            usage,
 		usageObserved:    usageParsed,
 		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
-		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
+		imageCount:       imageCount,
 		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
 	}, nil
 }
@@ -7500,6 +7530,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if !clientDisconnected {
 				_ = flushPendingClientLines()
 			}
+		if (usage == nil || (usage.InputTokens == 0 && usage.OutputTokens == 0)) && imageCounter.Count() == 0 {
+			failoverErr := openAIEmptyResponseFailoverError()
+			if !clientOutputStarted {
+				return resultWithUsage(), failoverErr
+			}
+			if !clientDisconnected {
+				_ = writeOpenAIResponsesGatewayRetryableFailedSSE(bufferedWriter, flushBuffered, responseID, originalModel)
+			}
+			return resultWithUsage(), fmt.Errorf("upstream response failed: empty response")
+		}
 			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 		}
 		if !clientDisconnected {
@@ -8363,6 +8403,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 			return s.handleSSEToJSON(resp, c, body, account.Platform, originalModel, mappedModel)
 		}
 		return nil, s.newOpenAI2xxProtocolFailoverError(c, account, resp, body, "OpenAI upstream returned non-JSON 2xx response body")
+	imageCount := countOpenAIResponseImageOutputsFromJSONBytes(body)
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && imageCount == 0 {
+		return &openaiNonStreamingResult{OpenAIUsage: usage, usage: usage, usageObserved: true}, openAIEmptyResponseFailoverError()
+	}
 	}
 	usage := &usageValue
 
@@ -8383,7 +8427,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		usage:            usage,
 		usageObserved:    true,
 		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
-		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
+		imageCount:       imageCount,
 		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
 	}, nil
 }
@@ -9350,7 +9394,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if result == nil {
 		return errors.New("openai usage result is nil")
 	}
-	if result.UsageMissing && result.ImageCount == 0 && result.WebSearchCalls == 0 {
+	if isOpenAIEmptyTokenResponse(result) {
 		return nil
 	}
 	if s.rateLimitService != nil && input.Account != nil && input.Account.Platform == PlatformOpenAI {

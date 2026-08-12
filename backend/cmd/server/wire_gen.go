@@ -204,6 +204,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	accountProbeService.SetRateLimitService(rateLimitService)
 	crsSyncService := service.NewCRSSyncService(accountRepository, proxyRepository, oAuthService, openAIOAuthService, geminiOAuthService, configConfig)
 	accountHandler := admin.NewAccountHandler(adminService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, rateLimitService, accountUsageService, accountTestService, upstreamBalanceService, concurrencyService, crsSyncService, sessionLimitCache, rpmCache, compositeTokenCacheInvalidator)
+	accountHandler.SetUsageService(usageService)
 	accountHandler.SetAccountProbeService(accountProbeService)
 	accountHandler.SetAccountBatchTestRepository(accountBatchTestRepository)
 	accountHandler.SetOpenAIPathHealthReader(openAIGatewayService)

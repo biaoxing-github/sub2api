@@ -25,6 +25,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -70,6 +71,7 @@ type AccountHandler struct {
 	rateLimitService                  *service.RateLimitService
 	accountUsageService               *service.AccountUsageService
 	accountTestService                *service.AccountTestService
+	usageService                      *service.UsageService
 	batchAccountTester                batchAccountTester
 	accountBatchTestRepo              service.AccountBatchTestRepository
 	accountProbeService               accountProbeRunner
@@ -142,6 +144,11 @@ func NewAccountHandler(
 		rpmCache:                rpmCache,
 		tokenCacheInvalidator:   tokenCacheInvalidator,
 	}
+}
+
+// SetUsageService 注入人工探测使用记录服务。
+func (h *AccountHandler) SetUsageService(usageService *service.UsageService) {
+	h.usageService = usageService
 }
 
 func (h *AccountHandler) SetAccountProbeService(accountProbeService accountProbeRunner) {
@@ -1377,6 +1384,26 @@ func (h *AccountHandler) ManualProbe(c *gin.Context) {
 		response.InternalError(c, "Failed to test account")
 		return
 	}
+	if subject, ok := middleware.GetAuthSubjectFromContext(c); ok && h.usageService != nil {
+		model := strings.TrimSpace(result.Model)
+		if model == "" {
+			model = strings.TrimSpace(req.Model)
+		}
+		if model == "" {
+			model = "manual-probe"
+		}
+		durationMs := result.LatencyMs
+		inboundEndpoint := "/api/v1/admin/accounts/:id/manual-probe"
+		upstreamEndpoint := manualProbeUpstreamEndpoint(account)
+		_, err := h.usageService.Create(c.Request.Context(), service.CreateUsageLogRequest{
+			UserID: subject.UserID, AccountID: accountID, RequestID: fmt.Sprintf("manual-probe:%d:%d", subject.UserID, result.StartedAt.UnixNano()),
+			Model: model, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, Stream: result.Stream,
+			DurationMs: durationMs, FirstTokenMs: result.FirstTokenMs, InboundEndpoint: &inboundEndpoint, UpstreamEndpoint: &upstreamEndpoint,
+		})
+		if err != nil {
+			slog.Error("记录人工上游探测使用日志失败", "user_id", subject.UserID, "account_id", accountID, "error", err)
+		}
+	}
 
 	var updatedAccount *service.Account
 	if result.Success && h.rateLimitService != nil {
@@ -1409,6 +1436,17 @@ func (h *AccountHandler) ManualProbe(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// manualProbeUpstreamEndpoint 返回人工探测使用的标准上游端点。
+func manualProbeUpstreamEndpoint(account *service.Account) string {
+	if account != nil && account.IsOpenAI() {
+		return "/v1/responses"
+	}
+	if account != nil && account.IsGemini() {
+		return "/v1beta/models"
+	}
+	return "/v1/messages"
 }
 
 // BatchTestNonAPIKey tests all non-api-key accounts matching optional filters.

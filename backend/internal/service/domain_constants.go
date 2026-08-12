@@ -350,6 +350,12 @@ const (
 	// user-facing aggregate view. When false: user endpoint returns an empty list and the
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
+	// 管理端侧栏入口均为显式开启，默认隐藏但不限制对应路由访问。
+	SettingKeyAdminSidebarSubscriptionsEnabled = "admin_sidebar_subscriptions_enabled"
+	SettingKeyAdminSidebarPromoCodesEnabled    = "admin_sidebar_promo_codes_enabled"
+	SettingKeyAdminSidebarRedeemEnabled        = "admin_sidebar_redeem_enabled"
+	SettingKeyAdminSidebarAnnouncementsEnabled = "admin_sidebar_announcements_enabled"
+	SettingKeyAdminSidebarModelProbesEnabled   = "admin_sidebar_model_probes_enabled"
 
 	// SettingKeyModelPlazaEnabled is a DB-backed soft switch for the Model Plaza page
 	// (public group/model pricing showcase). When false: the plaza endpoint returns 404

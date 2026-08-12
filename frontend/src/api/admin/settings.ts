@@ -604,6 +604,11 @@ export interface SystemSettings {
 
   // Available Channels feature switch
   available_channels_enabled: boolean;
+  admin_sidebar_subscriptions_enabled: boolean;
+  admin_sidebar_promo_codes_enabled: boolean;
+  admin_sidebar_redeem_enabled: boolean;
+  admin_sidebar_announcements_enabled: boolean;
+  admin_sidebar_model_probes_enabled: boolean;
 
   // Model Plaza feature switches + description
   model_plaza_enabled: boolean;
@@ -868,6 +873,11 @@ export interface UpdateSettingsRequest {
 
   // Available Channels feature switch
   available_channels_enabled?: boolean;
+  admin_sidebar_subscriptions_enabled?: boolean;
+  admin_sidebar_promo_codes_enabled?: boolean;
+  admin_sidebar_redeem_enabled?: boolean;
+  admin_sidebar_announcements_enabled?: boolean;
+  admin_sidebar_model_probes_enabled?: boolean;
 
   // Model Plaza feature switches + description
   model_plaza_enabled?: boolean;

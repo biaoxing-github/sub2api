@@ -437,7 +437,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 	`
 
 	if err := scanSingleRow(ctx, sqlq, query, prepared.args, &log.ID, &log.CreatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) && prepared.requestID != "" {
+		if errors.Is(err, sql.ErrNoRows) && prepared.requestID != "" && log.APIKeyID > 0 {
 			selectQuery := "SELECT id, created_at FROM usage_logs WHERE request_id = $1 AND api_key_id = $2"
 			if err := scanSingleRow(ctx, sqlq, selectQuery, []any{prepared.requestID, log.APIKeyID}, &log.ID, &log.CreatedAt); err != nil {
 				return false, err
@@ -1363,6 +1363,10 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 	upstreamModel := nullString(log.UpstreamModel)
 	upstreamResponseModel := nullString(log.UpstreamResponseModel)
 	upstreamModelMismatch := nullBool(log.UpstreamModelMismatch)
+	var apiKeyID any
+	if log.APIKeyID > 0 {
+		apiKeyID = log.APIKeyID
+	}
 
 	var requestIDArg any
 	if requestID != "" {
@@ -1376,7 +1380,7 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 		requestType:    requestType,
 		args: []any{
 			log.UserID,
-			log.APIKeyID,
+			apiKeyID,
 			log.AccountID,
 			requestIDArg,
 			log.Model,
@@ -4370,7 +4374,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 	var (
 		id                    int64
 		userID                int64
-		apiKeyID              int64
+		apiKeyID              sql.NullInt64
 		accountID             int64
 		requestID             sql.NullString
 		model                 string
@@ -4488,7 +4492,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 	log := &service.UsageLog{
 		ID:                    id,
 		UserID:                userID,
-		APIKeyID:              apiKeyID,
+		APIKeyID:              apiKeyID.Int64,
 		AccountID:             accountID,
 		Model:                 model,
 		RequestedModel:        coalesceTrimmedString(requestedModel, model),

@@ -2,6 +2,19 @@
   <div class="space-y-6">
     <div class="card">
       <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t("admin.settings.features.adminSidebar.title") }}</h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.features.adminSidebar.description") }}</p>
+      </div>
+      <div class="divide-y divide-gray-100 px-6 dark:divide-dark-700">
+        <div v-for="item in adminSidebarItems" :key="item.key" class="flex items-center justify-between gap-4 py-4">
+          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ item.label }}</span>
+          <Toggle v-model="form[item.key]" :data-test="item.key" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
           {{ t("admin.settings.features.channelMonitor.title") }}
         </h2>
@@ -686,6 +699,11 @@ type FeaturesSettingsForm = {
   channel_monitor_default_interval_seconds: number;
   channel_monitor_hide_throughput: boolean;
   available_channels_enabled: boolean;
+  admin_sidebar_subscriptions_enabled: boolean;
+  admin_sidebar_promo_codes_enabled: boolean;
+  admin_sidebar_redeem_enabled: boolean;
+  admin_sidebar_announcements_enabled: boolean;
+  admin_sidebar_model_probes_enabled: boolean;
   model_plaza_enabled: boolean;
   model_plaza_require_auth: boolean;
   model_plaza_description: string;
@@ -749,6 +767,14 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
+const form = props.form;
+const adminSidebarItems = computed(() => [
+  { key: "admin_sidebar_subscriptions_enabled" as const, label: t("nav.subscriptions") },
+  { key: "admin_sidebar_promo_codes_enabled" as const, label: t("nav.promoCodes") },
+  { key: "admin_sidebar_redeem_enabled" as const, label: t("nav.redeemCodes") },
+  { key: "admin_sidebar_announcements_enabled" as const, label: t("nav.announcements") },
+  { key: "admin_sidebar_model_probes_enabled" as const, label: t("nav.accountModelProbes") },
+]);
 const affiliateModalCanSubmitValue = computed(() =>
   unref(props.affiliateModalCanSubmit),
 );

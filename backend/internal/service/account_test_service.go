@@ -69,10 +69,12 @@ const (
 )
 
 const (
-	accountTestStartedAtContextKey  = "account_test_started_at"
-	accountTestLatencyMsContextKey  = "account_test_latency_ms"
-	accountTestFirstTokenContextKey = "account_test_first_token_ms"
-	accountTestErrorContextKey      = "account_test_error"
+	accountTestStartedAtContextKey    = "account_test_started_at"
+	accountTestLatencyMsContextKey    = "account_test_latency_ms"
+	accountTestFirstTokenContextKey   = "account_test_first_token_ms"
+	accountTestErrorContextKey        = "account_test_error"
+	accountTestInputTokensContextKey  = "account_test_input_tokens"
+	accountTestOutputTokensContextKey = "account_test_output_tokens"
 )
 
 // AccountTestConnectionResult 是人工测试连接返回给 handler 的结构化结果。
@@ -86,6 +88,10 @@ type AccountTestConnectionResult struct {
 	FirstTokenMs *int
 	StartedAt    time.Time
 	FinishedAt   time.Time
+	Model        string
+	InputTokens  int
+	OutputTokens int
+	Stream       bool
 }
 
 // isOpenAIImageModel checks if the model is an OpenAI image generation model (e.g. gpt-image-2).
@@ -421,6 +427,8 @@ func (s *AccountTestService) TestAccountConnectionWithResult(c *gin.Context, acc
 	if recorded, ok := accountTestContextInt(c, accountTestFirstTokenContextKey); ok {
 		firstTokenMs = &recorded
 	}
+	inputTokens, _ := accountTestContextInt(c, accountTestInputTokensContextKey)
+	outputTokens, _ := accountTestContextInt(c, accountTestOutputTokensContextKey)
 	errorMessage := ""
 	if recorded, ok := accountTestContextString(c, accountTestErrorContextKey); ok {
 		errorMessage = recorded
@@ -437,6 +445,10 @@ func (s *AccountTestService) TestAccountConnectionWithResult(c *gin.Context, acc
 		FirstTokenMs: firstTokenMs,
 		StartedAt:    startedAt,
 		FinishedAt:   finishedAt,
+		Model:        strings.TrimSpace(modelID),
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		Stream:       true,
 	}
 	result.Reason = accountTestOutcomeReason(result)
 	return result, err
@@ -1856,6 +1868,16 @@ func (s *AccountTestService) processOpenAIStreamWithStart(c *gin.Context, body i
 
 		switch eventType {
 		case "response.completed", "response.done":
+			if responseData, ok := data["response"].(map[string]any); ok {
+				if usageData, ok := responseData["usage"].(map[string]any); ok {
+					if value, ok := usageData["input_tokens"].(float64); ok {
+						c.Set(accountTestInputTokensContextKey, int(value))
+					}
+					if value, ok := usageData["output_tokens"].(float64); ok {
+						c.Set(accountTestOutputTokensContextKey, int(value))
+					}
+				}
+			}
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
 		case "response.failed":

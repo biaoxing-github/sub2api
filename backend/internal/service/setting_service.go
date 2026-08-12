@@ -761,6 +761,11 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyChannelMonitorDefaultIntervalSeconds,
 		SettingKeyChannelMonitorHideThroughput,
 		SettingKeyAvailableChannelsEnabled,
+		SettingKeyAdminSidebarSubscriptionsEnabled,
+		SettingKeyAdminSidebarPromoCodesEnabled,
+		SettingKeyAdminSidebarRedeemEnabled,
+		SettingKeyAdminSidebarAnnouncementsEnabled,
+		SettingKeyAdminSidebarModelProbesEnabled,
 		SettingKeyModelPlazaEnabled,
 		SettingKeyModelPlazaRequireAuth,
 		SettingKeyAffiliateEnabled,
@@ -875,9 +880,14 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		ChannelMonitorDefaultIntervalSeconds: parseChannelMonitorInterval(settings[SettingKeyChannelMonitorDefaultIntervalSeconds]),
 		ChannelMonitorHideThroughput:         !isFalseSettingValue(settings[SettingKeyChannelMonitorHideThroughput]),
 
-		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
-		ModelPlazaEnabled:        settings[SettingKeyModelPlazaEnabled] == "true",
-		ModelPlazaRequireAuth:    settings[SettingKeyModelPlazaRequireAuth] == "true",
+		AvailableChannelsEnabled:         settings[SettingKeyAvailableChannelsEnabled] == "true",
+		AdminSidebarSubscriptionsEnabled: settings[SettingKeyAdminSidebarSubscriptionsEnabled] == "true",
+		AdminSidebarPromoCodesEnabled:    settings[SettingKeyAdminSidebarPromoCodesEnabled] == "true",
+		AdminSidebarRedeemEnabled:        settings[SettingKeyAdminSidebarRedeemEnabled] == "true",
+		AdminSidebarAnnouncementsEnabled: settings[SettingKeyAdminSidebarAnnouncementsEnabled] == "true",
+		AdminSidebarModelProbesEnabled:   settings[SettingKeyAdminSidebarModelProbesEnabled] == "true",
+		ModelPlazaEnabled:                settings[SettingKeyModelPlazaEnabled] == "true",
+		ModelPlazaRequireAuth:            settings[SettingKeyModelPlazaRequireAuth] == "true",
 
 		AffiliateEnabled: settings[SettingKeyAffiliateEnabled] == "true",
 
@@ -1297,6 +1307,11 @@ type PublicSettingsInjectionPayload struct {
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
 	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
 	AvailableChannelsEnabled             bool   `json:"available_channels_enabled"`
+	AdminSidebarSubscriptionsEnabled     bool   `json:"admin_sidebar_subscriptions_enabled"`
+	AdminSidebarPromoCodesEnabled        bool   `json:"admin_sidebar_promo_codes_enabled"`
+	AdminSidebarRedeemEnabled            bool   `json:"admin_sidebar_redeem_enabled"`
+	AdminSidebarAnnouncementsEnabled     bool   `json:"admin_sidebar_announcements_enabled"`
+	AdminSidebarModelProbesEnabled       bool   `json:"admin_sidebar_model_probes_enabled"`
 	ModelPlazaEnabled                    bool   `json:"model_plaza_enabled"`
 	ModelPlazaRequireAuth                bool   `json:"model_plaza_require_auth"`
 	AffiliateEnabled                     bool   `json:"affiliate_enabled"`
@@ -1364,6 +1379,11 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 		ChannelMonitorHideThroughput:         settings.ChannelMonitorHideThroughput,
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
+		AdminSidebarSubscriptionsEnabled:     settings.AdminSidebarSubscriptionsEnabled,
+		AdminSidebarPromoCodesEnabled:        settings.AdminSidebarPromoCodesEnabled,
+		AdminSidebarRedeemEnabled:            settings.AdminSidebarRedeemEnabled,
+		AdminSidebarAnnouncementsEnabled:     settings.AdminSidebarAnnouncementsEnabled,
+		AdminSidebarModelProbesEnabled:       settings.AdminSidebarModelProbesEnabled,
 		ModelPlazaEnabled:                    settings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:                settings.ModelPlazaRequireAuth,
 		AffiliateEnabled:                     settings.AffiliateEnabled,
@@ -2045,6 +2065,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
+	updates[SettingKeyAdminSidebarSubscriptionsEnabled] = strconv.FormatBool(settings.AdminSidebarSubscriptionsEnabled)
+	updates[SettingKeyAdminSidebarPromoCodesEnabled] = strconv.FormatBool(settings.AdminSidebarPromoCodesEnabled)
+	updates[SettingKeyAdminSidebarRedeemEnabled] = strconv.FormatBool(settings.AdminSidebarRedeemEnabled)
+	updates[SettingKeyAdminSidebarAnnouncementsEnabled] = strconv.FormatBool(settings.AdminSidebarAnnouncementsEnabled)
+	updates[SettingKeyAdminSidebarModelProbesEnabled] = strconv.FormatBool(settings.AdminSidebarModelProbesEnabled)
 
 	// 模型广场功能开关与页面说明。
 	updates[SettingKeyModelPlazaEnabled] = strconv.FormatBool(settings.ModelPlazaEnabled)
@@ -3294,7 +3319,12 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyChannelMonitorHideThroughput:         "true",
 
 		// Available channels feature (default disabled; opt-in)
-		SettingKeyAvailableChannelsEnabled: "false",
+		SettingKeyAvailableChannelsEnabled:         "false",
+		SettingKeyAdminSidebarSubscriptionsEnabled: "false",
+		SettingKeyAdminSidebarPromoCodesEnabled:    "false",
+		SettingKeyAdminSidebarRedeemEnabled:        "false",
+		SettingKeyAdminSidebarAnnouncementsEnabled: "false",
+		SettingKeyAdminSidebarModelProbesEnabled:   "false",
 
 		// 模型广场默认关闭，开启后默认允许匿名访问。
 		SettingKeyModelPlazaEnabled:     "false",
@@ -3871,6 +3901,11 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
+	result.AdminSidebarSubscriptionsEnabled = settings[SettingKeyAdminSidebarSubscriptionsEnabled] == "true"
+	result.AdminSidebarPromoCodesEnabled = settings[SettingKeyAdminSidebarPromoCodesEnabled] == "true"
+	result.AdminSidebarRedeemEnabled = settings[SettingKeyAdminSidebarRedeemEnabled] == "true"
+	result.AdminSidebarAnnouncementsEnabled = settings[SettingKeyAdminSidebarAnnouncementsEnabled] == "true"
+	result.AdminSidebarModelProbesEnabled = settings[SettingKeyAdminSidebarModelProbesEnabled] == "true"
 
 	// 模型广场功能配置（默认关闭）。
 	result.ModelPlazaEnabled = settings[SettingKeyModelPlazaEnabled] == "true"

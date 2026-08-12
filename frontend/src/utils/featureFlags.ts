@@ -104,6 +104,11 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Available Channels',
   }),
+  adminSidebarSubscriptions: defineFlag({ key: 'admin_sidebar_subscriptions_enabled', mode: 'opt-in', label: 'Admin Subscriptions' }),
+  adminSidebarPromoCodes: defineFlag({ key: 'admin_sidebar_promo_codes_enabled', mode: 'opt-in', label: 'Admin Promo Codes' }),
+  adminSidebarRedeem: defineFlag({ key: 'admin_sidebar_redeem_enabled', mode: 'opt-in', label: 'Admin Redeem Codes' }),
+  adminSidebarAnnouncements: defineFlag({ key: 'admin_sidebar_announcements_enabled', mode: 'opt-in', label: 'Admin Announcements' }),
+  adminSidebarModelProbes: defineFlag({ key: 'admin_sidebar_model_probes_enabled', mode: 'opt-in', label: 'Admin Model Probes' }),
   modelPlaza: defineFlag({
     key: 'model_plaza_enabled',
     mode: 'opt-in',

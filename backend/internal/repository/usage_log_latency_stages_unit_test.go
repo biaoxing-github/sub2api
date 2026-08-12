@@ -45,3 +45,10 @@ func TestUsageLatencyStagesJSONRoundTrip(t *testing.T) {
 	require.Equal(t, int64(1200), *stages.UpstreamMs)
 	require.Nil(t, stages.RoutingMs)
 }
+
+func TestPrepareUsageLogInsertUsesNullAPIKeyForAdminProbe(t *testing.T) {
+	log := newSessionIDUsageLog(nil)
+	log.APIKeyID = 0
+	prepared := prepareUsageLogInsert(log)
+	require.Nil(t, prepared.args[1])
+}

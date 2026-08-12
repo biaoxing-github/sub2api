@@ -363,7 +363,12 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 		ChannelMonitorHideThroughput:         settings.ChannelMonitorHideThroughput,
 
-		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
+		AvailableChannelsEnabled:         settings.AvailableChannelsEnabled,
+		AdminSidebarSubscriptionsEnabled: settings.AdminSidebarSubscriptionsEnabled,
+		AdminSidebarPromoCodesEnabled:    settings.AdminSidebarPromoCodesEnabled,
+		AdminSidebarRedeemEnabled:        settings.AdminSidebarRedeemEnabled,
+		AdminSidebarAnnouncementsEnabled: settings.AdminSidebarAnnouncementsEnabled,
+		AdminSidebarModelProbesEnabled:   settings.AdminSidebarModelProbesEnabled,
 
 		ModelPlazaEnabled:     settings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth: settings.ModelPlazaRequireAuth,
@@ -765,7 +770,12 @@ type UpdateSettingsRequest struct {
 	ChannelMonitorHideThroughput         *bool   `json:"channel_monitor_hide_throughput"`
 
 	// Available Channels feature switch (user-facing)
-	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
+	AvailableChannelsEnabled         *bool `json:"available_channels_enabled"`
+	AdminSidebarSubscriptionsEnabled *bool `json:"admin_sidebar_subscriptions_enabled"`
+	AdminSidebarPromoCodesEnabled    *bool `json:"admin_sidebar_promo_codes_enabled"`
+	AdminSidebarRedeemEnabled        *bool `json:"admin_sidebar_redeem_enabled"`
+	AdminSidebarAnnouncementsEnabled *bool `json:"admin_sidebar_announcements_enabled"`
+	AdminSidebarModelProbesEnabled   *bool `json:"admin_sidebar_model_probes_enabled"`
 
 	// 模型广场功能开关与页面说明。
 	ModelPlazaEnabled     *bool   `json:"model_plaza_enabled"`
@@ -780,6 +790,14 @@ type UpdateSettingsRequest struct {
 
 	// OpenAI fast/flex policy (optional, only updated when provided)
 	OpenAIFastPolicySettings *dto.OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
+}
+
+// mergeOptionalBool 合并可选布尔设置，未提交字段时保留原值。
+func mergeOptionalBool(value *bool, previous bool) bool {
+	if value == nil {
+		return previous
+	}
+	return *value
 }
 
 // settingKeyJSONAliases 记录请求字段名与持久化 setting key 不一致的别名。
@@ -2087,6 +2105,11 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AvailableChannelsEnabled
 		}(),
+		AdminSidebarSubscriptionsEnabled: mergeOptionalBool(req.AdminSidebarSubscriptionsEnabled, previousSettings.AdminSidebarSubscriptionsEnabled),
+		AdminSidebarPromoCodesEnabled:    mergeOptionalBool(req.AdminSidebarPromoCodesEnabled, previousSettings.AdminSidebarPromoCodesEnabled),
+		AdminSidebarRedeemEnabled:        mergeOptionalBool(req.AdminSidebarRedeemEnabled, previousSettings.AdminSidebarRedeemEnabled),
+		AdminSidebarAnnouncementsEnabled: mergeOptionalBool(req.AdminSidebarAnnouncementsEnabled, previousSettings.AdminSidebarAnnouncementsEnabled),
+		AdminSidebarModelProbesEnabled:   mergeOptionalBool(req.AdminSidebarModelProbesEnabled, previousSettings.AdminSidebarModelProbesEnabled),
 		ModelPlazaEnabled: func() bool {
 			if req.ModelPlazaEnabled != nil {
 				return *req.ModelPlazaEnabled
@@ -2480,10 +2503,15 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ChannelMonitorDefaultIntervalSeconds: updatedSettings.ChannelMonitorDefaultIntervalSeconds,
 		ChannelMonitorHideThroughput:         updatedSettings.ChannelMonitorHideThroughput,
 
-		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
-		ModelPlazaEnabled:        updatedSettings.ModelPlazaEnabled,
-		ModelPlazaRequireAuth:    updatedSettings.ModelPlazaRequireAuth,
-		ModelPlazaDescription:    updatedSettings.ModelPlazaDescription,
+		AvailableChannelsEnabled:         updatedSettings.AvailableChannelsEnabled,
+		AdminSidebarSubscriptionsEnabled: updatedSettings.AdminSidebarSubscriptionsEnabled,
+		AdminSidebarPromoCodesEnabled:    updatedSettings.AdminSidebarPromoCodesEnabled,
+		AdminSidebarRedeemEnabled:        updatedSettings.AdminSidebarRedeemEnabled,
+		AdminSidebarAnnouncementsEnabled: updatedSettings.AdminSidebarAnnouncementsEnabled,
+		AdminSidebarModelProbesEnabled:   updatedSettings.AdminSidebarModelProbesEnabled,
+		ModelPlazaEnabled:                updatedSettings.ModelPlazaEnabled,
+		ModelPlazaRequireAuth:            updatedSettings.ModelPlazaRequireAuth,
+		ModelPlazaDescription:            updatedSettings.ModelPlazaDescription,
 
 		AffiliateEnabled: updatedSettings.AffiliateEnabled,
 
@@ -2991,6 +3019,21 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.AvailableChannelsEnabled != after.AvailableChannelsEnabled {
 		changed = append(changed, "available_channels_enabled")
+	}
+	if before.AdminSidebarSubscriptionsEnabled != after.AdminSidebarSubscriptionsEnabled {
+		changed = append(changed, "admin_sidebar_subscriptions_enabled")
+	}
+	if before.AdminSidebarPromoCodesEnabled != after.AdminSidebarPromoCodesEnabled {
+		changed = append(changed, "admin_sidebar_promo_codes_enabled")
+	}
+	if before.AdminSidebarRedeemEnabled != after.AdminSidebarRedeemEnabled {
+		changed = append(changed, "admin_sidebar_redeem_enabled")
+	}
+	if before.AdminSidebarAnnouncementsEnabled != after.AdminSidebarAnnouncementsEnabled {
+		changed = append(changed, "admin_sidebar_announcements_enabled")
+	}
+	if before.AdminSidebarModelProbesEnabled != after.AdminSidebarModelProbesEnabled {
+		changed = append(changed, "admin_sidebar_model_probes_enabled")
 	}
 	if before.ModelPlazaEnabled != after.ModelPlazaEnabled {
 		changed = append(changed, "model_plaza_enabled")

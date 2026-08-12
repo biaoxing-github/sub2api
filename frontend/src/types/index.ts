@@ -456,6 +456,11 @@ export interface PublicSettings {
   /** When true, user monitor hides RPM/TPM so scale cannot be reverse-estimated. */
   channel_monitor_hide_throughput?: boolean
   available_channels_enabled: boolean
+  admin_sidebar_subscriptions_enabled: boolean
+  admin_sidebar_promo_codes_enabled: boolean
+  admin_sidebar_redeem_enabled: boolean
+  admin_sidebar_announcements_enabled: boolean
+  admin_sidebar_model_probes_enabled: boolean
   model_plaza_enabled: boolean
   model_plaza_require_auth: boolean
   affiliate_enabled: boolean
