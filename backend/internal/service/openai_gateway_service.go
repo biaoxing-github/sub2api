@@ -6528,11 +6528,11 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	}
 	if !usageParsed {
 		// 兜底：尝试从 SSE 文本中解析 usage
+		usage = s.parseSSEUsageFromBody(string(body))
+	}
 	imageCount := countOpenAIResponseImageOutputsFromJSONBytes(body)
 	if usage.InputTokens == 0 && usage.OutputTokens == 0 && imageCount == 0 {
 		return &openaiNonStreamingResultPassthrough{OpenAIUsage: usage, usage: usage, usageObserved: usageParsed}, openAIEmptyResponseFailoverError()
-	}
-		usage = s.parseSSEUsageFromBody(string(body))
 	}
 
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -7530,6 +7530,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if !clientDisconnected {
 				_ = flushPendingClientLines()
 			}
+			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
+		}
 		if (usage == nil || (usage.InputTokens == 0 && usage.OutputTokens == 0)) && imageCounter.Count() == 0 {
 			failoverErr := openAIEmptyResponseFailoverError()
 			if !clientOutputStarted {
@@ -7539,8 +7541,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				_ = writeOpenAIResponsesGatewayRetryableFailedSSE(bufferedWriter, flushBuffered, responseID, originalModel)
 			}
 			return resultWithUsage(), fmt.Errorf("upstream response failed: empty response")
-		}
-			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", failedMessage)
 		}
 		if !clientDisconnected {
 			_ = flushPendingClientLines()
@@ -8403,12 +8403,12 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 			return s.handleSSEToJSON(resp, c, body, account.Platform, originalModel, mappedModel)
 		}
 		return nil, s.newOpenAI2xxProtocolFailoverError(c, account, resp, body, "OpenAI upstream returned non-JSON 2xx response body")
+	}
+	usage := &usageValue
 	imageCount := countOpenAIResponseImageOutputsFromJSONBytes(body)
 	if usage.InputTokens == 0 && usage.OutputTokens == 0 && imageCount == 0 {
 		return &openaiNonStreamingResult{OpenAIUsage: usage, usage: usage, usageObserved: true}, openAIEmptyResponseFailoverError()
 	}
-	}
-	usage := &usageValue
 
 	// Replace model in response if needed
 	if originalModel != mappedModel {
