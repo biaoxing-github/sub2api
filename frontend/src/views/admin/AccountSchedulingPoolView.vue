@@ -514,6 +514,7 @@ async function manualProbe(item: OpenAIAccountSchedulingPoolItem) {
     if (result.success && probeResult?.success) {
       nextMessage = t('admin.accountSchedulingPool.probeSuccess', {
         name: item.account.name,
+        firstToken: probeResult.first_token_ms ?? '-',
         latency: probeResult.latency_ms
       })
     } else {

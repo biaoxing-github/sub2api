@@ -159,8 +159,10 @@ type UsageLog struct {
 	OpenAIWSMode bool
 	DurationMs   *int
 	FirstTokenMs *int
-	UserAgent    *string
-	IPAddress    *string
+	// LatencyStages 记录认证、路由、上游和本地响应处理阶段耗时，单位毫秒。
+	LatencyStages *UsageLatencyStages
+	UserAgent     *string
+	IPAddress     *string
 	// SessionID 仅记录客户端显式提供的会话标识，不从请求内容或 prompt_cache_key 推导。
 	SessionID *string
 
@@ -183,6 +185,15 @@ type UsageLog struct {
 	Account      *Account
 	Group        *Group
 	Subscription *UserSubscription
+}
+
+// UsageLatencyStages 是一次 Responses 转发请求的可观测阶段快照。
+// 各阶段来自不同计时边界，可能存在重叠，因此不保证相加等于总耗时。
+type UsageLatencyStages struct {
+	AuthMs     *int64 `json:"auth_ms,omitempty"`
+	RoutingMs  *int64 `json:"routing_ms,omitempty"`
+	UpstreamMs *int64 `json:"upstream_ms,omitempty"`
+	ResponseMs *int64 `json:"response_ms,omitempty"`
 }
 
 func (u *UsageLog) TotalTokens() int {

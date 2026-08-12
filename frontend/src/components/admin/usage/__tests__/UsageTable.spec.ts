@@ -47,6 +47,15 @@ const messages: Record<string, string> = {
   'usage.upstreamResponseModel': 'Upstream response',
   'usage.modelVariant': 'Possible version variant',
   'usage.modelMismatch': 'Different model',
+  'usage.latencyFirstToken': 'First',
+  'usage.latencyDuration': 'Total',
+  'usage.latencyStages': 'Forwarding chain',
+  'usage.latencyStageAuth': 'Auth',
+  'usage.latencyStageRouting': 'Routing',
+  'usage.latencyStageUpstream': 'Upstream',
+  'usage.latencyStageResponse': 'Response handling',
+  'usage.latencyStagesMissing': 'Stage timings not collected',
+  'usage.latencyStagesHint': 'Stages may overlap.',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -68,6 +77,7 @@ const DataTableStub = {
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
+        <slot name="cell-latency" :row="row" />
       </div>
     </div>
   `,
@@ -114,6 +124,53 @@ describe('admin UsageTable tooltip', () => {
       height: 20,
       toJSON: () => ({}),
     } as DOMRect)
+  })
+
+  it('shows forwarding latency stages and keeps historical rows explicit', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          {
+            request_id: 'req-latency-stages',
+            duration_ms: 5736,
+            first_token_ms: 5514,
+            latency_stages: {
+              auth_ms: 12,
+              routing_ms: 18,
+              upstream_ms: 5502,
+              response_ms: 204,
+            },
+          },
+          {
+            request_id: 'req-latency-historical',
+            duration_ms: 7000,
+            first_token_ms: 6900,
+            latency_stages: null,
+          },
+        ],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('Auth')
+    expect(text).toContain('12ms')
+    expect(text).toContain('Routing')
+    expect(text).toContain('18ms')
+    expect(text).toContain('Upstream')
+    expect(text).toContain('5.50s')
+    expect(text).toContain('Response handling')
+    expect(text).toContain('204ms')
+    expect(text).toContain('Stage timings not collected')
   })
 
   it('shows service tier and billing breakdown in cost tooltip', async () => {

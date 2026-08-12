@@ -793,6 +793,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		OpenAIWSMode:          openAIWSMode,
 		DurationMs:            l.DurationMs,
 		FirstTokenMs:          l.FirstTokenMs,
+		LatencyStages:         usageLatencyStagesFromService(l.LatencyStages),
 		ImageCount:            l.ImageCount,
 		ImageSize:             l.ImageSize,
 		ImageInputSize:        l.ImageInputSize,
@@ -809,6 +810,19 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		APIKey:                APIKeyFromService(l.APIKey),
 		Group:                 GroupFromServiceShallow(l.Group),
 		Subscription:          UserSubscriptionFromService(l.Subscription),
+	}
+}
+
+// usageLatencyStagesFromService 显式映射 service 快照，避免 DTO 与业务对象共享可变指针。
+func usageLatencyStagesFromService(stages *service.UsageLatencyStages) *UsageLatencyStages {
+	if stages == nil {
+		return nil
+	}
+	return &UsageLatencyStages{
+		AuthMs:     stages.AuthMs,
+		RoutingMs:  stages.RoutingMs,
+		UpstreamMs: stages.UpstreamMs,
+		ResponseMs: stages.ResponseMs,
 	}
 }
 

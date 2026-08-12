@@ -29,7 +29,7 @@ func newSessionIDUsageLog(sessionID *string) *service.UsageLog {
 }
 
 func TestPrepareUsageLogInsertSessionIDArgWiring(t *testing.T) {
-	require.Len(t, usageLogInsertArgTypes, 53)
+	require.Len(t, usageLogInsertArgTypes, 54)
 	sessionID := "session-persisted-123"
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(&sessionID))
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))

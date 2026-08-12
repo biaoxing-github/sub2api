@@ -196,12 +196,35 @@
                 : LATENCY_BAR_CLASSES[durationSeverity(row.duration_ms ?? 0)]"
               aria-hidden="true"
             ></span>
-            <div class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
+            <div class="min-w-[176px] text-xs">
+              <div class="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5">
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyFirstToken') }}</span>
               <span v-if="row.first_token_ms != null" class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(row.first_token_ms)]">{{ formatDuration(row.first_token_ms) }}</span>
               <span v-else class="text-gray-400 dark:text-gray-500">-</span>
               <span class="text-gray-400 dark:text-gray-500">{{ t('usage.latencyDuration') }}</span>
               <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
+              </div>
+              <div v-if="hasLatencyStages(row)" class="mt-1.5" :title="latencyStagesTitle(row)">
+                <div class="mb-1 flex h-1.5 w-44 overflow-hidden rounded-sm bg-gray-100 dark:bg-gray-700" aria-hidden="true">
+                  <span
+                    v-for="stage in latencyStageItems(row)"
+                    :key="stage.key"
+                    class="h-full min-w-px"
+                    :class="stage.className"
+                    :style="{ width: stage.width + '%' }"
+                  ></span>
+                </div>
+                <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] leading-4 text-gray-500 dark:text-gray-400">
+                  <span v-for="stage in latencyStageItems(row)" :key="stage.key" class="flex min-w-0 items-center gap-1">
+                    <i class="h-1.5 w-1.5 shrink-0 rounded-sm" :class="stage.className"></i>
+                    <span class="truncate">{{ stage.label }}</span>
+                    <span class="ml-auto tabular-nums text-gray-700 dark:text-gray-300">{{ formatDuration(stage.value) }}</span>
+                  </span>
+                </div>
+              </div>
+              <div v-else class="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                {{ t('usage.latencyStagesMissing') }}
+              </div>
             </div>
           </div>
         </template>
@@ -557,6 +580,35 @@ const formatDuration = (ms: number | null | undefined): string => {
   if (totalSeconds < 3600) return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`
   return `${Math.floor(totalSeconds / 3600)}h ${Math.floor((totalSeconds % 3600) / 60)}m`
 }
+
+const latencyStageDefinitions = [
+  { key: 'auth_ms', labelKey: 'usage.latencyStageAuth', className: 'bg-cyan-500' },
+  { key: 'routing_ms', labelKey: 'usage.latencyStageRouting', className: 'bg-amber-500' },
+  { key: 'upstream_ms', labelKey: 'usage.latencyStageUpstream', className: 'bg-blue-500' },
+  { key: 'response_ms', labelKey: 'usage.latencyStageResponse', className: 'bg-emerald-500' },
+] as const
+
+// latencyStageItems 将已采集阶段映射为固定尺寸时间条，宽度按当前记录的阶段值归一化。
+const latencyStageItems = (row: AdminUsageLog) => {
+  const items = latencyStageDefinitions.flatMap((definition) => {
+    const value = row.latency_stages?.[definition.key]
+    if (value == null || value < 0) return []
+    return [{ ...definition, label: t(definition.labelKey), value }]
+  })
+  const total = items.reduce((sum, item) => sum + item.value, 0)
+  return items.map((item) => ({
+    ...item,
+    width: total > 0 ? (item.value / total) * 100 : 100 / Math.max(items.length, 1),
+  }))
+}
+
+const hasLatencyStages = (row: AdminUsageLog): boolean => latencyStageItems(row).length > 0
+
+const latencyStagesTitle = (row: AdminUsageLog): string => [
+  t('usage.latencyStages'),
+  ...latencyStageItems(row).map((stage) => `${stage.label}: ${formatDuration(stage.value)}`),
+  t('usage.latencyStagesHint'),
+].join('\n')
 
 // Cost tooltip functions
 const showTooltip = (event: MouseEvent, row: AdminUsageLog) => {

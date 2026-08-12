@@ -9334,6 +9334,7 @@ type OpenAIRecordUsageInput struct {
 	UpstreamEndpoint   string
 	UserAgent          string // 请求的 User-Agent
 	IPAddress          string // 请求的客户端 IP 地址
+	LatencyStages      *UsageLatencyStages
 	SessionID          string // 客户端显式会话标识，仅用于用量行关联
 	RequestPayloadHash string
 	APIKeyService      APIKeyQuotaUpdater
@@ -9479,6 +9480,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		ImageSize:             optionalTrimmedStringPtr(result.ImageSize),
 		ImageInputSize:        optionalTrimmedStringPtr(result.ImageInputSize),
 		ImageOutputSize:       optionalTrimmedStringPtr(result.ImageOutputSize),
+		LatencyStages:         input.LatencyStages,
 		ImageSizeSource:       optionalTrimmedStringPtr(result.ImageSizeSource),
 		ImageSizeBreakdown:    result.ImageSizeBreakdown,
 	}

@@ -29,7 +29,7 @@ import (
 	gocache "github.com/patrickmn/go-cache"
 )
 
-const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, upstream_response_model, upstream_model_mismatch, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, session_id, created_at"
+const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, upstream_response_model, upstream_model_mismatch, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, service_tier, reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, latency_stages, session_id, created_at"
 
 // usageLogInsertArgTypes must stay in the same order as:
 //  1. prepareUsageLogInsert().args
@@ -90,6 +90,7 @@ var usageLogInsertArgTypes = [...]string{
 	"text",        // billing_tier
 	"text",        // billing_mode
 	"numeric",     // account_stats_cost
+	"jsonb",       // latency_stages
 	"text",        // session_id
 	"timestamptz", // created_at
 }
@@ -420,6 +421,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			billing_tier,
 			billing_mode,
 			account_stats_cost,
+			latency_stages,
 			session_id,
 			created_at
 		) VALUES (
@@ -428,7 +430,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			$12, $13, $14, $15,
 			$16, $17, $18, $19,
 			$20, $21, $22, $23, $24, $25,
-			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53
+			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING id, created_at
@@ -865,11 +867,12 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			billing_tier,
 			billing_mode,
 			account_stats_cost,
+			latency_stages,
 			session_id,
 			created_at
 		) AS (VALUES `)
 
-	args := make([]any, 0, len(keys)*54)
+	args := make([]any, 0, len(keys)*55)
 	argPos := 1
 	for idx, key := range keys {
 		if idx > 0 {
@@ -949,6 +952,7 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				billing_tier,
 				billing_mode,
 				account_stats_cost,
+				latency_stages,
 				session_id,
 				created_at
 			)
@@ -1004,6 +1008,7 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				billing_tier,
 				billing_mode,
 				account_stats_cost,
+				latency_stages,
 				session_id,
 				created_at
 			FROM input
@@ -1099,11 +1104,12 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			billing_tier,
 			billing_mode,
 			account_stats_cost,
+			latency_stages,
 			session_id,
 			created_at
 		) AS (VALUES `)
 
-	args := make([]any, 0, len(preparedList)*53)
+	args := make([]any, 0, len(preparedList)*54)
 	argPos := 1
 	for idx, prepared := range preparedList {
 		if idx > 0 {
@@ -1180,6 +1186,7 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			billing_tier,
 			billing_mode,
 			account_stats_cost,
+			latency_stages,
 			session_id,
 			created_at
 		)
@@ -1235,6 +1242,7 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			billing_tier,
 			billing_mode,
 			account_stats_cost,
+			latency_stages,
 			session_id,
 			created_at
 		FROM input
@@ -1298,6 +1306,7 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			billing_tier,
 			billing_mode,
 			account_stats_cost,
+			latency_stages,
 			session_id,
 			created_at
 		) VALUES (
@@ -1306,7 +1315,7 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			$12, $13, $14, $15,
 			$16, $17, $18, $19,
 			$20, $21, $22, $23, $24, $25,
-			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53
+			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`, prepared.args...)
@@ -1345,6 +1354,7 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 	modelMappingChain := nullString(log.ModelMappingChain)
 	billingTier := nullString(log.BillingTier)
 	billingMode := nullString(log.BillingMode)
+	latencyStages := nullUsageLatencyStagesJSON(log.LatencyStages)
 	sessionID := nullString(log.SessionID)
 	requestedModel := strings.TrimSpace(log.RequestedModel)
 	if requestedModel == "" {
@@ -1416,6 +1426,7 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 			billingTier,
 			billingMode,
 			log.AccountStatsCost, // account_stats_cost
+			latencyStages,        // latency_stages
 			sessionID,            // session_id
 			createdAt,
 		},
@@ -4409,6 +4420,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		billingTier           sql.NullString
 		billingMode           sql.NullString
 		accountStatsCost      sql.NullFloat64
+		latencyStages         sql.NullString
 		sessionID             sql.NullString
 		createdAt             time.Time
 	)
@@ -4466,6 +4478,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		&billingTier,
 		&billingMode,
 		&accountStatsCost,
+		&latencyStages,
 		&sessionID,
 		&createdAt,
 	); err != nil {
@@ -4499,6 +4512,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		RequestType:           service.RequestTypeFromInt16(requestTypeRaw),
 		ImageCount:            imageCount,
 		CacheTTLOverridden:    cacheTTLOverridden,
+		LatencyStages:         usageLatencyStagesFromNullJSON(latencyStages),
 		CreatedAt:             createdAt,
 	}
 	// 先回填 legacy 字段，再基于 legacy + request_type 计算最终请求类型，保证历史数据兼容。
@@ -4745,6 +4759,33 @@ func nullStringIntMapJSON(v map[string]int) any {
 		return nil
 	}
 	return string(payload)
+}
+
+// nullUsageLatencyStagesJSON 将阶段耗时编码为可写入 jsonb 的参数。
+func nullUsageLatencyStagesJSON(v *service.UsageLatencyStages) any {
+	if v == nil {
+		return nil
+	}
+	payload, err := json.Marshal(v)
+	if err != nil || string(payload) == "{}" {
+		return nil
+	}
+	return string(payload)
+}
+
+// usageLatencyStagesFromNullJSON 将数据库 jsonb 还原为阶段耗时快照。
+func usageLatencyStagesFromNullJSON(v sql.NullString) *service.UsageLatencyStages {
+	if !v.Valid || strings.TrimSpace(v.String) == "" {
+		return nil
+	}
+	var stages service.UsageLatencyStages
+	if err := json.Unmarshal([]byte(v.String), &stages); err != nil {
+		return nil
+	}
+	if stages.AuthMs == nil && stages.RoutingMs == nil && stages.UpstreamMs == nil && stages.ResponseMs == nil {
+		return nil
+	}
+	return &stages
 }
 
 func stringIntMapFromNullJSON(v sql.NullString) map[string]int {

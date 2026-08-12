@@ -452,6 +452,32 @@ func TestOpenAIGatewayServiceRecordUsage_IncludesEndpointMetadata(t *testing.T) 
 	require.Equal(t, "/v1/responses", *usageRepo.lastLog.UpstreamEndpoint)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_PersistsLatencyStages(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	authMs := int64(12)
+	routingMs := int64(18)
+	upstreamMs := int64(5502)
+	responseMs := int64(204)
+	stages := &UsageLatencyStages{AuthMs: &authMs, RoutingMs: &routingMs, UpstreamMs: &upstreamMs, ResponseMs: &responseMs}
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			Model:     "gpt-5.6-terra",
+			RequestID: "req-latency-stages",
+			Usage:     OpenAIUsage{InputTokens: 10, OutputTokens: 5},
+		},
+		APIKey:        &APIKey{ID: 2, UserID: 1},
+		User:          &User{ID: 1},
+		Account:       &Account{ID: 501, Platform: PlatformOpenAI},
+		LatencyStages: stages,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Same(t, stages, usageRepo.lastLog.LatencyStages)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_FallsBackToGroupDefaultRateOnResolverError(t *testing.T) {
 	groupID := int64(12)
 	groupRate := 1.6

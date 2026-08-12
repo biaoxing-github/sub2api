@@ -70,6 +70,36 @@ func SetOpsLatencyMs(c *gin.Context, key string, value int64) {
 	c.Set(key, value)
 }
 
+// SnapshotOpsLatencyStages 在异步用量任务启动前复制当前请求的阶段耗时。
+func SnapshotOpsLatencyStages(c *gin.Context) *UsageLatencyStages {
+	if c == nil {
+		return nil
+	}
+	stages := &UsageLatencyStages{
+		AuthMs:     opsLatencyValue(c, OpsAuthLatencyMsKey),
+		RoutingMs:  opsLatencyValue(c, OpsRoutingLatencyMsKey),
+		UpstreamMs: opsLatencyValue(c, OpsUpstreamLatencyMsKey),
+		ResponseMs: opsLatencyValue(c, OpsResponseLatencyMsKey),
+	}
+	if stages.AuthMs == nil && stages.RoutingMs == nil && stages.UpstreamMs == nil && stages.ResponseMs == nil {
+		return nil
+	}
+	return stages
+}
+
+// opsLatencyValue 读取并复制单个非负阶段耗时。
+func opsLatencyValue(c *gin.Context, key string) *int64 {
+	value, exists := c.Get(key)
+	if !exists {
+		return nil
+	}
+	latency, ok := value.(int64)
+	if !ok || latency < 0 {
+		return nil
+	}
+	return &latency
+}
+
 func MarkOpsClientBusinessLimited(c *gin.Context, reason string) {
 	if c == nil {
 		return

@@ -547,6 +547,8 @@ type UsageLog struct {
 	OpenAIWSMode bool   `json:"openai_ws_mode"`
 	DurationMs   *int   `json:"duration_ms"`
 	FirstTokenMs *int   `json:"first_token_ms"`
+	// LatencyStages 是 Responses 转发链路的阶段耗时快照。
+	LatencyStages *UsageLatencyStages `json:"latency_stages,omitempty"`
 
 	// 图片生成字段
 	ImageCount         int            `json:"image_count"`
@@ -574,6 +576,14 @@ type UsageLog struct {
 	APIKey       *APIKey           `json:"api_key,omitempty"`
 	Group        *Group            `json:"group,omitempty"`
 	Subscription *UserSubscription `json:"subscription,omitempty"`
+}
+
+// UsageLatencyStages 是管理端可视化使用的转发阶段耗时，单位毫秒。
+type UsageLatencyStages struct {
+	AuthMs     *int64 `json:"auth_ms,omitempty"`
+	RoutingMs  *int64 `json:"routing_ms,omitempty"`
+	UpstreamMs *int64 `json:"upstream_ms,omitempty"`
+	ResponseMs *int64 `json:"response_ms,omitempty"`
 }
 
 // AdminUsageLog 是管理员接口使用的 usage log DTO（包含管理员字段）。

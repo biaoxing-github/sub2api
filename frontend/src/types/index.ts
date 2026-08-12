@@ -2183,6 +2183,8 @@ export interface UsageLog {
   openai_ws_mode?: boolean
   duration_ms: number
   first_token_ms: number | null
+  // Responses 转发链路的阶段耗时；历史记录可能未采集。
+  latency_stages?: UsageLatencyStages | null
 
   // 图片生成字段
   image_count: number
@@ -2209,6 +2211,13 @@ export interface UsageLog {
   api_key?: ApiKey
   group?: Group
   subscription?: UserSubscription
+}
+
+export interface UsageLatencyStages {
+  auth_ms?: number | null
+  routing_ms?: number | null
+  upstream_ms?: number | null
+  response_ms?: number | null
 }
 
 export interface UsageLogAccountSummary {

@@ -29,6 +29,26 @@ func TestUsageLogFromService_IncludesOpenAIWSMode(t *testing.T) {
 	require.False(t, UsageLogFromServiceAdmin(httpLog).OpenAIWSMode)
 }
 
+func TestUsageLogFromService_IncludesLatencyStages(t *testing.T) {
+	t.Parallel()
+	authMs := int64(12)
+	upstreamMs := int64(5502)
+	log := &service.UsageLog{
+		RequestID: "req_latency_stages",
+		Model:     "gpt-5.6-terra",
+		LatencyStages: &service.UsageLatencyStages{
+			AuthMs:     &authMs,
+			UpstreamMs: &upstreamMs,
+		},
+	}
+
+	userDTO := UsageLogFromService(log)
+	adminDTO := UsageLogFromServiceAdmin(log)
+	require.NotNil(t, userDTO.LatencyStages)
+	require.Equal(t, authMs, *userDTO.LatencyStages.AuthMs)
+	require.Equal(t, upstreamMs, *adminDTO.LatencyStages.UpstreamMs)
+}
+
 func TestUsageLogFromService_PrefersRequestTypeForLegacyFields(t *testing.T) {
 	t.Parallel()
 

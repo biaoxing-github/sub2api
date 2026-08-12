@@ -462,6 +462,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 		sessionID := service.ExtractClientSessionID(c)
+		latencyStages := service.SnapshotOpsLatencyStages(c)
 
 		h.submitOpenAIUsageRecordTask(c.Request.Context(), usageResult, func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
@@ -476,6 +477,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				IPAddress:          clientIP,
 				SessionID:          sessionID,
 				RequestPayloadHash: requestPayloadHash,
+				LatencyStages:      latencyStages,
 				APIKeyService:      h.apiKeyService,
 				ChannelUsageFields: channelMapping.ToUsageFields(reqModel, usageResult.UpstreamModel),
 			}); err != nil {
