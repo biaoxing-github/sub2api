@@ -87,6 +87,30 @@ func TestRateLimitService_HandleUpstreamError_OpenAI403ThresholdDisables(t *test
 	require.Contains(t, repo.lastErrorMsg, "consecutive_403=3/3")
 }
 
+func TestRateLimitService_HandleUpstreamError_OpenAIHTML403SkipsAccountPenalty(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	counter := &openAI403CounterCacheStub{counts: []int64{1}}
+	blocker := &runtimeBlockRecorder{}
+	service := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	service.SetOpenAI403CounterCache(counter)
+	service.SetAccountRuntimeBlocker(blocker)
+	account := &Account{ID: 306, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	shouldDisable := service.HandleUpstreamError(
+		context.Background(),
+		account,
+		http.StatusForbidden,
+		http.Header{},
+		[]byte("\n <!DOCTYPE HTML><html><body>403 Forbidden</body></html>"),
+	)
+
+	require.False(t, shouldDisable)
+	require.Equal(t, 0, repo.setErrorCalls)
+	require.Equal(t, 0, repo.tempCalls)
+	require.Empty(t, blocker.accounts)
+	require.Equal(t, []int64{1}, counter.counts)
+}
+
 func TestRateLimitService_HandleUpstreamError_OpenAIImageGenerationPermissionSkipsCooldown(t *testing.T) {
 	repo := &rateLimitAccountRepoStub{}
 	counter := &openAI403CounterCacheStub{counts: []int64{1}}

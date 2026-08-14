@@ -361,7 +361,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 				Detail:             upstreamDetail,
 			})
 			if account.Platform == PlatformGrok {
-				s.handleGrokAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+				s.handleGrokAccountUpstreamError(withGrokRequestedModel(ctx, upstreamModel), account, resp.StatusCode, resp.Header, respBody)
 			} else {
 				s.handleOpenAIAccountUpstreamErrorForModel(ctx, account, resp.StatusCode, resp.Header, respBody, normalizedModel)
 			}

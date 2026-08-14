@@ -261,6 +261,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountModelRuntimeBlocked(account *Accou
 	if s == nil || account == nil || account.ID <= 0 {
 		return false
 	}
+	if account.IsGrok() && isGrokModelCapacityBlocked(account.ID, requestedModel, time.Now()) {
+		return true
+	}
 	state := s.getOpenAIAccountModelTransientState()
 	if state == nil {
 		return false

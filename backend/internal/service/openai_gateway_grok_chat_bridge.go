@@ -185,7 +185,17 @@ func grokChatCacheIntentBody(body []byte) ([]byte, error) {
 }
 
 func grokChatResponsesRuntimeEligible(upstreamModel, cacheIdentity string) bool {
-	return strings.TrimSpace(upstreamModel) == "grok-4.5" && strings.TrimSpace(cacheIdentity) != ""
+	return grokChatResponsesBridgeModel(upstreamModel) && strings.TrimSpace(cacheIdentity) != ""
+}
+
+// grokChatResponsesBridgeModel 表示可走 xAI Responses-to-Chat 桥接的文本模型。
+func grokChatResponsesBridgeModel(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "grok-4.5", "grok-4.5-latest", "grok-4.6", "grok-4.6-latest":
+		return true
+	default:
+		return false
+	}
 }
 
 // forwardGrokChatCompletionsViaResponses converts a strictly compatible Chat
@@ -300,7 +310,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 			Kind:               kind,
 			Message:            upstreamMsg,
 		})
-		s.handleGrokAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		s.handleGrokAccountUpstreamError(withGrokRequestedModel(ctx, upstreamModel), account, resp.StatusCode, resp.Header, respBody)
 		if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
@@ -311,7 +321,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 		return s.handleChatCompletionsErrorResponse(resp, c, account)
 	}
 
-	s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
+	s.updateGrokUsageSnapshotForAccount(ctx, account, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode), upstreamModel)
 
 	var result *OpenAIForwardResult
 	if clientStream {

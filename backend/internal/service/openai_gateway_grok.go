@@ -126,7 +126,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			writeOpenAIForwardLocalError(c, http.StatusForbidden, "invalid_request_error", clientMsg, "")
 			return nil, fmt.Errorf("grok content policy rejection: %s", clientMsg)
 		}
-		s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
+		s.updateGrokUsageSnapshotForAccount(ctx, account, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode), upstreamModel)
 		upstreamMsg := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(respBody))
 		if upstreamMsg == "" {
 			upstreamMsg = fmt.Sprintf("xAI upstream returned status %d", resp.StatusCode)
@@ -144,7 +144,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			Kind:               kind,
 			Message:            upstreamMsg,
 		})
-		s.handleGrokAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		s.handleGrokAccountUpstreamError(withGrokRequestedModel(ctx, upstreamModel), account, resp.StatusCode, resp.Header, respBody)
 		if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
@@ -154,7 +154,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		}
 		return s.handleErrorResponse(ctx, resp, c, account, patchedBody, upstreamModel)
 	}
-	s.updateGrokUsageSnapshot(ctx, account.ID, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode))
+	s.updateGrokUsageSnapshotForAccount(ctx, account, xai.ParseQuotaHeaders(resp.Header, resp.StatusCode), upstreamModel)
 
 	var usage *OpenAIUsage
 	var firstTokenMs *int
@@ -422,12 +422,81 @@ func (s *OpenAIGatewayService) updateGrokUsageSnapshot(ctx context.Context, acco
 	})
 }
 
+// updateGrokUsageSnapshotForAccount 在保存配额窗口前补齐产生窗口的模型与 4.5 档位提示。
+func (s *OpenAIGatewayService) updateGrokUsageSnapshotForAccount(ctx context.Context, account *Account, snapshot *xai.QuotaSnapshot, upstreamModel string) {
+	if snapshot == nil {
+		return
+	}
+	snapshot.Model = strings.TrimSpace(upstreamModel)
+	if account != nil && account.Extra != nil {
+		if raw, ok := account.Extra[grokQuotaSnapshotExtraKey]; ok {
+			if previous, ok := raw.(map[string]any); ok {
+				if plan, _ := previous["plan_from_45_responses"].(string); plan != "" && !isGrok45ResponsesModel(snapshot.Model) {
+					snapshot.PlanFrom45Responses = plan
+					snapshot.PlanFrom45ResponsesAt, _ = previous["plan_from_45_responses_at"].(string)
+				}
+			}
+		}
+	}
+	if isGrok45ResponsesModel(snapshot.Model) && grokQuotaLooksHeavy(snapshot) {
+		snapshot.PlanFrom45Responses = "supergrok_heavy"
+		snapshot.PlanFrom45ResponsesAt = firstNonEmpty(snapshot.LastHeadersSeenAt, snapshot.UpdatedAt)
+	}
+	if account != nil {
+		s.updateGrokUsageSnapshot(ctx, account.ID, snapshot)
+	}
+}
+
+// isGrok45ResponsesModel 判断配额窗口是否来自可用于 Heavy 推断的 Grok 4.5 Responses 模型。
+func isGrok45ResponsesModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	model = strings.TrimPrefix(model, "x-ai/")
+	model = strings.TrimPrefix(model, "xai/")
+	return model == "grok-4.5" || strings.HasPrefix(model, "grok-4.5-")
+}
+
+// grokQuotaLooksHeavy 根据 xAI Heavy 的 8300 请求或 53M token 窗口识别档位。
+func grokQuotaLooksHeavy(snapshot *xai.QuotaSnapshot) bool {
+	if snapshot == nil {
+		return false
+	}
+	if snapshot.Requests != nil && snapshot.Requests.Limit != nil && *snapshot.Requests.Limit >= 8300 {
+		return true
+	}
+	return snapshot.Tokens != nil && snapshot.Tokens.Limit != nil && *snapshot.Tokens.Limit >= 53000000
+}
+
+type grokRequestedModelContextKey struct{}
+
+// withGrokRequestedModel 在错误处理链路携带当前上游模型，供单模型容量冷却使用。
+func withGrokRequestedModel(ctx context.Context, model string) context.Context {
+	if ctx == nil || strings.TrimSpace(model) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, grokRequestedModelContextKey{}, strings.TrimSpace(model))
+}
+
+// grokRequestedModelFromContext 读取当前请求已经解析后的 Grok 上游模型。
+func grokRequestedModelFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	model, _ := ctx.Value(grokRequestedModelContextKey{}).(string)
+	return strings.TrimSpace(model)
+}
+
 func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) {
 	if s == nil || account == nil {
 		return
 	}
 	if isGrokContentPolicyRejection(statusCode, responseBody) {
 		return
+	}
+	if isGrokModelCapacityFailure(responseBody) {
+		if model := grokRequestedModelFromContext(ctx); isGrokMultiAgentModel(model) {
+			markGrokModelCapacityBlocked(account.ID, model, time.Now())
+			return
+		}
 	}
 	switch statusCode {
 	case http.StatusUnauthorized:
@@ -451,6 +520,19 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 		}
 	}
 	_ = responseBody
+}
+
+// isGrokModelCapacityFailure 只识别 xAI 明确的模型容量抖动，不把普通限流误判为容量。
+func isGrokModelCapacityFailure(responseBody []byte) bool {
+	text := strings.ToLower(string(responseBody))
+	return strings.Contains(text, "engine_overloaded") ||
+		strings.Contains(text, "model capacity") ||
+		strings.Contains(text, "server_busy")
+}
+
+// isGrokMultiAgentModel 限定单模型容量封禁只作用于 Heavy 多代理模型。
+func isGrokMultiAgentModel(model string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "multi-agent")
 }
 
 func (s *OpenAIGatewayService) tempUnscheduleGrok(ctx context.Context, account *Account, cooldown time.Duration, reason string) {

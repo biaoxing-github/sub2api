@@ -3,6 +3,8 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +62,48 @@ type UpdateAPIKeyRequest struct {
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
 	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // 重置限速用量
+}
+
+// validAPIKeyLimit 校验 API Key 配额与限速值，0 仍表示不限制。
+func validAPIKeyLimit(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
+}
+
+// validateAPIKeyCreateRequest 校验创建请求中的数值边界与过期天数。
+func validateAPIKeyCreateRequest(req CreateAPIKeyRequest) error {
+	if req.Quota != nil && !validAPIKeyLimit(*req.Quota) {
+		return errors.New("invalid quota")
+	}
+	if req.RateLimit5h != nil && !validAPIKeyLimit(*req.RateLimit5h) {
+		return errors.New("invalid rate_limit_5h")
+	}
+	if req.RateLimit1d != nil && !validAPIKeyLimit(*req.RateLimit1d) {
+		return errors.New("invalid rate_limit_1d")
+	}
+	if req.RateLimit7d != nil && !validAPIKeyLimit(*req.RateLimit7d) {
+		return errors.New("invalid rate_limit_7d")
+	}
+	if req.ExpiresInDays != nil && *req.ExpiresInDays <= 0 {
+		return errors.New("invalid expires_in_days")
+	}
+	return nil
+}
+
+// validateAPIKeyUpdateRequest 校验更新请求中显式传入的数值边界。
+func validateAPIKeyUpdateRequest(req UpdateAPIKeyRequest) error {
+	if req.Quota != nil && !validAPIKeyLimit(*req.Quota) {
+		return errors.New("invalid quota")
+	}
+	if req.RateLimit5h != nil && !validAPIKeyLimit(*req.RateLimit5h) {
+		return errors.New("invalid rate_limit_5h")
+	}
+	if req.RateLimit1d != nil && !validAPIKeyLimit(*req.RateLimit1d) {
+		return errors.New("invalid rate_limit_1d")
+	}
+	if req.RateLimit7d != nil && !validAPIKeyLimit(*req.RateLimit7d) {
+		return errors.New("invalid rate_limit_7d")
+	}
+	return nil
 }
 
 // List handles listing user's API keys with pagination
@@ -152,6 +196,10 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
+	if err := validateAPIKeyCreateRequest(req); err != nil {
+		response.BadRequest(c, "Invalid request: numeric limits must be finite and non-negative, and expires_in_days must be greater than zero")
+		return
+	}
 
 	svcReq := service.CreateAPIKeyRequest{
 		Name:          req.Name,
@@ -201,6 +249,10 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	var req UpdateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := validateAPIKeyUpdateRequest(req); err != nil {
+		response.BadRequest(c, "Invalid request: numeric limits must be finite and non-negative")
 		return
 	}
 

@@ -135,7 +135,9 @@ const metaModels = [
 // xAI Grok
 const xaiModels = [
   'grok-4.5',
+  'grok-4.6',
   'grok-4.3',
+  'grok-4.6-latest',
   'grok-build-0.1',
   'grok-composer-2.5-fast',
   'grok-imagine-image-quality',
@@ -296,6 +298,7 @@ const geminiPresetMappings = [
 
 // Grok 预设映射（与后端 xai.DefaultModelMapping 保持一致）
 const grokPresetMappings = [
+  { label: 'Grok 4.6', from: 'grok-4.6', to: 'grok-4.6', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' },
   { label: 'Grok 4.5', from: 'grok-4.5', to: 'grok-4.5', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' },
   { label: 'Grok Latest→4.5', from: 'grok-latest', to: 'grok-4.5', color: 'bg-sky-100 text-sky-700 hover:bg-sky-200 dark:bg-sky-900/30 dark:text-sky-400' },
   { label: 'Grok→4.5', from: 'grok', to: 'grok-4.5', color: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400' },

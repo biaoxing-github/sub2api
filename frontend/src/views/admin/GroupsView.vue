@@ -669,6 +669,7 @@
         <div
           v-if="
             createForm.platform === 'antigravity' ||
+            createForm.platform === 'composite' ||
             createForm.platform === 'gemini' ||
             createForm.platform === 'openai'
           "
@@ -1957,6 +1958,7 @@
         <div
           v-if="
             editForm.platform === 'antigravity' ||
+            editForm.platform === 'composite' ||
             editForm.platform === 'gemini' ||
             editForm.platform === 'openai'
           "

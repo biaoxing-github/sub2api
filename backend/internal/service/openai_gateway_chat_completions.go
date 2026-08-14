@@ -317,7 +317,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 				Detail:             upstreamDetail,
 			})
 			if account.Platform == PlatformGrok {
-				s.handleGrokAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+				s.handleGrokAccountUpstreamError(withGrokRequestedModel(ctx, upstreamModel), account, resp.StatusCode, resp.Header, respBody)
 			} else {
 				s.handleOpenAIAccountUpstreamErrorForModel(ctx, account, resp.StatusCode, resp.Header, respBody, originalModel)
 			}
@@ -526,6 +526,16 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	// When the terminal event has an empty output array, reconstruct from
 	// accumulated delta events so the client receives the full content.
 	acc.SupplementResponseOutput(finalResponse)
+	if requiresBillableGrokChatUsage(account, originalModel, billingModel, upstreamModel, finalResponse.Model) && !hasBillableOpenAIUsage(usage) {
+		return nil, s.newOpenAIStreamFailoverError(
+			c,
+			account,
+			false,
+			firstNonEmpty(requestID, resp.Header.Get("xai-request-id")),
+			nil,
+			grokMissingUsageMessage,
+		)
+	}
 
 	chatResp := apicompat.ResponsesToChatCompletions(finalResponse, originalModel)
 

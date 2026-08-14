@@ -17,9 +17,11 @@ func TestGrokChatResponsesBridgeEligibilityCompat(t *testing.T) {
 	require.Equal(t, "unsupported_tools", reason)
 }
 
-// TestGrokChatResponsesRuntimeEligibleCompat 验证 bridge 仅用于已建立租户隔离缓存身份的 grok-4.5。
+// TestGrokChatResponsesRuntimeEligibleCompat 验证 bridge 仅用于已建立租户隔离缓存身份的 4.5/4.6。
 func TestGrokChatResponsesRuntimeEligibleCompat(t *testing.T) {
 	require.True(t, grokChatResponsesRuntimeEligible("grok-4.5", "cache-id"))
+	require.True(t, grokChatResponsesRuntimeEligible("grok-4.6", "cache-id"))
+	require.True(t, grokChatResponsesRuntimeEligible("grok-4.6-latest", "cache-id"))
 	require.False(t, grokChatResponsesRuntimeEligible("grok-4.3", "cache-id"))
 	require.False(t, grokChatResponsesRuntimeEligible("grok-4.5", ""))
 }

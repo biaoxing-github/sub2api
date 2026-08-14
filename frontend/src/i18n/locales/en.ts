@@ -1792,6 +1792,7 @@ export default {
         status: 'Status',
         fileName: 'File Name',
         size: 'Size',
+        parts: 'Parts',
         expiresAt: 'Expires At',
         triggeredBy: 'Triggered By',
         startedAt: 'Started At',
@@ -1816,6 +1817,10 @@ export default {
       empty: 'No backup records',
       actions: {
         download: 'Download',
+        downloadParts: 'Download Parts',
+        downloadPartsHint: 'Download every part in order and concatenate the gzip bytes: on Linux/macOS run cat payload.part-* > backup.sql.gz; on Windows run copy /b payload.part-000001+payload.part-000002 backup.sql.gz.',
+        partLabel: 'Part {index}',
+        downloadFailed: 'Download URL is empty',
         restore: 'Restore',
         restoreConfirm: 'Are you sure you want to restore from this backup? This will overwrite the current database!',
         restorePasswordPrompt: 'Please enter your admin password to confirm the restore operation',
@@ -3813,6 +3818,13 @@ export default {
         codexCLIOnly: 'Codex official clients only',
         codexCLIOnlyDesc:
           'Only applies to OpenAI OAuth. When enabled, only Codex official client families are allowed; when disabled, the gateway bypasses this restriction and keeps existing behavior.',
+        codexFingerprintMode: 'Codex fingerprint convergence',
+        codexFingerprintModeDesc:
+          'When multiple users share one OAuth account, converge device and session identifiers to account-stable values. Off passes client identifiers through unchanged.',
+        codexFingerprintOff: 'Off (passthrough)',
+        codexFingerprintDevice: 'Device only',
+        codexFingerprintSession: 'Device + Session (recommended)',
+        codexFingerprintFull: 'Full convergence',
         codexCLISimulation: 'Simulate Codex CLI upstream',
         codexCLISimulationDesc:
           'Only applies to this OpenAI account. When enabled, upstream /responses requests use Codex CLI User-Agent, originator, and version headers; when disabled, default routing is preserved.',

@@ -81,10 +81,12 @@ describe('useModelWhitelist', () => {
 
     expect(models[0]).toBe('grok-4.5')
     expect(models).toContain('grok-4.5')
+    expect(models).toContain('grok-4.6')
     expect(models).toContain('grok-4.3')
     expect(models).not.toContain('claude-sonnet-4-6')
     expect(presets.map(item => item.to)).toEqual(expect.arrayContaining([
       'grok-4.5',
+      'grok-4.6',
       'grok-4.3',
       'grok-build-0.1',
       'grok-4.20-0309-reasoning'

@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -205,8 +203,13 @@ func (s *GrokOAuthService) RefreshAccountToken(ctx context.Context, account *Acc
 	if err != nil {
 		return nil, err
 	}
-	tokenInfo.SubscriptionTier = account.GetCredential("subscription_tier")
-	tokenInfo.EntitlementStatus = account.GetCredential("entitlement_status")
+	// 新 access token 的 JWT tier 是当前真实档位；仅在没有 tier claim 时保留旧值。
+	if strings.TrimSpace(tokenInfo.SubscriptionTier) == "" {
+		tokenInfo.SubscriptionTier = account.GetCredential("subscription_tier")
+	}
+	if strings.TrimSpace(tokenInfo.EntitlementStatus) == "" {
+		tokenInfo.EntitlementStatus = account.GetCredential("entitlement_status")
+	}
 	return tokenInfo, nil
 }
 
@@ -276,9 +279,8 @@ func (s *GrokOAuthService) tokenInfoFromResponse(tokenResp *xai.TokenResponse, c
 	if info.TokenType == "" {
 		info.TokenType = "Bearer"
 	}
-	if email := parseJWTEmailClaim(tokenResp.IDToken); email != "" {
-		info.Email = email
-	}
+	applyGrokTokenClaims(info, tokenResp.IDToken, false)
+	applyGrokTokenClaims(info, tokenResp.AccessToken, true)
 	if info.Email == "" && existing != nil {
 		if email, _ := existing["email"].(string); email != "" {
 			info.Email = email
@@ -305,21 +307,19 @@ func (s *GrokOAuthService) proxyURL(ctx context.Context, proxyID *int64) (string
 	return proxy.URL(), nil
 }
 
-// parseJWTEmailClaim 从 id_token payload 中读取 email claim。
-func parseJWTEmailClaim(token string) string {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return ""
+// applyGrokTokenClaims 从 token 提取稳定身份字段；档位仅信任 access token。
+func applyGrokTokenClaims(info *GrokTokenInfo, token string, includeTier bool) {
+	if info == nil || strings.TrimSpace(token) == "" {
+		return
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return ""
+	claims := xai.DecodeJWTClaims(token)
+	if claims == nil {
+		return
 	}
-	var claims struct {
-		Email string `json:"email"`
+	if info.Email == "" {
+		info.Email = xai.JWTClaimString(claims, "email")
 	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return ""
+	if includeTier {
+		info.SubscriptionTier = xai.SubscriptionTierFromJWT(token)
 	}
-	return strings.TrimSpace(claims.Email)
 }

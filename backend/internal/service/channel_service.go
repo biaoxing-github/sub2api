@@ -351,6 +351,12 @@ func isPlatformPricingMatch(groupPlatform, pricingPlatform string) bool {
 func matchingPlatforms(groupPlatform string) []string {
 	return []string{groupPlatform}
 }
+
+// InvalidateCache 失效并重建渠道缓存，供分组平台等外部配置变化调用。
+func (s *ChannelService) InvalidateCache() {
+	s.invalidateCache()
+}
+
 func (s *ChannelService) invalidateCache() {
 	s.cache.Store((*channelCache)(nil))
 	s.cacheSF.Forget("channel_cache")
@@ -928,13 +934,23 @@ func toModelEntry(pattern string) modelEntry {
 	return modelEntry{pattern: pattern, prefix: prefix, wildcard: isWild}
 }
 
+// toPricingModelEntry 使用与定价缓存键一致的规则归一化模型模式。
+func toPricingModelEntry(pattern string) modelEntry {
+	prefix, isWild := splitWildcardSuffix(pattern)
+	return modelEntry{
+		pattern:  pattern,
+		prefix:   normalizeChannelPricingModelName(prefix),
+		wildcard: isWild,
+	}
+}
+
 // validateNoConflictingModels 检查定价列表中是否有冲突模型模式（同一平台下）。
 // 冲突包括：精确重复、通配符之间的前缀包含、通配符与精确名的前缀匹配。
 func validateNoConflictingModels(pricingList []ChannelModelPricing) error {
 	byPlatform := make(map[string][]modelEntry)
 	for _, p := range pricingList {
 		for _, model := range p.Models {
-			byPlatform[p.Platform] = append(byPlatform[p.Platform], toModelEntry(model))
+			byPlatform[p.Platform] = append(byPlatform[p.Platform], toPricingModelEntry(model))
 		}
 	}
 	for platform, entries := range byPlatform {

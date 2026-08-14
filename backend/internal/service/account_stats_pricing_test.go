@@ -480,6 +480,29 @@ func TestTryModelFilePricing_AppliesLongContextPricing(t *testing.T) {
 	require.InDelta(t, 0.233, *result, 1e-12)
 }
 
+func TestTryModelFilePricing_AppliesServiceTierPricing(t *testing.T) {
+	bs := newTestBillingServiceWithPrices(map[string]*ModelPricing{
+		"gpt-5.6-sol": {
+			InputPricePerToken:          0.001,
+			InputPricePerTokenPriority:  0.002,
+			OutputPricePerToken:         0.002,
+			OutputPricePerTokenPriority: 0.004,
+		},
+	})
+	tokens := UsageTokens{InputTokens: 100, OutputTokens: 50}
+
+	standard := tryModelFilePricing(bs, "gpt-5.6-sol", tokens)
+	priority := tryModelFilePricing(bs, "gpt-5.6-sol", tokens, "priority")
+	flex := tryModelFilePricing(bs, "gpt-5.6-sol", tokens, "flex")
+
+	require.NotNil(t, standard)
+	require.NotNil(t, priority)
+	require.NotNil(t, flex)
+	require.InDelta(t, 0.2, *standard, 1e-12)
+	require.InDelta(t, 0.4, *priority, 1e-12)
+	require.InDelta(t, 0.1, *flex, 1e-12)
+}
+
 func TestTryModelFilePricing_PricingNotFound(t *testing.T) {
 	// "nonexistent-model" does not match any fallback pattern
 	bs := newTestBillingServiceWithPrices(map[string]*ModelPricing{})

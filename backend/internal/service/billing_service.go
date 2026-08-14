@@ -478,6 +478,33 @@ func (s *BillingService) initFallbackPricing() {
 		CacheReadPricePerToken: 0.2e-6,
 		SupportsCacheBreakdown: false,
 	}
+	// xAI Grok 4.5 官方价格：输入 $2、缓存输入 $0.50、输出 $6 / MTok。
+	s.fallbackPrices["grok-4.5"] = &ModelPricing{
+		InputPricePerToken:     2e-6,
+		OutputPricePerToken:    6e-6,
+		CacheReadPricePerToken: 0.5e-6,
+		SupportsCacheBreakdown: false,
+	}
+	// xAI Grok 4.6 官方价格：200K 以下输入 $2、缓存 $0.50、输出 $6 / MTok；
+	// 超过阈值后输入、缓存和输出均翻倍。
+	s.fallbackPrices["grok-4.6"] = &ModelPricing{
+		InputPricePerToken:          2e-6,
+		OutputPricePerToken:         6e-6,
+		CacheReadPricePerToken:      0.5e-6,
+		SupportsCacheBreakdown:      false,
+		LongContextInputThreshold:   200000,
+		LongContextInputMultiplier:  2,
+		LongContextOutputMultiplier: 2,
+	}
+	// xAI Grok 4.3 官方价格：输入 $1.25、缓存输入 $0.20、输出 $2.50 / MTok。
+	s.fallbackPrices["grok-4.3"] = &ModelPricing{
+		InputPricePerToken:         1.25e-6,
+		OutputPricePerToken:        2.5e-6,
+		CacheReadPricePerToken:     0.2e-6,
+		SupportsCacheBreakdown:     false,
+		LongContextInputThreshold:  1000000,
+		LongContextInputMultiplier: 1,
+	}
 	// Grok Build 0.1 官方价格：输入 $1、缓存输入 $0.20、输出 $2 / MTok；Composer 共用该价格。
 	s.fallbackPrices["grok-build-0.1"] = &ModelPricing{
 		InputPricePerToken:     1e-6,
@@ -649,6 +676,10 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	}
 
 	switch modelLower {
+	case "grok", "grok-latest", "grok-4.5", "grok-4.5-latest", "grok-build-latest":
+		return s.fallbackPrices["grok-4.5"]
+	case "grok-4.6", "grok-4.6-latest":
+		return s.fallbackPrices["grok-4.6"]
 	case "grok-4.3",
 		"grok-4.20-0309-reasoning",
 		"grok-4.20-0309-non-reasoning",
@@ -658,6 +689,11 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 		return s.fallbackPrices["grok-4.3"]
 	case "grok-build", "grok-build-0.1", "grok-composer", "grok-composer-2.5-fast", "composer-2.5":
 		return s.fallbackPrices["grok-build-0.1"]
+	}
+	// 未登记的 Grok 文本模型使用当前 4.5 价卡，避免新文本模型上线后零计费；
+	// 图像、语音和搜索模型不属于 token 计费范围，保持不可识别。
+	if isUnknownGrokTextModel(modelLower) {
+		return s.fallbackPrices["grok-4.5"]
 	}
 
 	if strings.Contains(modelLower, "kimi-for-coding") {
@@ -731,6 +767,23 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	}
 
 	return nil
+}
+
+// isUnknownGrokTextModel 识别尚未登记但命名符合 Grok 文本系列的新模型。
+func isUnknownGrokTextModel(model string) bool {
+	native := strings.ToLower(strings.TrimSpace(model))
+	native = strings.TrimPrefix(native, "x-ai/")
+	native = strings.TrimPrefix(native, "xai/")
+	if !strings.HasPrefix(native, "grok-") || len(native) <= len("grok-") {
+		return false
+	}
+	for _, excluded := range []string{"grok-imagine", "grok-voice", "grok-speech", "grok-web", "grok-x-search"} {
+		if strings.HasPrefix(native, excluded) {
+			return false
+		}
+	}
+	first := native[len("grok-")]
+	return first >= '0' && first <= '9'
 }
 
 // GetModelPricing 获取模型价格配置

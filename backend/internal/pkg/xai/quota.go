@@ -27,6 +27,11 @@ type QuotaSnapshot struct {
 	LastProbeAt       string            `json:"last_probe_at,omitempty"`
 	LastHeadersSeenAt string            `json:"last_headers_seen_at,omitempty"`
 	UpdatedAt         string            `json:"updated_at"`
+	// Model 是产生当前限流窗口的上游模型，用于区分 SuperGrok 与 Heavy。
+	Model string `json:"model,omitempty"`
+	// PlanFrom45Responses 保存 grok-4.5 Responses 窗口推断出的档位，避免后续其他模型覆盖。
+	PlanFrom45Responses   string `json:"plan_from_45_responses,omitempty"`
+	PlanFrom45ResponsesAt string `json:"plan_from_45_responses_at,omitempty"`
 }
 
 // HasObservedHeaders 判断快照是否包含任一可用的 xAI 配额响应头。

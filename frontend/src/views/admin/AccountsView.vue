@@ -320,7 +320,7 @@
                 <section class="account-overview-section">
                   <span class="account-overview-label">{{ t('admin.accounts.columns.platformType') }}</span>
                   <div class="flex min-w-0 flex-wrap items-center gap-1">
-                    <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
+                    <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="getAccountPlanType(row)" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
                     <span
                       v-if="getAntigravityTierLabel(row)"
                       :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
@@ -427,7 +427,7 @@
           <template #cell-platform_type="{ row }">
             <div class="flex min-w-0 flex-col gap-1">
               <div class="flex flex-wrap items-center gap-1">
-                <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
+                <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="getAccountPlanType(row)" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
                 <span
                   v-if="getAntigravityTierLabel(row)"
                   :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
@@ -1995,6 +1995,54 @@ function getAntigravityTierFromRow(row: any): string | null {
   const current = lca.currentTier as Record<string, unknown> | undefined
   if (current && typeof current.id === 'string') return current.id
   return null
+}
+
+const GROK_QUOTA_SIGNAL_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const GROK_QUOTA_SIGNAL_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000
+
+// normalizeGrokPlanKey 将管理端不同来源的档位显示名归一化为比较键。
+function normalizeGrokPlanKey(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+}
+
+// isGrokQuotaTimestampFresh 防止旧窗口把已降级账号长期显示为 Heavy。
+function isGrokQuotaTimestampFresh(raw: unknown): boolean {
+  const observedAt = Date.parse(String(raw ?? '').trim())
+  if (!Number.isFinite(observedAt)) return false
+  const age = Date.now() - observedAt
+  return age <= GROK_QUOTA_SIGNAL_MAX_AGE_MS && age >= -GROK_QUOTA_SIGNAL_MAX_FUTURE_SKEW_MS
+}
+
+// grok45ResponsesPlanIsHeavy 仅接受 grok-4.5 Responses 的新鲜 8300/53M 窗口。
+function grok45ResponsesPlanIsHeavy(snapshot: Record<string, any> | undefined): boolean {
+  if (!snapshot) return false
+  const hint = normalizeGrokPlanKey(snapshot.plan_from_45_responses)
+  if (hint === 'supergrokheavy' && isGrokQuotaTimestampFresh(snapshot.plan_from_45_responses_at)) {
+    return true
+  }
+  const model = String(snapshot.model ?? '').trim().toLowerCase().replace(/^(x-ai|xai)\//, '')
+  const observedAt = snapshot.last_headers_seen_at || snapshot.updated_at
+  const requestLimit = Number(snapshot.requests?.limit ?? 0)
+  const tokenLimit = Number(snapshot.tokens?.limit ?? 0)
+  return (model === 'grok-4.5' || model.startsWith('grok-4.5-')) &&
+    isGrokQuotaTimestampFresh(observedAt) &&
+    (requestLimit >= 8300 || tokenLimit >= 53_000_000)
+}
+
+// getAccountPlanType 合并 Grok JWT、账单和 4.5 配额窗口，其余平台保持原字段语义。
+function getAccountPlanType(row: any): string | undefined {
+  if (!row) return undefined
+  if (row.platform !== 'grok') return row.credentials?.plan_type || row.parent_plan_type || undefined
+  const extra = (row.extra || {}) as Record<string, any>
+  const billing = extra.grok_billing_snapshot as Record<string, any> | undefined
+  const quota = (extra.grok_quota_snapshot || extra.grok_usage_snapshot) as Record<string, any> | undefined
+  const credentialTier = row.credentials?.subscription_tier
+  const credentialKey = normalizeGrokPlanKey(credentialTier)
+  if (credentialKey && credentialKey !== 'supergrokpro') return credentialTier
+  if (grok45ResponsesPlanIsHeavy(quota) && credentialKey === 'supergrokpro') return 'SuperGrok Heavy'
+  if (credentialKey === 'supergrokpro') return billing?.plan || 'SuperGrok'
+  return billing?.plan || quota?.subscription_tier || extra.subscription_tier ||
+    row.credentials?.plan_type || row.parent_plan_type || undefined
 }
 
 function getAntigravityTierLabel(row: any): string | null {

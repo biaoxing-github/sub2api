@@ -31,6 +31,30 @@ func newTestBillingService() *BillingService {
 	return NewBillingService(&config.Config{}, nil)
 }
 
+func TestGetModelPricing_Grok46AndUnknownTextFallback(t *testing.T) {
+	svc := newTestBillingService()
+
+	grok46, err := svc.GetModelPricing("grok-4.6")
+	require.NoError(t, err)
+	require.InDelta(t, 2e-6, grok46.InputPricePerToken, 1e-12)
+	require.InDelta(t, 6e-6, grok46.OutputPricePerToken, 1e-12)
+	require.Equal(t, 200000, grok46.LongContextInputThreshold)
+	require.InDelta(t, 2.0, grok46.LongContextInputMultiplier, 1e-12)
+
+	baseline, err := svc.GetModelPricing("grok-4.5")
+	require.NoError(t, err)
+	for _, model := range []string{"grok-5", "grok-5-latest", "x-ai/grok-7", "grok-4.7-beta"} {
+		pricing, pricingErr := svc.GetModelPricing(model)
+		require.NoError(t, pricingErr, model)
+		require.InDelta(t, baseline.InputPricePerToken, pricing.InputPricePerToken, 1e-12, model)
+		require.InDelta(t, baseline.OutputPricePerToken, pricing.OutputPricePerToken, 1e-12, model)
+	}
+	for _, model := range []string{"grok-imagine-image-3", "grok-voice-latest", "grok-x-search"} {
+		_, pricingErr := svc.GetModelPricing(model)
+		require.ErrorIs(t, pricingErr, ErrModelPricingUnavailable, model)
+	}
+}
+
 func TestCalculateCost_BasicComputation(t *testing.T) {
 	svc := newTestBillingService()
 

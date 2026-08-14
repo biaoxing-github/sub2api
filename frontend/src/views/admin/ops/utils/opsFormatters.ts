@@ -73,3 +73,16 @@ export function formatByteRate(bytes: number, windowMinutes: number): string {
   const seconds = Math.max(1, (windowMinutes || 1) * 60)
   return `${formatBytes(bytes / seconds, 1)}/s`
 }
+
+/**
+ * 格式化 Ops 接口返回的内存容量。
+ *
+ * 后端的 `*_mb` 字段按 1024² 字节换算；这里沿用相同口径，避免大容量
+ * 继续显示成不直观的数万 MB。
+ */
+export function formatMemorySizeMB(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '-'
+  if (value === 0) return '0 MB'
+
+  return formatBytes(value * 1024 * 1024, 1)
+}

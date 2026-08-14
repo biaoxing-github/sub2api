@@ -21,6 +21,12 @@ func TestDefaultModelsIncludeGrok45AsDefaultAliasTarget(t *testing.T) {
 	if got := mapping["grok-4.5"]; got != "grok-4.5" {
 		t.Fatalf("DefaultModelMapping()[grok-4.5] = %q, want grok-4.5", got)
 	}
+	if got := mapping["grok-4.6-latest"]; got != "grok-4.6" {
+		t.Fatalf("DefaultModelMapping()[grok-4.6-latest] = %q, want grok-4.6", got)
+	}
+	if !containsModelID(ids, "grok-4.6") {
+		t.Fatalf("DefaultModelIDs() does not contain grok-4.6: %v", ids)
+	}
 }
 
 // TestDefaultModelsIncludeComposerAndImagineModels 校验 v0.1.149 新增的 Composer 与图片模型可被后端模型接口发现。

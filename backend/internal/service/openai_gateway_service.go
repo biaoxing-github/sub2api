@@ -4139,6 +4139,22 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if !isCompactRequest && applyCodexClientMetadata(decoded, account) {
 			markDecodedModified()
 		}
+		// 指纹收敛只解析一次，请求体和出站头共享同一份 ID，确保随机 turn_id 一致。
+		if !isCompactRequest {
+			var clientHeaders http.Header
+			if c != nil && c.Request != nil {
+				clientHeaders = c.Request.Header
+			}
+			fingerprintIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+			if fingerprintIDs != nil {
+				if applyCodexFingerprintClientMetadata(decoded, fingerprintIDs) {
+					markDecodedModified()
+				}
+				if c != nil {
+					c.Set("codex_fingerprint_ids", fingerprintIDs)
+				}
+			}
+		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
 		}
@@ -6797,6 +6813,14 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 
 	// 透传与后台账户探测共用同一账户级身份规则。
 	s.applyOpenAIPassthroughClientIdentity(ctx, req, c, account, body)
+	// 指纹收敛在白名单透传和身份头收口后执行，仅改写设备/会话字段，不影响 routing hint。
+	if account.Type == AccountTypeOAuth && c != nil {
+		if value, ok := c.Get("codex_fingerprint_ids"); ok {
+			if fingerprintIDs, ok := value.(*codexFingerprintIDs); ok {
+				applyCodexFingerprintHeaders(req.Header, fingerprintIDs)
+			}
+		}
+	}
 
 	// Ensure required headers exist
 	if req.Header.Get("content-type") == "" {
@@ -8244,10 +8268,13 @@ func extractOpenAIUsageFromJSONBytes(body []byte) (OpenAIUsage, bool) {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return OpenAIUsage{}, false
 	}
-	if usage, ok := openAIUsageFromGJSON(gjson.GetBytes(body, "usage")); ok {
-		return usage, true
+	// 保留原生路径优先级，再兼容将 Chat 或 Responses 结果包在 data 中的上游。
+	for _, path := range []string{"usage", "response.usage", "data.usage", "data.response.usage"} {
+		if usage, ok := openAIUsageFromGJSON(gjson.GetBytes(body, path)); ok {
+			return usage, true
+		}
 	}
-	return openAIUsageFromGJSON(gjson.GetBytes(body, "response.usage"))
+	return OpenAIUsage{}, false
 }
 
 func extractOpenAIResponseIDFromJSONBytes(body []byte) string {

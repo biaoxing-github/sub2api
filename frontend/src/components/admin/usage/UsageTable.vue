@@ -233,6 +233,24 @@
           <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatDateTime(value) }}</span>
         </template>
 
+        <template #cell-request_id="{ row }">
+          <div v-if="row.request_id" class="flex max-w-[160px] items-center gap-1.5">
+            <span class="truncate font-mono text-xs text-gray-500 dark:text-gray-400" :title="row.request_id">
+              {{ row.request_id }}
+            </span>
+            <button
+              type="button"
+              class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-300"
+              :class="copiedRequestId === row.request_id ? 'text-green-500 hover:text-green-500' : ''"
+              :title="copiedRequestId === row.request_id ? t('keys.copied') : t('keys.copyToClipboard')"
+              @click="copyRequestId(row.request_id)"
+            >
+              <Icon :name="copiedRequestId === row.request_id ? 'check' : 'copy'" size="sm" class="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+        </template>
+
         <template #cell-user_agent="{ row }">
           <span v-if="row.user_agent" class="text-sm text-gray-600 dark:text-gray-400 block max-w-[320px] truncate" :title="row.user_agent">{{ formatUserAgent(row.user_agent) }}</span>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
@@ -439,6 +457,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAppStore } from '@/stores/app'
 import { formatDateTime, formatReasoningEffort } from '@/utils/format'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
@@ -514,6 +533,8 @@ defineEmits<{
   sort: [key: string, order: 'asc' | 'desc']
 }>()
 const { t } = useI18n()
+const appStore = useAppStore()
+const copiedRequestId = ref<string | null>(null)
 
 // sentUpstreamModel 返回实际发往上游的模型；没有映射时回退到用户请求模型。
 const sentUpstreamModel = (row: AdminUsageLog): string => row.upstream_model?.trim() || row.model?.trim() || ''
@@ -609,6 +630,20 @@ const latencyStagesTitle = (row: AdminUsageLog): string => [
   ...latencyStageItems(row).map((stage) => `${stage.label}: ${formatDuration(stage.value)}`),
   t('usage.latencyStagesHint'),
 ].join('\n')
+
+// copyRequestId 复制请求 ID，并用短暂状态提示当前复制成功的行。
+const copyRequestId = async (requestId: string) => {
+  try {
+    await navigator.clipboard.writeText(requestId)
+    copiedRequestId.value = requestId
+    appStore.showSuccess(t('admin.usage.requestIdCopied'))
+    window.setTimeout(() => {
+      if (copiedRequestId.value === requestId) copiedRequestId.value = null
+    }, 2000)
+  } catch {
+    appStore.showError(t('common.copyFailed'))
+  }
+}
 
 // Cost tooltip functions
 const showTooltip = (event: MouseEvent, row: AdminUsageLog) => {
