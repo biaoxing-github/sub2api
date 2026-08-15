@@ -24,12 +24,36 @@ type dashboardAggregationRepoTestStub struct {
 	cleanupUsageErr      error
 	cleanupDedupErr      error
 	ensurePartitionErr   error
+	aggregateCtx         context.Context
+	events               *[]string
+}
+
+type dashboardAggregationRollupRepoTestStub struct {
+	*dashboardAggregationRepoTestStub
+	groupRollupCalls int
+	groupRollupAt    time.Time
+	groupRollupErr   error
+	groupRollupCtx   context.Context
+}
+
+func (s *dashboardAggregationRollupRepoTestStub) SyncGroupUsageRollups(ctx context.Context, todayStart time.Time) error {
+	s.groupRollupCalls++
+	s.groupRollupAt = todayStart
+	s.groupRollupCtx = ctx
+	if s.events != nil {
+		*s.events = append(*s.events, "group_rollup")
+	}
+	return s.groupRollupErr
 }
 
 func (s *dashboardAggregationRepoTestStub) AggregateRange(ctx context.Context, start, end time.Time) error {
 	s.aggregateCalls++
+	s.aggregateCtx = ctx
 	s.lastStart = start
 	s.lastEnd = end
+	if s.events != nil {
+		*s.events = append(*s.events, "dashboard_aggregation")
+	}
 	return s.aggregateErr
 }
 

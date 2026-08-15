@@ -21,6 +21,10 @@ const (
 	dashboardAggregationLeaderLockKey = "dashboard:aggregation:leader"
 	// dashboardAggregationLeaderLockTTL 必须大于周期聚合超时时间。
 	dashboardAggregationLeaderLockTTL = 5 * time.Minute
+
+	// 启动回填耗时可能远长于周期聚合，因此使用独立锁并让 TTL 严格大于回填超时。
+	dashboardAggregationGroupUsageBackfillLeaderLockKey = "dashboard:aggregation:group-usage-backfill:leader"
+	dashboardAggregationGroupUsageBackfillLeaderLockTTL = defaultDashboardAggregationBackfillTimeout + time.Minute
 )
 
 var (
@@ -89,6 +93,7 @@ func (s *DashboardAggregationService) Start() {
 		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 聚合作业已禁用")
 		return
 	}
+	go s.runStartupGroupUsageSync()
 
 	interval := time.Duration(s.cfg.IntervalSeconds) * time.Second
 	if interval <= 0 {
@@ -221,6 +226,7 @@ func (s *DashboardAggregationService) runScheduledAggregation() {
 		return
 	}
 	defer release()
+	defer s.runScheduledGroupUsageSync()
 
 	now := time.Now().UTC()
 	last, err := s.repo.GetAggregationWatermark(ctx)
@@ -259,6 +265,35 @@ func (s *DashboardAggregationService) runScheduledAggregation() {
 	)
 
 	s.maybeCleanupRetention(ctx, now)
+}
+
+func (s *DashboardAggregationService) runScheduledGroupUsageSync() {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationTimeout)
+	defer cancel()
+	if err := s.syncGroupUsageRollups(ctx, time.Now().UTC()); err != nil {
+		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 分组用量日汇总失败: %v", err)
+	}
+}
+
+func (s *DashboardAggregationService) runStartupGroupUsageSync() {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationBackfillTimeout)
+	defer cancel()
+	release, ok := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, dashboardAggregationGroupUsageBackfillLeaderLockKey, s.instanceID, dashboardAggregationGroupUsageBackfillLeaderLockTTL)
+	if !ok {
+		return
+	}
+	defer release()
+	if err := s.syncGroupUsageRollups(ctx, time.Now().UTC()); err != nil {
+		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 启动分组用量回填失败: %v", err)
+	}
+}
+
+func (s *DashboardAggregationService) syncGroupUsageRollups(ctx context.Context, now time.Time) error {
+	repo, ok := s.repo.(GroupUsageRollupRepository)
+	if !ok {
+		return nil
+	}
+	return repo.SyncGroupUsageRollups(ctx, GroupUsageTodayStart(now))
 }
 
 func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, end time.Time) error {
