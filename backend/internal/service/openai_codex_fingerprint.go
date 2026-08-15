@@ -9,8 +9,42 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
+
+// codexFingerprintIDsContextKey 是暂存在 gin context 的收敛 ID 集合键。
+// 由 Forward（非透传）或 forwardOpenAIPassthrough（透传）解析后写入，请求
+// 构造器读取用于出站头改写——请求体与出站头必须共享同一份 IDs，保证
+// turn_id 等随机字段一致。
+const codexFingerprintIDsContextKey = "codex_fingerprint_ids"
+
+// stageCodexFingerprintIDs 将本 attempt 解析出的收敛 ID 暂存到 gin context。
+// 必须无条件覆写（含 nil）：failover 从收敛账号切到 off 账号时，上一账号的
+// IDs 不得残留并被误应用到新账号的出站头（typed-nil 由应用侧 nil 守卫吸收）。
+func stageCodexFingerprintIDs(c *gin.Context, ids *codexFingerprintIDs) {
+	if c != nil {
+		c.Set(codexFingerprintIDsContextKey, ids)
+	}
+}
+
+// applyStagedCodexFingerprintHeaders 读取 context 暂存的收敛 ID 并改写出站头。
+// 非透传与透传两个请求构造器共用本函数，防止应用语义漂移。仅 OAuth 账号
+// 生效（stale 键在账号类型混合 failover 下由该门挡住）。
+func applyStagedCodexFingerprintHeaders(c *gin.Context, account *Account, h http.Header) {
+	if c == nil || account == nil || account.Type != AccountTypeOAuth {
+		return
+	}
+	value, ok := c.Get(codexFingerprintIDsContextKey)
+	if !ok {
+		return
+	}
+	if ids, ok := value.(*codexFingerprintIDs); ok {
+		applyCodexFingerprintHeaders(h, ids)
+	}
+}
 
 // codexFingerprintMode 控制 OAuth 账号出站请求的设备指纹收敛强度。
 // 多人共享同一 OAuth 账号时，收敛客户端携带的设备与会话标识，减少上游可见的指纹数量。
@@ -39,7 +73,7 @@ func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
 	case codexFingerprintOff, codexFingerprintDevice, codexFingerprintSession, codexFingerprintFull:
 		return codexFingerprintMode(raw)
 	default:
-		return codexFingerprintSession
+		return codexFingerprintOff
 	}
 }
 
