@@ -184,6 +184,28 @@ func rawVsMapClientMetadata(t *testing.T, body []byte, ids *codexFingerprintIDs)
 	var rawDecoded map[string]any
 	require.NoError(t, json.Unmarshal(rawBody, &rawDecoded))
 	rawCM, _ := rawDecoded["client_metadata"].(map[string]any)
+
+	// 两条改写路径会分别读取当前毫秒，跨毫秒执行时该字段允许自然递增；
+	// 先验证时间戳有效，再比较其余稳定字段的逐点一致性。
+	normalizeTurnStartedAt := func(clientMetadata map[string]any) {
+		rawMetadata, ok := clientMetadata["x-codex-turn-metadata"].(string)
+		if !ok {
+			return
+		}
+		var metadata map[string]any
+		require.NoError(t, json.Unmarshal([]byte(rawMetadata), &metadata))
+		if startedAtValue, exists := metadata["turn_started_at_unix_ms"]; exists {
+			startedAt, ok := startedAtValue.(float64)
+			require.True(t, ok)
+			require.Positive(t, startedAt)
+		}
+		delete(metadata, "turn_started_at_unix_ms")
+		normalized, err := json.Marshal(metadata)
+		require.NoError(t, err)
+		clientMetadata["x-codex-turn-metadata"] = string(normalized)
+	}
+	normalizeTurnStartedAt(mapCM)
+	normalizeTurnStartedAt(rawCM)
 	return mapCM, rawCM
 }
 
