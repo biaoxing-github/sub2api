@@ -1000,6 +1000,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 
 	authToken := ""
 	requestBaseURL := ""
+	isOAuth := account.IsOAuth()
 
 	switch {
 	case account.IsOAuth():
@@ -1035,15 +1036,21 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 
 	// 原生 v2 走普通 /responses 线：OAuth 与真实转发一致做上游模型归一化。
 	if isOAuth {
-		testModelID = normalizeOpenAIModelForUpstream(credentialAccount, testModelID)
+		testModelID = normalizeOpenAIModelForUpstream(account, testModelID)
 	}
 	payloadBytes, _ := json.Marshal(createOpenAICompactProbePayload(testModelID, isOAuth))
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
 		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	}
 	c.Set(openAICompactSessionSeedKey, compactProbeSessionID(account.ID))
+	MarkOpenAINativeCompactionV2(c)
+	stageCodexFingerprintIDs(c, resolveCodexFingerprintIDs(
+		account,
+		compactProbeSessionID(account.ID),
+		account.GetCodexFingerprintMode(),
+	))
 
-	req, err := s.buildOpenAITestResponsesRequest(ctx, c, account, payloadBytes, authToken, false, "", requestBaseURL, "/v1/responses/compact")
+	req, err := s.buildOpenAITestResponsesRequest(ctx, c, account, payloadBytes, authToken, true, "", requestBaseURL, "/v1/responses")
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create request")
 	}
@@ -1076,6 +1083,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	}
 
 	accountScheduled := s.scheduleOpenAIAPIKeyFromTestError(ctx, account, resp.StatusCode, body)
+	compactionFound := openAICompactProbeFoundCompactionItem(body)
 
 	if s.accountRepo != nil {
 		updates := buildOpenAICompactProbeExtraUpdates(resp, body, nil, compactionFound, time.Now())

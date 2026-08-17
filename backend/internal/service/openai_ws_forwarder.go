@@ -1193,6 +1193,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 			}
 		}
 	}
+	applyOpenAICodexBetaFeatures(c, account, headers)
 	// OAuth 账号：将 apiKeyID 混入 session 标识符，防止跨用户会话碰撞。
 	if account != nil && account.Type == AccountTypeOAuth {
 		apiKeyID := getAPIKeyIDFromContext(c)

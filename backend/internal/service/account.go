@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
@@ -2341,7 +2342,13 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 		return capability == OpenAIEndpointCapabilityChatCompletions
 	}
 	switch capability {
-	case OpenAIEndpointCapabilityResponses, OpenAIEndpointCapabilityChatCompletions:
+	case OpenAIEndpointCapabilityResponses:
+		if a.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(a.Extra) {
+			return false
+		}
+		capability = OpenAIEndpointCapabilityChatCompletions
+		fallthrough
+	case OpenAIEndpointCapabilityChatCompletions:
 	case OpenAIEndpointCapabilityAlphaSearch:
 		// OAuth 走 ChatGPT/Codex 端点，API Key 走账号 base_url 的 /v1/alpha/search。
 		if a.Type != AccountTypeOAuth && a.Type != AccountTypeAPIKey {

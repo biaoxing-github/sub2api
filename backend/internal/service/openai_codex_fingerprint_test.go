@@ -18,6 +18,10 @@ func newTestCodexFingerprintAccount(id int64, extra map[string]any) *Account {
 	return &Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: extra}
 }
 
+func newTestOAuthAccount(id int64, extra map[string]any) *Account {
+	return newTestCodexFingerprintAccount(id, extra)
+}
+
 // TestGetCodexFingerprintMode 验证默认值、显式关闭和账号类型边界。
 func TestGetCodexFingerprintMode(t *testing.T) {
 	tests := []struct {
@@ -27,8 +31,8 @@ func TestGetCodexFingerprintMode(t *testing.T) {
 	}{
 		{name: "nil账号", expected: codexFingerprintOff},
 		{name: "非OAuth账号", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, expected: codexFingerprintOff},
-		{name: "未配置默认session", account: newTestCodexFingerprintAccount(1, nil), expected: codexFingerprintSession},
-		{name: "非法值默认session", account: newTestCodexFingerprintAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), expected: codexFingerprintSession},
+		{name: "未配置默认off", account: newTestCodexFingerprintAccount(1, nil), expected: codexFingerprintOff},
+		{name: "非法值默认off", account: newTestCodexFingerprintAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), expected: codexFingerprintOff},
 		{name: "显式off", account: newTestCodexFingerprintAccount(1, map[string]any{codexFingerprintModeExtraKey: "off"}), expected: codexFingerprintOff},
 		{name: "device", account: newTestCodexFingerprintAccount(1, map[string]any{codexFingerprintModeExtraKey: "device"}), expected: codexFingerprintDevice},
 		{name: "full", account: newTestCodexFingerprintAccount(1, map[string]any{codexFingerprintModeExtraKey: "full"}), expected: codexFingerprintFull},
@@ -58,7 +62,7 @@ func TestResolveCodexFingerprintIDsFromRequest(t *testing.T) {
 	off := newTestCodexFingerprintAccount(1, map[string]any{codexFingerprintModeExtraKey: "off"})
 	assert.Nil(t, resolveCodexFingerprintIDsFromRequest(off, nil))
 
-	account := newTestCodexFingerprintAccount(1, nil)
+	account := newTestCodexFingerprintAccount(1, map[string]any{codexFingerprintModeExtraKey: "session"})
 	headersA := http.Header{"Session-Id": []string{"client-a"}}
 	headersB := http.Header{"Session-Id": []string{"client-b"}}
 	idsA := resolveCodexFingerprintIDsFromRequest(account, headersA)
@@ -93,7 +97,7 @@ func TestApplyCodexFingerprintHeadersDevice(t *testing.T) {
 
 // TestApplyCodexFingerprintHeadersSession 验证 session 模式的头字段收敛及非指纹字段保留。
 func TestApplyCodexFingerprintHeadersSession(t *testing.T) {
-	account := newTestCodexFingerprintAccount(7, nil)
+	account := newTestCodexFingerprintAccount(7, map[string]any{codexFingerprintModeExtraKey: "session"})
 	clientHeaders := http.Header{"Session-Id": []string{"client-session"}}
 	ids := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
 	headers := http.Header{}
@@ -125,7 +129,7 @@ func TestApplyCodexFingerprintHeadersFull(t *testing.T) {
 
 // TestApplyCodexFingerprintClientMetadata 验证请求体与请求头复用同一份 turn_id。
 func TestApplyCodexFingerprintClientMetadata(t *testing.T) {
-	account := newTestCodexFingerprintAccount(11, nil)
+	account := newTestCodexFingerprintAccount(11, map[string]any{codexFingerprintModeExtraKey: "session"})
 	ids := resolveCodexFingerprintIDsFromRequest(account, http.Header{"Session-Id": []string{"client-session"}})
 	headers := http.Header{}
 	headers.Set("x-codex-turn-metadata", `{"installation_id":"old","session_id":"old","thread_id":"old","turn_id":"old","window_id":"old:0"}`)

@@ -63,7 +63,7 @@ const (
 
 const codexFingerprintModeExtraKey = "codex_fingerprint_mode"
 
-// GetCodexFingerprintMode 从账号扩展配置读取指纹收敛模式；OpenAI OAuth 默认使用 session。
+// GetCodexFingerprintMode 从账号扩展配置读取指纹收敛模式；未显式配置时保持关闭。
 func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
 	if a == nil || !a.IsOpenAIOAuth() {
 		return codexFingerprintOff
@@ -244,14 +244,25 @@ func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFinge
 	if existing == nil {
 		existing = make(map[string]any)
 	}
-	existing["x-codex-installation-id"] = ids.installationID
+	if !applyCodexFingerprintToClientMetadataMap(existing, ids) {
+		return false
+	}
+	reqBody["client_metadata"] = existing
+	return true
+}
 
+// applyCodexFingerprintToClientMetadataMap 统一 map 与 raw JSON 两条路径的收敛语义。
+func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *codexFingerprintIDs) bool {
+	if existing == nil || ids == nil {
+		return false
+	}
+	if ids.installationID != "" {
+		existing["x-codex-installation-id"] = ids.installationID
+	}
 	if ids.mode == codexFingerprintDevice {
 		rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{"installation_id": ids.installationID})
-		reqBody["client_metadata"] = existing
-		return true
+		return ids.installationID != ""
 	}
-
 	existing["session_id"] = ids.sessionID
 	existing["thread_id"] = ids.threadID
 	existing["turn_id"] = ids.turnID
@@ -264,8 +275,35 @@ func applyCodexFingerprintClientMetadata(reqBody map[string]any, ids *codexFinge
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": time.Now().UnixMilli(),
 	})
-	reqBody["client_metadata"] = existing
 	return true
+}
+
+// applyCodexFingerprintClientMetadataRaw 只解码 client_metadata 小对象并拼回原始 JSON。
+func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintIDs) ([]byte, bool, error) {
+	if len(body) == 0 || ids == nil {
+		return body, false, nil
+	}
+	if !gjson.ParseBytes(body).IsObject() {
+		return body, false, nil
+	}
+	existing := map[string]any{}
+	if metadata := gjson.GetBytes(body, "client_metadata"); metadata.IsObject() {
+		if err := json.Unmarshal([]byte(metadata.Raw), &existing); err != nil {
+			return body, false, fmt.Errorf("decode client_metadata for fingerprint: %w", err)
+		}
+	}
+	if !applyCodexFingerprintToClientMetadataMap(existing, ids) {
+		return body, false, nil
+	}
+	raw, err := json.Marshal(existing)
+	if err != nil {
+		return body, false, fmt.Errorf("encode converged client_metadata: %w", err)
+	}
+	next, err := sjson.SetRawBytes(body, "client_metadata", raw)
+	if err != nil {
+		return body, false, fmt.Errorf("splice converged client_metadata: %w", err)
+	}
+	return next, true, nil
 }
 
 // rewriteClientMetadataEmbeddedTurnMetadata 改写 client_metadata 内嵌的 turn metadata JSON。

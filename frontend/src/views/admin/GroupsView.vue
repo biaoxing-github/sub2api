@@ -3302,9 +3302,12 @@ const copyAccountsGroupOptionsForEdit = computed(() => {
 
 const groups = ref<AdminGroup[]>([]);
 const loading = ref(false);
-const usageMap = ref<Map<number, { today_cost: number; total_cost: number }>>(
-  new Map(),
-);
+const usageMap = ref<
+  Map<
+    number,
+    { today_cost: number; yesterday_cost: number; total_cost: number }
+  >
+>(new Map());
 const usageLoading = ref(false);
 const capacityMap = ref<
   Map<
@@ -3915,9 +3918,11 @@ const formatCost = (cost: number): string => {
 const loadUsageSummary = async () => {
   usageLoading.value = true;
   try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const data = await adminAPI.groups.getUsageSummary(tz);
-    const map = new Map<number, { today_cost: number; total_cost: number }>();
+    const data = await adminAPI.groups.getUsageSummary();
+    const map = new Map<
+      number,
+      { today_cost: number; yesterday_cost: number; total_cost: number }
+    >();
     for (const item of data) {
       map.set(item.group_id, {
         today_cost: item.today_cost,

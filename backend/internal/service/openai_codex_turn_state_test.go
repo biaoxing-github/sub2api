@@ -1,12 +1,14 @@
 package service
 
 import (
-	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -101,6 +103,37 @@ func TestStageOpenAICodexTurnState_StagedHeaders(t *testing.T) {
 	var nilStaged http.Header
 	stageOpenAICodexTurnState(&nilStaged, http.Header{})
 	require.Nil(t, nilStaged)
+}
+
+func TestHandleStreamingResponse_CommitsStagedTurnState(t *testing.T) {
+	c, rec := newTurnStateTestContext(t, 7, "stream-session")
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
+		OpenAIFirstOutputTimeoutSeconds: 2,
+		MaxLineSize:                     defaultMaxLineSize,
+	}}}
+	account := &Account{ID: 42, Platform: PlatformOpenAI}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+		},
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"type":"response.output_text.delta","delta":"hello"}`,
+			"",
+			`data: {"type":"response.completed","response":{"id":"resp_turn_state","usage":{"input_tokens":1,"output_tokens":1}}}`,
+			"",
+		}, "\n"))),
+	}
+	resp.Header.Set(openAICodexTurnStateHeader, "turn-state-stream")
+
+	result, err := svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "turn-state-stream", rec.Result().Header.Get(openAICodexTurnStateHeader))
+	originValue, ok := svc.openaiCodexTurnStateOrigins.Load(openAICodexTurnStateSeed(c))
+	require.True(t, ok)
+	require.Equal(t, account.ID, originValue.(openAICodexTurnStateOrigin).accountID)
 }
 
 // 首输出超时导致 attempt 被丢弃时，溯源不得被该 attempt 污染——否则后续
@@ -353,11 +386,9 @@ func TestBuildOpenAIWSHeaders_CarriesSessionBetaFeatures(t *testing.T) {
 		if clientBeta != "" {
 			c.Request.Header.Set("x-codex-beta-features", clientBeta)
 		}
-		headers, _, err := svc.buildOpenAIWSHeaders(
-			context.Background(), c, account, "test-token", decision,
-			true, "", "", "", "gpt-5.6-codex", "",
+		headers, _ := svc.buildOpenAIWSHeaders(
+			c, account, "test-token", decision, true, "", "", "",
 		)
-		require.NoError(t, err)
 		return headers
 	}
 

@@ -777,6 +777,9 @@ func isUnknownGrokTextModel(model string) bool {
 	if !strings.HasPrefix(native, "grok-") || len(native) <= len("grok-") {
 		return false
 	}
+	if isGrokMediaFamilyModel(native) {
+		return false
+	}
 	for _, excluded := range []string{"grok-imagine", "grok-voice", "grok-speech", "grok-web", "grok-x-search"} {
 		if strings.HasPrefix(native, excluded) {
 			return false
@@ -784,6 +787,16 @@ func isUnknownGrokTextModel(model string) bool {
 	}
 	first := native[len("grok-")]
 	return first >= '0' && first <= '9'
+}
+
+// isGrokMediaFamilyModel 识别按图片、视频或音频单位计费的 Grok 模型族。
+func isGrokMediaFamilyModel(native string) bool {
+	for _, marker := range []string{"imagine", "image", "video", "audio", "speech", "tts", "transcribe", "realtime"} {
+		if strings.Contains(native, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetModelPricing 获取模型价格配置

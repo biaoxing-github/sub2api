@@ -2362,8 +2362,9 @@ export default {
       compositeRoutes: {
         action: 'Routes'
       },
-      usageToday: 'Today',
-      usageTotal: 'Total',
+		usageToday: 'Today',
+		usageYesterday: 'Yesterday',
+		usageTotal: 'Total',
       accountsAvailable: 'Avail:',
       accountsRateLimited: 'Limited:',
       accountsTotal: 'Total:',

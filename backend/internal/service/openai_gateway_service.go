@@ -488,6 +488,9 @@ type OpenAIGatewayService struct {
 	codexSnapshotThrottle               *accountWriteThrottle
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
+	// openaiCodexTurnStateOrigins 记录下游会话最近一次收到的 turn-state 铸造账号。
+	openaiCodexTurnStateOrigins sync.Map
+	openaiCodexTurnStateWrites  atomic.Uint64
 
 	openAISchedulerExhaustionProbeFunc  func(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error
 	openAISchedulerExhaustionProbeSleep func(ctx context.Context, d time.Duration) error
@@ -4154,10 +4157,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				if applyCodexFingerprintClientMetadata(decoded, fingerprintIDs) {
 					markDecodedModified()
 				}
-				if c != nil {
-					c.Set("codex_fingerprint_ids", fingerprintIDs)
-				}
 			}
+			stageCodexFingerprintIDs(c, fingerprintIDs)
 		}
 		if codexResult.NormalizedModel != "" {
 			upstreamModel = codexResult.NormalizedModel
@@ -4834,6 +4835,23 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			body = normalizedBody
 		}
 		reqStream = gjson.GetBytes(body, "stream").Bool()
+		if !isOpenAIResponsesCompactPath(c) {
+			var clientHeaders http.Header
+			if c != nil && c.Request != nil {
+				clientHeaders = c.Request.Header
+			}
+			fingerprintIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+			if fingerprintIDs != nil {
+				fingerprintBody, changed, fingerprintErr := applyCodexFingerprintClientMetadataRaw(body, fingerprintIDs)
+				if fingerprintErr != nil {
+					return nil, fingerprintErr
+				}
+				if changed {
+					body = fingerprintBody
+				}
+			}
+			stageCodexFingerprintIDs(c, fingerprintIDs)
+		}
 	}
 
 	sanitizedBody, sanitized, err := sanitizeEmptyBase64InputImagesInOpenAIBody(body)
@@ -5234,6 +5252,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthroughWithBaseURL(
 
 	// 透传与后台账户探测共用同一账户级身份规则。
 	s.applyOpenAIPassthroughClientIdentity(ctx, req, c, account, body)
+	applyStagedCodexFingerprintHeaders(c, account, req.Header)
+	applyOpenAICodexBetaFeatures(c, account, req.Header)
+	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
 
 	if req.Header.Get("content-type") == "" {
 		req.Header.Set("content-type", "application/json")
@@ -6677,6 +6698,12 @@ func writeOpenAIPassthroughResponseHeaders(dst http.Header, src http.Header, fil
 			dst.Set("Content-Type", v)
 		}
 	}
+	turnState := strings.TrimSpace(src.Get(openAICodexTurnStateHeader))
+	if turnState == "" {
+		dst.Del(openAICodexTurnStateHeader)
+	} else {
+		dst.Set(openAICodexTurnStateHeader, turnState)
+	}
 	// 透传模式强制放行 x-codex-* 响应头（若上游返回）。
 	// 注意：真实 http.Response.Header 的 key 一般会被 canonicalize；但为了兼容测试/自建响应，
 	// 这里用 EqualFold 做一次大小写不敏感的查找。
@@ -6801,6 +6828,11 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 			req.Header.Set("session_id", isolateOpenAISessionID(apiKeyID, compactSession))
 		} else {
 			req.Header.Set("accept", "text/event-stream")
+			if isOpenAINativeCompactionV2(c) {
+				if compactSession := resolveOpenAICompactSessionID(c); compactSession != "" {
+					req.Header.Set("session_id", isolateOpenAISessionID(apiKeyID, compactSession))
+				}
+			}
 		}
 		if promptCacheKey != "" {
 			isolated := isolateOpenAISessionID(apiKeyID, promptCacheKey)
@@ -6808,6 +6840,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 			if !compatMessagesBridge || clientConversationID != "" {
 				req.Header.Set("conversation_id", isolated)
 			}
+		}
+		if req.Header.Get("version") == "" {
+			req.Header.Set("version", codexCLIVersion())
 		}
 	} else if isOpenAIResponsesCompactPath(c) {
 		// API Key 的 compact 也固定等待 unary JSON 终态，避免上游依据
@@ -6817,14 +6852,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestWithBaseURL(ctx context.Conte
 
 	// 透传与后台账户探测共用同一账户级身份规则。
 	s.applyOpenAIPassthroughClientIdentity(ctx, req, c, account, body)
-	// 指纹收敛在白名单透传和身份头收口后执行，仅改写设备/会话字段，不影响 routing hint。
-	if account.Type == AccountTypeOAuth && c != nil {
-		if value, ok := c.Get("codex_fingerprint_ids"); ok {
-			if fingerprintIDs, ok := value.(*codexFingerprintIDs); ok {
-				applyCodexFingerprintHeaders(req.Header, fingerprintIDs)
-			}
-		}
-	}
+	applyStagedCodexFingerprintHeaders(c, account, req.Header)
+	applyOpenAICodexBetaFeatures(c, account, req.Header)
+	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
 
 	// Ensure required headers exist
 	if req.Header.Get("content-type") == "" {
@@ -7276,6 +7306,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	} else if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	}
+	// turn-state 不在通用响应头白名单内；首输出守卫开启时只暂存，
+	// 避免尚未提交的失败 attempt 污染下一次账号切换。
+	if guardFirstOutput {
+		stageOpenAICodexTurnState(&attemptResponseHeaders, resp.Header)
+	} else {
+		s.relayOpenAICodexTurnState(c, account, resp.Header)
+	}
 
 	// Set SSE response headers
 	c.Header("Content-Type", "text/event-stream")
@@ -7297,6 +7334,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				c.Writer.Header().Add(key, value)
 			}
 		}
+		s.noteStagedOpenAICodexTurnStateCommitted(c, account, attemptResponseHeaders)
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
@@ -8395,7 +8433,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	// Some OpenAI-compatible upstreams (including other sub2api instances)
 	// may return SSE even when stream=false was requested.
 	if isEventStreamResponse(resp.Header) {
-		return s.handleSSEToJSON(resp, c, body, account.Platform, originalModel, mappedModel)
+		return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 	bodyLooksLikeSSE := bodyHasSSEFraming(body)
 
@@ -8405,7 +8443,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	// positives on JSON responses that coincidentally contain "data:" or
 	// "event:" in their text content.
 	if account.Type == AccountTypeOAuth && bodyLooksLikeSSE {
-		return s.handleSSEToJSON(resp, c, body, account.Platform, originalModel, mappedModel)
+		return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
 	if account != nil && account.IsGrok() {
 		body, err = restoreGrokResponsesClientToolPayload(c, body)
@@ -8431,7 +8469,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	usageValue, usageOK := extractOpenAIUsageFromJSONBytes(body)
 	if !usageOK {
 		if bodyLooksLikeSSE {
-			return s.handleSSEToJSON(resp, c, body, account.Platform, originalModel, mappedModel)
+			return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 		}
 		return nil, s.newOpenAI2xxProtocolFailoverError(c, account, resp, body, "OpenAI upstream returned non-JSON 2xx response body")
 	}
@@ -8447,6 +8485,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	s.relayOpenAICodexTurnState(c, account, resp.Header)
 	forceJSONContentType(c.Writer.Header())
 
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
@@ -8479,7 +8518,7 @@ func bodyHasSSEFraming(body []byte) bool {
 	return false
 }
 
-func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Context, body []byte, platform, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
+func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
 	bodyText := string(body)
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 
@@ -8531,7 +8570,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 				imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
 				imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
 			}
-			protocolErr := s.writeOpenAINonStreamingProtocolError(resp, c, platform, terminalPayload, msg)
+			protocolErr := s.writeOpenAINonStreamingProtocolError(resp, c, account.Platform, terminalPayload, msg)
 			if !usageObserved {
 				return nil, protocolErr
 			}
@@ -8545,6 +8584,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	s.relayOpenAICodexTurnState(c, account, resp.Header)
 
 	contentType := jsonContentTypeUTF8
 	if !ok {
@@ -9248,8 +9288,13 @@ func isOpenAIEncryptedReasoningInputItem(item any) bool {
 	return hasEncryptedContent
 }
 
-func IsOpenAIResponsesCompactPathForTest(c *gin.Context) bool {
+// IsOpenAIResponsesCompactPath 判断请求是否命中 legacy /responses/compact 端点。
+func IsOpenAIResponsesCompactPath(c *gin.Context) bool {
 	return isOpenAIResponsesCompactPath(c)
+}
+
+func IsOpenAIResponsesCompactPathForTest(c *gin.Context) bool {
+	return IsOpenAIResponsesCompactPath(c)
 }
 
 func OpenAICompactSessionSeedKeyForTest() string {

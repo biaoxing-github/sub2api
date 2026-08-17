@@ -256,6 +256,14 @@ func openAICompatibleRequestPlatform(apiKey *service.APIKey) string {
 	return service.PlatformOpenAI
 }
 
+// openAIResponsesRequiredCapabilityForRequest 为生图、legacy compact 与原生 v2 请求选择能力门。
+func openAIResponsesRequiredCapabilityForRequest(imageIntent bool, needsResponses bool, platform string) service.OpenAIEndpointCapability {
+	if (imageIntent || needsResponses) && platform == service.PlatformOpenAI {
+		return service.OpenAIEndpointCapabilityResponses
+	}
+	return service.OpenAIEndpointCapabilityChatCompletions
+}
+
 // NewOpenAIGatewayHandler creates a new OpenAIGatewayHandler
 func NewOpenAIGatewayHandler(
 	gatewayService *service.OpenAIGatewayService,
@@ -355,6 +363,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
 	if !ok {
 		return
+	}
+	legacyCompact := isOpenAILegacyCompactPath(c)
+	nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(body)
+	if nativeV2 {
+		service.MarkOpenAINativeCompactionV2(c)
 	}
 
 	// 校验请求体 JSON 合法性
@@ -519,7 +532,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	sessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
-	requireCompact := isOpenAIRemoteCompactPath(c)
+	requireCompact := legacyCompact
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -530,10 +543,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	firstOutputTimeoutSwitchCount := 0
 	probeFailureCount := 0
 	schedulerProbeStartedAt := time.Time{}
-	requiredCapability := service.OpenAIEndpointCapabilityChatCompletions
-	if imageIntent && requestPlatform == service.PlatformOpenAI {
-		requiredCapability = service.OpenAIEndpointCapabilityResponses
-	}
+	requiredCapability := openAIResponsesRequiredCapabilityForRequest(
+		imageIntent,
+		nativeV2 || legacyCompact,
+		requestPlatform,
+	)
 
 	for {
 		if !openAIRequestAllowsFailoverReplay(c) {
@@ -905,7 +919,7 @@ func isOpenAIRemoteCompactionV2Request(body []byte) bool {
 // 原生流式 /responses 链路，并继续兼容未声明该协议的 body-signal 请求。
 // 返回归一化后的 body；ok=false 表示错误响应已写出，调用方应直接 return。
 func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Context, reqLog *zap.Logger, body []byte) ([]byte, bool) {
-	isCompactRequest := service.IsOpenAIResponsesCompactPathForTest(c)
+	isCompactRequest := isOpenAILegacyCompactPath(c)
 	bodySignalCompact := !isCompactRequest && isBareOpenAIResponsesPath(c) && service.HasCompactionTriggerInInput(body)
 	clientStream := false
 	if isCompactRequest || bodySignalCompact {
@@ -917,7 +931,7 @@ func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Con
 		}
 	}
 	if bodySignalCompact {
-		if isOpenAIRemoteCompactionV2Request(c, body) {
+		if isOpenAIRemoteCompactionV2Request(body) {
 			return body, true
 		}
 		c.Request.URL.Path = strings.TrimRight(c.Request.URL.Path, "/") + "/compact"

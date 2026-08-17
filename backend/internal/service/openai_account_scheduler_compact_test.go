@@ -143,8 +143,6 @@ func selectOpenAICompactionSchedulerTestAccount(t *testing.T, svc *OpenAIGateway
 		OpenAIUpstreamTransportAny,
 		OpenAIEndpointCapabilityResponses,
 		requireCompact,
-		false,
-		false,
 	)
 	return selection, err
 }
@@ -303,8 +301,6 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactRequiresResponse
 		OpenAIUpstreamTransportAny,
 		OpenAIEndpointCapabilityResponses,
 		true,
-		false,
-		false,
 	)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrNoAvailableAccounts))
@@ -363,8 +359,6 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_CompactSkipsChatOnlyAcc
 		OpenAIUpstreamTransportAny,
 		OpenAIEndpointCapabilityResponses,
 		true,
-		false,
-		false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, selection)

@@ -4598,7 +4598,10 @@ func TestHandleSSEToJSON_CompletedEventReturnsJSON(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{}}
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+			http.CanonicalHeaderKey(openAICodexTurnStateHeader): []string{"turn-state-sse-json"},
+		},
 	}
 	body := []byte(strings.Join([]string{
 		`data: {"type":"response.in_progress","response":{"id":"resp_2"}}`,
@@ -4606,13 +4609,14 @@ func TestHandleSSEToJSON_CompletedEventReturnsJSON(t *testing.T) {
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-4o", "gpt-4o")
+	usage, err := svc.handleSSEToJSON(resp, c, &Account{Platform: PlatformOpenAI}, body, "gpt-4o", "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 7, usage.InputTokens)
 	require.Equal(t, 9, usage.OutputTokens)
 	require.Equal(t, 1, usage.CacheReadInputTokens)
 	require.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+	require.Equal(t, "turn-state-sse-json", rec.Header().Get(openAICodexTurnStateHeader))
 	require.NotContains(t, rec.Body.String(), "event:")
 	require.Contains(t, rec.Body.String(), `"id":"resp_2"`)
 	require.NotContains(t, rec.Body.String(), "data:")
@@ -4750,7 +4754,7 @@ func TestHandleSSEToJSON_ReconstructsImageGenerationOutputItemDone(t *testing.T)
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-5.4", "gpt-5.4")
+	usage, err := svc.handleSSEToJSON(resp, c, &Account{Platform: PlatformOpenAI}, body, "gpt-5.4", "gpt-5.4")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 4, usage.ImageOutputTokens)
@@ -4776,7 +4780,7 @@ func TestHandleSSEToJSON_NoFinalResponseKeepsSSEBody(t *testing.T) {
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-4o", "gpt-4o")
+	usage, err := svc.handleSSEToJSON(resp, c, &Account{Platform: PlatformOpenAI}, body, "gpt-4o", "gpt-4o")
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.Equal(t, 0, usage.InputTokens)
@@ -4800,7 +4804,7 @@ func TestHandleSSEToJSON_ResponseFailedReturnsProtocolError(t *testing.T) {
 		`data: [DONE]`,
 	}, "\n"))
 
-	usage, err := svc.handleSSEToJSON(resp, c, body, PlatformOpenAI, "gpt-4o", "gpt-4o")
+	usage, err := svc.handleSSEToJSON(resp, c, &Account{Platform: PlatformOpenAI}, body, "gpt-4o", "gpt-4o")
 	require.Nil(t, usage)
 	require.Error(t, err)
 	require.Equal(t, http.StatusBadGateway, rec.Code)
