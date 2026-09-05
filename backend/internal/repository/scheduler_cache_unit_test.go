@@ -3,6 +3,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -74,4 +75,38 @@ func TestBuildSchedulerMetadataAccount_KeepsSlimGroupMembership(t *testing.T) {
 	require.Nil(t, got.AccountGroups[0].Group)
 	require.Equal(t, int64(11), got.AccountGroups[1].GroupID)
 	require.Nil(t, got.Groups)
+}
+func TestBuildSchedulerMetadataAccount_KeepsOpenAIPassthroughForModelGate(t *testing.T) {
+	for _, key := range []string{"openai_passthrough", "openai_oauth_passthrough"} {
+		t.Run(key, func(t *testing.T) {
+			account := service.Account{
+				ID:       383,
+				Platform: service.PlatformOpenAI,
+				Type:     service.AccountTypeOAuth,
+				Credentials: map[string]any{
+					// 账号从白名单模式切到透传后常见的残留映射，未列出请求的模型。
+					"model_mapping": map[string]any{"gpt-5.5": "gpt-5.5"},
+					"access_token":  "drop-me",
+				},
+				Extra: map[string]any{key: true},
+			}
+			require.True(t, account.IsModelSupported("gpt-5.6-sol"),
+				"前置条件：透传账号本应放行白名单外的模型")
+
+			meta := buildSchedulerMetadataAccount(account)
+
+			// 走一遍真实的序列化/反序列化路径（写入 sched:meta 再由 decodeCachedAccount 读回）。
+			payload, err := json.Marshal(meta)
+			require.NoError(t, err)
+			var restored service.Account
+			require.NoError(t, json.Unmarshal(payload, &restored))
+
+			require.Equal(t, true, restored.Extra[key])
+			require.True(t, restored.IsOpenAIPassthroughEnabled())
+			require.True(t, restored.IsModelSupported("gpt-5.6-sol"),
+				"投影裁掉透传开关会让透传账号在候选过滤阶段被误判为 model_not_supported")
+			// 白名单本身仍需保留：非透传账号依赖它做模型门。
+			require.Equal(t, map[string]any{"gpt-5.5": "gpt-5.5"}, restored.Credentials["model_mapping"])
+		})
+	}
 }

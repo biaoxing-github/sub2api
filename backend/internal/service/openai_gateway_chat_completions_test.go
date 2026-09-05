@@ -48,6 +48,54 @@ func (r *openAIChatStreamReadErrorCloser) Read(p []byte) (int, error) {
 
 func (r *openAIChatStreamReadErrorCloser) Close() error { return nil }
 
+// API Key 自动缓存键必须在同一租户内稳定，并在不同租户之间隔离。
+func TestForwardAsChatCompletions_APIKeyAutoDerivesStableIsolatedPromptCacheKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	response := func() *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"stop before response parsing"}}`)),
+		}
+	}
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{response(), response(), response()}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID: 2, Name: "openai-compatible", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
+		Credentials: map[string]any{"api_key": "sk-compatible"},
+		Extra:       map[string]any{"openai_responses_supported": true},
+	}
+	firstBody := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"be concise"},{"role":"user","content":"hello"}],"stream":false}`)
+	appendedBody := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"be concise"},{"role":"user","content":"hello"},{"role":"assistant","content":"hi"},{"role":"user","content":"continue"}],"stream":false}`)
+
+	forward := func(apiKeyID int64, body []byte) {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set("api_key", &APIKey{ID: apiKeyID})
+		result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.4")
+		require.Error(t, err)
+		require.Nil(t, result)
+	}
+
+	forward(99, firstBody)
+	forward(99, appendedBody)
+	forward(100, appendedBody)
+
+	firstKey := gjson.GetBytes(upstream.bodies[0], "prompt_cache_key").String()
+	appendedKey := gjson.GetBytes(upstream.bodies[1], "prompt_cache_key").String()
+	otherTenantKey := gjson.GetBytes(upstream.bodies[2], "prompt_cache_key").String()
+	require.NotEmpty(t, firstKey)
+	require.Equal(t, firstKey, appendedKey)
+	require.NotEqual(t, firstKey, otherTenantKey)
+	require.Equal(t, generateSessionUUID(firstKey), upstream.requests[0].Header.Get("session_id"))
+	require.Equal(t, upstream.requests[0].Header.Get("session_id"), upstream.requests[1].Header.Get("session_id"))
+	require.Equal(t, generateSessionUUID(otherTenantKey), upstream.requests[2].Header.Get("session_id"))
+	require.NotEqual(t, upstream.requests[1].Header.Get("session_id"), upstream.requests[2].Header.Get("session_id"))
+}
+
 func TestHandleChatStreamingResponse_ClassifiesHTTP2ReadError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

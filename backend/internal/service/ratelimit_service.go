@@ -1484,7 +1484,7 @@ func parseOpenAIRateLimitResetTime(body []byte) *int64 {
 
 	// 检查是否为 usage_limit_reached 或 rate_limit_exceeded 类型
 	errType, _ := errObj["type"].(string)
-	if errType != "usage_limit_reached" && errType != "rate_limit_exceeded" {
+	if errType != "usage_limit_reached" && errType != "rate_limit_exceeded" && errType != "GoUsageLimitError" {
 		return nil
 	}
 
@@ -1507,6 +1507,13 @@ func parseOpenAIRateLimitResetTime(body []byte) *int64 {
 	if resetsInSeconds, ok := errObj["resets_in_seconds"].(string); ok {
 		if sec, err := strconv.ParseInt(resetsInSeconds, 10, 64); err == nil {
 			ts := time.Now().Unix() + sec
+			return &ts
+		}
+	}
+	if errType == "GoUsageLimitError" {
+		message, _ := errObj["message"].(string)
+		if duration := parseOpenCodeGoUsageLimitResetDuration(message); duration > 0 {
+			ts := time.Now().Add(duration).Unix()
 			return &ts
 		}
 	}

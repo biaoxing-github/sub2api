@@ -208,10 +208,17 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		s.handleGeminiUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		policy := ErrorPolicyNone
+		if s.rateLimitService != nil {
+			policy = s.rateLimitService.CheckErrorPolicy(ctx, account, resp.StatusCode, respBody, mappedModel)
+		}
+		// 策略层已处理的账号状态不重复写入，跳过策略仍保留换号与客户端错误映射。
+		if policy == ErrorPolicyNone || policy == ErrorPolicyMatched {
+			s.handleGeminiUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+		}
 		evBody := unwrapIfNeeded(account.Type == AccountTypeOAuth, respBody)
 
-		if s.shouldFailoverGeminiUpstreamError(resp.StatusCode) {
+		if s.shouldFailoverGeminiUpstreamError(resp.StatusCode) || policy == ErrorPolicyMatched || policy == ErrorPolicyRetryNext || policy == ErrorPolicyRateLimited || policy == ErrorPolicyTempUnscheduled || policy == ErrorPolicyDisabled {
 			upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(evBody)))
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
@@ -229,6 +236,11 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 			}
 		}
 
+		if policy == ErrorPolicySkipped && account.IsCustomErrorCodesEnabled() {
+			return nil, s.writeGeminiCustomCodeSkippedError(c, account, resp.StatusCode, requestID, evBody, func() {
+				_ = s.writeChatCompletionsError(c, http.StatusInternalServerError, "api_error", geminiCustomCodeSkippedClientMessage)
+			})
+		}
 		return nil, s.writeGeminiChatCompletionsMappedError(c, account, resp.StatusCode, requestID, evBody)
 	}
 
@@ -844,8 +856,13 @@ func (s *GeminiMessagesCompatService) writeGeminiChatCompletionsMappedError(
 		if errType == "upstream_error" {
 			errType = "invalid_request_error"
 		}
+		// 400 是确定性的请求错误：回传上游 message（已脱敏），客户端据此定位非法字段。
 		if errMsg == "Upstream request failed" {
-			errMsg = "Invalid request"
+			if upstreamMsg != "" {
+				errMsg = upstreamMsg
+			} else {
+				errMsg = "Invalid request"
+			}
 		}
 	case http.StatusNotFound:
 		statusCode = http.StatusNotFound

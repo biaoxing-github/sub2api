@@ -15,7 +15,7 @@ func TestChatReasoningAlias_NonStreamingResponse(t *testing.T) {
 		"choices":[{"message":{"role":"assistant","content":"final answer","reasoning":"fallback reasoning"},"finish_reason":"stop"}]
 	}`), &response))
 
-	out := ChatCompletionsResponseToResponses(&response, "reasoning-model", nil, false, nil)
+	out := ChatCompletionsResponseToResponses(&response, "reasoning-model", nil, nil, false, nil)
 
 	require.Len(t, out.Output, 2)
 	require.Equal(t, "reasoning", out.Output[0].Type)

@@ -118,11 +118,13 @@
         :show-proxy-warning="isAnthropic"
         :show-cookie-option="isAnthropic"
         :allow-multiple="false"
+        :show-refresh-token-option="isOpenAI || isAntigravity"
         :method-label="t('admin.accounts.inputMethod')"
         :platform="isOpenAI ? 'openai' : isGrok ? 'grok' : isGemini ? 'gemini' : isAntigravity ? 'antigravity' : 'anthropic'"
         :show-project-id="isGemini && geminiOAuthType === 'code_assist'"
         @generate-url="handleGenerateUrl"
         @cookie-auth="handleCookieAuth"
+        @validate-refresh-token="handleValidateRefreshToken"
       />
 
     </div>
@@ -337,6 +339,40 @@ const handleGenerateUrl = async () => {
     await antigravityOAuth.generateAuthUrl(props.account.proxy_id)
   } else {
     await claudeOAuth.generateAuthUrl(addMethod.value, props.account.proxy_id)
+  }
+}
+
+// 用单个刷新令牌重新授权当前账号，沿用现有更新及解除错误状态流程。
+const handleValidateRefreshToken = async (input: string) => {
+  const account = props.account
+  const refreshToken = input.split('\n').map(line => line.trim()).find(Boolean)
+  if (!account || !refreshToken || (!isOpenAI.value && !isAntigravity.value)) return
+  const oauthClient = isOpenAI.value ? openaiOAuth : antigravityOAuth
+  oauthClient.error.value = ''
+  try {
+    let credentials: Record<string, unknown>
+    let extra: Record<string, unknown> | undefined
+    if (isOpenAI.value) {
+      const tokenInfo = await openaiOAuth.validateRefreshToken(refreshToken, account.proxy_id)
+      if (!tokenInfo) return
+      credentials = openaiOAuth.buildCredentials(tokenInfo)
+      extra = openaiOAuth.buildExtraInfo(tokenInfo)
+    } else {
+      const tokenInfo = await antigravityOAuth.validateRefreshToken(refreshToken, account.proxy_id)
+      if (!tokenInfo) return
+      credentials = antigravityOAuth.buildCredentials(tokenInfo, refreshToken)
+    }
+    oauthClient.loading.value = true
+    await adminAPI.accounts.update(account.id, { type: 'oauth', credentials, ...(extra ? { extra } : {}) })
+    const updatedAccount = await adminAPI.accounts.clearError(account.id)
+    appStore.showSuccess(t('admin.accounts.reAuthorizedSuccess'))
+    emit('reauthorized', updatedAccount)
+    handleClose()
+  } catch (error: any) {
+    oauthClient.error.value = error.response?.data?.detail || error.message || t('admin.accounts.oauth.authFailed')
+    appStore.showError(oauthClient.error.value)
+  } finally {
+    oauthClient.loading.value = false
   }
 }
 

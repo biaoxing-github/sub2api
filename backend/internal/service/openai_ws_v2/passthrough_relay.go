@@ -29,6 +29,7 @@ type Usage struct {
 }
 
 type RelayResult struct {
+	ResponseServiceTier     string // 最后终态实际声明的服务档位。
 	RequestModel            string
 	ResponseModel           string
 	ResponseModelConflict   bool
@@ -43,6 +44,7 @@ type RelayResult struct {
 }
 
 type RelayTurnResult struct {
+	ResponseServiceTier   string // 本轮终态实际声明的服务档位。
 	RequestModel          string
 	ResponseModel         string
 	ResponseModelConflict bool
@@ -82,16 +84,18 @@ type RelayTraceEvent struct {
 }
 
 type relayState struct {
-	usage              Usage
-	requestModel       string
-	lastResponseID     string
-	lastResponseModel  string
-	responseConflict   bool
-	terminalEventType  string
-	lastRequestPayload []byte
-	firstTokenMs       *int
-	turnTimingByID     map[string]*relayTurnTiming
-	activeTurn         *relayTurnTiming
+	lastResponseServiceTier string
+	usage                   Usage
+	requestModel            string
+	lastResponseID          string
+	lastResponseModel       string
+	responseConflict        bool
+	terminalEventType       string
+	lastRequestPayload      []byte
+	firstTokenMs            *int
+	turnTimingByID          map[string]*relayTurnTiming
+	activeTurn              *relayTurnTiming
+	pendingTurns            atomic.Int64 // 已提交但尚未收到终态的轮次数，跨读写协程同步。
 }
 
 type relayExitSignal struct {
@@ -102,14 +106,15 @@ type relayExitSignal struct {
 }
 
 type observedUpstreamEvent struct {
-	terminal         bool
-	eventType        string
-	responseID       string
-	usage            Usage
-	responseModel    string
-	responseConflict bool
-	duration         time.Duration
-	firstToken       *int
+	responseServiceTier string
+	terminal            bool
+	eventType           string
+	responseID          string
+	usage               Usage
+	responseModel       string
+	responseConflict    bool
+	duration            time.Duration
+	firstToken          *int
 }
 
 type relayTurnTiming struct {
@@ -363,6 +368,8 @@ func runClientToUpstream(
 			return
 		}
 		markActivity()
+		// 先登记轮次，避免极快终态在 WriteFrame 返回前到达。
+		observeClientTurnRequest(state, msgType, payload)
 		if err := writeUpstream(msgType, payload); err != nil {
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:        "write_upstream_failed",
@@ -377,7 +384,6 @@ func runClientToUpstream(
 		if forwardedFrames != nil {
 			forwardedFrames.Add(1)
 		}
-		observeClientTurnRequest(state, msgType, payload)
 		markActivity()
 	}
 }
@@ -402,17 +408,23 @@ func runUpstreamToClient(
 	for {
 		msgType, payload, err := upstreamConn.ReadFrame(ctx)
 		if err != nil {
+			// 传输正常关闭不能替代 Responses 终态，未完成轮次必须报告失败。
+			graceful := isDisconnectError(err)
+			if graceful && state != nil && (state.pendingTurns.Load() > 0 || state.activeTurn != nil) {
+				graceful = false
+				err = errors.New("upstream websocket closed before terminal event: " + err.Error())
+			}
 			emitRelayTrace(onTrace, RelayTraceEvent{
 				Stage:           "read_upstream_failed",
 				Direction:       "upstream_to_client",
 				Error:           err.Error(),
-				Graceful:        isDisconnectError(err),
+				Graceful:        graceful,
 				WroteDownstream: wroteDownstream,
 			})
 			exitCh <- relayExitSignal{
 				stage:           "read_upstream",
 				err:             err,
-				graceful:        isDisconnectError(err),
+				graceful:        graceful,
 				wroteDownstream: wroteDownstream,
 			}
 			return
@@ -604,6 +616,17 @@ func observeUpstreamMessage(
 		return observed
 	}
 	observed.terminal = true
+	// 前导帧可能回显请求档位，只有终态声明可用于本轮费用结算。
+	for _, value := range gjson.GetManyBytes(message, "response.service_tier", "service_tier") {
+		if value.Type == gjson.String && strings.TrimSpace(value.String()) != "" {
+			observed.responseServiceTier = strings.TrimSpace(value.String())
+			break
+		}
+	}
+	state.lastResponseServiceTier = observed.responseServiceTier
+	if state.pendingTurns.Load() > 0 {
+		state.pendingTurns.Add(-1)
+	}
 	state.terminalEventType = eventType
 	if responseID != "" {
 		state.lastResponseID = responseID
@@ -643,6 +666,7 @@ func emitTurnComplete(
 		RequestModel:          requestModel,
 		ResponseModel:         observed.responseModel,
 		ResponseModelConflict: observed.responseConflict,
+		ResponseServiceTier:   observed.responseServiceTier,
 		Usage:                 observed.usage,
 		RequestID:             responseID,
 		TerminalEventType:     observed.eventType,
@@ -706,6 +730,7 @@ func observeClientTurnRequest(state *relayState, msgType coderws.MessageType, pa
 	if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) != "response.create" {
 		return
 	}
+	state.pendingTurns.Add(1)
 	state.lastRequestPayload = cloneRelayBytes(payload)
 	if model := strings.TrimSpace(gjson.GetBytes(payload, "model").String()); model != "" {
 		state.requestModel = model
@@ -879,6 +904,7 @@ func enrichResult(result *RelayResult, state *relayState, duration time.Duration
 	result.RequestModel = state.requestModel
 	result.ResponseModel = state.lastResponseModel
 	result.ResponseModelConflict = state.responseConflict
+	result.ResponseServiceTier = state.lastResponseServiceTier
 	result.Usage = state.usage
 	result.RequestID = state.lastResponseID
 	result.TerminalEventType = state.terminalEventType

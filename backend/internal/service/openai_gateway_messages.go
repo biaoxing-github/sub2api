@@ -35,6 +35,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
+	ClearActualOpenAIUpstreamEndpoint(c)
 
 	// API Key 兼容上游若不支持 Responses API，/v1/messages 先走 Chat Completions 直转链路。
 	if account.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
@@ -402,10 +403,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 	}
 	if result != nil {
-		if responsesReq.ServiceTier != "" {
-			st := responsesReq.ServiceTier
-			result.ServiceTier = &st
-		}
+		result.ServiceTier = extractOpenAIServiceTierFromBody(responsesBody)
 		if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
 			re := responsesReq.Reasoning.Effort
 			result.ReasoningEffort = &re
@@ -413,7 +411,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	// Extract and save Codex usage snapshot from response headers (for OAuth accounts)
-	if handleErr == nil && account.Type == AccountTypeOAuth {
+	if handleErr == nil && account.Type == AccountTypeOAuth && !isCodexSparkModel(upstreamModel) {
 		if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
 			s.updateCodexUsageSnapshot(ctx, account.ID, snapshot)
 		}
@@ -473,6 +471,10 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 
 	finalResponse, usage, acc, err := s.readOpenAICompatBufferedTerminal(resp, "openai messages buffered", requestID)
 	if err != nil {
+		var readErr *openAICompatBufferedReadError
+		if errors.As(err, &readErr) && readErr != nil {
+			return nil, readErr.cause
+		}
 		return nil, err
 	}
 
@@ -485,6 +487,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	observer.Observe(finalResponse.Model, true)
+	observer.ObserveServiceTier(normalizeObservedOpenAIServiceTier(finalResponse.ServiceTier), true)
 
 	resultWithUsage := func() *OpenAIForwardResult {
 		return &OpenAIForwardResult{
@@ -496,6 +499,7 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 			BillingModel:                  billingModel,
 			UpstreamModel:                 upstreamModel,
 			UpstreamResponseModel:         observedUpstreamResponseModel(c),
+			UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
 			UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
 			Stream:                        false,
 			Duration:                      time.Since(startTime),
@@ -509,8 +513,9 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 			message = "Upstream stream failed"
 		}
 		if openAIStreamFailedEventShouldFailover(payload, message) {
-			return resultWithUsage(), s.newOpenAIStreamFailoverError(c, account, false, requestID, payload, message)
+			return resultWithUsage(), s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, payload, message, upstreamModel, resp.Header)
 		}
+		s.handleOpenAIStreamRateLimit(contextFromGin(c), account, payload, upstreamModel, resp.Header)
 		message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payload, message)
 		if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(
 			c, account.Platform, payload, message,
@@ -574,6 +579,14 @@ func isOpenAICompatDoneSentinelLine(line string) bool {
 	payload, ok := extractOpenAISSEDataLine(line)
 	return ok && strings.TrimSpace(payload) == "[DONE]"
 }
+
+// openAICompatBufferedReadError 只标记错误发生在上游响应体读取阶段，由具体入口决定是否重放。
+type openAICompatBufferedReadError struct {
+	cause error
+}
+
+func (e *openAICompatBufferedReadError) Error() string { return e.cause.Error() }
+func (e *openAICompatBufferedReadError) Unwrap() error { return e.cause }
 
 func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 	resp *http.Response,
@@ -682,7 +695,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 						zap.String("request_id", requestID),
 					)
 				}
-				return nil, usage, acc, ev.err
+				return nil, usage, acc, &openAICompatBufferedReadError{cause: ev.err}
 			}
 
 			if isOpenAICompatDoneSentinelLine(ev.line) {
@@ -803,6 +816,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			BillingModel:                  billingModel,
 			UpstreamModel:                 upstreamModel,
 			UpstreamResponseModel:         observedUpstreamResponseModel(c),
+			UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
 			UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
@@ -828,6 +842,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			return false
 		}
 		observer.ObserveOpenAI([]byte(payload), event.Type)
+		if event.Type == "error" {
+			s.handleOpenAIStreamRateLimit(contextFromGin(c), account, []byte(payload), upstreamModel, resp.Header)
+		}
 
 		// 仅按兼容转换器支持的终止事件提取 usage，避免无意扩大事件语义。
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(event.Type)
@@ -852,9 +869,10 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				message = "Upstream stream failed"
 			}
 			if openAIStreamFailedEventShouldFailover(payloadBytes, message) {
-				streamFailoverErr = s.newOpenAIStreamFailoverError(c, account, false, requestID, payloadBytes, message)
+				streamFailoverErr = s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, payloadBytes, message, upstreamModel, resp.Header)
 				return true
 			}
+			s.handleOpenAIStreamRateLimit(contextFromGin(c), account, payloadBytes, upstreamModel, resp.Header)
 			message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
 			errStatus, errType, errMsg := http.StatusBadGateway, "api_error", message
 			if status, matchedType, matchedMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(

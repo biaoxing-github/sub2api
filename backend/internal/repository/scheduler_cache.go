@@ -554,6 +554,9 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"upstream_balance_total",
 		"upstream_balance_updated_at",
 		"upstream_manual_balance_total",
+		// 调度快照保留透传开关，避免按残留模型白名单误筛账号。
+		"openai_passthrough",
+		"openai_oauth_passthrough",
 	}
 	filtered := make(map[string]any)
 	for _, key := range keys {

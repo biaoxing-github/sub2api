@@ -67,8 +67,10 @@ func prepareOpenAIWSHTTPBridgeBody(payload []byte) ([]byte, error) {
 }
 
 type openAIWSToolCallReplayCollector struct {
-	items []json.RawMessage
-	seen  map[string]struct{}
+	items    []json.RawMessage
+	seen     map[string]struct{}
+	allItems []json.RawMessage   // 切号回放所需的全部输出项。
+	allSeen  map[string]struct{} // 完成事件与单项事件的去重键。
 }
 
 func (c *openAIWSToolCallReplayCollector) AddEvent(eventType string, message []byte) {
@@ -90,6 +92,11 @@ func (c *openAIWSToolCallReplayCollector) Items() []json.RawMessage {
 	return cloneOpenAIWSRawMessages(c.items)
 }
 
+// AllItems 返回用于跨账号恢复的完整输出副本。
+func (c *openAIWSToolCallReplayCollector) AllItems() []json.RawMessage {
+	return cloneOpenAIWSRawMessages(c.allItems)
+}
+
 func (c *openAIWSToolCallReplayCollector) addItem(item gjson.Result) {
 	if !item.Exists() || item.Type != gjson.JSON {
 		return
@@ -98,7 +105,7 @@ func (c *openAIWSToolCallReplayCollector) addItem(item gjson.Result) {
 	if raw == "" || !strings.HasPrefix(raw, "{") {
 		return
 	}
-	if !isCodexToolCallContextItemType(item.Get("type").String()) {
+	if strings.TrimSpace(item.Get("type").String()) == "" {
 		return
 	}
 	key := strings.TrimSpace(item.Get("id").String())
@@ -107,6 +114,16 @@ func (c *openAIWSToolCallReplayCollector) addItem(item gjson.Result) {
 	}
 	if key == "" {
 		key = raw
+	}
+	if c.allSeen == nil {
+		c.allSeen = make(map[string]struct{})
+	}
+	if _, ok := c.allSeen[key]; !ok {
+		c.allSeen[key] = struct{}{}
+		c.allItems = append(c.allItems, json.RawMessage(raw))
+	}
+	if !isCodexToolCallContextItemType(item.Get("type").String()) {
+		return
 	}
 	if c.seen == nil {
 		c.seen = make(map[string]struct{})
@@ -173,12 +190,24 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	if err != nil {
 		return nil, fmt.Errorf("prepare http bridge body: %w", err)
 	}
+	if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
+		liteBody, changed, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
+		if liteErr != nil {
+			return nil, fmt.Errorf("normalize responses Lite payload: %w", liteErr)
+		}
+		if changed {
+			body = liteBody
+		}
+	}
 
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 	releaseUpstreamCtx()
 	if err != nil {
 		return nil, err
+	}
+	if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
+		upstreamReq.Header.Set(responsesLiteHeader, "true")
 	}
 
 	proxyURL := ""
@@ -201,6 +230,13 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, openAIWSHTTPBridgeErrorBodyLimitBytes))
+		if resp.StatusCode == http.StatusTooManyRequests {
+			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, openAIRequestModelFromBody(body))
+			return nil, &UpstreamFailoverError{
+				StatusCode: resp.StatusCode, ResponseBody: respBody, ResponseHeaders: cloneHeader(resp.Header),
+				ActionMetadata: openAIModelRateLimitActionMetadata(account, openAIRequestModelFromBody(body), nil),
+			}
+		}
 		upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		if upstreamMsg == "" {
 			upstreamMsg = http.StatusText(resp.StatusCode)
@@ -221,6 +257,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	firstEventType := ""
 	lastEventType := ""
 	sawDone := false
+	replayComplete := false
 	wroteDownstream := false
 	clientDisconnected := false
 	mappedModel := ""
@@ -243,6 +280,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			UpstreamModel:                 mappedModel,
 			UpstreamResponseModel:         responseModelObserver.Model(),
 			UpstreamResponseModelConflict: responseModelObserver.Conflict(),
+			UpstreamResponseServiceTier:   responseModelObserver.ServiceTier(),
 			ServiceTier:                   extractOpenAIServiceTierFromBody(body),
 			ReasoningEffort:               extractOpenAIReasoningEffortFromBody(body, mappedModel, originalModel),
 			Stream:                        reqStream,
@@ -255,6 +293,8 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			result.wsReplayInput = replayInput
 			result.wsReplayInputExists = true
 		}
+		result.wsAccountFailoverReplayInput = replayCollector.AllItems()
+		result.wsAccountFailoverReplayComplete = replayComplete
 		if imageCount > 0 {
 			result.ImageCount = imageCount
 			result.ImageSize = imageSizeTier
@@ -326,9 +366,31 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			}
 		}
 		replayCollector.AddEvent(eventType, upstreamMessage)
+		if eventType == "response.completed" || eventType == "response.done" {
+			replayComplete = gjson.GetBytes(upstreamMessage, "response.output").IsArray()
+		}
+
+		// 仅当前轮尚未输出时允许切号；限流副作用在此统一执行一次。
+		semantic429 := false
+		if eventType == "error" || eventType == "response.failed" {
+			errCode := firstNonEmptyString(gjson.GetBytes(upstreamMessage, "response.error.code").String(), gjson.GetBytes(upstreamMessage, "error.code").String())
+			errType := firstNonEmptyString(gjson.GetBytes(upstreamMessage, "response.error.type").String(), gjson.GetBytes(upstreamMessage, "error.type").String())
+			semantic429 = isOpenAIWSRateLimitError(errCode, errType, extractOpenAISSEErrorMessage(upstreamMessage))
+			if semantic429 && !s.handleOpenAIStreamRateLimit(ctx, account, upstreamMessage, openAIRequestModelFromBody(body), resp.Header) {
+				// API Key 的重试判定同样按 429 处理，账号副作用仍复用原有错误策略。
+				s.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, nil, upstreamMessage, openAIRequestModelFromBody(body))
+			}
+			if semantic429 && !wroteDownstream && !clientDisconnected {
+				return nil, &UpstreamFailoverError{
+					StatusCode: http.StatusTooManyRequests, ResponseBody: append([]byte(nil), upstreamMessage...), ResponseHeaders: cloneHeader(resp.Header),
+					ActionMetadata: openAIModelRateLimitActionMetadata(account, openAIRequestModelFromBody(body), nil),
+				}
+			}
+		}
 
 		if !clientDisconnected {
-			if err := writeClientMessage(upstreamMessage); err != nil {
+			clientMessage, _ := sanitizeOpenAICapacityShedErrorCodeForClient(upstreamMessage)
+			if err := writeClientMessage(clientMessage); err != nil {
 				if isOpenAIWSClientDisconnectError(err) {
 					clientDisconnected = true
 					closeStatus, closeReason := summarizeOpenAIWSReadCloseError(err)
@@ -353,12 +415,17 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 
 		if eventType == "error" {
 			errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(upstreamMessage)
-			s.persistOpenAIWSRateLimitSignal(ctx, account, resp.Header, upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw)
+			if !semantic429 {
+				s.persistOpenAIWSRateLimitSignal(ctx, account, resp.Header, upstreamMessage, errCodeRaw, errTypeRaw, errMsgRaw, openAIRequestModelFromBody(body))
+			}
 			errMessage := strings.TrimSpace(errMsgRaw)
 			if errMessage == "" {
 				errMessage = "upstream error event"
 			}
 			return resultWithUsage(), errors.New(errMessage)
+		}
+		if eventType == "response.failed" {
+			return resultWithUsage(), fmt.Errorf("upstream response failed: %s", extractOpenAISSEErrorMessage(upstreamMessage))
 		}
 		if isOpenAIWSTerminalEvent(eventType) {
 			terminalEventCount++

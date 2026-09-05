@@ -66,6 +66,18 @@ func TestResolveGrokCacheIdentityUsesAndIsolatesNativeConversationHeader(t *test
 	require.NotContains(t, first, "raw-native-conversation")
 }
 
+// TestGrokSideCallCacheIdentity 验证摘要旁路请求复用父会话缓存而非临时会话头。
+func TestGrokSideCallCacheIdentity(t *testing.T) {
+	parent := newGrokCacheTestContext(401)
+	parent.Request.Header.Set(grokConversationIDHeader, "parent-session")
+	side := newGrokCacheTestContext(401)
+	side.Request.Header.Set(grokConversationIDHeader, "turn-summary-new-id")
+	body := []byte(`{"model":"grok","prompt_cache_key":"parent-session","input":"summarize"}`)
+	require.Equal(t,
+		resolveGrokCacheIdentity(parent, nil, "", "grok-4.5"),
+		resolveGrokCacheIdentity(side, body, "", "grok-4.5"))
+}
+
 func TestResolveGrokCacheIdentityExplicitHeaderPriority(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"grok","prompt_cache_key":"body-key","input":"hi"}`)

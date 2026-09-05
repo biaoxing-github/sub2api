@@ -27,6 +27,14 @@ var clientSessionIDHeaders = []string{
 	claudeCodeSessionHeader,
 }
 
+// ClaudeCodeSessionIDFromHeader 单独提取 Claude 会话用于 Messages 粘性，不改变其他协议的缓存键。
+func ClaudeCodeSessionIDFromHeader(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	return sanitizeSessionID(c.GetHeader(claudeCodeSessionHeader))
+}
+
 // ExtractClientSessionID 提取客户端显式提供的会话标识，仅用于 usage_logs.session_id。
 // 该值不参与粘性路由、账号选择、request_id 或上游缓存键计算。
 func ExtractClientSessionID(c *gin.Context) string {

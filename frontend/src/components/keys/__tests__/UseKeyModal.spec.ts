@@ -179,10 +179,14 @@ describe('UseKeyModal', () => {
     expect(configToml).toContain('model = "gpt-5.5"')
     expect(configToml).toContain('review_model = "gpt-5.5"')
     expect(configToml).not.toContain('model = "gpt-5.4"')
+    expect(configToml).toContain('requires_openai_auth = false')
+    expect(configToml).toContain('experimental_bearer_token = "sk-test"')
+    expect(configToml).toContain('http_headers = { "x-openai-actor-authorization" = "local-image-extension" }')
+    expect(wrapper.text()).not.toContain('auth.json')
     expect(configToml).toContain('[features]\ngoals = true')
   })
 
-  it('renders attribution-off env in Claude Code terminal snippets', async () => {
+  it('preserves Claude attribution headers in generated setup', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
         show: true,
@@ -202,13 +206,15 @@ describe('UseKeyModal', () => {
       }
     })
 
-    expect(wrapper.find('pre code').text()).toContain('export CLAUDE_CODE_ATTRIBUTION_HEADER=0')
+    expect(wrapper.findAll('pre code').map(code => code.text()).join('\n'))
+      .not.toContain('CLAUDE_CODE_ATTRIBUTION_HEADER')
 
     const cmdTab = wrapper.findAll('button').find((button) => button.text().includes('Windows'))
     expect(cmdTab).toBeDefined()
     await cmdTab!.trigger('click')
     await nextTick()
-    expect(wrapper.find('pre code').text()).toContain('set CLAUDE_CODE_ATTRIBUTION_HEADER=0')
+    expect(wrapper.findAll('pre code').map(code => code.text()).join('\n'))
+      .not.toContain('CLAUDE_CODE_ATTRIBUTION_HEADER')
   })
 
   it('renders GPT-5.4 mini entry in OpenCode config', async () => {

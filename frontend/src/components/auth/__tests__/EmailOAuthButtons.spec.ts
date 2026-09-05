@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EmailOAuthButtons from '@/components/auth/EmailOAuthButtons.vue'
+import LinuxDoOAuthSection from '@/components/auth/LinuxDoOAuthSection.vue'
 
 const routeState = vi.hoisted(() => ({
   query: {} as Record<string, unknown>,
@@ -37,11 +38,25 @@ describe('EmailOAuthButtons', () => {
     window.sessionStorage.clear()
   })
 
+  it.each(['google', 'linuxdo'])('preserves promo codes in the %s start URL', async (provider) => {
+    const component = provider === 'linuxdo' ? LinuxDoOAuthSection : EmailOAuthButtons
+    const wrapper = mount(component, {
+      props: { githubEnabled: false, googleEnabled: true, promoCode: ' PROMO456 ' },
+      global: { stubs: { GitHubMark: true, GoogleMark: true } },
+    })
+    await wrapper.get('button').trigger('click')
+    const url = new URL(locationState.current.href, 'http://localhost')
+    expect(url.pathname).toBe(`/api/v1/auth/oauth/${provider}/start`)
+    expect(url.searchParams.get('promo_code')).toBe('PROMO456')
+    expect(url.searchParams.get('redirect')).toBe('/billing?plan=pro')
+  })
+
   it('passes the affiliate code to the email oauth start URL', async () => {
     const wrapper = mount(EmailOAuthButtons, {
       props: {
         githubEnabled: true,
         googleEnabled: false,
+        promoCode: ' PROMO123 ',
       },
       global: {
         stubs: {
@@ -54,7 +69,7 @@ describe('EmailOAuthButtons', () => {
     await wrapper.get('button').trigger('click')
 
     expect(locationState.current.href).toBe(
-      '/api/v1/auth/oauth/github/start?redirect=%2Fbilling%3Fplan%3Dpro&aff_code=AFF123'
+      '/api/v1/auth/oauth/github/start?redirect=%2Fbilling%3Fplan%3Dpro&aff_code=AFF123&promo_code=PROMO123'
     )
     expect(window.sessionStorage.getItem('oauth_aff_code')).toBe('AFF123')
     expect(window.sessionStorage.getItem('email_oauth_pending_provider')).toBe('github')

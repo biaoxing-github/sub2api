@@ -1235,7 +1235,7 @@ const DETAIL_COLUMN_KEYS = [
   'expires_at',
   'notes'
 ]
-const DEFAULT_HIDDEN_COLUMNS = [...DETAIL_COLUMN_KEYS]
+const DEFAULT_HIDDEN_COLUMNS = DETAIL_COLUMN_KEYS.filter(key => key !== 'priority')
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns-v2'
 
 // Sorting settings
@@ -2881,12 +2881,19 @@ const handleClickOutside = (event: MouseEvent) => {
 
 onMounted(async () => {
   load()
-  try {
-    const [p, g] = await Promise.all([adminAPI.proxies.getAll(), adminAPI.groups.getAll()])
-    proxies.value = p
-    groups.value = g
-  } catch (error) {
-    console.error('Failed to load proxies/groups:', error)
+  const [proxiesResult, groupsResult] = await Promise.allSettled([
+    adminAPI.proxies.getAll(),
+    adminAPI.groups.getAll()
+  ])
+  if (proxiesResult.status === 'fulfilled') {
+    proxies.value = proxiesResult.value
+  } else {
+    console.error('Failed to load proxies:', proxiesResult.reason)
+  }
+  if (groupsResult.status === 'fulfilled') {
+    groups.value = groupsResult.value
+  } else {
+    console.error('Failed to load groups:', groupsResult.reason)
   }
   window.addEventListener('scroll', handleScroll, true)
   document.addEventListener('click', handleClickOutside)

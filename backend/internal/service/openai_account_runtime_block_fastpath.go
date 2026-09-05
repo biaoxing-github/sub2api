@@ -58,6 +58,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorForModel(ctx cont
 	if isOpenAIContextWindowError("", responseBody) {
 		return false
 	}
+	if s.handleOpenAIImageCapabilityLoss(stateCtx, account, statusCode, responseBody) {
+		return false
+	}
 	if s.handleOpenAIModelNotFoundCooldown(stateCtx, account, statusCode, responseBody, requestedModel) {
 		return isOpenAIModelUnsupportedForChatGPTAccountError(statusCode, responseBody)
 	}
@@ -69,6 +72,17 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamErrorForModel(ctx cont
 		return true
 	}
 	if statusCode == http.StatusTooManyRequests {
+		if s != nil && s.rateLimitService != nil &&
+			s.rateLimitService.HandleOpenAICodexSparkRateLimit(stateCtx, account, requestedModel, statusCode, headers, responseBody) {
+			// Spark 同样计入 storm，但不能经过整账号封锁；每个事件只计数一次。
+			s.recordOpenAIOAuth429()
+			if s.schedulerSnapshot != nil {
+				if err := s.schedulerSnapshot.UpdateAccountInCache(stateCtx, account); err != nil {
+					slog.Warn("openai_spark_snapshot_update_failed", "account_id", account.ID, "error", err)
+				}
+			}
+			return false
+		}
 		s.markOpenAIOAuth429RateLimited(stateCtx, account, headers, responseBody)
 	}
 	if s == nil || account == nil || s.rateLimitService == nil {

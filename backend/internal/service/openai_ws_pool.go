@@ -20,8 +20,11 @@ import (
 )
 
 const (
-	openAIWSConnMaxAge             = 60 * time.Minute
-	openAIWSConnHealthCheckIdle    = 90 * time.Second
+	openAIWSConnMaxAge          = 60 * time.Minute
+	openAIWSConnHealthCheckIdle = 90 * time.Second
+	// coder/websocket cannot consume pong frames without a reader. Recycle
+	// unsupported idle sockets before the upstream keepalive window expires.
+	openAIWSConnIdleRecycleAfter   = 90 * time.Second
 	openAIWSConnHealthCheckTO      = 2 * time.Second
 	openAIWSConnPrewarmExtraDelay  = 2 * time.Second
 	openAIWSAcquireCleanupInterval = 3 * time.Second
@@ -445,6 +448,15 @@ func (c *openAIWSConn) pingWithTimeout(timeout time.Duration) error {
 	return nil
 }
 
+// supportsIdlePingWithoutReader 保留已有实现的探针约定，识别需要活跃 reader 的连接。
+func (c *openAIWSConn) supportsIdlePingWithoutReader() bool {
+	if c == nil || c.ws == nil {
+		return false
+	}
+	capable, ok := c.ws.(interface{ SupportsIdlePingWithoutReader() bool })
+	return !ok || capable.SupportsIdlePingWithoutReader()
+}
+
 func (c *openAIWSConn) touch() {
 	if c == nil {
 		return
@@ -721,7 +733,7 @@ func (p *openAIWSConnPool) runBackgroundPingSweep() {
 	g.SetLimit(10)
 	for _, item := range candidates {
 		item := item
-		if item.conn == nil || item.conn.isLeased() || item.conn.waiters.Load() > 0 {
+		if item.conn == nil || item.conn.isLeased() || item.conn.waiters.Load() > 0 || !item.conn.supportsIdlePingWithoutReader() {
 			continue
 		}
 		g.Go(func() error {
@@ -1285,6 +1297,17 @@ func (p *openAIWSConnPool) cleanupAccountLocked(ap *openAIWSAccountPool, now tim
 		if p.isConnPinnedLocked(ap, id) {
 			continue
 		}
+		if !conn.isLeased() && conn.waiters.Load() == 0 &&
+			!conn.supportsIdlePingWithoutReader() &&
+			conn.idleDuration(now) >= openAIWSConnIdleRecycleAfter {
+			delete(ap.conns, id)
+			if len(ap.pinnedConns) > 0 {
+				delete(ap.pinnedConns, id)
+			}
+			evicted = append(evicted, conn)
+			p.metrics.scaleDownTotal.Add(1)
+			continue
+		}
 		if maxAge > 0 && !conn.isLeased() && conn.age(now) > maxAge {
 			delete(ap.conns, id)
 			if len(ap.pinnedConns) > 0 {
@@ -1730,7 +1753,7 @@ func (p *openAIWSConnPool) nextConnID(accountID int64) string {
 }
 
 func (p *openAIWSConnPool) shouldHealthCheckConn(conn *openAIWSConn) bool {
-	if conn == nil {
+	if conn == nil || !conn.supportsIdlePingWithoutReader() {
 		return false
 	}
 	return conn.idleDuration(time.Now()) >= openAIWSConnHealthCheckIdle

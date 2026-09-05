@@ -62,7 +62,7 @@ func TestV165PoolModeRetryDoesNotEnterModelCooldown(t *testing.T) {
 func TestV165OpenAIResponsesSanitizers(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol","input":[{"type":"message","id":"item_bad","namespace":"client","content":[{"type":"input_text","text":"hello","namespace":"nested"}]},{"type":"function_call","id":"fc_valid","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","id":"item_output","call_id":"call_1","output":"done"}]}`)
 
-	withoutNamespaces, err := stripOpenAIResponsesInputNamespaces(body)
+	withoutNamespaces, err := stripOpenAIResponsesInputNamespaces(body, false)
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(withoutNamespaces, "input.0.namespace").Exists())
 	require.Equal(t, "nested", gjson.GetBytes(withoutNamespaces, "input.0.content.0.namespace").String())

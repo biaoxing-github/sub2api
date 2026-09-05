@@ -88,6 +88,12 @@ func (a *Account) modelRateLimitKeysForRequest(ctx context.Context, requestedMod
 		modelKey = resolveFinalAntigravityModelKey(ctx, a, requestedModel)
 	}
 	add(modelKey)
+	if a.Platform == PlatformOpenAI && OpenAIImageGenerationIntentFromContext(ctx) {
+		add(openAIImageGenerationRateLimitKey)
+	}
+	if a.Platform == PlatformOpenAI && isCodexSparkModel(modelKey) {
+		add(normalizeCodexModel(modelKey))
+	}
 	if a.Platform == PlatformAnthropic && (isAnthropicFableModel(requestedModel) || isAnthropicFableModel(modelKey)) {
 		add(anthropicFableRateLimitKey)
 	}

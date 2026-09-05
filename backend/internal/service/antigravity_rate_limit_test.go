@@ -989,7 +989,7 @@ func TestResolveAntigravityForwardBaseURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(antigravityForwardBaseURLEnv, tt.mode)
-			require.Equal(t, tt.want, resolveAntigravityForwardBaseURL())
+			require.Equal(t, tt.want, resolveAntigravityForwardBaseURL(nil))
 		})
 	}
 }

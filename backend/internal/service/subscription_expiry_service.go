@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	subscriptionExpiryReminderSMTPWarningInterval = time.Minute
 	// subscriptionExpiryReminderLeaderLockKey 避免多实例重复全量扫描活跃订阅并重复发送提醒邮件。
 	subscriptionExpiryReminderLeaderLockKey = "subscription:expiry:reminder:leader"
 	// subscriptionExpiryReminderLeaderLockTTL 需要覆盖一次分页扫描的最坏耗时。
@@ -33,6 +34,9 @@ type SubscriptionExpiryService struct {
 	lockCache                LeaderLockCache
 	db                       *sql.DB
 	instanceID               string
+
+	smtpWarningMu   sync.Mutex
+	lastSMTPWarning time.Time
 }
 
 func NewSubscriptionExpiryService(userSubRepo UserSubscriptionRepository, interval time.Duration) *SubscriptionExpiryService {
@@ -115,6 +119,11 @@ func (s *SubscriptionExpiryService) sendExpiryReminders(ctx context.Context) {
 	if !s.expiryReminderEnabled(ctx) {
 		return
 	}
+	if !s.smtpConfigured(ctx) {
+		return
+	}
+
+	// 仅 leader 执行订阅扫描和提醒邮件发送。
 	release, ok := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, subscriptionExpiryReminderLeaderLockKey, s.instanceID, subscriptionExpiryReminderLeaderLockTTL)
 	if !ok {
 		return
@@ -149,6 +158,28 @@ func (s *SubscriptionExpiryService) expiryReminderEnabled(ctx context.Context) b
 		return false
 	}
 	return !isFalseSettingValue(value)
+}
+
+func (s *SubscriptionExpiryService) smtpConfigured(ctx context.Context) bool {
+	if s == nil || s.notificationEmailService == nil || s.notificationEmailService.emailService == nil {
+		return false
+	}
+	_, err := s.notificationEmailService.emailService.GetSMTPConfig(ctx)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, ErrEmailNotConfigured) {
+		s.smtpWarningMu.Lock()
+		defer s.smtpWarningMu.Unlock()
+		now := time.Now()
+		if s.lastSMTPWarning.IsZero() || now.Sub(s.lastSMTPWarning) >= subscriptionExpiryReminderSMTPWarningInterval {
+			log.Printf("[SubscriptionExpiry] SMTP is not configured; skipping expiry reminders")
+			s.lastSMTPWarning = now
+		}
+		return false
+	}
+	log.Printf("[SubscriptionExpiry] Read SMTP configuration failed; skipping expiry reminders: %v", err)
+	return false
 }
 
 func (s *SubscriptionExpiryService) sendExpiryReminderIfDue(ctx context.Context, sub *UserSubscription) {

@@ -21,6 +21,22 @@ func TestOpenAICacheCreationTokensNestedZeroOverridesFallback(t *testing.T) {
 	require.Zero(t, result.Int())
 }
 
+// 连续 WS 轮次只使用各自终态的档位，前导回显及上一轮声明不能污染下一轮。
+func TestRelayResponseServiceTierPerTurn(t *testing.T) {
+	state := &relayState{}
+	start := time.Now()
+	observeUpstreamMessage(state, []byte(`{"type":"response.created","response":{"id":"r1","model":"gpt-5","service_tier":"priority"}}`), start, time.Now, nil)
+	first := observeUpstreamMessage(state, []byte(`{"type":"response.completed","response":{"id":"r1","model":"gpt-5","service_tier":"default"}}`), start, time.Now, nil)
+	require.Equal(t, "default", first.responseServiceTier)
+	var result RelayTurnResult
+	emitTurnComplete(func(turn RelayTurnResult) { result = turn }, state, first)
+	require.Equal(t, "default", result.ResponseServiceTier)
+	observeUpstreamMessage(state, []byte(`{"type":"response.created","response":{"id":"r2","model":"gpt-5","service_tier":"flex"}}`), start, time.Now, nil)
+	second := observeUpstreamMessage(state, []byte(`{"type":"response.completed","response":{"id":"r2","model":"gpt-5"}}`), start, time.Now, nil)
+	require.Empty(t, second.responseServiceTier)
+	require.Empty(t, state.lastResponseServiceTier)
+}
+
 type passthroughTestFrame struct {
 	msgType coderws.MessageType
 	payload []byte
@@ -243,8 +259,9 @@ func TestRelay_UpstreamDisconnect(t *testing.T) {
 	defer cancel()
 
 	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
-	// 上游 EOF 属于 disconnect，标记为 graceful
-	require.Nil(t, relayExit, "上游 EOF 应被视为 graceful disconnect")
+	// 请求已发出，即使尚未收到 response.created，也不能将 EOF 计为成功。
+	require.NotNil(t, relayExit)
+	require.ErrorContains(t, relayExit.Err, "closed before terminal event")
 	require.Equal(t, "gpt-4o", result.RequestModel)
 }
 
@@ -558,7 +575,8 @@ func TestRelay_BinaryFramePassthrough(t *testing.T) {
 	defer cancel()
 
 	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
-	require.Nil(t, relayExit)
+	require.NotNil(t, relayExit)
+	require.ErrorContains(t, relayExit.Err, "closed before terminal event")
 	// binary frame 不解析 usage
 	require.Equal(t, 0, result.Usage.InputTokens)
 
@@ -584,7 +602,8 @@ func TestRelay_BinaryJSONFrameSkipsObservation(t *testing.T) {
 	defer cancel()
 
 	result, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
-	require.Nil(t, relayExit)
+	require.NotNil(t, relayExit)
+	require.ErrorContains(t, relayExit.Err, "closed before terminal event")
 	require.Equal(t, 0, result.Usage.InputTokens)
 	require.Equal(t, "", result.RequestID)
 	require.Equal(t, "", result.TerminalEventType)
@@ -611,7 +630,8 @@ func TestRelay_UpstreamErrorEventPassthroughRaw(t *testing.T) {
 	defer cancel()
 
 	_, relayExit := Relay(ctx, clientConn, upstreamConn, firstPayload, RelayOptions{})
-	require.Nil(t, relayExit)
+	require.NotNil(t, relayExit)
+	require.ErrorContains(t, relayExit.Err, "closed before terminal event")
 
 	clientWrites := clientConn.Writes()
 	require.Len(t, clientWrites, 1)

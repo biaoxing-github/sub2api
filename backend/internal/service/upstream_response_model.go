@@ -14,9 +14,12 @@ const (
 
 // upstreamResponseModelObserver 记录单次上游尝试声明的实际模型；终态声明优先。
 type upstreamResponseModelObserver struct {
-	first    string
-	terminal string
-	conflict bool
+	first             string
+	terminal          string
+	conflict          bool
+	firstTier         string // Chat 响应首次声明的实际服务档位。
+	firstTierConflict bool   // 非终态档位发生冲突时不用于计费。
+	terminalTier      string // Responses 终态声明优先，忽略前导事件的请求回显。
 }
 
 func (o *upstreamResponseModelObserver) Observe(model string, terminal bool) {
@@ -50,7 +53,60 @@ func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType 
 		return
 	}
 	model := firstValidTrimmedGJSONModel(payload, "response.model", "model")
-	o.Observe(model, isUpstreamResponseModelTerminalEvent(eventType))
+	terminal := isUpstreamResponseModelTerminalEvent(eventType)
+	o.Observe(model, terminal)
+	// 档位可以独立于模型出现在 usage chunk 或终态响应中。
+	if terminal || strings.TrimSpace(eventType) == "" {
+		o.ObserveServiceTier(normalizeObservedOpenAIServiceTier(firstValidTrimmedGJSONModel(payload, "response.service_tier", "service_tier")), terminal)
+	}
+}
+
+// ObserveServiceTier 只保留一致的非终态声明或上游终态明确给出的实际档位。
+func (o *upstreamResponseModelObserver) ObserveServiceTier(tier string, terminal bool) {
+	if o == nil || tier == "" {
+		return
+	}
+	if terminal {
+		o.terminalTier = tier
+		return
+	}
+	if o.firstTier == "" {
+		o.firstTier = tier
+		return
+	}
+	if o.firstTier != tier {
+		o.firstTierConflict = true
+	}
+}
+
+// ServiceTier 返回可用于结算的实际档位；不明确时返回空值。
+func (o *upstreamResponseModelObserver) ServiceTier() string {
+	if o == nil {
+		return ""
+	}
+	if o.terminalTier != "" {
+		return o.terminalTier
+	}
+	if o.firstTierConflict {
+		return ""
+	}
+	return o.firstTier
+}
+
+// normalizeObservedOpenAIServiceTier 不把 auto 或未知值当作实际处理档位。
+func normalizeObservedOpenAIServiceTier(raw string) string {
+	switch value := strings.ToLower(strings.TrimSpace(raw)); value {
+	case "priority", "fast":
+		return "priority"
+	case "default", "flex", "scale":
+		return value
+	default:
+		return ""
+	}
+}
+
+func observedUpstreamResponseServiceTier(c *gin.Context) string {
+	return upstreamResponseModelObserverFromContext(c).ServiceTier()
 }
 
 func (o *upstreamResponseModelObserver) ObserveAnthropic(payload []byte) {
@@ -146,8 +202,30 @@ func upstreamModelMismatch(sentModel, responseModel string) *bool {
 	if responseModel == "" {
 		return nil
 	}
-	mismatch := !strings.EqualFold(strings.TrimSpace(sentModel), responseModel)
+	sentModel = strings.TrimSpace(sentModel)
+	mismatch := sentModel == "" || !upstreamModelsMatchForAudit(sentModel, responseModel)
 	return &mismatch
+}
+
+// upstreamModelsMatchForAudit 仅在审计中归一化 Grok 公共别名，保留原始计费模型。
+func upstreamModelsMatchForAudit(sentModel, responseModel string) bool {
+	if strings.EqualFold(sentModel, responseModel) {
+		return true
+	}
+	model := canonicalGrokBuildRuntimeModel(sentModel)
+	return model != "" && model == canonicalGrokBuildRuntimeModel(responseModel)
+}
+
+// canonicalGrokBuildRuntimeModel 映射已知 xAI 模型别名与运行时 build 标识。
+func canonicalGrokBuildRuntimeModel(model string) string {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "grok-4.5", "grok-4.5-latest", "grok-4.5-build":
+		return "grok-4.5-build"
+	case "grok-4.6", "grok-4.6-latest", "grok-4.6-build":
+		return "grok-4.6-build"
+	default:
+		return ""
+	}
 }
 
 func upstreamSentModel(requestedModel, upstreamModel string) string {

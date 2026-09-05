@@ -12,6 +12,18 @@ import (
 
 func init() { gin.SetMode(gin.TestMode) }
 
+// TestGetUpstreamEndpointUsesCurrentAttempt 验证错误路径端点覆盖和下一账号尝试的清理。
+func TestGetUpstreamEndpointUsesCurrentAttempt(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, EndpointResponses, nil)
+	service.SetActualOpenAIUpstreamEndpoint(c, EndpointChatCompletions)
+	require.Equal(t, EndpointChatCompletions, GetUpstreamEndpoint(c, service.PlatformOpenAI))
+	require.Equal(t, EndpointChatCompletions, GetUpstreamEndpoint(c, service.PlatformGrok))
+	require.Equal(t, EndpointMessages, GetUpstreamEndpoint(c, service.PlatformAnthropic))
+	service.ClearActualOpenAIUpstreamEndpoint(c)
+	require.Equal(t, EndpointResponses, GetUpstreamEndpoint(c, service.PlatformOpenAI))
+}
+
 // ──────────────────────────────────────────────────────────
 // NormalizeInboundEndpoint
 // ──────────────────────────────────────────────────────────

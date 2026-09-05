@@ -386,6 +386,88 @@ func TestConvertClaudeToolsToGeminiTools_CustomType(t *testing.T) {
 	}
 }
 
+func TestCleanToolSchema_NormalizesGeminiUnsupportedSchemaFields(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"$defs": map[string]any{
+			"unused": map[string]any{"type": "string"},
+		},
+		"definitions": map[string]any{
+			"legacy": map[string]any{"type": "number"},
+		},
+		"properties": map[string]any{
+			"path": map[string]any{
+				"type": []any{"string", "null"},
+			},
+			"count": map[string]any{
+				"type": []any{"null", "integer"},
+			},
+			"empty": map[string]any{
+				"type": []any{"null"},
+			},
+		},
+	}
+
+	cleaned, ok := cleanToolSchema(schema).(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "OBJECT", cleaned["type"])
+	require.NotContains(t, cleaned, "$defs")
+	require.NotContains(t, cleaned, "definitions")
+
+	properties, ok := cleaned["properties"].(map[string]any)
+	require.True(t, ok)
+
+	pathSchema, ok := properties["path"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "STRING", pathSchema["type"])
+
+	countSchema, ok := properties["count"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "INTEGER", countSchema["type"])
+
+	emptySchema, ok := properties["empty"].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, emptySchema, "type")
+}
+
+func TestCleanToolSchema_RemovesNestedDeprecatedAndNormalizesMixedScalarEnum(t *testing.T) {
+	schema := map[string]any{
+		"anyOf": []any{
+			map[string]any{
+				"type":       "string",
+				"deprecated": true,
+			},
+			map[string]any{
+				"enum": []any{"enabled", false, float64(1), nil},
+			},
+		},
+	}
+
+	cleaned, ok := cleanToolSchema(schema).(map[string]any)
+	require.True(t, ok)
+	anyOf, ok := cleaned["anyOf"].([]any)
+	require.True(t, ok)
+	require.Len(t, anyOf, 2)
+
+	deprecatedSchema, ok := anyOf[0].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, deprecatedSchema, "deprecated")
+
+	enumSchema, ok := anyOf[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, []any{"enabled", "false", "1", "null"}, enumSchema["enum"])
+}
+
+func TestCleanToolSchema_DropsEnumWithNonScalarValue(t *testing.T) {
+	schema := map[string]any{
+		"enum": []any{"valid", map[string]any{"invalid": true}},
+	}
+
+	cleaned, ok := cleanToolSchema(schema).(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, cleaned, "enum")
+}
+
 func TestConvertClaudeToolsToGeminiTools_PreservesWebSearchAlongsideFunctions(t *testing.T) {
 	tools := []any{
 		map[string]any{

@@ -98,8 +98,8 @@ func TestParseSSEUsage_DeltaDoesNotResetCacheCreationBreakdown(t *testing.T) {
 
 	// 后续 delta 带默认 0，不应覆盖已有非零值
 	svc.parseSSEUsage(`{"type":"message_delta","usage":{"output_tokens":12,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}}}`, usage)
-	require.Equal(t, 30, usage.CacheCreation5mTokens, "delta 的 0 值不应重置 5m 明细")
-	require.Equal(t, 70, usage.CacheCreation1hTokens, "delta 的 0 值不应重置 1h 明细")
+	require.Zero(t, usage.CacheCreation5mTokens, "显式零值清除旧的 5m 明细")
+	require.Zero(t, usage.CacheCreation1hTokens, "显式零值清除旧的 1h 明细")
 	require.Equal(t, 12, usage.OutputTokens)
 }
 
@@ -354,6 +354,31 @@ func TestHandleStreamingResponse_MissingTerminalAfterOutput_SendsErrorEvent(t *t
 	require.Contains(t, body, `"type":"error"`)
 	require.Contains(t, body, `"stream_incomplete"`)
 	require.Contains(t, body, "upstream stream ended before a terminal event")
+}
+
+// 写前过载在显式 SSE 事件、纯 data 帧和 API Key 透传路径保持相同错误语义。
+func TestHandleStreamingResponse_OverloadSemanticStatus(t *testing.T) {
+	for _, passthrough := range []bool{false, true} {
+		for _, prefix := range []string{"", "event: error\n"} {
+			svc := newMinimalGatewayService()
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			body := `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`
+			resp := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(prefix + "data: " + body + "\n\n"))}
+			var err error
+			if passthrough {
+				_, err = svc.handleStreamingResponseAnthropicAPIKeyPassthrough(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model")
+			} else {
+				_, err = svc.handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
+			}
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, 529, failoverErr.StatusCode)
+			require.JSONEq(t, body, string(failoverErr.ResponseBody))
+			require.Empty(t, rec.Body.String())
+		}
+	}
 }
 
 func TestHandleStreamingResponse_DataErrorBeforeOutput_TriggersFailover(t *testing.T) {

@@ -405,6 +405,11 @@ func (c *coderOpenAIWSClientConn) Ping(ctx context.Context) error {
 	return c.conn.Ping(ctx)
 }
 
+// SupportsIdlePingWithoutReader 标明 coder/websocket 需要 Read 消费 pong。
+func (*coderOpenAIWSClientConn) SupportsIdlePingWithoutReader() bool {
+	return false
+}
+
 func (c *coderOpenAIWSClientConn) Close() error {
 	if c == nil || c.conn == nil {
 		return nil

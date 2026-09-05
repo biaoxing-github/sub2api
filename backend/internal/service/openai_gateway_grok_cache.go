@@ -62,12 +62,13 @@ func explicitGrokCacheSeed(c *gin.Context, body []byte, explicitKey string) stri
 		if seed == "" {
 			seed = strings.TrimSpace(c.GetHeader("conversation_id"))
 		}
-		if seed == "" {
-			seed = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
-		}
 	}
+	// 客户端的父会话缓存键优先于摘要等旁路请求临时生成的 Grok 会话头。
 	if seed == "" && len(body) > 0 {
 		seed = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
+	}
+	if seed == "" && c != nil {
+		seed = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
 	}
 	if seed == "" {
 		seed = strings.TrimSpace(explicitKey)

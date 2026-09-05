@@ -150,12 +150,8 @@ type antigravityRetryLoopResult struct {
 
 // resolveAntigravityForwardBaseURL 解析转发用 base URL。
 //
-// 默认使用生产端点 cloudcode-pa.googleapis.com（antigravity.BaseURLs 的首个地址，
-// 与账号 OAuth 登录/测试连接所用的 antigravity.BaseURL 一致）。
-//
-// daily/sandbox 端点仅供内部联调，需显式设置
-// GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=daily（或 sandbox）才启用。
-func resolveAntigravityForwardBaseURL() string {
+// 显式环境配置优先；付费 Pro/Ultra 使用官方 daily，其他账号保持生产端点。
+func resolveAntigravityForwardBaseURL(account *Account) string {
 	baseURLs := antigravity.BaseURLs
 	if len(baseURLs) == 0 {
 		return ""
@@ -163,6 +159,12 @@ func resolveAntigravityForwardBaseURL() string {
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv(antigravityForwardBaseURLEnv)))
 	if (mode == "daily" || mode == "sandbox") && len(baseURLs) > 1 {
 		return baseURLs[1]
+	}
+	if mode == "" && account != nil && len(baseURLs) > 1 {
+		plan := strings.ToLower(strings.TrimSpace(account.GetCredential("plan_type")))
+		if plan == "pro" || plan == "ultra" {
+			return baseURLs[1]
+		}
 	}
 	return baseURLs[0]
 }
@@ -596,7 +598,7 @@ func (s *AntigravityGatewayService) antigravityRetryLoop(p antigravityRetryLoopP
 		}
 	}
 
-	baseURL := resolveAntigravityForwardBaseURL()
+	baseURL := resolveAntigravityForwardBaseURL(p.account)
 	if baseURL == "" {
 		return nil, errors.New("no antigravity forward base url configured")
 	}

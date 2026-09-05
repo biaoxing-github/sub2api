@@ -213,6 +213,12 @@ func GetInboundEndpoint(c *gin.Context) string {
 // and the account platform. Handlers call this after scheduling an
 // account, passing account.Platform.
 func GetUpstreamEndpoint(c *gin.Context, platform string) string {
+	// 出错时可能没有 ForwardResult，优先采用本次转发实际选择的协议端点。
+	if platform == service.PlatformOpenAI || platform == service.PlatformGrok {
+		if endpoint := service.GetActualOpenAIUpstreamEndpoint(c); endpoint != "" {
+			return endpoint
+		}
+	}
 	inbound := GetInboundEndpoint(c)
 	rawPath := ""
 	if c != nil && c.Request != nil && c.Request.URL != nil {

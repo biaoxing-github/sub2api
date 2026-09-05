@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import PaymentView from '../PaymentView.vue'
 import { PAYMENT_RECOVERY_STORAGE_KEY } from '@/components/payment/paymentFlow'
+import AmountInput from '@/components/payment/AmountInput.vue'
+import en from '@/i18n/locales/en'
+import zh from '@/i18n/locales/zh'
 
 const routeState = vi.hoisted(() => ({
   path: '/purchase',
@@ -19,6 +22,7 @@ const showInfo = vi.hoisted(() => vi.fn())
 const showWarning = vi.hoisted(() => vi.fn())
 const getCheckoutInfo = vi.hoisted(() => vi.fn())
 const bridgeInvoke = vi.hoisted(() => vi.fn())
+const translate = vi.hoisted(() => vi.fn((key: string) => key))
 
 vi.mock('vue-router', async () => {
   const actual = await vi.importActual<typeof import('vue-router')>('vue-router')
@@ -38,7 +42,7 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key,
+      t: translate,
     }),
   }
 })
@@ -89,6 +93,7 @@ function checkoutInfoFixture() {
     data: {
       methods: {
         wxpay: {
+          currency: 'CNY',
           daily_limit: 0,
           daily_used: 0,
           daily_remaining: 0,
@@ -110,6 +115,38 @@ function checkoutInfoFixture() {
     },
   }
 }
+
+describe('PaymentView recharge rate preview', () => {
+  it('uses the selected payment method currency in both locale templates', async () => {
+    translate.mockClear()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    const checkoutInfo = checkoutInfoFixture()
+    checkoutInfo.data.balance_recharge_multiplier = 0.5
+    checkoutInfo.data.methods.wxpay.currency = 'USD'
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfo)
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 10)
+    await flushPromises()
+
+    expect(translate).toHaveBeenCalledWith('payment.rechargeRatePreview', {
+      currency: 'USD',
+      usd: '0.50',
+    })
+    expect(en.payment.rechargeRatePreview).toBe('Current rate: 1 {currency} = {usd} USD')
+    expect(zh.payment.rechargeRatePreview).toBe('当前倍率：1 {currency} = {usd} USD')
+  })
+})
 
 function checkoutInfoWithPlansFixture() {
   return {

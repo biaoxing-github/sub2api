@@ -194,6 +194,8 @@ func PrepareBedrockRequestBody(body []byte, modelID string, betaHeader string) (
 // ccCompat 启用 CC 兼容模式时额外处理 thinking 类型转换和 tool_use.id 清理。
 func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens []string, ccCompat bool) ([]byte, error) {
 	var err error
+	// Bedrock Invoke 不支持直连 Anthropic 的 fallback 字段。
+	body = stripBedrockFallbackFields(body)
 
 	// 注入 anthropic_version（Bedrock 要求）
 	body, err = sjson.SetBytes(body, "anthropic_version", "bedrock-2023-05-31")
@@ -713,6 +715,7 @@ const defaultCCMaxTokens = 81920
 //   - 注入 max_tokens 默认值 81920（CC 可能省略，Bedrock 要求必须提供）
 //   - 注入 anthropic_version（CC 通过 HTTP 头发送，Bedrock 需要放在请求体中）
 func sanitizeBedrockCCFields(body []byte) []byte {
+	body = stripBedrockFallbackFields(body)
 	if gjson.GetBytes(body, "service_tier").Exists() {
 		body, _ = sjson.DeleteBytes(body, "service_tier")
 	}
@@ -727,6 +730,16 @@ func sanitizeBedrockCCFields(body []byte) []byte {
 	}
 	if !gjson.GetBytes(body, "anthropic_version").Exists() {
 		body, _ = sjson.SetBytes(body, "anthropic_version", "bedrock-2023-05-31")
+	}
+	return body
+}
+
+// stripBedrockFallbackFields 移除 Bedrock 未提供对应 beta 能力的字段。
+func stripBedrockFallbackFields(body []byte) []byte {
+	for _, field := range []string{"fallbacks", "fallback_credit_token"} {
+		if gjson.GetBytes(body, field).Exists() {
+			body, _ = sjson.DeleteBytes(body, field)
+		}
 	}
 	return body
 }

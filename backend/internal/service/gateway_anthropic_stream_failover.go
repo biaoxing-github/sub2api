@@ -58,10 +58,14 @@ func anthropicStreamClientErrorEvent(errType, message string) string {
 	return "event: error\ndata: " + string(anthropicStreamFailoverBody(errType, message)) + "\n\n"
 }
 
-// newAnthropicStreamFailoverError 构造流式写前阶段的 failover 错误。statusCode 固定 502。
+// newAnthropicStreamFailoverError 保留写前过载的 529 语义，其余流故障继续使用 502。
 func newAnthropicStreamFailoverError(body []byte, retryableSameAccount bool) *UpstreamFailoverError {
+	status := http.StatusBadGateway
+	if gjson.GetBytes(body, "error.type").String() == "overloaded_error" {
+		status = 529
+	}
 	return &UpstreamFailoverError{
-		StatusCode:             http.StatusBadGateway,
+		StatusCode:             status,
 		ResponseBody:           body,
 		RetryableOnSameAccount: retryableSameAccount,
 	}
