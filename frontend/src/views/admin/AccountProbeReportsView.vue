@@ -600,6 +600,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { getSettings } from '@/api/admin/settings'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -1225,6 +1226,13 @@ function statusClass(status: string): string {
 onMounted(() => {
   loadRuns()
   loadRanking()
+  getSettings().then(settings => {
+    const model = settings.account_test_model_openai?.trim()
+    if (model) {
+      batchForm.model = model
+      scheduleForm.model_id = model
+    }
+  }).catch(() => undefined)
 })
 
 onUnmounted(() => {

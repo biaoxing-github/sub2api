@@ -286,6 +286,23 @@ type AccountProbeService struct {
 	testSvc          *AccountTestService
 	health           *OpenAIPathHealthTracker
 	rateLimitService *RateLimitService
+	settingService   *SettingService
+}
+
+// SetSettingService 注入系统设置读取器，确保后台探测使用最新默认模型。
+func (s *AccountProbeService) SetSettingService(settingService *SettingService) {
+	if s != nil {
+		s.settingService = settingService
+	}
+}
+
+func (s *AccountProbeService) configuredOpenAITestModel(ctx context.Context) string {
+	if s != nil && s.settingService != nil {
+		if settings, err := s.settingService.GetAllSettings(ctx); err == nil && strings.TrimSpace(settings.AccountTestModelOpenAI) != "" {
+			return strings.TrimSpace(settings.AccountTestModelOpenAI)
+		}
+	}
+	return openai.DefaultTestModel
 }
 
 var accountProbeBaseURLLocks sync.Map
@@ -1017,7 +1034,7 @@ func (s *AccountProbeService) prepareRun(ctx context.Context, req AccountProbeRu
 
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
-		model = openai.DefaultTestModel
+		model = s.configuredOpenAITestModel(ctx)
 	}
 	model = account.GetMappedModel(model)
 	req.Model = model
@@ -1070,7 +1087,7 @@ func (s *AccountProbeService) prepareTrustedComparisonTarget(ctx context.Context
 	}
 	requestModel := strings.TrimSpace(model)
 	if requestModel == "" {
-		requestModel = openai.DefaultTestModel
+		requestModel = s.configuredOpenAITestModel(ctx)
 	}
 	requestModel = account.GetMappedModel(requestModel)
 	baseURLs := account.GetOpenAIRequestBaseURLs()

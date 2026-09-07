@@ -108,9 +108,35 @@ type AccountTestService struct {
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
 	tlsFPProfileService       *TLSFingerprintProfileService
+	settingService            *SettingService
 	openAIPathHealthTracker   *OpenAIPathHealthTracker
 	agentIdentityTaskMu       sync.Mutex
 	agentIdentityWS           agentIdentityWSConnectionInvalidator
+}
+
+// SetSettingService 注入系统设置读取器；测试请求每次读取数据库，保存后立即生效。
+func (s *AccountTestService) SetSettingService(settingService *SettingService) {
+	s.settingService = settingService
+}
+
+func (s *AccountTestService) configuredTestModel(ctx context.Context, platform, fallback string) string {
+	if s != nil && s.settingService != nil {
+		if settings, err := s.settingService.GetAllSettings(ctx); err == nil {
+			var value string
+			switch platform {
+			case PlatformOpenAI:
+				value = settings.AccountTestModelOpenAI
+			case PlatformAnthropic:
+				value = settings.AccountTestModelClaude
+			case PlatformGrok:
+				value = settings.AccountTestModelGrok
+			}
+			if strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return fallback
 }
 
 // NewAccountTestService creates a new AccountTestService
@@ -351,7 +377,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	if account.IsSyntheticUITest() {
 		testModelID := modelID
 		if testModelID == "" {
-			testModelID = claude.DefaultTestModel
+			testModelID = s.configuredTestModel(ctx, PlatformAnthropic, claude.DefaultTestModel)
 		}
 		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 		s.sendEvent(c, TestEvent{Type: "content", Text: "Synthetic Anthropic OAuth account is healthy and interactive."})
@@ -387,7 +413,7 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 
 	testModelID := strings.TrimSpace(modelID)
 	if testModelID == "" {
-		testModelID = grokDefaultResponsesModel
+		testModelID = s.configuredTestModel(c.Request.Context(), PlatformGrok, grokDefaultResponsesModel)
 	}
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -469,7 +495,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	// Determine the model to use
 	testModelID := modelID
 	if testModelID == "" {
-		testModelID = "claude-opus-4-8"
+		testModelID = s.configuredTestModel(ctx, PlatformAnthropic, "claude-opus-4-8")
 	}
 
 	// API Key 账号测试连接时也需要应用通配符模型映射。
@@ -768,7 +794,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Default to openai.DefaultTestModel for OpenAI testing
 	testModelID := modelID
 	if testModelID == "" {
-		testModelID = openai.DefaultTestModel
+		testModelID = s.configuredTestModel(ctx, PlatformOpenAI, openai.DefaultTestModel)
 	}
 
 	// Align test routing with gateway behavior: OpenAI accounts apply normal

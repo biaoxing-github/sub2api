@@ -634,6 +634,7 @@ import Icon from '@/components/icons/Icon.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import { batchAccountModelProbeRuns, createAccountModelProbeRun, createBazaarLinkModelProbeRun, deleteAccountProbeRuns, getAccountProbeRun, list as listAccounts, listAccountProbeRuns } from '@/api/admin/accounts'
+import { getSettings } from '@/api/admin/settings'
 import type { Account, AccountProbeRequestMode, AccountProbeRun, AccountProbeSample, AccountProbeValidationEvidence } from '@/types'
 
 const { t } = useI18n()
@@ -1766,6 +1767,13 @@ function statusClass(status: string | undefined): string {
 
 onMounted(() => {
   loadRuns()
+  getSettings().then(settings => {
+    const model = settings.account_test_model_openai?.trim()
+    if (model) {
+      batchForm.model = model
+      bazaarLinkForm.model = model
+    }
+  }).catch(() => undefined)
 })
 
 onUnmounted(() => {

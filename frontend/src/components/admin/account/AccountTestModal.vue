@@ -268,6 +268,7 @@ import TextArea from '@/components/common/TextArea.vue'
 import { Icon } from '@/components/icons'
 import { useClipboard } from '@/composables/useClipboard'
 import { adminAPI } from '@/api/admin'
+import { getSettings } from '@/api/admin/settings'
 import type { Account, ClaudeModel } from '@/types'
 
 const { t } = useI18n()
@@ -336,8 +337,7 @@ const sortTestModels = (models: ClaudeModel[]) => {
   })
 }
 
-const selectOpenAITestModel = (models: ClaudeModel[]) => {
-  const preferredModelID = 'gpt-5.6-terra'
+const selectOpenAITestModel = (models: ClaudeModel[], preferredModelID = 'gpt-5.6-terra') => {
   return models.find((m) => m.id === preferredModelID)?.id || models[0]?.id || ''
 }
 
@@ -375,13 +375,14 @@ const loadAvailableModels = async () => {
       : models
     // Default selection by platform
     if (availableModels.value.length > 0) {
+      const settings = await getSettings().catch(() => null)
       if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
       } else if (props.account.platform === 'openai') {
-        selectedModelId.value = selectOpenAITestModel(availableModels.value)
+        selectedModelId.value = selectOpenAITestModel(availableModels.value, settings?.account_test_model_openai || undefined)
       } else {
         // Anthropic 默认人工测试指定 Opus 4.8，缺失时保持可用模型列表兜底。
-        const opusModel = availableModels.value.find((m) => m.id === 'claude-opus-4-8')
+        const opusModel = availableModels.value.find((m) => m.id === (settings?.account_test_model_claude || 'claude-opus-4-8'))
         selectedModelId.value = opusModel?.id || availableModels.value[0].id
       }
     }

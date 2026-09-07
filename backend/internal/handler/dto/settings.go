@@ -159,6 +159,9 @@ type SystemSettings struct {
 	FallbackModelOpenAI      string `json:"fallback_model_openai"`
 	FallbackModelGemini      string `json:"fallback_model_gemini"`
 	FallbackModelAntigravity string `json:"fallback_model_antigravity"`
+	AccountTestModelOpenAI   string `json:"account_test_model_openai"`
+	AccountTestModelClaude   string `json:"account_test_model_claude"`
+	AccountTestModelGrok     string `json:"account_test_model_grok"`
 
 	// Identity patch configuration (Claude -> Gemini)
 	EnableIdentityPatch bool   `json:"enable_identity_patch"`
@@ -303,7 +306,7 @@ type SystemSettings struct {
 	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
 
 	// Available Channels feature switch (user-facing aggregate view)
-	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+	AvailableChannelsEnabled         bool `json:"available_channels_enabled"`
 	AdminSidebarSubscriptionsEnabled bool `json:"admin_sidebar_subscriptions_enabled"`
 	AdminSidebarPromoCodesEnabled    bool `json:"admin_sidebar_promo_codes_enabled"`
 	AdminSidebarRedeemEnabled        bool `json:"admin_sidebar_redeem_enabled"`
@@ -385,7 +388,7 @@ type PublicSettings struct {
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
 	ChannelMonitorHideThroughput         bool   `json:"channel_monitor_hide_throughput"`
 
-	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+	AvailableChannelsEnabled         bool `json:"available_channels_enabled"`
 	AdminSidebarSubscriptionsEnabled bool `json:"admin_sidebar_subscriptions_enabled"`
 	AdminSidebarPromoCodesEnabled    bool `json:"admin_sidebar_promo_codes_enabled"`
 	AdminSidebarRedeemEnabled        bool `json:"admin_sidebar_redeem_enabled"`

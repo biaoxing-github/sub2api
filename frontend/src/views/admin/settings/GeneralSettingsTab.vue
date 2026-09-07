@@ -71,6 +71,16 @@
         </div>
 
         <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
+          <h3 class="text-sm font-medium text-gray-900 dark:text-white">账号测试默认模型</h3>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">留空时使用系统内置模型；保存后下一次测试立即生效。</p>
+          <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <label class="block text-sm text-gray-700 dark:text-gray-300">OpenAI<input v-model="form.account_test_model_openai" class="input mt-2 font-mono text-sm" /></label>
+            <label class="block text-sm text-gray-700 dark:text-gray-300">Claude<input v-model="form.account_test_model_claude" class="input mt-2 font-mono text-sm" /></label>
+            <label class="block text-sm text-gray-700 dark:text-gray-300">Grok<input v-model="form.account_test_model_grok" class="input mt-2 font-mono text-sm" /></label>
+          </div>
+        </div>
+
+        <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
           <h3 class="text-sm font-medium text-gray-900 dark:text-white">
             {{ t("admin.settings.site.tablePreferencesTitle") }}
           </h3>
@@ -426,6 +436,9 @@ type GeneralSettingsForm = {
   home_content: string;
   hide_ccs_import_button: boolean;
   custom_menu_items: CustomMenuItem[];
+  account_test_model_openai: string;
+  account_test_model_claude: string;
+  account_test_model_grok: string;
 };
 
 defineProps<{

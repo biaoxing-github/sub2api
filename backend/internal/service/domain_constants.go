@@ -292,6 +292,9 @@ const (
 	SettingKeyFallbackModelOpenAI      = "fallback_model_openai"
 	SettingKeyFallbackModelGemini      = "fallback_model_gemini"
 	SettingKeyFallbackModelAntigravity = "fallback_model_antigravity"
+	SettingKeyAccountTestModelOpenAI   = "account_test_model_openai"
+	SettingKeyAccountTestModelClaude   = "account_test_model_claude"
+	SettingKeyAccountTestModelGrok     = "account_test_model_grok"
 
 	// Request identity patch (Claude -> Gemini systemInstruction injection)
 	SettingKeyEnableIdentityPatch = "enable_identity_patch"
