@@ -1036,7 +1036,6 @@ func (s *AccountProbeService) prepareRun(ctx context.Context, req AccountProbeRu
 	if model == "" {
 		model = s.configuredOpenAITestModel(ctx)
 	}
-	model = account.GetMappedModel(model)
 	req.Model = model
 	plan, err := buildAccountProbePlan(req)
 	if err != nil {
@@ -1089,7 +1088,6 @@ func (s *AccountProbeService) prepareTrustedComparisonTarget(ctx context.Context
 	if requestModel == "" {
 		requestModel = s.configuredOpenAITestModel(ctx)
 	}
-	requestModel = account.GetMappedModel(requestModel)
 	baseURLs := account.GetOpenAIRequestBaseURLs()
 	if len(baseURLs) == 0 {
 		baseURLs = []string{"https://api.openai.com"}
@@ -1249,7 +1247,11 @@ func (s *AccountProbeService) runOpenAIAPIKeySample(ctx context.Context, account
 	sampleCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	requestModel := accountProbeSampleRequestModel(account, model, sample)
+	// 调度池探测样本统一沿用入口解析出的全局模型 ID，禁止样本配对模型或账号映射覆盖。
+	requestModel := strings.TrimSpace(model)
+	if requestModel == "" {
+		requestModel = s.configuredOpenAITestModel(sampleCtx)
+	}
 	if sample.ExpectedModel == "" || sample.PairedModel != "" {
 		sample.ExpectedModel = requestModel
 	}
@@ -2272,17 +2274,9 @@ func accountProbeLongContextPrompt() string {
 }
 
 func accountProbeSampleRequestModel(account *Account, model string, sample APIKeyProbePlannedSample) string {
-	requestModel := strings.TrimSpace(model)
-	if sample.PairedModel != "" {
-		requestModel = strings.TrimSpace(sample.PairedModel)
-		if account != nil {
-			requestModel = account.GetMappedModel(requestModel)
-		}
-	}
-	if requestModel == "" {
-		return openai.DefaultTestModel
-	}
-	return requestModel
+	// 所有上游测试样本均使用入口解析出的全局模型 ID；样本配对模型和账号映射
+	// 仅用于报告/比较元数据，不得改写实际上游请求模型。
+	return strings.TrimSpace(model)
 }
 
 func isAccountProbeModelValidationSample(sample APIKeyProbePlannedSample) bool {

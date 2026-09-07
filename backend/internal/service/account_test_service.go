@@ -385,6 +385,18 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return nil
 	}
 
+	// 所有具备全局测试模型设置的平台测试都忽略调用方传入的 modelID，
+	// 防止手动探测、批量探测或历史计划覆盖最新设置。
+	if account.IsGrok() {
+		modelID = s.configuredTestModel(ctx, PlatformGrok, grokDefaultResponsesModel)
+	}
+	if account.IsOpenAI() {
+		modelID = s.configuredTestModel(ctx, PlatformOpenAI, openai.DefaultTestModel)
+	}
+	if account.Platform == PlatformAnthropic {
+		modelID = s.configuredTestModel(ctx, PlatformAnthropic, claude.DefaultTestModel)
+	}
+
 	// Route to platform-specific test method
 	if account.IsGrok() {
 		return s.testGrokAccountConnection(c, account, modelID)
@@ -415,9 +427,6 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 	if testModelID == "" {
 		testModelID = s.configuredTestModel(c.Request.Context(), PlatformGrok, grokDefaultResponsesModel)
 	}
-	// 账号测试对齐正式转发的账号级模型映射；调度池直连探测不走映射（见探测服务）。
-	testModelID = account.GetMappedModel(testModelID)
-
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
@@ -498,11 +507,6 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	testModelID := modelID
 	if testModelID == "" {
 		testModelID = s.configuredTestModel(ctx, PlatformAnthropic, "claude-opus-4-8")
-	}
-
-	// API Key 账号测试连接时也需要应用通配符模型映射。
-	if account.Type == "apikey" {
-		testModelID = account.GetMappedModel(testModelID)
 	}
 
 	// Bedrock accounts use a separate test path
@@ -799,11 +803,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		testModelID = s.configuredTestModel(ctx, PlatformOpenAI, openai.DefaultTestModel)
 	}
 
-	// Align test routing with gateway behavior: OpenAI accounts apply normal
-	// account model mapping. Native remote compaction v2 rides the ordinary
-	// /responses wire and does NOT apply the legacy compact-only mapping
-	// (post-#5641 semantics: compact_model_mapping is /responses/compact-only).
-	testModelID = account.GetMappedModel(testModelID)
+	// 测试请求严格使用全局设置的模型 ID，不应用账号级映射。
 	if mode == AccountTestModeCompact {
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
