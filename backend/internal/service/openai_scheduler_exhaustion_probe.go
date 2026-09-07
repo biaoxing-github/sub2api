@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -191,18 +190,31 @@ func (s *OpenAIGatewayService) probeOpenAISchedulerExhaustionAccount(ctx context
 	if s.openAISchedulerExhaustionProbeFunc != nil {
 		return s.openAISchedulerExhaustionProbeFunc(ctx, account, requestedModel, requireCompact, stream)
 	}
-	if account != nil && account.IsGrok() {
-		return s.sendGrokSchedulerExhaustionProbe(ctx, account, requestedModel, stream)
+	if account == nil {
+		return errors.New("openai scheduler exhaustion probe account is nil")
 	}
-	return s.sendOpenAISchedulerExhaustionProbe(ctx, account, requestedModel, requireCompact, stream)
+	// 调度池直连探测只使用系统设置的全局测试模型：
+	// 不跟随客户端请求模型、代码内默认模型和账号级模型映射。
+	probeModel, err := s.configuredSchedulerProbeModel(ctx, account)
+	if err != nil {
+		return fmt.Errorf("resolve scheduler probe model for account %d: %w", account.ID, err)
+	}
+	if account.IsGrok() {
+		return s.sendGrokSchedulerExhaustionProbe(ctx, account, probeModel, stream)
+	}
+	return s.sendOpenAISchedulerExhaustionProbe(ctx, account, probeModel, requireCompact, stream)
 }
 
-func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Context, account *Account, requestedModel string, requireCompact bool, stream bool) error {
+func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Context, account *Account, probeModel string, requireCompact bool, stream bool) error {
 	if s == nil || s.httpUpstream == nil {
 		return errors.New("openai scheduler exhaustion probe upstream is nil")
 	}
 	if account == nil {
 		return errors.New("openai scheduler exhaustion probe account is nil")
+	}
+	probeModel = strings.TrimSpace(probeModel)
+	if probeModel == "" {
+		return errors.New("openai scheduler exhaustion probe model is empty")
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, openaiResponsesProbeTimeout)
@@ -213,10 +225,6 @@ func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Co
 		return fmt.Errorf("get openai probe token for account %d: %w", account.ID, err)
 	}
 
-	probeModel := s.configuredSchedulerProbeModel(ctx, account, requestedModel)
-	if requireCompact {
-		probeModel = resolveOpenAICompactForwardModel(account, probeModel)
-	}
 	targetURL, err := s.openAISchedulerExhaustionProbeURL(account, requireCompact)
 	if err != nil {
 		return err
@@ -283,7 +291,7 @@ func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Co
 		return nil
 	}
 
-	s.handleOpenAIAccountUpstreamError(probeCtx, account, resp.StatusCode, resp.Header, responseBody, requestedModel)
+	s.handleOpenAIAccountUpstreamError(probeCtx, account, resp.StatusCode, resp.Header, responseBody, probeModel)
 	bodyText := strings.TrimSpace(truncateForLog(responseBody, 512))
 	if bodyText == "" {
 		return fmt.Errorf("openai scheduler exhaustion probe failed for account %d: status %d", account.ID, resp.StatusCode)
@@ -360,7 +368,7 @@ func (s *OpenAIGatewayService) openAISchedulerExhaustionProbeURL(account *Accoun
 	return targetURL, nil
 }
 
-func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Context, account *Account, requestedModel string, stream bool) error {
+func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Context, account *Account, probeModel string, stream bool) error {
 	if s == nil || s.httpUpstream == nil {
 		return errors.New("grok scheduler exhaustion probe upstream is nil")
 	}
@@ -376,12 +384,11 @@ func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Cont
 		return fmt.Errorf("get grok probe token for account %d: %w", account.ID, err)
 	}
 
-	probeModel := s.configuredSchedulerProbeModel(ctx, account, requestedModel)
-	upstreamProbeModel := strings.TrimSpace(account.GetMappedModel(probeModel))
-	if upstreamProbeModel == "" {
-		upstreamProbeModel = probeModel
+	probeModel = strings.TrimSpace(probeModel)
+	if probeModel == "" {
+		return errors.New("grok scheduler exhaustion probe model is empty")
 	}
-	patchedBody, err := patchGrokResponsesBody(openaiResponsesProbePayload(probeModel), upstreamProbeModel)
+	patchedBody, err := patchGrokResponsesBody(openaiResponsesProbePayload(probeModel), probeModel)
 	if err != nil {
 		return fmt.Errorf("build grok scheduler exhaustion probe body: %w", err)
 	}
@@ -437,36 +444,30 @@ func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Cont
 	return fmt.Errorf("grok scheduler exhaustion probe failed for account %d: status %d body %s", account.ID, resp.StatusCode, bodyText)
 }
 
-// configuredSchedulerProbeModel 获取调度池直连探测使用的最新平台测试模型。
-// 显式传入的模型优先；未传入时每次从系统设置读取，确保保存后立即生效。
-func (s *OpenAIGatewayService) configuredSchedulerProbeModel(ctx context.Context, account *Account, requestedModel string) string {
-	if model := strings.TrimSpace(requestedModel); model != "" {
-		return model
-	}
-
-	fallback := openai.DefaultTestModel
-	if account != nil && account.IsGrok() {
-		fallback = grokDefaultResponsesModel
-	}
+// configuredSchedulerProbeModel 返回调度池直连探测使用的模型。
+// 只读取系统设置里的全局账号测试模型（保存后立即生效）；不走请求模型、
+// 代码内默认模型和账号级模型/compact 映射。读取失败时返回错误，由调用方
+// 让本轮探测失败，绝不静默回退到其他模型。
+func (s *OpenAIGatewayService) configuredSchedulerProbeModel(ctx context.Context, account *Account) (string, error) {
 	if s == nil || s.settingService == nil {
-		return fallback
+		return "", errors.New("openai scheduler probe setting service is nil")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	settings, err := s.settingService.GetAllSettings(ctx)
 	if err != nil || settings == nil {
-		return fallback
+		return "", fmt.Errorf("read scheduler probe test model settings: %w", err)
 	}
-
 	configured := settings.AccountTestModelOpenAI
 	if account != nil && account.IsGrok() {
 		configured = settings.AccountTestModelGrok
 	}
-	if model := strings.TrimSpace(configured); model != "" {
-		return model
+	model := strings.TrimSpace(configured)
+	if model == "" {
+		return "", errors.New("scheduler probe test model is not configured")
 	}
-	return fallback
+	return model, nil
 }
 
 func (s *OpenAIGatewayService) recoverOpenAISchedulerExhaustionAccount(ctx context.Context, account *Account) error {

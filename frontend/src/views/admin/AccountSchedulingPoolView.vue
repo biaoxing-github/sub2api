@@ -531,24 +531,24 @@ async function manualProbe(item: OpenAIAccountSchedulingPoolItem) {
 }
 
 async function buildManualProbePayload(account: Account): Promise<{ model?: string }> {
+  // 上游直连探测的模型只跟随系统设置的全局测试模型：OpenAI/Anthropic 不传模型，
+  // 由后端读取最新全局配置；Antigravity/Gemini 无全局测试模型，按账号可用模型兜底。
+  if (account.platform === 'openai' || account.platform === 'anthropic') {
+    return {}
+  }
   const models = await getAvailableModels(account.id)
   const model = selectAccountTestModel(account, models)
   return model ? { model } : {}
 }
 
 function selectAccountTestModel(account: Account, models: ClaudeModel[]): string {
-  // 与账号测试弹窗保持一致：按平台选中实际会提交给 /test 的默认模型。
+  // 仅 Antigravity/Gemini 探测走账号可用模型兜底；OpenAI/Anthropic 不传模型。
   const availableModels = account.platform === 'antigravity' ? sortAccountTestModels(models) : models
   if (availableModels.length === 0) return ''
-  if (account.platform === 'openai') {
-    return availableModels.find(model => model.id === 'gpt-5.6-terra')?.id || availableModels[0]?.id || ''
-  }
   if (account.platform === 'gemini') {
     return sortAccountTestModels(availableModels)[0]?.id || ''
   }
-  // Anthropic 默认人工测试指定 Opus 4.8，缺失时保持可用模型列表兜底。
-  const opusModel = availableModels.find(model => model.id === 'claude-opus-4-8')
-  return opusModel?.id || availableModels[0]?.id || ''
+  return availableModels[0]?.id || ''
 }
 
 function sortAccountTestModels(models: ClaudeModel[]): ClaudeModel[] {

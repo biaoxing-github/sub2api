@@ -717,3 +717,192 @@ func TestRoundDelayFromFailureCounts(t *testing.T) {
 		})
 	}
 }
+
+// schedulerProbeSettingRepo 为探测模型测试提供可返回 GetAll 的系统设置仓库桩。
+type schedulerProbeSettingRepo struct {
+	values map[string]string
+	err    error
+}
+
+func (r *schedulerProbeSettingRepo) Get(context.Context, string) (*Setting, error) {
+	panic("unexpected Get call")
+}
+
+func (r *schedulerProbeSettingRepo) GetValue(context.Context, string) (string, error) {
+	panic("unexpected GetValue call")
+}
+
+func (r *schedulerProbeSettingRepo) Set(context.Context, string, string) error {
+	panic("unexpected Set call")
+}
+
+func (r *schedulerProbeSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	result := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if v, ok := r.values[key]; ok {
+			result[key] = v
+		}
+	}
+	return result, nil
+}
+
+func (r *schedulerProbeSettingRepo) SetMultiple(context.Context, map[string]string) error {
+	panic("unexpected SetMultiple call")
+}
+
+func (r *schedulerProbeSettingRepo) GetAll(context.Context) (map[string]string, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.values, nil
+}
+
+func (r *schedulerProbeSettingRepo) Delete(context.Context, string) error {
+	panic("unexpected Delete call")
+}
+
+// TestRecoverOpenAISchedulerExhaustionProbeUsesGlobalTestModelOnly 验证调度池直连
+// 探测的模型只来自系统设置的全局测试模型：客户端请求模型与账号级 model_mapping /
+// compact_model_mapping 一律不参与探测模型选择。
+func TestRecoverOpenAISchedulerExhaustionProbeUsesGlobalTestModelOnly(t *testing.T) {
+	groupID := int64(9)
+	repo := &schedulerExhaustionProbeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{
+			{
+				ID:          71,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "sk-test",
+					"base_url": "https://compat-upstream.example/v1",
+					"model_mapping": map[string]any{
+						"global-openai-probe-model": "account-mapped-model",
+						"requested-but-ignored":     "another-mapped-model",
+					},
+					"compact_model_mapping": map[string]any{
+						"global-openai-probe-model": "account-compact-model",
+					},
+				},
+			},
+		}},
+	}
+	upstream := &schedulerExhaustionHTTPUpstream{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_probe","status":"completed"}`)),
+	}}
+	svc := &OpenAIGatewayService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg: &config.Config{Security: config.SecurityConfig{
+			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+		}},
+		settingService: NewSettingService(&schedulerProbeSettingRepo{values: map[string]string{
+			SettingKeyAccountTestModelOpenAI: "global-openai-probe-model",
+		}}, &config.Config{}),
+	}
+
+	recovered, err := svc.RecoverOpenAISchedulerExhaustion(context.Background(), OpenAISchedulerExhaustionProbeOptions{
+		GroupID:        &groupID,
+		RequestedModel: "requested-but-ignored",
+		RequireCompact: true,
+	})
+
+	require.NoError(t, err)
+	require.True(t, recovered)
+	requestBody, readErr := io.ReadAll(upstream.request.Body)
+	require.NoError(t, readErr)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(requestBody, &payload))
+	require.Equal(t, "global-openai-probe-model", payload["model"])
+}
+
+// TestRecoverOpenAISchedulerExhaustionProbeUsesGlobalGrokTestModelOnly 验证 Grok
+// 调度池直连探测同样只使用全局 Grok 测试模型，不应用账号级模型映射。
+func TestRecoverOpenAISchedulerExhaustionProbeUsesGlobalGrokTestModelOnly(t *testing.T) {
+	groupID := int64(9)
+	repo := &schedulerExhaustionProbeRepo{
+		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{
+			{
+				ID:          72,
+				Platform:    PlatformGrok,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "xai-test",
+					"base_url": "https://api.x.ai/v1",
+					"model_mapping": map[string]any{
+						"global-grok-probe-model": "grok-mapped-away",
+						"requested-but-ignored":   "grok-other-mapped",
+					},
+				},
+			},
+		}},
+	}
+	upstream := &schedulerExhaustionHTTPUpstream{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_probe","status":"completed"}`)),
+	}}
+	svc := &OpenAIGatewayService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		settingService: NewSettingService(&schedulerProbeSettingRepo{values: map[string]string{
+			SettingKeyAccountTestModelGrok: "global-grok-probe-model",
+		}}, &config.Config{}),
+	}
+
+	recovered, err := svc.RecoverOpenAISchedulerExhaustion(context.Background(), OpenAISchedulerExhaustionProbeOptions{
+		GroupID:        &groupID,
+		Platform:       PlatformGrok,
+		RequestedModel: "requested-but-ignored",
+	})
+
+	require.NoError(t, err)
+	require.True(t, recovered)
+	requestBody, readErr := io.ReadAll(upstream.request.Body)
+	require.NoError(t, readErr)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(requestBody, &payload))
+	require.Equal(t, "global-grok-probe-model", payload["model"])
+}
+
+// TestConfiguredSchedulerProbeModelOnlyReadsGlobalSettings 验证探测模型解析只依赖
+// 全局设置：无设置服务、设置读取失败均报错，读取结果按平台取值并去除空白。
+func TestConfiguredSchedulerProbeModelOnlyReadsGlobalSettings(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	_, err := svc.configuredSchedulerProbeModel(context.Background(), &Account{Platform: PlatformOpenAI})
+	require.ErrorContains(t, err, "setting service is nil")
+
+	svc = &OpenAIGatewayService{
+		settingService: NewSettingService(&schedulerProbeSettingRepo{err: errors.New("db down")}, &config.Config{}),
+	}
+	_, err = svc.configuredSchedulerProbeModel(context.Background(), &Account{Platform: PlatformOpenAI})
+	require.Error(t, err)
+
+	svc = &OpenAIGatewayService{
+		settingService: NewSettingService(&schedulerProbeSettingRepo{values: map[string]string{
+			SettingKeyAccountTestModelOpenAI: "  global-openai-probe-model  ",
+		}}, &config.Config{}),
+	}
+	model, err := svc.configuredSchedulerProbeModel(context.Background(), &Account{Platform: PlatformOpenAI})
+	require.NoError(t, err)
+	require.Equal(t, "global-openai-probe-model", model)
+
+	grokSvc := &OpenAIGatewayService{
+		settingService: NewSettingService(&schedulerProbeSettingRepo{values: map[string]string{
+			SettingKeyAccountTestModelGrok: "global-grok-probe-model",
+		}}, &config.Config{}),
+	}
+	model, err = grokSvc.configuredSchedulerProbeModel(context.Background(), &Account{Platform: PlatformGrok})
+	require.NoError(t, err)
+	require.Equal(t, "global-grok-probe-model", model)
+}

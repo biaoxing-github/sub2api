@@ -415,6 +415,8 @@ func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *
 	if testModelID == "" {
 		testModelID = s.configuredTestModel(c.Request.Context(), PlatformGrok, grokDefaultResponsesModel)
 	}
+	// 账号测试对齐正式转发的账号级模型映射；调度池直连探测不走映射（见探测服务）。
+	testModelID = account.GetMappedModel(testModelID)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
