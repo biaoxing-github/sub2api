@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -212,9 +213,9 @@ func (s *OpenAIGatewayService) sendOpenAISchedulerExhaustionProbe(ctx context.Co
 		return fmt.Errorf("get openai probe token for account %d: %w", account.ID, err)
 	}
 
-	probeModel := requestedModel
+	probeModel := s.configuredSchedulerProbeModel(ctx, account, requestedModel)
 	if requireCompact {
-		probeModel = resolveOpenAICompactForwardModel(account, requestedModel)
+		probeModel = resolveOpenAICompactForwardModel(account, probeModel)
 	}
 	targetURL, err := s.openAISchedulerExhaustionProbeURL(account, requireCompact)
 	if err != nil {
@@ -375,10 +376,7 @@ func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Cont
 		return fmt.Errorf("get grok probe token for account %d: %w", account.ID, err)
 	}
 
-	probeModel := requestedModel
-	if strings.TrimSpace(probeModel) == "" {
-		probeModel = grokDefaultResponsesModel
-	}
+	probeModel := s.configuredSchedulerProbeModel(ctx, account, requestedModel)
 	upstreamProbeModel := strings.TrimSpace(account.GetMappedModel(probeModel))
 	if upstreamProbeModel == "" {
 		upstreamProbeModel = probeModel
@@ -437,6 +435,38 @@ func (s *OpenAIGatewayService) sendGrokSchedulerExhaustionProbe(ctx context.Cont
 		return fmt.Errorf("grok scheduler exhaustion probe failed for account %d: status %d", account.ID, resp.StatusCode)
 	}
 	return fmt.Errorf("grok scheduler exhaustion probe failed for account %d: status %d body %s", account.ID, resp.StatusCode, bodyText)
+}
+
+// configuredSchedulerProbeModel 获取调度池直连探测使用的最新平台测试模型。
+// 显式传入的模型优先；未传入时每次从系统设置读取，确保保存后立即生效。
+func (s *OpenAIGatewayService) configuredSchedulerProbeModel(ctx context.Context, account *Account, requestedModel string) string {
+	if model := strings.TrimSpace(requestedModel); model != "" {
+		return model
+	}
+
+	fallback := openai.DefaultTestModel
+	if account != nil && account.IsGrok() {
+		fallback = grokDefaultResponsesModel
+	}
+	if s == nil || s.settingService == nil {
+		return fallback
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	settings, err := s.settingService.GetAllSettings(ctx)
+	if err != nil || settings == nil {
+		return fallback
+	}
+
+	configured := settings.AccountTestModelOpenAI
+	if account != nil && account.IsGrok() {
+		configured = settings.AccountTestModelGrok
+	}
+	if model := strings.TrimSpace(configured); model != "" {
+		return model
+	}
+	return fallback
 }
 
 func (s *OpenAIGatewayService) recoverOpenAISchedulerExhaustionAccount(ctx context.Context, account *Account) error {
