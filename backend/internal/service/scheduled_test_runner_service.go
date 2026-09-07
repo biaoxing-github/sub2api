@@ -231,7 +231,8 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 		s.runOneAccountProbePlan(ctx, plan)
 		return
 	}
-	result, err := s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID)
+	// 调度计划不固化测试模型，运行时由账号平台读取最新管理设置，保存设置后下一轮立即生效。
+	result, err := s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, "")
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d RunTestBackground error: %v", plan.ID, err)
 		return
@@ -265,7 +266,8 @@ func (s *ScheduledTestRunnerService) runOneAccountProbePlan(ctx context.Context,
 	probeReq := AccountProbeRunRequest{
 		AccountID:          plan.AccountID,
 		Profile:            plan.ProbeMode,
-		Model:              plan.ModelID,
+		// 探测服务收到空模型时读取最新 OpenAI 测试模型设置。
+		Model:              "",
 		RequestMode:        plan.ProbeRequestMode,
 		IncludeLongContext: plan.ProbeLongContext,
 	}
