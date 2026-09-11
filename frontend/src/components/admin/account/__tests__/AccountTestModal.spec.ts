@@ -2,6 +2,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AccountTestModal from '../AccountTestModal.vue'
 
+// 隔离设置接口，避免模型初始化依赖真实 HTTP 请求。
+vi.mock('@/api/admin/settings', () => ({
+  getSettings: async () => ({})
+}))
+
 const { getAvailableModels, copyToClipboard } = vi.hoisted(() => ({
   getAvailableModels: vi.fn(),
   copyToClipboard: vi.fn()
@@ -93,6 +98,21 @@ function mountModal() {
 }
 
 describe('AccountTestModal', () => {
+  // 重开弹窗时，自定义问题和模式必须一起重置。
+  it('resets custom prompt mode when reopened', async () => {
+    const wrapper = mountModal()
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.promptMode = 'custom'
+    vm.testPrompt = 'previous prompt'
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect(vm.promptMode).toBe('default')
+    expect(vm.testPrompt).not.toBe('previous prompt')
+    wrapper.unmount()
+  })
   beforeEach(() => {
     getAvailableModels.mockResolvedValue([
       { id: 'gemini-2.0-flash', display_name: 'Gemini 2.0 Flash' },

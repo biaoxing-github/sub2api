@@ -361,6 +361,7 @@ watch(
   async (newVal) => {
     if (newVal && props.account) {
       testPrompt.value = ''
+      promptMode.value = 'default'
       resetState()
       showProbeDialog.value = false
       await loadAvailableModels()

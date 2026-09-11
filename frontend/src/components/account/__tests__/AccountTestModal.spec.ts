@@ -3,6 +3,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import AccountTestModal from '../AccountTestModal.vue'
 
+// 隔离设置接口，避免模型初始化依赖真实 HTTP 请求。
+vi.mock('@/api/admin/settings', () => ({
+  getSettings: async () => ({})
+}))
+
 const { getAvailableModelsMock } = vi.hoisted(() => ({
   getAvailableModelsMock: vi.fn()
 }))
@@ -99,6 +104,21 @@ function buildAccount() {
 }
 
 describe('AccountTestModal', () => {
+  // 重开弹窗时，自定义问题和模式必须一起重置。
+  it('resets custom prompt mode when reopened', async () => {
+    const wrapper = mount(AccountTestModal, { props: { show: false, account: buildAccount() }, global: { stubs: { BaseDialog: BaseDialogStub, Select: SelectStub, TextArea: TextAreaStub, Icon: true } } })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.promptMode = 'custom'
+    vm.testPrompt = 'previous prompt'
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    expect(vm.promptMode).toBe('default')
+    expect(vm.testPrompt).not.toBe('previous prompt')
+    wrapper.unmount()
+  })
   const originalFetch = global.fetch
 
   beforeEach(() => {

@@ -1630,7 +1630,6 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 	}()
 	concurrency := run.Concurrency
 	concurrency = normalizeBatchTestNonAPIKeyConcurrency(concurrency)
-	modelID := normalizeBatchTestNonAPIKeyModelID(run.ModelID)
 	limiter := h.accountBatchTestLimiter()
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -1668,7 +1667,8 @@ func (h *AccountHandler) runBatchTestNonAPIKeyBackground(run service.AccountBatc
 			}
 			defer release()
 
-			result, runErr := h.batchAccountTester.RunTestBackground(context.Background(), items[i].AccountID, modelID)
+			// 批量体检按账号平台读取最新默认模型，避免历史批次模型覆盖全局设置或串平台。
+			result, runErr := h.batchAccountTester.RunTestBackground(context.Background(), items[i].AccountID, "")
 			finishedAt := time.Now()
 			items[i].FinishedAt = &finishedAt
 			if runErr != nil {

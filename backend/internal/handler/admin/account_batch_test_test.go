@@ -86,6 +86,8 @@ func TestAccountBatchTestNonAPIKeySkipsAPIKeyAndClassifies401(t *testing.T) {
 			items[1].Category == "unauthorized"
 	}, time.Second, 10*time.Millisecond)
 	require.ElementsMatch(t, []int64{11, 13}, tester.calledIDsSnapshot())
+	// 混合平台批次不将请求中的 OpenAI 模型传给任一平台。
+	require.Equal(t, []string{"", ""}, tester.calledModelsSnapshot())
 }
 
 func TestAccountBatchTestNonAPIKeyPersistsFirstTokenMs(t *testing.T) {
@@ -250,7 +252,7 @@ func TestAccountBatchTestNonAPIKeyUsesGroupFilterAndDefaultConcurrency(t *testin
 	require.Equal(t, 5, body.Data.Concurrency)
 	require.Eventually(t, func() bool {
 		models := tester.calledModelsSnapshot()
-		return len(models) == 1 && models[0] == "gpt-5.6-terra"
+		return len(models) == 1 && models[0] == ""
 	}, time.Second, 10*time.Millisecond)
 }
 
@@ -322,7 +324,7 @@ func TestAccountBatchTestNonAPIKeyPassesPlanTypeFilter(t *testing.T) {
 	require.Equal(t, "free", adminSvc.lastListAccounts.planType)
 	require.Eventually(t, func() bool {
 		models := tester.calledModelsSnapshot()
-		return len(models) == 1 && models[0] == "gpt-5.6-terra"
+		return len(models) == 1 && models[0] == ""
 	}, time.Second, 10*time.Millisecond)
 }
 
