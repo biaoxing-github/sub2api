@@ -286,6 +286,13 @@
                     <span v-else class="truncate text-sm font-semibold text-gray-950 dark:text-white">{{ value }}</span>
                     <AccountAvailabilityRadarBadge :advice="row.load_factor_advice" />
                     <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
+                    <span
+                      v-if="row.extra?.account_tag"
+                      class="inline-flex max-w-[16rem] items-center truncate rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                      :title="`${String(row.extra.account_tag)}${row.extra.account_tagged_at ? ` · ${formatDateTime(new Date(String(row.extra.account_tagged_at)))}` : ''}`"
+                    >
+                      {{ row.extra.account_tag }}
+                    </span>
                   </div>
                   <div class="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
                     <span
@@ -297,6 +304,9 @@
                     </span>
                     <span v-if="row.notes" class="max-w-[22rem] truncate text-gray-600 dark:text-gray-300" :title="row.notes">
                       {{ row.notes }}
+                    </span>
+                    <span v-if="row.extra?.account_tagged_at" class="whitespace-nowrap">
+                      打标 {{ formatDateTime(new Date(String(row.extra.account_tagged_at))) }}
                     </span>
                   </div>
                 </div>

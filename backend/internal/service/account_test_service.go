@@ -75,6 +75,7 @@ const (
 	accountTestErrorContextKey        = "account_test_error"
 	accountTestInputTokensContextKey  = "account_test_input_tokens"
 	accountTestOutputTokensContextKey = "account_test_output_tokens"
+	accountTestModelContextKey        = "account_test_model"
 )
 
 // AccountTestConnectionResult 是人工测试连接返回给 handler 的结构化结果。
@@ -318,10 +319,18 @@ func generateSessionString(cliVersion string) (string, error) {
 }
 
 // createTestPayload creates a Claude Code style test request payload
-func createTestPayload(modelID string, cliVersion string) (map[string]any, error) {
+func createTestPayload(modelID string, cliVersion string, prompt ...string) (map[string]any, error) {
 	sessionID, err := generateSessionString(cliVersion)
 	if err != nil {
 		return nil, err
+	}
+
+	testPrompt := ""
+	if len(prompt) > 0 {
+		testPrompt = strings.TrimSpace(prompt[0])
+	}
+	if testPrompt == "" {
+		testPrompt = RandomQuickValidationPrompt()
 	}
 
 	return map[string]any{
@@ -332,7 +341,7 @@ func createTestPayload(modelID string, cliVersion string) (map[string]any, error
 				"content": []map[string]any{
 					{
 						"type": "text",
-						"text": RandomQuickValidationPrompt(),
+						"text": testPrompt,
 						"cache_control": map[string]string{
 							"type": "ephemeral",
 						},
@@ -385,16 +394,19 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return nil
 	}
 
-	// 所有具备全局测试模型设置的平台测试都忽略调用方传入的 modelID，
-	// 防止手动探测、批量探测或历史计划覆盖最新设置。
-	if account.IsGrok() {
+	// 手动测试显式模型优先；调度池等未传模型的入口才读取平台全局设置。
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" && account.IsGrok() {
 		modelID = s.configuredTestModel(ctx, PlatformGrok, grokDefaultResponsesModel)
 	}
-	if account.IsOpenAI() {
+	if modelID == "" && account.IsOpenAI() {
 		modelID = s.configuredTestModel(ctx, PlatformOpenAI, openai.DefaultTestModel)
 	}
-	if account.Platform == PlatformAnthropic {
+	if modelID == "" && account.Platform == PlatformAnthropic {
 		modelID = s.configuredTestModel(ctx, PlatformAnthropic, claude.DefaultTestModel)
+	}
+	if c != nil && modelID != "" {
+		c.Set(accountTestModelContextKey, modelID)
 	}
 
 	// Route to platform-specific test method
@@ -414,7 +426,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return s.routeAntigravityTest(c, account, modelID, prompt)
 	}
 
-	return s.testClaudeAccountConnection(c, account, modelID)
+	return s.testClaudeAccountConnection(c, account, modelID, prompt)
 }
 
 // testGrokAccountConnection 复用正式 Grok Responses 探测链验证账号，避免测试接口维护第二套路由规则。
@@ -487,6 +499,9 @@ func (s *AccountTestService) TestAccountConnectionWithResult(c *gin.Context, acc
 		OutputTokens: outputTokens,
 		Stream:       true,
 	}
+	if resolvedModel, ok := accountTestContextString(c, accountTestModelContextKey); ok {
+		result.Model = resolvedModel
+	}
 	result.Reason = accountTestOutcomeReason(result)
 	return result, err
 }
@@ -500,7 +515,7 @@ func (s *AccountTestService) TestAccountConnectionWithResultBackground(ctx conte
 }
 
 // testClaudeAccountConnection tests an Anthropic Claude account's connection
-func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account *Account, modelID string) error {
+func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account *Account, modelID string, prompt ...string) error {
 	ctx := c.Request.Context()
 
 	// Determine the model to use
@@ -560,7 +575,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 
 	// Create Claude Code style payload (same for all account types)
 	cliVersion := account.GetClaudeCLIVersion()
-	payload, err := createTestPayload(testModelID, cliVersion)
+	payload, err := createTestPayload(testModelID, cliVersion, prompt...)
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}
@@ -802,6 +817,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if testModelID == "" {
 		testModelID = s.configuredTestModel(ctx, PlatformOpenAI, openai.DefaultTestModel)
 	}
+	c.Set(accountTestModelContextKey, testModelID)
 
 	// 测试请求严格使用全局设置的模型 ID，不应用账号级映射。
 	if mode == AccountTestModeCompact {
@@ -867,7 +883,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	c.Writer.Flush()
 
 	// Create OpenAI Responses API payload
-	payload := createOpenAITestPayload(testModelID, account)
+	payload := createOpenAITestPayload(testModelID, account, prompt)
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Task recovery restarts this probe once without emitting duplicate events.
@@ -1292,7 +1308,7 @@ func (s *AccountTestService) routeAntigravityTest(c *gin.Context, account *Accou
 		if strings.HasPrefix(modelID, "gemini-") {
 			return s.testGeminiAccountConnection(c, account, modelID, prompt)
 		}
-		return s.testClaudeAccountConnection(c, account, modelID)
+		return s.testClaudeAccountConnection(c, account, modelID, prompt)
 	}
 	return s.testAntigravityAccountConnection(c, account, modelID)
 }
@@ -1600,8 +1616,15 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 
 // createOpenAITestPayload 构造管理端人工测试使用的 OpenAI Responses 请求体。
 // API Key 和 OAuth 账号都走正式网关 builder，payload 保持接近真实 Codex CLI 的普通请求。
-func createOpenAITestPayload(modelID string, account *Account) map[string]any {
+func createOpenAITestPayload(modelID string, account *Account, prompt ...string) map[string]any {
 	promptCacheKey := uuid.NewString()
+	testPrompt := ""
+	if len(prompt) > 0 {
+		testPrompt = strings.TrimSpace(prompt[0])
+	}
+	if testPrompt == "" {
+		testPrompt = RandomQuickValidationPrompt()
+	}
 	payload := map[string]any{
 		"model": modelID,
 		"client_metadata": map[string]any{
@@ -1617,7 +1640,7 @@ func createOpenAITestPayload(modelID string, account *Account) map[string]any {
 				"content": []map[string]any{
 					{
 						"type": "input_text",
-						"text": RandomQuickValidationPrompt(),
+						"text": testPrompt,
 					},
 				},
 			},

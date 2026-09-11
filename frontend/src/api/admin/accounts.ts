@@ -1100,6 +1100,7 @@ export async function manualProbeAccount(
   success: boolean
   result?: {
     success: boolean
+    model?: string
     message?: string
     latency_ms?: number
     first_token_ms?: number

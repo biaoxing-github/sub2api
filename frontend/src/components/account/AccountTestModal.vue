@@ -66,12 +66,21 @@
         />
       </div>
 
-      <div v-if="supportsImageTest" class="space-y-1.5">
+      <div v-if="!supportsImageTest" class="space-y-1.5">
+        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">测试问题</label>
+        <Select
+          v-model="promptMode"
+          :options="promptModeOptions"
+          :disabled="status === 'connecting'"
+        />
+      </div>
+
+      <div v-if="supportsImageTest || promptMode === 'custom'" class="space-y-1.5">
         <TextArea
           v-model="testPrompt"
-          :label="t('admin.accounts.imagePromptLabel')"
-          :placeholder="t('admin.accounts.imagePromptPlaceholder')"
-          :hint="t('admin.accounts.imageTestHint')"
+          :label="supportsImageTest ? t('admin.accounts.imagePromptLabel') : '自定义问题'"
+          :placeholder="supportsImageTest ? t('admin.accounts.imagePromptPlaceholder') : '输入本次测试要发送的问题'"
+          :hint="supportsImageTest ? t('admin.accounts.imageTestHint') : ''"
           :disabled="status === 'connecting'"
           rows="3"
         />
@@ -286,6 +295,11 @@ const testStartedAt = ref<number | null>(null)
 const availableModels = ref<ClaudeModel[]>([])
 const selectedModelId = ref('')
 const testPrompt = ref('')
+const promptMode = ref<'default' | 'custom'>('default')
+const promptModeOptions = [
+  { value: 'default', label: '使用默认问题' },
+  { value: 'custom', label: '自定义问题' }
+]
 const loadingModels = ref(false)
 let abortController: AbortController | null = null
 const generatedImages = ref<PreviewImage[]>([])
@@ -454,7 +468,7 @@ const startTest = async () => {
       },
       body: JSON.stringify({
         model_id: selectedModelId.value,
-        prompt: supportsImageTest.value ? testPrompt.value.trim() : '',
+        prompt: supportsImageTest.value || promptMode.value === 'custom' ? testPrompt.value.trim() : '',
         mode: isOpenAIAccount.value ? testMode.value : 'default'
       }),
       signal: abortController.signal

@@ -22,6 +22,20 @@
         :show-notes="activeFormTab === 'advanced'"
       />
 
+      <div v-show="activeFormTab === 'basic'" class="space-y-1.5">
+        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">账号标签</label>
+        <input
+          v-model="accountTag"
+          type="text"
+          maxlength="100"
+          placeholder="输入标签内容，留空可清除"
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-dark-500 dark:bg-dark-700 dark:text-gray-100"
+        />
+        <p v-if="accountTaggedAt" class="text-xs text-gray-500 dark:text-gray-400">
+          打标时间：{{ formatDateTime(new Date(accountTaggedAt)) }}
+        </p>
+      </div>
+
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey'" class="space-y-4">
         <AccountAPIKeyCredentialsFields
@@ -1550,6 +1564,8 @@ const form = reactive({
   group_ids: [] as number[],
   expires_at: null as number | null
 })
+const accountTag = ref('')
+const accountTaggedAt = ref('')
 
 // 每次打开弹窗先展示高频字段，避免高级设置淹没账号核心信息。
 const activeFormTab = ref<AccountFormTab>('basic')
@@ -1646,6 +1662,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   mixedScheduling.value = false
   allowOverages.value = false
   const extra = newAccount.extra as Record<string, unknown> | undefined
+  accountTag.value = typeof extra?.account_tag === 'string' ? extra.account_tag : ''
+  accountTaggedAt.value = typeof extra?.account_tagged_at === 'string' ? extra.account_tagged_at : ''
   accountAvailabilitySchedule.value = createAccountAvailabilityScheduleForm(
     readAccountAvailabilityScheduleFromExtra(extra)
   )
@@ -2897,6 +2915,19 @@ const handleSubmit = async () => {
       ...(((updatePayload.extra as Record<string, unknown>) ||
         (props.account.extra as Record<string, unknown>) ||
         {}))
+    }
+    const nextTag = accountTag.value.trim()
+    const previousTag = typeof props.account.extra?.account_tag === 'string'
+      ? props.account.extra.account_tag.trim()
+      : ''
+    if (nextTag) {
+      extraWithAvailability.account_tag = nextTag
+      extraWithAvailability.account_tagged_at = nextTag === previousTag && accountTaggedAt.value
+        ? accountTaggedAt.value
+        : new Date().toISOString()
+    } else {
+      delete extraWithAvailability.account_tag
+      delete extraWithAvailability.account_tagged_at
     }
     writeAccountAvailabilityScheduleToExtra(extraWithAvailability, accountAvailabilitySchedule.value)
     if (Object.keys(extraWithAvailability).length > 0 || props.account.extra) {

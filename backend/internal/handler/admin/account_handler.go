@@ -1324,6 +1324,7 @@ type ManualProbeRequest struct {
 // ManualProbeResultResponse 是调度池人工探测给前端消费的稳定 JSON 契约。
 type ManualProbeResultResponse struct {
 	Success      bool   `json:"success"`
+	Model        string `json:"model,omitempty"`
 	Message      string `json:"message,omitempty"`
 	Error        string `json:"error,omitempty"`
 	LatencyMS    *int   `json:"latency_ms,omitempty"`
@@ -1345,6 +1346,7 @@ func manualProbeResultResponseFromService(result *service.AccountTestConnectionR
 	}
 	resp := &ManualProbeResultResponse{
 		Success:      result.Success,
+		Model:        result.Model,
 		LatencyMS:    result.LatencyMs,
 		FirstTokenMS: result.FirstTokenMs,
 		HTTPStatus:   result.HTTPStatus,
